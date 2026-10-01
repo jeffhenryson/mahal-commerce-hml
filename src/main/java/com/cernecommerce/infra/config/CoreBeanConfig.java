@@ -95,6 +95,7 @@ import com.cernecommerce.core.ports.out.estoque.OpenPackageRepository;
 import com.cernecommerce.core.ports.out.estoque.StockMovementRepository;
 import com.cernecommerce.core.ports.out.estoque.StockReservationRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
+import com.cernecommerce.core.ports.out.pagamento.OrderPaymentCorrectionRepository;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pdv.CashMovementRepository;
 import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
@@ -251,8 +252,11 @@ class CoreBeanConfig {
 
     @Bean
     OrderUseCase orderUseCase(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
-            OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase) {
-        return new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase);
+            OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
+            CashRegisterRepository cashRegisterRepository,
+            OrderPaymentCorrectionRepository orderPaymentCorrectionRepository) {
+        return new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
+                cashRegisterRepository, orderPaymentCorrectionRepository);
     }
 
     @Bean

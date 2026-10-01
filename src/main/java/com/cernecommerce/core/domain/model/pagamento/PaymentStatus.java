@@ -26,5 +26,10 @@ public enum PaymentStatus {
      * investigação de pagamento. Não é {@link #REFUNDED}: estorno é dinheiro que entrou e voltou.
      * Aqui o dinheiro nunca passou por este caminho.</p>
      */
-    CANCELLED
+    CANCELLED,
+    /**
+     * Linha capturada na forma errada e aposentada por uma correção (PDV-F027). Fica de pé como
+     * lastro — as leituras do pedido a devolvem, riscada — mas não soma em caixa nem em total.
+     */
+    CORRECTED
 }

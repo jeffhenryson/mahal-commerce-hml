@@ -497,6 +497,17 @@ public record Order(
                 separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
     }
 
+    /**
+     * Troca o troco registrado — a correção de forma de pagamento (PDV-F027) o zera quando a forma
+     * certa não era dinheiro: o troco já foi devolvido, e o novo lançamento é pelo valor exato.
+     */
+    public Order withChangeAmount(BigDecimal newChangeAmount) {
+        return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode,
+                items, grossAmount, discountAmount, cashbackRedeemed, netAmount, newChangeAmount,
+                cancelReason, createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt,
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+    }
+
     /** Vincula o pedido a um cliente identificado depois da montagem — o "CPF na nota?" do balcão. */
     public Order withCustomer(Long newCustomerId) {
         return new Order(id, orderNumber, channel, status, newCustomerId, sessionId, warehouseCode, items,

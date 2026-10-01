@@ -6,9 +6,11 @@ import com.cernecommerce.adapter.in.dtos.request.OrderRefundRequest;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderStatusRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderBulkStatusRequest;
+import com.cernecommerce.adapter.in.dtos.request.OrderPaymentCorrectionRequest;
 import com.cernecommerce.adapter.in.dtos.request.RefundItemLotRequest;
 import com.cernecommerce.adapter.in.dtos.response.OrderAdminResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderBulkStatusResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.PaymentCorrectionHistoryDTO;
 import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.adapter.in.dtos.response.OrderSummaryResponseDTO;
@@ -46,6 +48,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -205,6 +208,67 @@ public class OrdersController {
         // PDV-F026 — o detalhe deixa de precisar do recibo só para saber como o pedido foi pago.
         dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
         return ResponseEntity.ok(dto);
+    }
+
+    @Operation(summary = "Corrige a forma de pagamento do pedido, sem perder o registro do erro (PDV-F027)",
+            description = "As linhas CAPTURED vigentes passam a CORRECTED (ficam no pedido como lastro e "
+                    + "saem de payment-totals e da conferência do caixa); as informadas nascem CAPTURED. "
+                    + "A soma tem que ser exatamente totalPayable — sem troco, nem em DINHEIRO; se o "
+                    + "pedido tinha troco, changeAmount vai a zero. Com o caixa do pedido aberto basta "
+                    + "ORDER_PAYMENT_CORRECT; depois do fechamento exige ORDER_PAYMENT_CORRECT_CLOSED e a "
+                    + "divergência por método fica registrada no caixa fechado.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Corrigido", content = @Content(schema = @Schema(implementation = OrderAdminResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "PAYMENT_TOTAL_MISMATCH, REASON_REQUIRED ou INVALID_PAYMENT_METHOD", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "CASH_SESSION_CLOSED, ORDER_NOT_CORRECTABLE ou GATEWAY_PAYMENT_NOT_CORRECTABLE", content = @Content)
+    })
+    @PostMapping("/{id}/payments/correction")
+    @PreAuthorize("hasAnyAuthority('ORDER_PAYMENT_CORRECT', 'ORDER_PAYMENT_CORRECT_CLOSED')")
+    public ResponseEntity<OrderAdminResponseDTO> correctPayments(@PathVariable("id") Long orderId,
+            @Valid @RequestBody OrderPaymentCorrectionRequest request, Authentication authentication) {
+        boolean canCorrectClosed = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch("ORDER_PAYMENT_CORRECT_CLOSED"::equals);
+        OrderUseCase.PaymentCorrectionResult result = orderUseCase.correctPayments(orderId,
+                orderConverter.toPaymentCommands(request.getPayments()), request.getReason(),
+                authentication.getName(), canCorrectClosed);
+
+        publisher.publishEvent(AuditEvent.of(EventType.ORDER_PAYMENT_CORRECTED, authentication.getName(),
+                Map.of("orderId", orderId,
+                        "orderNumber", String.valueOf(result.order().orderNumber()),
+                        "correctionId", result.correction().id(),
+                        "sessionWasClosed", result.correction().sessionWasClosed(),
+                        "before", result.before().stream().map(OrdersController::auditLine).toList(),
+                        "after", result.after().stream().map(OrdersController::auditLine).toList(),
+                        "reason", result.correction().reason())));
+
+        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(result.order());
+        enrichCustomerNames(List.of(dto));
+        dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
+        return ResponseEntity.ok(dto);
+    }
+
+    private static Map<String, Object> auditLine(OrderPayment payment) {
+        return Map.of("method", payment.method().name(), "amount", payment.amount());
+    }
+
+    @Operation(summary = "Histórico de correções da forma de pagamento (PDV-F027)",
+            description = "Da mais antiga para a mais recente. Pedido sem correção responde [].")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content)
+    })
+    @GetMapping("/{id}/payment-history")
+    @PreAuthorize("hasAuthority('ORDER_READ')")
+    public ResponseEntity<List<PaymentCorrectionHistoryDTO>> getPaymentHistory(@PathVariable("id") Long orderId) {
+        return ResponseEntity.ok(orderUseCase.getPaymentHistory(orderId).stream()
+                .map(entry -> new PaymentCorrectionHistoryDTO(entry.correction().id(),
+                        entry.correction().correctedAt(), entry.correction().correctedBy(),
+                        entry.correction().reason(),
+                        entry.before().stream().map(orderConverter::toResponse).toList(),
+                        entry.after().stream().map(orderConverter::toResponse).toList()))
+                .toList());
     }
 
     @Operation(summary = "Recibo do pedido — funciona para BALCAO, MESA e MARKETPLACE",

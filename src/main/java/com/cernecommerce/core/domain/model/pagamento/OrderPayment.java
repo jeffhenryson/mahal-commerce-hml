@@ -16,7 +16,8 @@ import java.time.Instant;
  */
 public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
         PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
-        Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider) {
+        Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+        Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy) {
 
     public OrderPayment {
         if (orderId == null) {
@@ -49,10 +50,16 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         if (provider != null && channel == null) {
             throw new IllegalArgumentException("operadora exige o canal (maquininha ou link)");
         }
-        // Espelha o CHECK da V68: status e captura não podem discordar.
-        if ((status == PaymentStatus.CAPTURED) != (capturedAt != null)) {
+        // Espelha o CHECK da V68/V136: status e captura não podem discordar. CORRECTED nasce de
+        // CAPTURED e guarda o instante da captura original.
+        if ((status == PaymentStatus.CAPTURED || status == PaymentStatus.CORRECTED) != (capturedAt != null)) {
             throw new IllegalArgumentException(
                     "status CAPTURED e capturedAt têm que coexistir: status=" + status + ", capturedAt=" + capturedAt);
+        }
+        // PDV-F027 — espelha ck_order_payment_corrected.
+        if ((status == PaymentStatus.CORRECTED)
+                != (correctionId != null && correctedAt != null && correctedBy != null)) {
+            throw new IllegalArgumentException("CORRECTED exige correctionId, correctedAt e correctedBy");
         }
     }
 
@@ -68,9 +75,18 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     /** Pagamento de balcão com o canal e a operadora da cobrança (PDV-F025). */
     public static OrderPayment captured(Long orderId, PaymentMethod method, BigDecimal amount,
             Integer installments, PaymentChannel channel, PaymentProvider provider) {
+        return captured(orderId, method, amount, installments, channel, provider, null);
+    }
+
+    /**
+     * Pagamento lançado por uma correção (PDV-F027): nasce CAPTURED, como o do balcão, mas carrega
+     * a correção que o criou — é o "depois" do histórico de pagamento.
+     */
+    public static OrderPayment captured(Long orderId, PaymentMethod method, BigDecimal amount,
+            Integer installments, PaymentChannel channel, PaymentProvider provider, Long originCorrectionId) {
         Instant now = Instant.now();
         return new OrderPayment(null, orderId, method, amount, PaymentStatus.CAPTURED, installments,
-                null, now, now, now, channel, provider);
+                null, now, now, now, channel, provider, null, originCorrectionId, null, null);
     }
 
     /**
@@ -89,7 +105,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         Instant now = Instant.now();
         return new OrderPayment(null, original.orderId(), original.method(), original.amount(),
                 PaymentStatus.REFUNDED, original.installments(), null, now, null, now, original.channel(),
-                original.provider());
+                original.provider(), null, null, null, null);
     }
 
     /** Reconstitui um pagamento a partir de persistência. */
@@ -104,8 +120,18 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
             PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
             Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider) {
+        return of(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt,
+                createdAt, channel, provider, null, null, null, null);
+    }
+
+    /** Reconstitui um pagamento com o lastro de correção (PDV-F027). */
+    public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy) {
         return new OrderPayment(id, orderId, method, amount, status, installments, gatewayRef,
-                authorizedAt, capturedAt, createdAt, channel, provider);
+                authorizedAt, capturedAt, createdAt, channel, provider, correctionId, originCorrectionId,
+                correctedAt, correctedBy);
     }
 
     /**
@@ -116,7 +142,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     public static OrderPayment pending(Long orderId, PaymentMethod method, BigDecimal amount) {
         Instant now = Instant.now();
         return new OrderPayment(null, orderId, method, amount, PaymentStatus.PENDING, null,
-                null, null, null, now, null, null);
+                null, null, null, now, null, null, null, null, null, null);
     }
 
     /**
@@ -139,7 +165,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             throw new IllegalArgumentException("capturedAt é obrigatório na confirmação");
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CAPTURED, installments,
-                gatewayRef, capturedAt, capturedAt, createdAt, channel, provider);
+                gatewayRef, capturedAt, capturedAt, createdAt, channel, provider, null, null, null, null);
     }
 
     /**
@@ -157,6 +183,20 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             throw new IllegalArgumentException("só se cancela uma cobrança PENDING");
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CANCELLED, installments,
-                gatewayRef, authorizedAt, null, createdAt, channel, provider);
+                gatewayRef, authorizedAt, null, createdAt, channel, provider, null, null, null, null);
+    }
+
+    /**
+     * Aposenta um pagamento {@link PaymentStatus#CAPTURED} lançado na forma errada (PDV-F027).
+     * Atualiza a MESMA linha — a correção é o evento, registrado em {@code order_payment_correction};
+     * a linha antiga fica de pé, riscada, como lastro. Sai de toda soma de caixa, que só conta CAPTURED.
+     */
+    public OrderPayment corrected(Long correctionId, String correctedBy, Instant correctedAt) {
+        if (status != PaymentStatus.CAPTURED) {
+            throw new IllegalArgumentException("só se corrige um pagamento CAPTURED");
+        }
+        return new OrderPayment(id, orderId, method, amount, PaymentStatus.CORRECTED, installments,
+                gatewayRef, authorizedAt, capturedAt, createdAt, channel, provider, correctionId,
+                originCorrectionId, correctedAt, correctedBy);
     }
 }

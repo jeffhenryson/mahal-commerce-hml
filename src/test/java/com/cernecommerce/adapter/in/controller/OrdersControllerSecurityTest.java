@@ -127,6 +127,25 @@ public class OrdersControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    // PDV-F027 — correção da forma de pagamento.
+    @Test
+    void correct_payments_without_permission_returns_403() throws Exception {
+        mockMvc.perform(post("/orders/999999/payments/correction")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"payments\":[{\"method\":\"DEBITO\",\"amount\":10}],\"reason\":\"x\"}")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ORDER_FULFILL"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void correct_payments_with_permission_returns_404_for_inexistent() throws Exception {
+        mockMvc.perform(post("/orders/999999/payments/correction")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"payments\":[{\"method\":\"DEBITO\",\"amount\":10}],\"reason\":\"x\"}")
+                .with(user("ana").authorities(new SimpleGrantedAuthority("ORDER_PAYMENT_CORRECT"))))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void change_status_with_order_fulfill_returns_404_for_inexistent() throws Exception {
         mockMvc.perform(post("/orders/999999/status")

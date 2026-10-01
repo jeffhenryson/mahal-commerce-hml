@@ -110,7 +110,13 @@ import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
+import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
+import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
+import com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.InvalidCorrectionPaymentMethodException;
+import com.cernecommerce.core.domain.exception.pagamento.OrderNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException;
 import com.cernecommerce.core.domain.exception.pdv.DiscountExceedsBillException;
 import com.cernecommerce.core.domain.exception.pagamento.InsufficientPaymentException;
 import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTotalException;
@@ -944,6 +950,42 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleCashRegisterSessionNotFound(CashRegisterSessionNotFoundException ex,
             HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CASH_REGISTER_SESSION_NOT_FOUND", req);
+    }
+
+    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+
+    @ExceptionHandler(PaymentTotalMismatchException.class)
+    public ResponseEntity<ApiError> handlePaymentTotalMismatch(PaymentTotalMismatchException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PAYMENT_TOTAL_MISMATCH", req);
+    }
+
+    @ExceptionHandler(CorrectionReasonRequiredException.class)
+    public ResponseEntity<ApiError> handleCorrectionReasonRequired(CorrectionReasonRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "REASON_REQUIRED", req);
+    }
+
+    @ExceptionHandler(InvalidCorrectionPaymentMethodException.class)
+    public ResponseEntity<ApiError> handleInvalidCorrectionPaymentMethod(InvalidCorrectionPaymentMethodException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_PAYMENT_METHOD", req);
+    }
+
+    @ExceptionHandler(CashSessionClosedForCorrectionException.class)
+    public ResponseEntity<ApiError> handleCashSessionClosedForCorrection(CashSessionClosedForCorrectionException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CASH_SESSION_CLOSED", req);
+    }
+
+    @ExceptionHandler(OrderNotCorrectableException.class)
+    public ResponseEntity<ApiError> handleOrderNotCorrectable(OrderNotCorrectableException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_NOT_CORRECTABLE", req);
+    }
+
+    @ExceptionHandler(GatewayPaymentNotCorrectableException.class)
+    public ResponseEntity<ApiError> handleGatewayPaymentNotCorrectable(GatewayPaymentNotCorrectableException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "GATEWAY_PAYMENT_NOT_CORRECTABLE", req);
     }
 
     @ExceptionHandler(CashRegisterSessionClosedException.class)

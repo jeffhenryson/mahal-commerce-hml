@@ -101,7 +101,7 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,
         // Pedido
-        ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED,
+        ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
         // PDV-F022 — códigos da 99, rastreio, entregador preenchidos depois da venda.
         ORDER_DELIVERY_UPDATED,
         // Cashback (CRM-F003)

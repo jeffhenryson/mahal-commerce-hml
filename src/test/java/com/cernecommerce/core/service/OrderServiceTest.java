@@ -22,7 +22,18 @@ import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
+import com.cernecommerce.core.ports.out.pagamento.OrderPaymentCorrectionRepository;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
+import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
+import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
+import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
+import com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.OrderNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException;
+import com.cernecommerce.core.domain.model.pagamento.CashSessionAdjustment;
+import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
+import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,12 +65,15 @@ class OrderServiceTest {
     @Mock EstoqueUseCase estoqueUseCase;
     @Mock OrderPaymentRepository orderPaymentRepository;
     @Mock CashbackUseCase cashbackUseCase;
+    @Mock CashRegisterRepository cashRegisterRepository;
+    @Mock OrderPaymentCorrectionRepository correctionRepository;
 
     OrderService orderService;
 
     @BeforeEach
     void setUp() {
-        orderService = new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase);
+        orderService = new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
+                cashRegisterRepository, correctionRepository);
     }
 
     private static List<OrderItem> twoCharcoals() {
@@ -449,5 +463,173 @@ class OrderServiceTest {
 
         assertThatThrownBy(() -> orderService.updateDelivery(1L, tracking("X"), "gerente"))
                 .isInstanceOf(OrderDeliveryNotEditableException.class);
+    }
+
+    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+
+    private static OrderPayment capturedLine(long id, PaymentMethod method, String amount) {
+        return OrderPayment.of(id, 7L, method, new BigDecimal(amount), PaymentStatus.CAPTURED, null, null,
+                NOW, NOW, NOW);
+    }
+
+    private static CashRegisterSession session(CashRegisterSession.Status status) {
+        if (status == CashRegisterSession.Status.CLOSED) {
+            return CashRegisterSession.of(1L, "caixa1", NOW, BigDecimal.ZERO, "LOJA-01", NOW, "caixa1",
+                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, status);
+        }
+        return CashRegisterSession.of(1L, "caixa1", NOW, BigDecimal.ZERO, "LOJA-01", null, null,
+                null, null, null, status);
+    }
+
+    private static List<PaymentCommand> debit(String amount) {
+        return List.of(new PaymentCommand(PaymentMethod.DEBITO, new BigDecimal(amount), null, null, null));
+    }
+
+    private void givenCorrectableOrder(Order order, CashRegisterSession.Status sessionStatus,
+            OrderPayment... lines) {
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
+        when(orderPaymentRepository.findByOrderId(7L)).thenReturn(List.of(lines));
+        lenient().when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(session(sessionStatus)));
+        lenient().when(correctionRepository.save(any())).thenAnswer(inv -> {
+            OrderPaymentCorrection c = inv.getArgument(0);
+            return new OrderPaymentCorrection(30L, c.orderId(), c.reason(), c.correctedBy(), c.correctedAt(),
+                    c.cashSessionId(), c.sessionWasClosed());
+        });
+        lenient().when(orderPaymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @Test
+    void correctPayments_retiresCapturedLinesAndCapturesTheNewOnes() {
+        givenCorrectableOrder(concludedBalcao(), CashRegisterSession.Status.OPEN,
+                capturedLine(1L, PaymentMethod.PIX, "44.00"));
+
+        OrderUseCase.PaymentCorrectionResult result = orderService.correctPayments(7L, debit("44.00"),
+                "  marcou PIX, foi débito ", "ana", false);
+
+        assertThat(result.before()).singleElement().satisfies(p -> {
+            assertThat(p.status()).isEqualTo(PaymentStatus.CORRECTED);
+            assertThat(p.correctionId()).isEqualTo(30L);
+            assertThat(p.correctedBy()).isEqualTo("ana");
+            assertThat(p.capturedAt()).isEqualTo(NOW);
+        });
+        assertThat(result.after()).singleElement().satisfies(p -> {
+            assertThat(p.status()).isEqualTo(PaymentStatus.CAPTURED);
+            assertThat(p.method()).isEqualTo(PaymentMethod.DEBITO);
+            assertThat(p.originCorrectionId()).isEqualTo(30L);
+        });
+        assertThat(result.correction().reason()).isEqualTo("marcou PIX, foi débito");
+        assertThat(result.correction().sessionWasClosed()).isFalse();
+        verify(correctionRepository, never()).saveAdjustment(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void correctPayments_cashWithChangeBecomesExactAndZeroesTheChange() {
+        Order withChange = Order.openBalcao(1L, "LOJA-01", null, twoCharcoals())
+                .concluded("000001000", new BigDecimal("6.00"), NOW);
+        givenCorrectableOrder(withChange, CashRegisterSession.Status.OPEN,
+                capturedLine(1L, PaymentMethod.DINHEIRO, "50.00"));
+
+        OrderUseCase.PaymentCorrectionResult result = orderService.correctPayments(7L, debit("44.00"),
+                "foi débito", "ana", false);
+
+        assertThat(result.order().changeAmount()).isNull();
+    }
+
+    @Test
+    void correctPayments_refusesASumDifferentFromTotalPayable_evenInCash() {
+        givenCorrectableOrder(concludedBalcao(), CashRegisterSession.Status.OPEN,
+                capturedLine(1L, PaymentMethod.PIX, "44.00"));
+
+        assertThatThrownBy(() -> orderService.correctPayments(7L,
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("50.00"), null, null, null)),
+                "foi dinheiro", "ana", false))
+                .isInstanceOf(PaymentTotalMismatchException.class);
+        verify(orderPaymentRepository, never()).save(any());
+    }
+
+    @Test
+    void correctPayments_requiresAReason() {
+        assertThatThrownBy(() -> orderService.correctPayments(7L, debit("44.00"), "  ", "ana", false))
+                .isInstanceOf(CorrectionReasonRequiredException.class);
+    }
+
+    @Test
+    void correctPayments_refusesRefundedOrder() {
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(
+                concludedBalcao().refunded("devolução", NOW)));
+
+        assertThatThrownBy(() -> orderService.correctPayments(7L, debit("44.00"), "x", "ana", false))
+                .isInstanceOf(OrderNotCorrectableException.class);
+    }
+
+    @Test
+    void correctPayments_refusesGatewayPaidOrder() {
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(paidMarketplace()));
+        when(orderPaymentRepository.findByOrderId(7L)).thenReturn(List.of(
+                capturedLine(1L, PaymentMethod.GATEWAY_PIX, "44.00")));
+
+        assertThatThrownBy(() -> orderService.correctPayments(7L, debit("44.00"), "x", "ana", false))
+                .isInstanceOf(GatewayPaymentNotCorrectableException.class);
+    }
+
+    @Test
+    void correctPayments_closedSessionWithoutManagerPermission_isRefused() {
+        givenCorrectableOrder(concludedBalcao(), CashRegisterSession.Status.CLOSED,
+                capturedLine(1L, PaymentMethod.PIX, "44.00"));
+
+        assertThatThrownBy(() -> orderService.correctPayments(7L, debit("44.00"), "x", "ana", false))
+                .isInstanceOf(CashSessionClosedForCorrectionException.class);
+        verify(correctionRepository, never()).save(any());
+    }
+
+    @Test
+    void correctPayments_closedSessionWithManagerPermission_recordsTheDivergencePerMethod() {
+        Order withChange = Order.openBalcao(1L, "LOJA-01", null, twoCharcoals())
+                .concluded("000001000", new BigDecimal("6.00"), NOW);
+        givenCorrectableOrder(withChange, CashRegisterSession.Status.CLOSED,
+                capturedLine(1L, PaymentMethod.DINHEIRO, "50.00"));
+
+        orderService.correctPayments(7L, debit("44.00"), "foi débito", "gerente", true);
+
+        ArgumentCaptor<CashSessionAdjustment> adjustments = ArgumentCaptor.forClass(CashSessionAdjustment.class);
+        verify(correctionRepository, times(2)).saveAdjustment(adjustments.capture());
+        // A gaveta tinha ficado com 50 − 6 de troco = 44 em dinheiro; agora são 44 no débito.
+        assertThat(adjustments.getAllValues())
+                .extracting(CashSessionAdjustment::method, a -> a.deltaAmount().stripTrailingZeros())
+                .containsExactlyInAnyOrder(
+                        tuple(PaymentMethod.DINHEIRO, new BigDecimal("-44")),
+                        tuple(PaymentMethod.DEBITO, new BigDecimal("44")));
+    }
+
+    @Test
+    void getPaymentHistory_splitsLinesByWhoRetiredAndWhoCreatedThem() {
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(concludedBalcao()));
+        OrderPaymentCorrection first = new OrderPaymentCorrection(30L, 7L, "a", "ana", NOW, 1L, false);
+        OrderPaymentCorrection second = new OrderPaymentCorrection(31L, 7L, "b", "ana", NOW, 1L, false);
+        when(correctionRepository.findByOrderId(7L)).thenReturn(List.of(first, second));
+        OrderPayment original = capturedLine(1L, PaymentMethod.PIX, "44.00").corrected(30L, "ana", NOW);
+        OrderPayment firstFix = OrderPayment.captured(7L, PaymentMethod.DINHEIRO, new BigDecimal("44.00"),
+                null, null, null, 30L).corrected(31L, "ana", NOW);
+        OrderPayment secondFix = OrderPayment.captured(7L, PaymentMethod.DEBITO, new BigDecimal("44.00"),
+                null, null, null, 31L);
+        when(orderPaymentRepository.findByOrderId(7L)).thenReturn(List.of(original, firstFix, secondFix));
+
+        List<OrderUseCase.PaymentCorrectionEntry> history = orderService.getPaymentHistory(7L);
+
+        assertThat(history).hasSize(2);
+        assertThat(history.get(0).before()).containsExactly(original);
+        assertThat(history.get(0).after()).containsExactly(firstFix);
+        assertThat(history.get(1).before()).containsExactly(firstFix);
+        assertThat(history.get(1).after()).containsExactly(secondFix);
+    }
+
+    @Test
+    void getPaymentHistory_isEmptyWithoutCorrections() {
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(concludedBalcao()));
+        when(correctionRepository.findByOrderId(7L)).thenReturn(List.of());
+
+        assertThat(orderService.getPaymentHistory(7L)).isEmpty();
     }
 }

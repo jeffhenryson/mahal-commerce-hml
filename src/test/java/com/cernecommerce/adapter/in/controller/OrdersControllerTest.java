@@ -5,6 +5,10 @@ import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryExceptio
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
+import com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException;
+import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import java.time.Instant;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
@@ -178,6 +182,42 @@ public class OrdersControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"orderIds\":[],\"status\":\"CONCLUIDO\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void correctPayments_gerentePassaCanCorrectClosed_eAudita() throws Exception {
+        Order order = mock(Order.class);
+        when(order.orderNumber()).thenReturn("000001000");
+        OrderPaymentCorrection correction = new OrderPaymentCorrection(30L, 7L, "foi débito", "gerente",
+                Instant.now(), 1L, true);
+        when(orderUseCase.correctPayments(eq(7L), any(), eq("foi débito"), eq("gerente"), eq(true)))
+                .thenReturn(new OrderUseCase.PaymentCorrectionResult(order, correction, List.of(), List.of()));
+        when(orderConverter.toAdminResponse(order)).thenReturn(new OrderAdminResponseDTO());
+        when(orderUseCase.getOrderPayments(7L)).thenReturn(List.of());
+
+        mockMvc.perform(post("/orders/7/payments/correction")
+                        .principal(new UsernamePasswordAuthenticationToken("gerente", null,
+                                List.of(new SimpleGrantedAuthority("ORDER_PAYMENT_CORRECT_CLOSED"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"payments":[{"method":"DEBITO","amount":44.00}],"reason":"foi débito"}"""))
+                .andExpect(status().isOk());
+
+        verify(publisher).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void correctPayments_somaDiferente_retorna400PaymentTotalMismatch() throws Exception {
+        when(orderUseCase.correctPayments(eq(7L), any(), any(), eq("admin"), eq(false)))
+                .thenThrow(new PaymentTotalMismatchException(new BigDecimal("50.00"), new BigDecimal("44.00")));
+
+        mockMvc.perform(post("/orders/7/payments/correction")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"payments":[{"method":"DINHEIRO","amount":50.00}],"reason":"x"}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("PAYMENT_TOTAL_MISMATCH"));
     }
 
     /** PDV-F008 — o novo valor de enum precisa desserializar e passar pelo controller normalmente. */

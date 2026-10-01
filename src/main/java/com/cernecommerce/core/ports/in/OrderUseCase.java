@@ -2,6 +2,7 @@ package com.cernecommerce.core.ports.in;
 
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
+import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pedido.OrderFilter;
@@ -122,4 +123,34 @@ public interface OrderUseCase {
      * lote-rastreado.
      */
     Order refundOrder(Long orderId, String reason, String username, List<RefundItemLot> itemLots);
+
+    /**
+     * Corrige a forma de pagamento de um pedido sem perder o registro do erro (PDV-F027).
+     *
+     * <p>As linhas {@code CAPTURED} vigentes passam a {@code CORRECTED}; as informadas nascem
+     * {@code CAPTURED}. A soma tem que ser exatamente {@code totalPayable} — sem troco, que já foi
+     * devolvido na venda; se havia troco, {@code changeAmount} vai a zero. Com o caixa do pedido já
+     * fechado, exige {@code canCorrectClosed} e grava a divergência por método no caixa fechado.</p>
+     *
+     * @throws com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException
+     * @throws com.cernecommerce.core.domain.exception.pagamento.OrderNotCorrectableException
+     * @throws com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrectableException
+     * @throws com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException
+     * @throws com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException
+     */
+    PaymentCorrectionResult correctPayments(Long orderId, List<PdvUseCase.PaymentCommand> payments,
+            String reason, String username, boolean canCorrectClosed);
+
+    /** Correções do pedido, da mais antiga para a mais recente; {@code []} se nunca houve. */
+    List<PaymentCorrectionEntry> getPaymentHistory(Long orderId);
+
+    /** O pedido depois da correção, com o antes e o depois — o controller audita os dois. */
+    record PaymentCorrectionResult(Order order, OrderPaymentCorrection correction,
+            List<OrderPayment> before, List<OrderPayment> after) {
+    }
+
+    /** Uma correção com as linhas que aposentou ({@code before}) e as que lançou ({@code after}). */
+    record PaymentCorrectionEntry(OrderPaymentCorrection correction, List<OrderPayment> before,
+            List<OrderPayment> after) {
+    }
 }

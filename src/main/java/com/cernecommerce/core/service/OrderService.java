@@ -1,11 +1,21 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
+import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
+import com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.InvalidCorrectionPaymentMethodException;
+import com.cernecommerce.core.domain.exception.pagamento.OrderNotCorrectableException;
+import com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException;
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
+import com.cernecommerce.core.domain.model.pagamento.CashSessionAdjustment;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
+import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
+import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
@@ -17,12 +27,18 @@ import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
+import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.ports.out.pagamento.OrderPaymentCorrectionRepository;
+import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -34,13 +50,18 @@ public class OrderService implements OrderUseCase {
     private final EstoqueUseCase estoqueUseCase;
     private final OrderPaymentRepository orderPaymentRepository;
     private final CashbackUseCase cashbackUseCase;
+    private final CashRegisterRepository cashRegisterRepository;
+    private final OrderPaymentCorrectionRepository correctionRepository;
 
     public OrderService(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
-            OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase) {
+            OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
+            CashRegisterRepository cashRegisterRepository, OrderPaymentCorrectionRepository correctionRepository) {
         this.orderRepository = orderRepository;
         this.estoqueUseCase = estoqueUseCase;
         this.orderPaymentRepository = orderPaymentRepository;
         this.cashbackUseCase = cashbackUseCase;
+        this.cashRegisterRepository = cashRegisterRepository;
+        this.correctionRepository = correctionRepository;
     }
 
     @Override
@@ -172,5 +193,120 @@ public class OrderService implements OrderUseCase {
         cashbackUseCase.reverseEarningsForOrder(order);
 
         return orderRepository.save(refunded);
+    }
+
+    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public PaymentCorrectionResult correctPayments(Long orderId, List<PaymentCommand> payments,
+            String reason, String username, boolean canCorrectClosed) {
+        if (reason == null || reason.isBlank()) {
+            throw new CorrectionReasonRequiredException();
+        }
+        Order order = getOrder(orderId);
+        if (order.status() == OrderStatus.CANCELADO || order.status() == OrderStatus.REEMBOLSADO) {
+            throw new OrderNotCorrectableException(orderId, "pedido " + order.status());
+        }
+        List<OrderPayment> current = orderPaymentRepository.findByOrderId(orderId);
+        // Pago pelo app: o webhook confirmou, não houve gaveta. Sem sessão não há caixa a reconciliar.
+        // Só GATEWAY_PIX capturado bloqueia — o pedido do app pago no balcão (PDV-C015) tem a
+        // cobrança de gateway CANCELLED e o dinheiro de fato passou pelo caixa.
+        if (order.sessionId() == null || current.stream().anyMatch(p ->
+                p.method() == PaymentMethod.GATEWAY_PIX && p.status() == PaymentStatus.CAPTURED)) {
+            throw new GatewayPaymentNotCorrectableException(orderId);
+        }
+        List<OrderPayment> before = current.stream()
+                .filter(p -> p.status() == PaymentStatus.CAPTURED)
+                .toList();
+        if (before.isEmpty()) {
+            throw new OrderNotCorrectableException(orderId, "sem pagamento capturado");
+        }
+
+        // Valor exato, sem troco: o troco já foi devolvido na venda. Nem DINHEIRO pode exceder.
+        BigDecimal informed = BigDecimal.ZERO;
+        for (PaymentCommand payment : payments) {
+            if (payment.method() == PaymentMethod.GATEWAY_PIX) {
+                throw new InvalidCorrectionPaymentMethodException(payment.method());
+            }
+            informed = informed.add(payment.amount());
+        }
+        if (informed.compareTo(order.totalPayable()) != 0) {
+            throw new PaymentTotalMismatchException(informed, order.totalPayable());
+        }
+
+        CashRegisterSession session = cashRegisterRepository.findById(order.sessionId())
+                .orElseThrow(() -> new CashRegisterSessionNotFoundException(order.sessionId()));
+        boolean sessionClosed = !session.isOpen();
+        if (sessionClosed && !canCorrectClosed) {
+            throw new CashSessionClosedForCorrectionException(session.id());
+        }
+
+        Instant now = Instant.now();
+        OrderPaymentCorrection correction = correctionRepository.save(new OrderPaymentCorrection(null,
+                orderId, reason.trim(), username, now, session.id(), sessionClosed));
+
+        List<OrderPayment> retired = new ArrayList<>(before.size());
+        for (OrderPayment payment : before) {
+            retired.add(orderPaymentRepository.save(payment.corrected(correction.id(), username, now)));
+        }
+        List<OrderPayment> after = new ArrayList<>(payments.size());
+        for (PaymentCommand payment : payments) {
+            after.add(orderPaymentRepository.save(OrderPayment.captured(orderId, payment.method(),
+                    payment.amount(), payment.installments(), payment.channel(), payment.provider(),
+                    correction.id())));
+        }
+
+        BigDecimal oldChange = order.changeAmount() == null ? BigDecimal.ZERO : order.changeAmount();
+        Order saved = oldChange.signum() > 0
+                ? orderRepository.save(order.withChangeAmount(null))
+                : order;
+
+        if (sessionClosed) {
+            recordClosedSessionAdjustments(session.id(), orderId, correction.id(), before, after, oldChange,
+                    username, now);
+        }
+        return new PaymentCorrectionResult(saved, correction, retired, after);
+    }
+
+    /**
+     * O esperado de um caixa fechado não é reescrito: o que mudou vira um delta por método. Em
+     * DINHEIRO o "antes" é líquido do troco — foi isso que ficou na gaveta.
+     */
+    private void recordClosedSessionAdjustments(Long sessionId, Long orderId, Long correctionId,
+            List<OrderPayment> before, List<OrderPayment> after, BigDecimal oldChange, String username,
+            Instant now) {
+        Map<PaymentMethod, BigDecimal> delta = new EnumMap<>(PaymentMethod.class);
+        for (OrderPayment p : before) {
+            delta.merge(p.method(), p.amount().negate(), BigDecimal::add);
+        }
+        if (oldChange.signum() > 0) {
+            delta.merge(PaymentMethod.DINHEIRO, oldChange, BigDecimal::add);
+        }
+        for (OrderPayment p : after) {
+            delta.merge(p.method(), p.amount(), BigDecimal::add);
+        }
+        delta.forEach((method, amount) -> {
+            if (amount.signum() != 0) {
+                correctionRepository.saveAdjustment(new CashSessionAdjustment(null, sessionId, orderId,
+                        correctionId, method, amount, username, now));
+            }
+        });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PaymentCorrectionEntry> getPaymentHistory(Long orderId) {
+        getOrder(orderId);
+        List<OrderPaymentCorrection> corrections = correctionRepository.findByOrderId(orderId);
+        if (corrections.isEmpty()) {
+            return List.of();
+        }
+        List<OrderPayment> payments = orderPaymentRepository.findByOrderId(orderId);
+        return corrections.stream()
+                .map(c -> new PaymentCorrectionEntry(c,
+                        payments.stream().filter(p -> c.id().equals(p.correctionId())).toList(),
+                        payments.stream().filter(p -> c.id().equals(p.originCorrectionId())).toList()))
+                .toList();
     }
 }

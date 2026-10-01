@@ -17,7 +17,8 @@ public class OrderPaymentResponseDTO {
 
     private BigDecimal amount;
 
-    @Schema(description = "No balcão, sempre CAPTURED — o dinheiro já está na gaveta.")
+    @Schema(description = "CAPTURED soma; CORRECTED (PDV-F027) é a linha lançada na forma errada e "
+            + "aposentada por uma correção — devolvida como lastro, mas fora de qualquer total.")
     private String status;
 
     @Schema(description = "Só em CREDITO.")
@@ -31,4 +32,17 @@ public class OrderPaymentResponseDTO {
 
     @Schema(description = "CIELO ou INFINITYPAY (PDV-F025). Só junto com channel.")
     private PaymentProvider provider;
+
+    @Schema(description = "PDV-F027 — em CORRECTED, a correção que aposentou a linha; nas demais, a "
+            + "correção que a lançou (null se veio da venda).")
+    private Long correctionId;
+
+    @Schema(description = "PDV-F027 — a correção que lançou esta linha; null se veio da venda.")
+    private Long originCorrectionId;
+
+    @Schema(description = "PDV-F027 — só em CORRECTED.")
+    private Instant correctedAt;
+
+    @Schema(description = "PDV-F027 — só em CORRECTED.")
+    private String correctedBy;
 }

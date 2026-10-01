@@ -489,4 +489,72 @@ class PdvCashCycleIT {
                 .setParameter("id", sold.id()).getSingleResult();
         assertThat(rows.intValue()).isZero();
     }
+
+    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+
+    private static BigDecimal netOf(List<PdvUseCase.PaymentTotal> totals, PaymentMethod method) {
+        return totals.stream().filter(t -> t.method() == method).findFirst().orElseThrow().netAmount();
+    }
+
+    @Test
+    void correctPayments_movesTheAmountBetweenMethodsAndKeepsTheWrongLineAsHistory() {
+        String operator = "caixa-" + uniqueSuffix();
+        String[] setup = givenStockedWarehouse(operator).split("\\|");
+        CashRegisterSession session = pdvUseCase.openSession(operator, new BigDecimal("100.00"), setup[0]);
+        // 2 carvões a 22,00 = 44,00, pagos com 50 em dinheiro: 6 de troco.
+        Order sold = pdvUseCase.registerSale(session.id(), null,
+                List.of(new SaleItemCommand(setup[1], new BigDecimal("2.000"), null)), cash("50.00"), operator);
+        flushAndClear();
+
+        orderUseCase.correctPayments(sold.id(),
+                List.of(new PaymentCommand(PaymentMethod.DEBITO, new BigDecimal("44.00"), null)),
+                "Cliente pagou no débito", "ana", false);
+        flushAndClear();
+
+        List<PdvUseCase.PaymentTotal> totals = pdvUseCase.getSessionPaymentTotals(session.id());
+        assertThat(netOf(totals, PaymentMethod.DINHEIRO)).isEqualByComparingTo("0.00");
+        assertThat(netOf(totals, PaymentMethod.DEBITO)).isEqualByComparingTo("44.00");
+
+        assertThat(orderUseCase.getOrder(sold.id()).changeAmount()).isNull();
+        assertThat(orderUseCase.getOrderPayments(sold.id()))
+                .extracting(p -> p.method(), p -> p.status())
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(PaymentMethod.DINHEIRO, PaymentStatus.CORRECTED),
+                        org.assertj.core.groups.Tuple.tuple(PaymentMethod.DEBITO, PaymentStatus.CAPTURED));
+        assertThat(orderUseCase.getPaymentHistory(sold.id())).singleElement()
+                .satisfies(entry -> {
+                    assertThat(entry.before()).extracting(p -> p.method()).containsExactly(PaymentMethod.DINHEIRO);
+                    assertThat(entry.after()).extracting(p -> p.method()).containsExactly(PaymentMethod.DEBITO);
+                });
+
+        // O fechamento conta só o fundo de troco: a venda saiu do dinheiro.
+        CashRegisterSession closed = pdvUseCase.closeSession(session.id(), new BigDecimal("100.00"), operator);
+        assertThat(closed.expectedAmount()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void correctPayments_afterClose_recordsTheAdjustmentOnTheClosedSession() {
+        String operator = "caixa-" + uniqueSuffix();
+        String[] setup = givenStockedWarehouse(operator).split("\\|");
+        CashRegisterSession session = pdvUseCase.openSession(operator, new BigDecimal("0.00"), setup[0]);
+        Order sold = pdvUseCase.registerSale(session.id(), null,
+                List.of(new SaleItemCommand(setup[1], new BigDecimal("2.000"), null)),
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("44.00"), null)), operator);
+        pdvUseCase.closeSession(session.id(), BigDecimal.ZERO, operator);
+        flushAndClear();
+
+        orderUseCase.correctPayments(sold.id(),
+                List.of(new PaymentCommand(PaymentMethod.CREDITO, new BigDecimal("44.00"), 2)),
+                "foi crédito em 2x", "gerente", true);
+        flushAndClear();
+
+        List<?> rows = em.createNativeQuery(
+                        "SELECT method, delta_amount FROM cash_session_adjustment WHERE session_id = :id ORDER BY method")
+                .setParameter("id", session.id()).getResultList();
+        assertThat(rows).hasSize(2);
+        assertThat(((Object[]) rows.get(0))[0]).isEqualTo("CREDITO");
+        assertThat(new BigDecimal(((Object[]) rows.get(0))[1].toString())).isEqualByComparingTo("44.00");
+        assertThat(((Object[]) rows.get(1))[0]).isEqualTo("PIX");
+        assertThat(new BigDecimal(((Object[]) rows.get(1))[1].toString())).isEqualByComparingTo("-44.00");
+    }
 }

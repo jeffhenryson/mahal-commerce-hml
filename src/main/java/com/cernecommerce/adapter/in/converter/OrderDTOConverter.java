@@ -117,6 +117,10 @@ public class OrderDTOConverter {
         dto.setCreatedAt(payment.createdAt());
         dto.setChannel(payment.channel());
         dto.setProvider(payment.provider());
+        dto.setCorrectionId(payment.correctionId() != null ? payment.correctionId() : payment.originCorrectionId());
+        dto.setOriginCorrectionId(payment.originCorrectionId());
+        dto.setCorrectedAt(payment.correctedAt());
+        dto.setCorrectedBy(payment.correctedBy());
         return dto;
     }
 
