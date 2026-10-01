@@ -153,6 +153,34 @@ class OrderServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+    // ── PED-C006: o caminho genérico é só a esteira ─────────────────────────────────────────
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = OrderStatus.class, names = {"PAGO", "CONCLUIDO"})
+    void changeStatus_pedidoAguardandoPagamento_naoViraPagoNemConcluidoSemPagamento(OrderStatus alvo) {
+        // A tabela de OrderStatus permite as duas — mas só para o webhook e o settleOnlineOrder,
+        // que gravam o pagamento, numeram o pedido e consomem a reserva. Aqui nada disso aconteceria.
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(pendingMarketplace()));
+
+        assertThatThrownBy(() -> orderService.changeStatus(1L, alvo, "operador"))
+                .isInstanceOf(InvalidOrderStatusTransitionException.class);
+
+        verify(orderRepository, never()).save(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = OrderStatus.class, names = {"REEMBOLSADO", "CANCELADO"})
+    void changeStatus_reembolsoECancelamentoTemRotaPropria(OrderStatus alvo) {
+        // Antes estouravam IllegalArgumentException no construtor de Order (400 genérico) — e no
+        // bulk-status, no meio do laço (PED-C008).
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(paidMarketplace()));
+
+        assertThatThrownBy(() -> orderService.changeStatus(1L, alvo, "operador"))
+                .isInstanceOf(InvalidOrderStatusTransitionException.class);
+
+        verify(orderRepository, never()).save(any());
+    }
+
     // ── Retirada de venda reservada (PDV-F008) ──────────────────────────────────────────────
 
     @Test

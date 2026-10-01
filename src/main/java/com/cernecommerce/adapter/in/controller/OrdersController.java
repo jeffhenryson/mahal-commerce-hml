@@ -367,7 +367,9 @@ public class OrdersController {
                     + "pedido segue a máquina de estados e é gravado na própria transação, então um "
                     + "recusado não desfaz os outros. Os recusados voltam em `failed` com o mesmo "
                     + "errorCode do endpoint unitário (ORDER_NOT_FOUND, INVALID_STATUS_TRANSITION, "
-                    + "CONCURRENT_UPDATE). Máximo de 200 ids.")
+                    + "CONCURRENT_UPDATE), mais INVALID_ORDER_STATE para invariante de domínio do pedido. "
+                    + "Só aceita a esteira (SEPARADO/ENVIADO/ENTREGUE) e a retirada RESERVADO → CONCLUIDO. "
+                    + "Máximo de 200 ids.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Processado — ver ok/failed",
                     content = @Content(schema = @Schema(implementation = OrderBulkStatusResponseDTO.class))),
@@ -397,6 +399,12 @@ public class OrdersController {
             } catch (ObjectOptimisticLockingFailureException e) {
                 failed.add(new OrderBulkStatusResponseDTO.Failure(orderId, "CONCURRENT_UPDATE",
                         "pedido alterado por outra operação, tente de novo"));
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                // PED-C008 — invariante de domínio de UM pedido não pode parar o laço: os anteriores
+                // já foram gravados e auditados, e o cliente ficaria sem saber quais. A mensagem do
+                // domínio não sai (cita campo interno), como no handler global.
+                failed.add(new OrderBulkStatusResponseDTO.Failure(orderId, "INVALID_ORDER_STATE",
+                        "o pedido não está num estado que permita esta mudança"));
             }
         }
         return ResponseEntity.ok(new OrderBulkStatusResponseDTO(ok, failed));

@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
+
 import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
 import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
 import com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrectableException;
@@ -36,6 +38,8 @@ import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Set;
+import java.util.EnumSet;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -110,11 +114,27 @@ public class OrderService implements OrderUseCase {
         // porque só pickedUp() carimba concludedAt — withStatus não grava timestamp nenhum (é o
         // caminho da esteira SEPARADO/ENVIADO/ENTREGUE, que hoje mesmo não tem timestamp por etapa).
         Order order = getOrder(orderId);
-        Order updated = order.status() == OrderStatus.RESERVADO && newStatus == OrderStatus.CONCLUIDO
-                ? order.pickedUp(Instant.now())
-                : order.withStatus(newStatus);
+        boolean pickup = order.status() == OrderStatus.RESERVADO && newStatus == OrderStatus.CONCLUIDO;
+        // PED-C006 — este é o caminho da esteira, não o de qualquer transição da tabela. A tabela de
+        // OrderStatus deixa AGUARDANDO_PAGAMENTO ir a PAGO/CONCLUIDO, mas só o webhook e o
+        // settleOnlineOrder podem fazê-lo: são eles que gravam o pagamento, numeram o pedido e
+        // consomem a reserva. Por aqui o pedido do app virava pago sem dinheiro nenhum, e a reserva
+        // expirava devolvendo ao saldo a mercadoria já contada como vendida. Reembolso e
+        // cancelamento também têm rota própria (e estouravam IllegalArgumentException no construtor).
+        if (!pickup && !FULFILLMENT_TARGETS.contains(newStatus)) {
+            Set<OrderStatus> allowedHere = order.allowedTransitions().stream()
+                    .filter(s -> FULFILLMENT_TARGETS.contains(s)
+                            || (s == OrderStatus.CONCLUIDO && order.status() == OrderStatus.RESERVADO))
+                    .collect(java.util.stream.Collectors.toCollection(() -> EnumSet.noneOf(OrderStatus.class)));
+            throw new InvalidOrderStatusTransitionException(orderId, order.status(), newStatus, allowedHere);
+        }
+        Order updated = pickup ? order.pickedUp(Instant.now()) : order.withStatus(newStatus);
         return orderRepository.save(updated);
     }
+
+    /** PED-C006 — os destinos que {@link #changeStatus} aceita, além da retirada da reserva. */
+    private static final Set<OrderStatus> FULFILLMENT_TARGETS =
+            EnumSet.of(OrderStatus.SEPARADO, OrderStatus.ENVIADO, OrderStatus.ENTREGUE);
 
     @Override
     @Transactional

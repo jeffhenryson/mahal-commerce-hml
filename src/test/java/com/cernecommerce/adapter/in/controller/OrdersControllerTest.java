@@ -222,6 +222,30 @@ public class OrdersControllerTest {
     }
 
     @Test
+    void changeStatusInBulk_invarianteDeDominioNaoParaOLaco() throws Exception {
+        // PED-C008 — antes, uma IllegalArgumentException do construtor de Order parava o laço: os
+        // pedidos anteriores já estavam gravados e o cliente recebia 400 sem ok/failed.
+        Order reservado = mock(Order.class);
+        when(reservado.status()).thenReturn(OrderStatus.RESERVADO);
+        Order concluido = mock(Order.class);
+        when(concluido.status()).thenReturn(OrderStatus.CONCLUIDO);
+        when(orderUseCase.getOrder(1L)).thenReturn(reservado);
+        when(orderUseCase.changeStatus(1L, OrderStatus.CONCLUIDO, "admin"))
+                .thenThrow(new IllegalArgumentException("invariante"));
+        when(orderUseCase.getOrder(2L)).thenReturn(reservado);
+        when(orderUseCase.changeStatus(2L, OrderStatus.CONCLUIDO, "admin")).thenReturn(concluido);
+
+        mockMvc.perform(post("/orders/bulk-status")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderIds\":[1,2],\"status\":\"CONCLUIDO\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok[0]").value(2))
+                .andExpect(jsonPath("$.failed[0].orderId").value(1))
+                .andExpect(jsonPath("$.failed[0].code").value("INVALID_ORDER_STATE"));
+    }
+
+    @Test
     void changeStatusInBulk_listaVazia_retorna400() throws Exception {
         mockMvc.perform(post("/orders/bulk-status")
                         .principal(AUTH)
