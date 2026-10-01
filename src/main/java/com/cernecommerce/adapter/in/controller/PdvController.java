@@ -12,7 +12,6 @@ import com.cernecommerce.adapter.in.dtos.response.CashRegisterSessionResponseDTO
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PaymentTotalResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptResponseDTO;
-import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -227,7 +226,8 @@ public class PdvController {
                     + "`reserveForPickup=true` (PDV-F008) grava RESERVADO em vez de CONCLUIDO — mercadoria "
                     + "já baixada e pagamento já capturado, só a retirada fica pendente; marcar como "
                     + "retirado depois é `POST /orders/{id}/status` com `CONCLUIDO`. `delivery` (PDV-F022) "
-                    + "registra RETIRADA ou ENTREGA — as duas gravam RESERVADO; ENTREGA segue "
+                    + "registra RETIRADA ou ENTREGA — RETIRADA grava CONCLUIDO (ou RESERVADO com "
+                    + "`reserveForPickup=true`); ENTREGA grava RESERVADO e segue "
                     + "RESERVADO → SEPARADO → ENVIADO → ENTREGUE, e `delivery.fee` entra no total a "
                     + "pagar (fora do líquido). `items[].note` grava a observação da linha. Sessão "
                     + "aberta num dia anterior (data de America/Sao_Paulo) é recusada com 409 SESSION_STALE.")
@@ -247,11 +247,6 @@ public class PdvController {
         requireDiscountAuthority(items, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
-        // PDV-F022: entrega e retirada sempre reservam; pedir o contrário é contraditório.
-        if (delivery != null && Boolean.FALSE.equals(request.getReserveForPickup())) {
-            throw new InvalidDeliveryException(
-                    "venda com delivery sempre fica RESERVADO; não envie reserveForPickup=false");
-        }
         Order order = pdvUseCase.registerSale(sessionId, request.getCustomerId(), items, payments,
                 authentication.getName(), Boolean.TRUE.equals(request.getReserveForPickup()), delivery);
 

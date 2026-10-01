@@ -3,6 +3,8 @@ package com.cernecommerce.adapter.in.controller;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
+import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
+import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
@@ -140,6 +142,42 @@ public class OrdersControllerTest {
                 .andExpect(status().isOk());
 
         verify(publisher).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void changeStatusInBulk_cadaPedidoFalhaSozinho() throws Exception {
+        Order reservado = mock(Order.class);
+        when(reservado.status()).thenReturn(OrderStatus.RESERVADO);
+        Order concluido = mock(Order.class);
+        when(concluido.status()).thenReturn(OrderStatus.CONCLUIDO);
+        when(orderUseCase.getOrder(1L)).thenReturn(reservado);
+        when(orderUseCase.changeStatus(1L, OrderStatus.CONCLUIDO, "admin")).thenReturn(concluido);
+        when(orderUseCase.getOrder(2L)).thenReturn(concluido);
+        when(orderUseCase.changeStatus(2L, OrderStatus.CONCLUIDO, "admin"))
+                .thenThrow(new InvalidOrderStatusTransitionException(2L, OrderStatus.CONCLUIDO, OrderStatus.CONCLUIDO));
+        when(orderUseCase.getOrder(3L)).thenThrow(new OrderNotFoundException(3L));
+
+        mockMvc.perform(post("/orders/bulk-status")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderIds\":[1,2,3],\"status\":\"CONCLUIDO\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok[0]").value(1))
+                .andExpect(jsonPath("$.failed[0].orderId").value(2))
+                .andExpect(jsonPath("$.failed[0].code").value("INVALID_STATUS_TRANSITION"))
+                .andExpect(jsonPath("$.failed[1].orderId").value(3))
+                .andExpect(jsonPath("$.failed[1].code").value("ORDER_NOT_FOUND"));
+
+        verify(publisher, times(1)).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void changeStatusInBulk_listaVazia_retorna400() throws Exception {
+        mockMvc.perform(post("/orders/bulk-status")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"orderIds\":[],\"status\":\"CONCLUIDO\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     /** PDV-F008 — o novo valor de enum precisa desserializar e passar pelo controller normalmente. */

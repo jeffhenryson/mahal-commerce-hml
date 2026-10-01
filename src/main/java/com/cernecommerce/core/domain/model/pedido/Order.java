@@ -194,8 +194,8 @@ public record Order(
 
     /**
      * Igual a {@link #openBalcao(Long, String, Long, List)}, com entrega ou retirada (PDV-F022).
-     * Com {@code delivery}, quem chama fixa a venda via {@link #reserved}, nunca {@link #concluded}:
-     * a mercadoria ainda não saiu da loja.
+     * Com ENTREGA, quem chama fixa a venda via {@link #reserved}: a mercadoria ainda não saiu da
+     * loja. RETIRADA imediata conclui ({@link #concluded}); só a retirada "volto depois" reserva.
      */
     public static Order openBalcao(Long sessionId, String warehouseCode, Long customerId, List<OrderItem> items,
             OrderDelivery delivery) {

@@ -1156,16 +1156,31 @@ class PdvServiceTest {
     }
 
     @Test
-    void registerSale_withRetirada_reservesButCannotEnterTheShippingPipeline() {
+    void registerSale_withRetiradaImediata_concludes() {
         givenOpenSessionAndPersistence();
         givenCharcoalOnCatalog();
 
         Order order = pdvService.registerSale(1L, null, List.of(twoCharcoals(null)), cash("44.00"), "caixa1",
-                false, new OrderDelivery(DeliveryType.RETIRADA, null, null, null, null, null, null, null, null));
+                false, retirada());
+
+        assertThat(order.status()).isEqualTo(OrderStatus.CONCLUIDO);
+        assertThat(order.totalPayable()).isEqualByComparingTo("44.00");
+    }
+
+    @Test
+    void registerSale_withRetiradaAndReserveForPickup_reservesButCannotEnterTheShippingPipeline() {
+        givenOpenSessionAndPersistence();
+        givenCharcoalOnCatalog();
+
+        Order order = pdvService.registerSale(1L, null, List.of(twoCharcoals(null)), cash("44.00"), "caixa1",
+                true, retirada());
 
         assertThat(order.status()).isEqualTo(OrderStatus.RESERVADO);
-        assertThat(order.totalPayable()).isEqualByComparingTo("44.00");
         assertThat(order.allowedTransitions()).doesNotContain(OrderStatus.SEPARADO);
+    }
+
+    private static OrderDelivery retirada() {
+        return new OrderDelivery(DeliveryType.RETIRADA, null, null, null, null, null, null, null, null);
     }
 
     @Test

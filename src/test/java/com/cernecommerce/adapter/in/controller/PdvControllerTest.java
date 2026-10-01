@@ -278,7 +278,17 @@ public class PdvControllerTest {
     }
 
     @Test
-    void registerSale_deliveryComReserveForPickupFalse_retorna400() throws Exception {
+    void registerSale_retiradaComReserveForPickupFalse_eAceita() throws Exception {
+        when(pdvUseCase.registerSale(eq(1L), any(), any(), any(), anyString(), eq(false), any()))
+                .thenReturn(Order.openBalcao(1L, "LOJA-01", null, List.of(
+                                com.cernecommerce.core.domain.model.pedido.OrderItem.fromCatalog("CARV-001",
+                                        new BigDecimal("2.000"),
+                                        com.cernecommerce.core.domain.model.estoque.Pricing.of(
+                                                new BigDecimal("18.00"), null, new BigDecimal("22.00")), null)),
+                        new OrderDelivery(DeliveryType.RETIRADA, null, null, null, null, null, null, null, null))
+                        .concluded("000001001", null, Instant.now()));
+        when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
+
         mockMvc.perform(post("/pdv/sessions/1/sales")
                         .principal(AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -287,9 +297,8 @@ public class PdvControllerTest {
                                  "payments":[{"method":"DINHEIRO","amount":44.00}],
                                  "reserveForPickup":false,
                                  "delivery":{"type":"RETIRADA"}}"""))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("INVALID_DELIVERY"));
-        verifyNoInteractions(pdvUseCase);
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CONCLUIDO"));
     }
 
     @Test

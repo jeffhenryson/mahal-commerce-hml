@@ -5,8 +5,12 @@ import com.cernecommerce.adapter.in.dtos.request.OrderCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderRefundRequest;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderStatusRequest;
+import com.cernecommerce.adapter.in.dtos.request.OrderBulkStatusRequest;
 import com.cernecommerce.adapter.in.dtos.request.RefundItemLotRequest;
 import com.cernecommerce.adapter.in.dtos.response.OrderAdminResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.OrderBulkStatusResponseDTO;
+import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
+import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.adapter.in.dtos.response.OrderSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.TopProductResponseDTO;
@@ -39,6 +43,7 @@ import jakarta.validation.constraints.Pattern;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
@@ -52,6 +57,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -266,6 +272,46 @@ public class OrdersController {
                         "from", before.status().name(),
                         "to", order.status().name())));
         return ResponseEntity.ok(orderConverter.toAdminResponse(order));
+    }
+
+    @Operation(summary = "Move vários pedidos para o mesmo estado (\"Liberar selecionados/todos\")",
+            description = "Equivale a chamar POST /orders/{id}/status para cada id, na ordem dada: cada "
+                    + "pedido segue a máquina de estados e é gravado na própria transação, então um "
+                    + "recusado não desfaz os outros. Os recusados voltam em `failed` com o mesmo "
+                    + "errorCode do endpoint unitário (ORDER_NOT_FOUND, INVALID_STATUS_TRANSITION, "
+                    + "CONCURRENT_UPDATE). Máximo de 200 ids.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Processado — ver ok/failed",
+                    content = @Content(schema = @Schema(implementation = OrderBulkStatusResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Lista vazia, acima de 200 ou status ausente", content = @Content)
+    })
+    @PostMapping("/bulk-status")
+    @PreAuthorize("hasAuthority('ORDER_FULFILL')")
+    public ResponseEntity<OrderBulkStatusResponseDTO> changeStatusInBulk(
+            @Valid @RequestBody OrderBulkStatusRequest request, Authentication authentication) {
+        List<Long> ok = new ArrayList<>();
+        List<OrderBulkStatusResponseDTO.Failure> failed = new ArrayList<>();
+        for (Long orderId : request.getOrderIds().stream().distinct().toList()) {
+            try {
+                Order before = orderUseCase.getOrder(orderId);
+                Order order = orderUseCase.changeStatus(orderId, request.getStatus(), authentication.getName());
+                publisher.publishEvent(AuditEvent.of(EventType.ORDER_STATUS_CHANGED, authentication.getName(),
+                        Map.of("orderId", orderId,
+                                "orderNumber", String.valueOf(order.orderNumber()),
+                                "from", before.status().name(),
+                                "to", order.status().name(),
+                                "bulk", true)));
+                ok.add(orderId);
+            } catch (OrderNotFoundException e) {
+                failed.add(new OrderBulkStatusResponseDTO.Failure(orderId, "ORDER_NOT_FOUND", e.getMessage()));
+            } catch (InvalidOrderStatusTransitionException e) {
+                failed.add(new OrderBulkStatusResponseDTO.Failure(orderId, "INVALID_STATUS_TRANSITION", e.getMessage()));
+            } catch (ObjectOptimisticLockingFailureException e) {
+                failed.add(new OrderBulkStatusResponseDTO.Failure(orderId, "CONCURRENT_UPDATE",
+                        "pedido alterado por outra operação, tente de novo"));
+            }
+        }
+        return ResponseEntity.ok(new OrderBulkStatusResponseDTO(ok, failed));
     }
 
     @Operation(summary = "Edita a entrega do pedido depois da venda (PDV-F022)",

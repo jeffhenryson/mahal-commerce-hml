@@ -36,7 +36,8 @@ public class SaleRequest {
     private Boolean reserveForPickup;
 
     @Valid
-    @Schema(description = "PDV-F022 — entrega ou retirada. Com delivery, o pedido grava RESERVADO "
-            + "(reserveForPickup=false explícito é recusado) e delivery.fee entra no total a pagar.")
+    @Schema(description = "PDV-F022 — entrega ou retirada. ENTREGA grava RESERVADO e segue a esteira; "
+            + "RETIRADA grava CONCLUIDO (retirada imediata) ou RESERVADO com reserveForPickup=true. "
+            + "delivery.fee entra no total a pagar.")
     private DeliveryRequest delivery;
 }

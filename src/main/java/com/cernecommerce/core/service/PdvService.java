@@ -23,6 +23,7 @@ import com.cernecommerce.core.domain.model.pdv.CashMovement;
 import com.cernecommerce.core.domain.model.pdv.CashMovementType;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSessionFilter;
+import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
@@ -284,8 +285,10 @@ public class PdvService implements PdvUseCase {
         // No balcão a mercadoria sai e o dinheiro entra no mesmo instante: CRIADO → CONCLUIDO (ou,
         // com reserva para retirada depois — PDV-F008 —, CRIADO → RESERVADO) na mesma transação. A
         // numeração é consumida aqui, e não na criação, nos dois casos.
-        // PDV-F022: entrega e retirada também reservam — a mercadoria ainda não saiu da loja.
-        boolean reserve = reserveForPickup || delivery != null;
+        // PDV-F022: ENTREGA reserva — a mercadoria ainda não saiu da loja. RETIRADA só reserva com
+        // reserveForPickup (cliente volta depois); a retirada imediata é o caso comum e conclui.
+        boolean reserve = reserveForPickup
+                || (delivery != null && delivery.type() == DeliveryType.ENTREGA);
         Order saved = orderRepository.save(reserve
                 ? order.reserved(orderRepository.nextOrderNumber(), changeAmount, Instant.now())
                 : order.concluded(orderRepository.nextOrderNumber(), changeAmount, Instant.now()));

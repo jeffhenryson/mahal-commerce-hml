@@ -19,7 +19,8 @@ import java.math.BigDecimal;
 @Data
 public class DeliveryRequest {
 
-    @Schema(description = "RETIRADA ou ENTREGA. As duas gravam o pedido como RESERVADO.", example = "ENTREGA")
+    @Schema(description = "RETIRADA ou ENTREGA. ENTREGA grava RESERVADO; RETIRADA grava CONCLUIDO, ou RESERVADO "
+            + "se a venda vier com reserveForPickup=true.", example = "ENTREGA")
     private DeliveryType type;
 
     @Valid
