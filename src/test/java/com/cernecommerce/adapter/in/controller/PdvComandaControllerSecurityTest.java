@@ -351,4 +351,77 @@ class PdvComandaControllerSecurityTest {
                 .with(user("bob").authorities(new SimpleGrantedAuthority("PDV_READ"))))
                 .andExpect(status().isForbidden());
     }
+
+    // ── Histórico e indicadores (PDV-F029) ──────────────────────────────────────────────────
+
+    private static final String PERIODO = "from=2026-09-01T00:00:00Z&to=2026-09-30T23:59:59Z";
+
+    /** Vendas › Mesas é tela do relatório: quem só lê pedido (ORDER_READ) também entra. */
+    @Test
+    void history_with_order_read_returns_200() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/history")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").isArray());
+    }
+
+    @Test
+    void history_without_permission_returns_403() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/history")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void history_with_status_aberta_returns_400() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/history?status=ABERTA")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void history_with_size_above_the_cap_returns_400() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/history?size=101")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void analytics_with_order_read_returns_200() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/analytics?" + PERIODO)
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mesas").isNumber())
+                .andExpect(jsonPath("$.porMesa").isArray());
+    }
+
+    @Test
+    void analytics_without_permission_returns_403() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/analytics?" + PERIODO)
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void analytics_without_period_returns_400() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/analytics")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void analytics_with_inverted_period_returns_400() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/analytics?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    /** O detalhe também abre para ORDER_READ: é de lá que o histórico leva ao pedido. */
+    @Test
+    void get_nonexistent_comanda_with_order_read_returns_404() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/999999")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("COMANDA_NOT_FOUND"));
+    }
 }

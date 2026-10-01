@@ -543,6 +543,7 @@ class ComandaSessaoServiceTest {
 
         assertThat(result.status()).isEqualTo(ComandaStatus.FECHADA);
         assertThat(result.orderId()).isEqualTo(401L);
+        verify(comandaRepository).recordClosing(10L, "caixa1", null);
     }
 
     @Test

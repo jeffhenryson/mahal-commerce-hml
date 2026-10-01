@@ -1,5 +1,21 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.ports.in.ComandaUseCase.PorHora;
+import com.cernecommerce.core.ports.in.ComandaUseCase.PorMesa;
+import com.cernecommerce.core.ports.in.ComandaUseCase.PorAtendente;
+import com.cernecommerce.core.ports.in.ComandaUseCase.SessoesNarguile;
+import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaAnalytics;
+import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaHistoryEntry;
+import java.util.TreeMap;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.Comparator;
+import java.time.Duration;
+import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
+import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.CatalogItemNotAllowedOnTableException;
@@ -861,6 +877,7 @@ public class ComandaService implements ComandaUseCase {
         }
         releaseSessionAssets(escopo);
         comandaRepository.save(cobrada.closed(saved.id(), Instant.now()));
+        comandaRepository.recordClosing(comandaId, username, null);
         return saved;
     }
 
@@ -925,7 +942,9 @@ public class ComandaService implements ComandaUseCase {
                 .orElseThrow(() -> new IllegalStateException("mesa " + comandaId + " paga sem pedido"));
         // Tudo recolhido já liberou os utensílios; a chamada cobre linha anterior à V132.
         releaseSessionAssets(comanda.items());
-        return comandaRepository.save(comanda.closed(lastOrderId, Instant.now()));
+        Comanda finished = comandaRepository.save(comanda.closed(lastOrderId, Instant.now()));
+        comandaRepository.recordClosing(comandaId, username, null);
+        return finished;
     }
 
     /**
@@ -973,6 +992,12 @@ public class ComandaService implements ComandaUseCase {
     @Override
     @Transactional
     public Comanda cancelComanda(Long comandaId, String username) {
+        return cancelComanda(comandaId, username, null);
+    }
+
+    @Override
+    @Transactional
+    public Comanda cancelComanda(Long comandaId, String username, String reason) {
         // PDV-C008 — ver getComandaForUpdate. Sem a trava, cancelar e fechar em paralelo
         // devolveriam o estoque de itens que o outro caminho acabou de cobrar.
         Comanda comanda = getComandaForUpdate(comandaId);
@@ -985,7 +1010,10 @@ public class ComandaService implements ComandaUseCase {
             undoStock(item, comanda.warehouseCode(), "Cancelamento de comanda #" + comandaId, username);
         }
         releaseSessionAssets(comanda.items());
-        return comandaRepository.save(comanda.cancelled(Instant.now()));
+        Comanda cancelled = comandaRepository.save(comanda.cancelled(Instant.now()));
+        comandaRepository.recordClosing(comandaId, username,
+                reason == null || reason.isBlank() ? null : reason.trim());
+        return cancelled;
     }
 
     /**
@@ -1081,6 +1109,7 @@ public class ComandaService implements ComandaUseCase {
         // único estado terminal sem pedido que o ck_comanda_status_consistency da V104 aceita; o que
         // distingue este cancelamento de um abandono é o evento COMANDA_MERGED na trilha.
         comandaRepository.save(origem.cancelled(Instant.now()));
+        comandaRepository.recordClosing(fromComandaId, username, "Juntada à comanda #" + toComandaId);
         return getComanda(toComandaId);
     }
 
@@ -1110,6 +1139,7 @@ public class ComandaService implements ComandaUseCase {
             if (comanda.items().isEmpty()) {
                 // Sem adjustStock: não há item, logo não há nada que tenha saído do estoque.
                 comandaRepository.save(comanda.cancelled(Instant.now()));
+                comandaRepository.recordClosing(id, "system", "Mesa vazia esquecida (varredura automática)");
                 cancelled++;
             } else {
                 withConsumption.add(comanda);
@@ -1150,5 +1180,145 @@ public class ComandaService implements ComandaUseCase {
         if (comanda.status() != ComandaStatus.ABERTA) {
             throw new ComandaNotOpenException(comanda.id(), comanda.status());
         }
+    }
+
+    // ── PDV-F029: histórico e indicadores de mesas ──────────────────────────────────────────
+
+    private static final java.time.ZoneId ZONA_LOJA = java.time.ZoneId.of("America/Sao_Paulo");
+    private static final int MAX_ANALYTICS_DAYS = 366;
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<ComandaHistoryEntry> listHistory(ComandaHistoryFilter filter, int page, int size) {
+        PageResult<ClosedComanda> result = comandaRepository.findHistory(filter, page, size);
+        Map<Long, List<Order>> ordersByComanda = ordersByComanda(result.content());
+        List<ComandaHistoryEntry> content = result.content().stream()
+                .map(c -> historyEntry(c, ordersByComanda.getOrDefault(c.comanda().id(), List.of()), Map.of()))
+                .toList();
+        return new PageResult<>(content, result.page(), result.size(), result.totalElements(), result.totalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ComandaHistoryEntry getHistoryEntry(Long comandaId) {
+        ClosedComanda closed = comandaRepository.findWithClosing(comandaId)
+                .orElseThrow(() -> new ComandaNotFoundException(comandaId));
+        List<Order> orders = ordersByComanda(List.of(closed)).getOrDefault(comandaId, List.of());
+        Map<Long, List<OrderPayment>> payments = new LinkedHashMap<>();
+        for (Order order : orders) {
+            payments.put(order.id(), orderPaymentRepository.findByOrderId(order.id()));
+        }
+        return historyEntry(closed, orders, payments);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ComandaAnalytics analytics(Instant from, Instant to, String warehouseCode) {
+        if (from == null || to == null || from.isAfter(to)) {
+            throw new InvalidReportPeriodException("Informe 'from' e 'to', com 'from' antes de 'to'");
+        }
+        if (Duration.between(from, to).toDays() > MAX_ANALYTICS_DAYS) {
+            throw new InvalidReportPeriodException("Intervalo máximo permitido: " + MAX_ANALYTICS_DAYS + " dias");
+        }
+        List<ClosedComanda> closed = comandaRepository.findClosedBetween(from, to, warehouseCode);
+        Map<Long, List<Order>> ordersByComanda = ordersByComanda(closed);
+        List<ComandaHistoryEntry> entries = closed.stream()
+                .map(c -> historyEntry(c, ordersByComanda.getOrDefault(c.comanda().id(), List.of()), Map.of()))
+                .toList();
+
+        BigDecimal receita = sum(entries, ComandaHistoryEntry::totalPaid);
+        int sessoes = 0;
+        BigDecimal receitaSessoes = BigDecimal.ZERO;
+        for (ComandaHistoryEntry e : entries) {
+            for (Order order : e.orders()) {
+                if (order.status() == OrderStatus.REEMBOLSADO) {
+                    continue;
+                }
+                for (OrderItem item : order.items()) {
+                    if (item.mode() == ConsumptionMode.SESSAO) {
+                        sessoes++;
+                        receitaSessoes = receitaSessoes.add(item.netAmount());
+                    }
+                }
+            }
+        }
+
+        Map<String, List<ComandaHistoryEntry>> byAttendant = new TreeMap<>();
+        Map<String, List<ComandaHistoryEntry>> byTable = new TreeMap<>();
+        Map<String, String> tableDisplay = new HashMap<>();
+        Map<Integer, List<ComandaHistoryEntry>> byHour = new TreeMap<>();
+        for (ComandaHistoryEntry e : entries) {
+            byAttendant.computeIfAbsent(e.comanda().openedBy(), k -> new ArrayList<>()).add(e);
+            String label = e.comanda().tableOrCustomerLabel().trim();
+            String key = label.toLowerCase(java.util.Locale.ROOT);
+            tableDisplay.putIfAbsent(key, label);
+            byTable.computeIfAbsent(key, k -> new ArrayList<>()).add(e);
+            int hour = e.comanda().openedAt().atZone(ZONA_LOJA).getHour();
+            byHour.computeIfAbsent(hour, k -> new ArrayList<>()).add(e);
+        }
+
+        List<PorAtendente> porAtendente = byAttendant.entrySet().stream()
+                .map(en -> new PorAtendente(en.getKey(), en.getValue().size(),
+                        sum(en.getValue(), ComandaHistoryEntry::totalPaid)))
+                .sorted(Comparator.comparing(PorAtendente::receita).reversed())
+                .toList();
+        List<PorMesa> porMesa = byTable.entrySet().stream()
+                .map(en -> new PorMesa(tableDisplay.get(en.getKey()), en.getValue().size(),
+                        sum(en.getValue(), ComandaHistoryEntry::totalPaid), averageMinutes(en.getValue())))
+                .sorted(Comparator.comparing(PorMesa::receita).reversed())
+                .toList();
+        List<PorHora> porHora = byHour.entrySet().stream()
+                .map(en -> new PorHora(en.getKey(), en.getValue().size(),
+                        sum(en.getValue(), ComandaHistoryEntry::totalPaid)))
+                .toList();
+
+        BigDecimal ticket = entries.isEmpty() ? BigDecimal.ZERO
+                : receita.divide(BigDecimal.valueOf(entries.size()), 2, java.math.RoundingMode.HALF_UP);
+        return new ComandaAnalytics(entries.size(), ticket, averageMinutes(entries), receita,
+                sum(entries, ComandaHistoryEntry::serviceFeeTotal), sum(entries, ComandaHistoryEntry::discountTotal),
+                new SessoesNarguile(sessoes, receitaSessoes), porAtendente, porMesa, porHora);
+    }
+
+    private Map<Long, List<Order>> ordersByComanda(List<ClosedComanda> comandas) {
+        if (comandas.isEmpty()) {
+            return Map.of();
+        }
+        return orderRepository.findByComandaIds(comandas.stream().map(c -> c.comanda().id()).toList()).stream()
+                .collect(Collectors.groupingBy(Order::comandaId, LinkedHashMap::new, Collectors.toList()));
+    }
+
+    private static ComandaHistoryEntry historyEntry(ClosedComanda closed, List<Order> orders,
+            Map<Long, List<OrderPayment>> payments) {
+        Comanda comanda = closed.comanda();
+        Long duration = comanda.closedAt() == null ? null
+                : Duration.between(comanda.openedAt(), comanda.closedAt()).toMinutes();
+        List<Order> paid = orders.stream().filter(o -> o.status() != OrderStatus.REEMBOLSADO).toList();
+        // A cortesia é gravada com preço zero (ck_comanda_item_courtesy_is_free) e o preço de venda
+        // não fica em lugar nenhum: o que a casa deu é medido pelo custo congelado na linha.
+        BigDecimal courtesy = BigDecimal.ZERO;
+        for (Order order : paid) {
+            for (OrderItem item : order.items()) {
+                if (item.courtesy() && item.costPrice() != null) {
+                    courtesy = courtesy.add(item.quantity().multiply(item.costPrice()));
+                }
+            }
+        }
+        courtesy = courtesy.setScale(2, java.math.RoundingMode.HALF_UP);
+        int sessions = (int) comanda.items().stream().filter(i -> i.mode() == ConsumptionMode.SESSAO).count();
+        return new ComandaHistoryEntry(comanda, closed.closedBy(), closed.cancelReason(), orders, payments, duration,
+                paid.stream().map(Order::totalPayable).reduce(BigDecimal.ZERO, BigDecimal::add),
+                paid.stream().map(Order::serviceFeeAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
+                paid.stream().map(Order::discountAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
+                courtesy, sessions);
+    }
+
+    private static BigDecimal sum(List<ComandaHistoryEntry> entries,
+            java.util.function.Function<ComandaHistoryEntry, BigDecimal> field) {
+        return entries.stream().map(field).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static long averageMinutes(List<ComandaHistoryEntry> entries) {
+        return Math.round(entries.stream().map(ComandaHistoryEntry::durationMinutes)
+                .filter(java.util.Objects::nonNull).mapToLong(Long::longValue).average().orElse(0));
     }
 }

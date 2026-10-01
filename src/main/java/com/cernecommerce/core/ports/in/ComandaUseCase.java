@@ -1,5 +1,7 @@
 package com.cernecommerce.core.ports.in;
 
+import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
@@ -268,6 +270,53 @@ public interface ComandaUseCase {
      *         estiver fechada ou cancelada
      */
     Comanda cancelComanda(Long comandaId, String username);
+
+    /** PDV-F029 — idem, com o motivo, que fica no histórico da mesa. */
+    Comanda cancelComanda(Long comandaId, String username, String reason);
+
+    /**
+     * PDV-F029 — mesas encerradas (FECHADA e CANCELADA), da mais recente para a mais antiga, com os
+     * pedidos MESA que geraram e os totais derivados deles.
+     */
+    PageResult<ComandaHistoryEntry> listHistory(ComandaHistoryFilter filter, int page, int size);
+
+    /** PDV-F029 — uma comanda em qualquer status, com os pedidos que gerou e os pagamentos de cada um. */
+    ComandaHistoryEntry getHistoryEntry(Long comandaId);
+
+    /**
+     * PDV-F029 — indicadores das mesas FECHADAS no período (encerradas entre {@code from} e
+     * {@code to}). Intervalo máximo de 366 dias.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException
+     */
+    ComandaAnalytics analytics(java.time.Instant from, java.time.Instant to, String warehouseCode);
+
+    /**
+     * Uma mesa encerrada com o que ela gerou. Os totais vêm dos pedidos MESA (inclusive os parciais);
+     * {@code totalPaid} ignora pedido reembolsado. {@code paymentsByOrder} só vem no detalhe.
+     */
+    record ComandaHistoryEntry(Comanda comanda, String closedBy, String cancelReason, List<Order> orders,
+            java.util.Map<Long, List<OrderPayment>> paymentsByOrder, Long durationMinutes, BigDecimal totalPaid,
+            BigDecimal serviceFeeTotal, BigDecimal discountTotal, BigDecimal courtesyTotal, int sessionsCount) {
+    }
+
+    /** Indicadores de mesas — os nomes de campo são o contrato do front (Vendas › Mesas). */
+    record ComandaAnalytics(int mesas, BigDecimal ticketMedio, long permanenciaMediaMin, BigDecimal receitaTotal,
+            BigDecimal taxaServicoTotal, BigDecimal descontoTotal, SessoesNarguile sessoesNarguile,
+            List<PorAtendente> porAtendente, List<PorMesa> porMesa, List<PorHora> porHora) {
+    }
+
+    record SessoesNarguile(int quantidade, BigDecimal receita) {
+    }
+
+    record PorAtendente(String username, int mesas, BigDecimal receita) {
+    }
+
+    record PorMesa(String tableLabel, int mesas, BigDecimal receita, long permanenciaMediaMin) {
+    }
+
+    record PorHora(int hora, int mesasAbertas, BigDecimal receita) {
+    }
 
     /**
      * Varre as comandas esquecidas abertas (PDV-F013) — as que passaram de {@code staleHours} sem

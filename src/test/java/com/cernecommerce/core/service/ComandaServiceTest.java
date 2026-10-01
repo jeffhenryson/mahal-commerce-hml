@@ -37,6 +37,11 @@ import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderItem;
+import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
+import com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.NotificationUseCase;
@@ -65,6 +70,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Optional;
 
@@ -611,6 +617,8 @@ class ComandaServiceTest {
                 new BigDecimal("25.00"), null)), null, false, "caixa1");
 
         verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+        // PDV-F029 — o fechamento total registra quem encerrou a mesa.
+        verify(comandaRepository).recordClosing(10L, "caixa1", null);
     }
 
     @Test
@@ -650,6 +658,30 @@ class ComandaServiceTest {
         assertThat(cancelada.status()).isEqualTo(ComandaStatus.CANCELADA);
         verify(estoqueUseCase).adjustStock(eq("ESS-MENTA"), eq("LOJA-01"), eq(MovementType.ENTRADA),
                 eq(BigDecimal.ONE), eq("Cancelamento de comanda #10"), eq("caixa1"));
+        verify(comandaRepository).recordClosing(10L, "caixa1", null);
+    }
+
+    /** PDV-F029 — o motivo vai para o histórico aparado; em branco vale como ausente. */
+    @Test
+    void cancelComanda_recordsWhoCancelledAndTheTrimmedReason() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda()));
+        when(pdvService.requireOpenSession(1L)).thenReturn(openSession());
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.cancelComanda(10L, "caixa1", "  Cliente desistiu  ");
+
+        verify(comandaRepository).recordClosing(10L, "caixa1", "Cliente desistiu");
+    }
+
+    @Test
+    void cancelComanda_blankReasonIsRecordedAsNull() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda()));
+        when(pdvService.requireOpenSession(1L)).thenReturn(openSession());
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.cancelComanda(10L, "caixa1", "   ");
+
+        verify(comandaRepository).recordClosing(10L, "caixa1", null);
     }
 
     @Test
@@ -1188,6 +1220,7 @@ class ComandaServiceTest {
         ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
         verify(comandaRepository).save(saved.capture());
         assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.CANCELADA);
+        verify(comandaRepository).recordClosing(10L, "system", "Mesa vazia esquecida (varredura automática)");
         // Comanda vazia não tem o que devolver — nenhum movimento de estoque pode sair daqui.
         verifyNoInteractions(estoqueUseCase);
         // E ninguém precisa ser avisado de uma mesa vazia que o próprio sistema resolveu.
@@ -1356,6 +1389,8 @@ class ComandaServiceTest {
         assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.ABERTA);
         assertThat(saved.getValue().orderId()).isNull();
         assertThat(saved.getValue().isFullyCharged()).isTrue();
+        // PDV-F029 — mesa aberta não tem encerramento a registrar.
+        verify(comandaRepository, never()).recordClosing(any(), any(), any());
     }
 
     /** Sem itemIds nada muda: cobra tudo que está aberto, como sempre foi. */
@@ -1501,6 +1536,7 @@ class ComandaServiceTest {
         verify(comandaRepository).save(saved.capture());
         assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.CANCELADA);
         assertThat(saved.getValue().id()).isEqualTo(10L);
+        verify(comandaRepository).recordClosing(10L, "caixa1", "Juntada à comanda #20");
     }
 
     /** Origem com parte da conta já cobrada não pode ser juntada — a conta ficaria partida. */
@@ -1758,5 +1794,202 @@ class ComandaServiceTest {
 
         assertThatThrownBy(() -> comandaService.removeKit(10L, "nao-existe", "caixa1"))
                 .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaItemNotFoundException.class);
+    }
+
+    // ── Histórico e indicadores de mesas (PDV-F029) ──────────────────────────────────────────
+
+    private static Comanda fechadaEm(Long id, String label, String openedBy, Instant openedAt, long minutes,
+            ComandaItem... items) {
+        return Comanda.of(id, 1L, "LOJA-01", label, ComandaStatus.FECHADA, List.of(items), 900L + id, openedBy,
+                openedAt, openedAt.plus(minutes, ChronoUnit.MINUTES));
+    }
+
+    private static OrderItem itemPedido(String sku, String unitPrice, String costPrice, int quantity,
+            ConsumptionMode mode, boolean courtesy) {
+        return OrderItem.of(null, sku, BigDecimal.valueOf(quantity), new BigDecimal(unitPrice),
+                new BigDecimal(costPrice), BigDecimal.ZERO, null, sku, mode, courtesy);
+    }
+
+    /** Pedido MESA com o bruto somado dos itens; o líquido é bruto − desconto. */
+    private static Order pedidoMesa(Long id, Long comandaId, OrderStatus status, String discount, String fee,
+            OrderItem... items) {
+        BigDecimal gross = java.util.Arrays.stream(items).map(OrderItem::grossAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal desconto = new BigDecimal(discount);
+        Instant now = Instant.now();
+        return Order.of(id, "00000" + id, SalesChannel.MESA, status, null, 1L, "LOJA-01", List.of(items), gross,
+                desconto, BigDecimal.ZERO, gross.subtract(desconto), null, null, now, now, now, null,
+                status == OrderStatus.REEMBOLSADO ? now : null, null, null, null, null, 0L, comandaId, "Mesa 4",
+                new BigDecimal(fee));
+    }
+
+    /**
+     * Os totais da mesa saem dos pedidos que ela gerou: o reembolsado fica fora de tudo, a
+     * cortesia é medida pelo custo (o preço dela é zero por construção) e as sessões vêm das
+     * linhas SESSAO da comanda.
+     */
+    @Test
+    void listHistory_derivesTheTotalsFromTheOrders() {
+        Instant aberta = Instant.parse("2026-09-30T22:00:00Z");
+        Comanda mesa = fechadaEm(10L, "Mesa 4", "caixa1", aberta, 90,
+                linha(1L, "SESS-BLUE", "70.00", ConsumptionMode.SESSAO, false, null),
+                linha(2L, "BEB-COLA", "0.00", ConsumptionMode.NORMAL, true, null));
+        ComandaHistoryFilter filter = new ComandaHistoryFilter(null, null, null, null, null, null, null, null);
+        when(comandaRepository.findHistory(filter, 0, 50)).thenReturn(
+                new PageResult<>(List.of(new ClosedComanda(mesa, "caixa2", null)), 0, 50, 1, 1));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of(
+                pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "5.00", "7.00",
+                        itemPedido("SESS-BLUE", "70.00", "20.00", 1, ConsumptionMode.SESSAO, false),
+                        itemPedido("BEB-COLA", "0.00", "2.50", 2, ConsumptionMode.NORMAL, true)),
+                pedidoMesa(501L, 10L, OrderStatus.REEMBOLSADO, "0.00", "3.00",
+                        itemPedido("BEB-COLA", "30.00", "2.50", 1, ConsumptionMode.NORMAL, false))));
+
+        PageResult<ComandaUseCase.ComandaHistoryEntry> page = comandaService.listHistory(filter, 0, 50);
+
+        assertThat(page.totalElements()).isEqualTo(1);
+        ComandaUseCase.ComandaHistoryEntry entry = page.content().get(0);
+        assertThat(entry.closedBy()).isEqualTo("caixa2");
+        assertThat(entry.durationMinutes()).isEqualTo(90L);
+        // O reembolsado aparece na lista de pedidos da mesa, mas não soma em nada.
+        assertThat(entry.orders()).extracting(Order::id).containsExactly(500L, 501L);
+        assertThat(entry.totalPaid()).isEqualByComparingTo("72.00");
+        assertThat(entry.serviceFeeTotal()).isEqualByComparingTo("7.00");
+        assertThat(entry.discountTotal()).isEqualByComparingTo("5.00");
+        assertThat(entry.courtesyTotal()).isEqualByComparingTo("5.00");
+        assertThat(entry.sessionsCount()).isEqualTo(1);
+        // A listagem não busca pagamento: isso é do detalhe.
+        assertThat(entry.paymentsByOrder()).isEmpty();
+        verifyNoInteractions(orderPaymentRepository);
+    }
+
+    @Test
+    void listHistory_emptyPage_doesNotQueryOrders() {
+        ComandaHistoryFilter filter = new ComandaHistoryFilter(null, null, null, null, null, null, null, null);
+        when(comandaRepository.findHistory(filter, 0, 50)).thenReturn(new PageResult<>(List.of(), 0, 50, 0, 0));
+
+        assertThat(comandaService.listHistory(filter, 0, 50).content()).isEmpty();
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void getHistoryEntry_bringsThePaymentsOfEachOrder() {
+        Comanda mesa = fechadaEm(10L, "Mesa 4", "caixa1", Instant.now().minus(1, ChronoUnit.HOURS), 30,
+                linha(1L, "BEB-COLA", "30.00", ConsumptionMode.NORMAL, false, null));
+        when(comandaRepository.findWithClosing(10L)).thenReturn(Optional.of(new ClosedComanda(mesa, "caixa1", null)));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of(
+                pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "0.00", "0.00",
+                        itemPedido("BEB-COLA", "30.00", "2.50", 1, ConsumptionMode.NORMAL, false))));
+        when(orderPaymentRepository.findByOrderId(500L)).thenReturn(List.of());
+
+        ComandaUseCase.ComandaHistoryEntry entry = comandaService.getHistoryEntry(10L);
+
+        assertThat(entry.paymentsByOrder()).containsOnlyKeys(500L);
+        assertThat(entry.totalPaid()).isEqualByComparingTo("30.00");
+    }
+
+    /** Comanda ABERTA também tem detalhe: sem pedido e sem duração. */
+    @Test
+    void getHistoryEntry_ofAnOpenComanda_hasNoDuration() {
+        when(comandaRepository.findWithClosing(10L))
+                .thenReturn(Optional.of(new ClosedComanda(abertaComanda(), null, null)));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of());
+
+        ComandaUseCase.ComandaHistoryEntry entry = comandaService.getHistoryEntry(10L);
+
+        assertThat(entry.durationMinutes()).isNull();
+        assertThat(entry.orders()).isEmpty();
+        assertThat(entry.totalPaid()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void getHistoryEntry_notFound() {
+        when(comandaRepository.findWithClosing(999L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> comandaService.getHistoryEntry(999L)).isInstanceOf(ComandaNotFoundException.class);
+    }
+
+    /**
+     * <b>O caso que define os indicadores.</b> Sem cadastro de mesa, "Mesa 4" e " mesa 4 " são a
+     * mesma; a hora é a da abertura no relógio da loja (23:30Z é 20:30 em São Paulo), não em UTC.
+     */
+    @Test
+    void analytics_groupsByNormalizedTableAndOpeningHourInSaoPaulo() {
+        Instant from = Instant.parse("2026-09-30T00:00:00Z");
+        Instant to = Instant.parse("2026-10-01T23:59:59Z");
+        Comanda a = fechadaEm(10L, "Mesa 4", "ana", Instant.parse("2026-09-30T23:30:00Z"), 60,
+                linha(1L, "SESS-BLUE", "100.00", ConsumptionMode.SESSAO, false, null));
+        Comanda b = fechadaEm(11L, " mesa 4 ", "bia", Instant.parse("2026-10-01T00:10:00Z"), 120,
+                linha(2L, "BEB-COLA", "50.00", ConsumptionMode.NORMAL, false, null));
+        Comanda c = fechadaEm(12L, "Mesa 9", "ana", Instant.parse("2026-10-01T00:40:00Z"), 30,
+                linha(3L, "BEB-COLA", "40.00", ConsumptionMode.NORMAL, false, null));
+        when(comandaRepository.findClosedBetween(from, to, "LOJA-01")).thenReturn(List.of(
+                new ClosedComanda(a, "ana", null), new ClosedComanda(b, "bia", null),
+                new ClosedComanda(c, "ana", null)));
+        when(orderRepository.findByComandaIds(List.of(10L, 11L, 12L))).thenReturn(List.of(
+                pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "0.00", "10.00",
+                        itemPedido("SESS-BLUE", "100.00", "30.00", 1, ConsumptionMode.SESSAO, false)),
+                pedidoMesa(501L, 11L, OrderStatus.CONCLUIDO, "0.00", "0.00",
+                        itemPedido("BEB-COLA", "50.00", "10.00", 1, ConsumptionMode.NORMAL, false)),
+                pedidoMesa(502L, 12L, OrderStatus.REEMBOLSADO, "0.00", "0.00",
+                        itemPedido("BEB-COLA", "40.00", "10.00", 1, ConsumptionMode.NORMAL, false))));
+
+        ComandaUseCase.ComandaAnalytics result = comandaService.analytics(from, to, "LOJA-01");
+
+        assertThat(result.mesas()).isEqualTo(3);
+        assertThat(result.receitaTotal()).isEqualByComparingTo("160.00");
+        assertThat(result.ticketMedio()).isEqualByComparingTo("53.33");
+        assertThat(result.permanenciaMediaMin()).isEqualTo(70L);
+        assertThat(result.taxaServicoTotal()).isEqualByComparingTo("10.00");
+        assertThat(result.sessoesNarguile().quantidade()).isEqualTo(1);
+        assertThat(result.sessoesNarguile().receita()).isEqualByComparingTo("100.00");
+
+        assertThat(result.porMesa()).hasSize(2);
+        ComandaUseCase.PorMesa mesa4 = result.porMesa().get(0);
+        assertThat(mesa4.tableLabel()).isEqualTo("Mesa 4");
+        assertThat(mesa4.mesas()).isEqualTo(2);
+        assertThat(mesa4.receita()).isEqualByComparingTo("160.00");
+        assertThat(mesa4.permanenciaMediaMin()).isEqualTo(90L);
+        assertThat(result.porMesa().get(1).tableLabel()).isEqualTo("Mesa 9");
+        assertThat(result.porMesa().get(1).receita()).isEqualByComparingTo("0");
+
+        assertThat(result.porHora()).extracting(ComandaUseCase.PorHora::hora, ComandaUseCase.PorHora::mesasAbertas)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(20, 1), org.assertj.core.groups.Tuple.tuple(21, 2));
+        assertThat(result.porHora().get(0).receita()).isEqualByComparingTo("110.00");
+
+        assertThat(result.porAtendente()).extracting(ComandaUseCase.PorAtendente::username,
+                        ComandaUseCase.PorAtendente::mesas)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("ana", 2), org.assertj.core.groups.Tuple.tuple("bia", 1));
+    }
+
+    @Test
+    void analytics_withoutAnyTable_returnsZeros() {
+        Instant from = Instant.parse("2026-01-01T00:00:00Z");
+        Instant to = from.plus(366, ChronoUnit.DAYS);
+        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of());
+
+        ComandaUseCase.ComandaAnalytics result = comandaService.analytics(from, to, null);
+
+        assertThat(result.mesas()).isZero();
+        assertThat(result.ticketMedio()).isEqualByComparingTo("0");
+        assertThat(result.porMesa()).isEmpty();
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void analytics_refusesAnInvertedPeriod() {
+        Instant to = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThatThrownBy(() -> comandaService.analytics(to.plusSeconds(1), to, null))
+                .isInstanceOf(InvalidReportPeriodException.class);
+        verifyNoInteractions(comandaRepository);
+    }
+
+    @Test
+    void analytics_refusesMoreThan366Days() {
+        Instant from = Instant.parse("2026-01-01T00:00:00Z");
+
+        assertThatThrownBy(() -> comandaService.analytics(from, from.plus(367, ChronoUnit.DAYS), null))
+                .isInstanceOf(InvalidReportPeriodException.class);
+        verifyNoInteractions(comandaRepository);
     }
 }

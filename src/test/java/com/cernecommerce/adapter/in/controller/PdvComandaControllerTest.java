@@ -157,16 +157,19 @@ class PdvComandaControllerTest {
 
     @Test
     void getComanda_returns_200() throws Exception {
-        when(comandaUseCase.getComanda(10L)).thenReturn(abertaComanda());
+        when(comandaUseCase.getHistoryEntry(10L)).thenReturn(new ComandaUseCase.ComandaHistoryEntry(
+                abertaComanda(), null, null, List.of(), Map.of(), null, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, 0));
 
         mockMvc.perform(get("/pdv/comandas/10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.tableOrCustomerLabel").value("Mesa 4"));
+                .andExpect(jsonPath("$.tableOrCustomerLabel").value("Mesa 4"))
+                .andExpect(jsonPath("$.orders").isEmpty());
     }
 
     @Test
     void getComanda_notFound_returns_404() throws Exception {
-        when(comandaUseCase.getComanda(999L)).thenThrow(new ComandaNotFoundException(999L));
+        when(comandaUseCase.getHistoryEntry(999L)).thenThrow(new ComandaNotFoundException(999L));
 
         mockMvc.perform(get("/pdv/comandas/999"))
                 .andExpect(status().isNotFound())
@@ -472,11 +475,26 @@ class PdvComandaControllerTest {
     void cancelComanda_returns_200() throws Exception {
         Comanda cancelada = Comanda.of(10L, 1L, "LOJA-01", "Mesa 4", ComandaStatus.CANCELADA, List.of(),
                 null, "caixa1", Instant.now(), Instant.now());
-        when(comandaUseCase.cancelComanda(eq(10L), anyString())).thenReturn(cancelada);
+        when(comandaUseCase.cancelComanda(eq(10L), anyString(), isNull())).thenReturn(cancelada);
 
         mockMvc.perform(post("/pdv/comandas/10/cancel").principal(AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADA"));
+    }
+
+    /** PDV-F029 — o motivo do cancelamento é opcional e vai para o histórico da mesa. */
+    @Test
+    void cancelComanda_withReason_passesItToTheService() throws Exception {
+        Comanda cancelada = Comanda.of(10L, 1L, "LOJA-01", "Mesa 4", ComandaStatus.CANCELADA, List.of(),
+                null, "caixa1", Instant.now(), Instant.now());
+        when(comandaUseCase.cancelComanda(10L, "caixa1", "Cliente desistiu")).thenReturn(cancelada);
+
+        mockMvc.perform(post("/pdv/comandas/10/cancel").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"Cliente desistiu\"}"))
+                .andExpect(status().isOk());
+
+        verify(comandaUseCase).cancelComanda(10L, "caixa1", "Cliente desistiu");
     }
     // ── Cortesia: a permissão que o controller guarda (PDV-F010) ─────────────────────────────
 

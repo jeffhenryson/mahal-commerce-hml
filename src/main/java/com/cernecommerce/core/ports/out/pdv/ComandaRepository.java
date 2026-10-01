@@ -1,5 +1,7 @@
 package com.cernecommerce.core.ports.out.pdv;
 
+import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 
@@ -82,4 +84,16 @@ public interface ComandaRepository {
     int moveOpenItems(Long fromComandaId, Long toComandaId);
 
     Comanda save(Comanda comanda);
+
+    /** PDV-F029 — grava quem encerrou a comanda e, no cancelamento, o motivo. */
+    void recordClosing(Long comandaId, String closedBy, String cancelReason);
+
+    /** PDV-F029 — comandas encerradas, da mais recente para a mais antiga. */
+    PageResult<ClosedComanda> findHistory(ComandaHistoryFilter filter, int page, int size);
+
+    /** PDV-F029 — a comanda com o registro do encerramento (qualquer status). */
+    Optional<ClosedComanda> findWithClosing(Long id);
+
+    /** PDV-F029 — FECHADAS no período, para os indicadores. */
+    List<ClosedComanda> findClosedBetween(java.time.Instant from, java.time.Instant to, String warehouseCode);
 }

@@ -107,6 +107,19 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .findBySessionIdOrderByIdDesc(sessionId, PageRequest.of(page, size)), page, size);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<Order> findByComandaIds(java.util.Collection<Long> comandaIds) {
+        if (comandaIds == null || comandaIds.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = orderJpaRepository.findIdsByComandaIdIn(comandaIds);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return orderJpaRepository.findAllByIdsWithItems(ids).stream().map(this::toDomain).toList();
+    }
+
     /**
      * Segunda fase do ID-first (PED-C002): recebe a página já resolvida — <b>sem</b> ter tocado a
      * coleção de itens — e carrega os itens de todos os pedidos dela numa consulta só.

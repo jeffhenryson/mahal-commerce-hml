@@ -1,5 +1,11 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
+import java.util.ArrayList;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
+import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaItemEntity;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -76,6 +82,88 @@ public class ComandaRepositoryImpl implements ComandaRepository {
     @Transactional(readOnly = true)
     public List<Long> findOpenIdsBySessionId(Long sessionId) {
         return comandaJpaRepository.findOpenIdsBySessionId(sessionId, ComandaStatus.ABERTA.name());
+    }
+
+    // ── PDV-F029: histórico ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Na entidade gerenciada, não por UPDATE em lote: o save que encerrou a comanda acabou de
+     * carregá-la nesta transação, e um UPDATE JPQL deixaria essa cópia sem closedBy para quem a
+     * relesse antes do commit.
+     */
+    @Override
+    public void recordClosing(Long comandaId, String closedBy, String cancelReason) {
+        comandaJpaRepository.findById(comandaId).ifPresent(entity -> {
+            entity.setClosedBy(closedBy);
+            entity.setCancelReason(cancelReason);
+        });
+    }
+
+    /**
+     * Specification para os filtros (Instant nulo em JPQL vira bytea no Postgres — ver
+     * OrderRepositoryImpl.findAll) e, como em {@link #findOpen}, ID-first: a página sai sem tocar
+     * nos itens, que vêm numa consulta só.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<ClosedComanda> findHistory(ComandaHistoryFilter filter, int page, int size) {
+        Specification<ComandaEntity> spec = historySpec(filter);
+        Page<ComandaEntity> result = comandaJpaRepository.findAll(spec, PageRequest.of(page, size,
+                Sort.by(Sort.Order.desc("closedAt"), Sort.Order.desc("id"))));
+        return new PageResult<>(withItemsInOrder(result.getContent()), page, size, result.getTotalElements(),
+                result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<ClosedComanda> findWithClosing(Long id) {
+        return comandaJpaRepository.findById(id)
+                .map(e -> new ClosedComanda(toDomain(e), e.getClosedBy(), e.getCancelReason()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ClosedComanda> findClosedBetween(Instant from, Instant to, String warehouseCode) {
+        Specification<ComandaEntity> spec = historySpec(new ComandaHistoryFilter(from, to, ComandaStatus.FECHADA,
+                null, null, null, null, warehouseCode));
+        return withItemsInOrder(comandaJpaRepository.findAll(spec, Sort.by(Sort.Order.asc("closedAt"))));
+    }
+
+    private static Specification<ComandaEntity> historySpec(ComandaHistoryFilter filter) {
+        return (root, query, cb) -> {
+            List<Predicate> p = new ArrayList<>();
+            if (filter.status() != null) {
+                p.add(cb.equal(root.get("status"), filter.status().name()));
+            } else {
+                p.add(cb.notEqual(root.get("status"), ComandaStatus.ABERTA.name()));
+            }
+            if (filter.from() != null) p.add(cb.greaterThanOrEqualTo(root.get("closedAt"), filter.from()));
+            if (filter.to() != null) p.add(cb.lessThanOrEqualTo(root.get("closedAt"), filter.to()));
+            if (filter.customerId() != null) p.add(cb.equal(root.get("customerId"), filter.customerId()));
+            if (filter.openedBy() != null) p.add(cb.equal(root.get("openedBy"), filter.openedBy()));
+            if (filter.closedBy() != null) p.add(cb.equal(root.get("closedBy"), filter.closedBy()));
+            if (filter.warehouseCode() != null) p.add(cb.equal(root.get("warehouseCode"), filter.warehouseCode()));
+            if (filter.tableLabel() != null && !filter.tableLabel().isBlank()) {
+                // Sem cadastro fixo de mesa: "Mesa 4", "mesa 4 " e "MESA 4" são a mesma.
+                p.add(cb.equal(cb.lower(cb.trim(root.get("tableOrCustomerLabel"))),
+                        filter.tableLabel().trim().toLowerCase(java.util.Locale.ROOT)));
+            }
+            return cb.and(p.toArray(new Predicate[0]));
+        };
+    }
+
+    /** Itens de todas as comandas numa consulta, mantendo a ordem da página. */
+    private List<ClosedComanda> withItemsInOrder(List<ComandaEntity> entities) {
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, ComandaEntity> loaded = comandaJpaRepository.findAllByIdsWithItems(
+                        entities.stream().map(ComandaEntity::getId).toList()).stream()
+                .collect(Collectors.toMap(ComandaEntity::getId, Function.identity(), (a, b) -> a));
+        return entities.stream()
+                .map(e -> loaded.getOrDefault(e.getId(), e))
+                .map(e -> new ClosedComanda(toDomain(e), e.getClosedBy(), e.getCancelReason()))
+                .toList();
     }
 
     @Override

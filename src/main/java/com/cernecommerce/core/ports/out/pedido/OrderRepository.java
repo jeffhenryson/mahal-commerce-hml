@@ -23,6 +23,9 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /** PDV-F029 — os pedidos MESA gerados pelas comandas, com itens, numa consulta só. */
+    java.util.List<Order> findByComandaIds(java.util.Collection<Long> comandaIds);
+
     /** Pedidos de uma sessão de caixa, do mais recente para o mais antigo. */
     PageResult<Order> findBySessionId(Long sessionId, int page, int size);
 

@@ -14,7 +14,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long> {
+public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<ComandaEntity> {
 
     /**
      * Fase 1 do padrão ID-first (PDV-C009): pagina só os ids, sem tocar na coleção de itens.

@@ -1,5 +1,10 @@
 package com.cernecommerce.adapter.in.controller;
 
+import java.time.Instant;
+import org.springframework.format.annotation.DateTimeFormat;
+import com.cernecommerce.adapter.in.dtos.request.ComandaCancelRequest;
+import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
+import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.adapter.in.dtos.request.CustomerRequest;
 import com.cernecommerce.adapter.in.dtos.request.LinkComandaCustomerRequest;
 import com.cernecommerce.core.domain.model.crm.LeadResolution;
@@ -331,13 +336,89 @@ public class PdvComandaController {
         return ResponseEntity.ok(dto);
     }
 
-    @Operation(summary = "Consulta uma comanda, com o total corrente")
+    @Operation(summary = "Consulta uma comanda em qualquer status, com o total corrente e os pedidos gerados",
+            description = "PDV-F029 — também para comanda FECHADA ou CANCELADA: traz closedBy, durationMinutes, "
+                    + "cancelReason, os totais derivados dos pedidos e orders[] com os pagamentos de cada um.")
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
     public ResponseEntity<ComandaResponseDTO> getComanda(@PathVariable("id") Long comandaId) {
-        ComandaResponseDTO dto = comandaConverter.toResponse(comandaUseCase.getComanda(comandaId));
+        ComandaUseCase.ComandaHistoryEntry entry = comandaUseCase.getHistoryEntry(comandaId);
+        ComandaResponseDTO dto = toHistoryResponse(entry);
+        dto.setOrders(entry.orders().stream().map(order -> {
+            ComandaResponseDTO.ComandaOrder o = new ComandaResponseDTO.ComandaOrder();
+            o.setId(order.id());
+            o.setOrderNumber(order.orderNumber());
+            o.setClosedAt(order.concludedAt());
+            o.setTotalPayable(order.totalPayable());
+            o.setStatus(order.status().name());
+            o.setPayments(entry.paymentsByOrder().getOrDefault(order.id(), List.of()).stream()
+                    .map(orderConverter::toResponse).toList());
+            return o;
+        }).toList());
         enrichCustomerNames(List.of(dto));
         return ResponseEntity.ok(dto);
+    }
+
+    @Operation(summary = "Histórico de mesas encerradas (PDV-F029)",
+            description = "FECHADA e CANCELADA, da mais recente para a mais antiga (por closedAt). from/to recortam "
+                    + "pelo encerramento; tableLabel compara sem caixa e sem espaços nas pontas. Cada item traz "
+                    + "closedBy, durationMinutes, cancelReason, orderIds (inclusive pedidos parciais), totalPaid, "
+                    + "serviceFeeTotal, discountTotal, courtesyTotal e sessionsCount.")
+    @GetMapping("/history")
+    @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
+    public ResponseEntity<PageResult<ComandaResponseDTO>> listHistory(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(required = false) ComandaStatus status,
+            @RequestParam(required = false) Long customerId,
+            @RequestParam(required = false) String openedBy,
+            @RequestParam(required = false) String closedBy,
+            @RequestParam(required = false) String tableLabel,
+            @RequestParam(required = false) String warehouseCode,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size) {
+        if (status == ComandaStatus.ABERTA) {
+            throw new IllegalArgumentException("o histórico é de mesas encerradas: status FECHADA ou CANCELADA");
+        }
+        PageResult<ComandaUseCase.ComandaHistoryEntry> result = comandaUseCase.listHistory(
+                new ComandaHistoryFilter(from, to, status, customerId, openedBy, closedBy, tableLabel, warehouseCode),
+                page, size);
+        List<ComandaResponseDTO> content = enrichCustomerNames(
+                result.content().stream().map(this::toHistoryResponse).toList());
+        return ResponseEntity.ok(new PageResult<>(content, result.page(), result.size(),
+                result.totalElements(), result.totalPages()));
+    }
+
+    @Operation(summary = "Indicadores de mesas no período (PDV-F029)",
+            description = "Sobre as mesas FECHADAS com encerramento entre from e to (máximo 366 dias). porMesa "
+                    + "agrupa pelo tableLabel sem caixa e sem espaços nas pontas; porHora usa a hora de abertura "
+                    + "(America/Sao_Paulo); porAtendente usa quem abriu. receita é o totalPayable dos pedidos não "
+                    + "reembolsados.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "400", description = "Período ausente, invertido ou acima de 366 dias", content = @Content)
+    })
+    @GetMapping("/analytics")
+    @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
+    public ResponseEntity<ComandaUseCase.ComandaAnalytics> analytics(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(required = false) String warehouseCode) {
+        return ResponseEntity.ok(comandaUseCase.analytics(from, to, warehouseCode));
+    }
+
+    private ComandaResponseDTO toHistoryResponse(ComandaUseCase.ComandaHistoryEntry entry) {
+        ComandaResponseDTO dto = comandaConverter.toResponse(entry.comanda());
+        dto.setClosedBy(entry.closedBy());
+        dto.setDurationMinutes(entry.durationMinutes());
+        dto.setCancelReason(entry.cancelReason());
+        dto.setOrderIds(entry.orders().stream().map(Order::id).toList());
+        dto.setTotalPaid(entry.totalPaid());
+        dto.setServiceFeeTotal(entry.serviceFeeTotal());
+        dto.setDiscountTotal(entry.discountTotal());
+        dto.setCourtesyTotal(entry.courtesyTotal());
+        dto.setSessionsCount(entry.sessionsCount());
+        return dto;
     }
 
     @Operation(summary = "Lista as comandas abertas — as \"mesas ocupadas\"",
@@ -545,13 +626,15 @@ public class PdvComandaController {
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> cancelComanda(@PathVariable("id") Long comandaId,
-            Authentication authentication) {
-        Comanda comanda = comandaUseCase.cancelComanda(comandaId, authentication.getName());
+            @RequestBody(required = false) @Valid ComandaCancelRequest request, Authentication authentication) {
+        String reason = request == null ? null : request.getReason();
+        Comanda comanda = comandaUseCase.cancelComanda(comandaId, authentication.getName(), reason);
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_CANCELLED, authentication.getName(),
                 auditPayload(comandaId,
                         "warehouseCode", comanda.warehouseCode(),
                         "type", MovementType.ENTRADA.name(),
-                        "itemCount", comanda.items().size())));
+                        "itemCount", comanda.items().size(),
+                        "reason", reason)));
         return ResponseEntity.ok(comandaConverter.toResponse(comanda));
     }
 }

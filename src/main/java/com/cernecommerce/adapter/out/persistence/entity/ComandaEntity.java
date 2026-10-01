@@ -55,6 +55,15 @@ public class ComandaEntity {
     @Column(name = "closed_at")
     private Instant closedAt;
 
+    // PDV-F029 — quem encerrou (fechou, finalizou ou cancelou) e o motivo do cancelamento (V138).
+    // Gravados por ComandaRepository.recordClosing, fora do record de domínio: o save da comanda
+    // carrega a entidade existente e não toca nestes campos.
+    @Column(name = "closed_by", length = 80)
+    private String closedBy;
+
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
+
     // @OrderBy porque a comanda é lida na ordem de lançamento — é assim que a tela mostra a
     // sessão antes das trocas que se penduram nela, e sem isso a ordem de um bag fica a critério
     // do banco.

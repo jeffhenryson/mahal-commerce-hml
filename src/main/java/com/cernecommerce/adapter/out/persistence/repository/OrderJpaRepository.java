@@ -15,6 +15,11 @@ import java.util.List;
 public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
         JpaSpecificationExecutor<OrderEntity> {
 
+    /** PDV-F029 — ids dos pedidos das comandas; os itens vêm por findAllByIdsWithItems. */
+    @Query("SELECT o.id FROM OrderEntity o WHERE o.comandaId IN :comandaIds ORDER BY o.id ASC")
+    List<Long> findIdsByComandaIdIn(@Param("comandaIds") java.util.Collection<Long> comandaIds);
+
+
     Page<OrderEntity> findBySessionIdOrderByIdDesc(Long sessionId, Pageable pageable);
 
     /**
