@@ -448,6 +448,56 @@ class ComandaSessaoServiceTest {
         verify(sessionMenu, never()).release(any());
     }
 
+    private static ComandaItem roshPagoEm(Long id, Long parentId, SessionProgress progress, Long closedIn) {
+        return ComandaItem.of(id, TRADICIONAL.sku(), BigDecimal.ONE, new BigDecimal("25.00"), null,
+                "2º rosh Tradicional", Instant.now().plusSeconds(1), ConsumptionMode.ROSH_EXTRA, false, parentId,
+                "Pred Menta", null, closedIn, null, null, null, null, null, progress);
+    }
+
+    /** PDV-C026 — o 2º rosh do duplo não vai ao preparo com a sessão ainda aguardando pagamento. */
+    @Test
+    void updateSessionStatus_roshNaFilaComRaizAguardandoPagamento_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null),
+                roshEm(2L, 1L, SessionProgress.queued(), null))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 2L, SessionStatus.PREPARANDO, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** PDV-C026 — rosh cobrável ainda não cobrado fica na fila quando a raiz é recolhida. */
+    @Test
+    void updateSessionStatus_recolherARaiz_naoPromoveRoshAindaNaoPago() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L),
+                roshPagoEm(2L, 1L, SessionProgress.queued(), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda depois = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(depois.items()).filteredOn(i -> i.id().equals(2L)).singleElement()
+                .satisfies(i -> assertThat(i.sessionStatus()).isEqualTo(SessionStatus.NA_FILA));
+        // O rosh na fila ainda é do salão: o narguilé não volta para a casa.
+        verify(sessionMenu, never()).release(any());
+    }
+
+    /**
+     * PDV-C027 — removido o último rosh ativo de uma sessão já recolhida, o vaso volta. Antes ele só
+     * voltava no recolhimento, e a remoção deixava o utensílio preso até a mesa fechar.
+     */
+    @Test
+    void removeItem_ultimoRoshAtivoDeSessaoRecolhida_liberaOVaso() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L),
+                roshPagoEm(2L, 1L, SessionProgress.queued(), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.removeItem(10L, 2L, "caixa1");
+
+        verify(sessionMenu).release(List.of(1L));
+    }
+
     private static ComandaItem catalogo(Long id, String price) {
         return ComandaItem.of(id, "AGUA", BigDecimal.ONE, new BigDecimal(price), new BigDecimal("1.00"), "Água",
                 Instant.now());

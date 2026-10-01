@@ -47,6 +47,7 @@ import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
@@ -705,6 +706,12 @@ public class ComandaService implements ComandaUseCase {
         }
         // PDV-F021 — sessão removida devolve os utensílios à casa.
         releaseSessionAssets(removidas);
+        // PDV-C027 — rosh removido: o grupo dele se acerta como num recolhimento. Sem isto, removido
+        // o último rosh ativo de uma sessão já recolhida, o vaso ficava preso até a mesa fechar.
+        Long raizDoRosh = alvo.mode() == ConsumptionMode.ROSH_EXTRA ? alvo.linkedItemId() : null;
+        if (raizDoRosh != null && semItem.items().stream().anyMatch(i -> raizDoRosh.equals(i.id()))) {
+            semItem = settleSessionGroup(semItem, raizDoRosh, Instant.now());
+        }
         // Sem checagem de "última linha": comanda vazia é estado legítimo — é como ela nasce, e o
         // COMANDA_EMPTY do fechamento já barra fechá-la assim.
         return comandaRepository.save(semItem);
@@ -977,24 +984,47 @@ public class ComandaService implements ComandaUseCase {
         if (!item.session().status().canTransitionTo(status)) {
             throw new InvalidSessionTransitionException(itemId, item.session().status(), status);
         }
+        // PDV-C026 — sair da fila para o preparo exige estar pago (ver isReleasedForPreparation).
+        if (item.sessionStatus() == SessionStatus.NA_FILA && status == SessionStatus.PREPARANDO
+                && !comanda.isReleasedForPreparation(item)) {
+            throw new SessionNotPaidException(itemId);
+        }
         Instant now = Instant.now();
         Comanda updated = comanda.withSessionStatus(itemId, status, now);
 
         if (status == SessionStatus.RECOLHIDO) {
             Long rootId = item.mode() == ConsumptionMode.SESSAO ? item.id() : item.linkedItemId();
-            boolean grupoRecolhido = updated.items().stream()
-                    .filter(i -> i.id().equals(rootId) || rootId.equals(i.linkedItemId()))
-                    .filter(i -> i.mode().isMenuSession())
-                    .noneMatch(ComandaItem::isActiveSession);
-            if (grupoRecolhido) {
-                releaseSessionAssets(updated.items().stream().filter(i -> i.id().equals(rootId)).toList());
-            }
-            Comanda atual = updated;
-            updated = updated.nextQueuedSessionOf(rootId)
-                    .map(next -> atual.withSessionStatus(next.id(), SessionStatus.PREPARANDO, now))
-                    .orElse(updated);
+            updated = settleSessionGroup(updated, rootId, now);
         }
         return comandaRepository.save(updated);
+    }
+
+    /**
+     * Depois que uma linha do grupo de um narguilé (a sessão {@code rootId} e os roshs ligados a ela)
+     * sai do salão — recolhida, ou removida (PDV-C027) —, o grupo se acerta: os utensílios voltam
+     * quando o grupo inteiro está recolhido (o 2º rosh usa o mesmo narguilé), e a próxima linha da
+     * fila entra no preparo se o narguilé ficou livre e ela já está paga (PDV-C026).
+     */
+    private Comanda settleSessionGroup(Comanda updated, Long rootId, Instant now) {
+        if (rootId == null) {
+            return updated;
+        }
+        List<ComandaItem> grupo = updated.items().stream()
+                .filter(i -> rootId.equals(i.id()) || rootId.equals(i.linkedItemId()))
+                .filter(i -> i.mode().isMenuSession())
+                .toList();
+        if (grupo.stream().noneMatch(ComandaItem::isActiveSession)) {
+            releaseSessionAssets(grupo.stream().filter(i -> rootId.equals(i.id())).toList());
+        }
+        boolean narguileEmUso = grupo.stream().anyMatch(i -> i.sessionStatus() == SessionStatus.PREPARANDO
+                || i.sessionStatus() == SessionStatus.ENTREGUE);
+        if (narguileEmUso) {
+            return updated;
+        }
+        return updated.nextQueuedSessionOf(rootId)
+                .filter(updated::isReleasedForPreparation)
+                .map(next -> updated.withSessionStatus(next.id(), SessionStatus.PREPARANDO, now))
+                .orElse(updated);
     }
 
     @Override

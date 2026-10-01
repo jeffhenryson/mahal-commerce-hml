@@ -371,6 +371,21 @@ public record Comanda(
     }
 
     /**
+     * PDV-C026 — a linha pode ir ao preparo: ela própria não deve nada (cortesia, ou já cobrada) e a
+     * sessão raiz dela não está esperando pagamento. Desde PDV-F027 nada é preparado antes de pago —
+     * o 2º rosh do duplo é cortesia, mas pertence a uma sessão que ainda pode não ter sido paga.
+     */
+    public boolean isReleasedForPreparation(ComandaItem item) {
+        if (!item.courtesy() && item.isOpen()) {
+            return false;
+        }
+        Long rootId = item.mode() == ConsumptionMode.SESSAO ? null : item.linkedItemId();
+        return rootId == null || items.stream()
+                .filter(i -> rootId.equals(i.id()))
+                .noneMatch(i -> i.sessionStatus() == SessionStatus.AGUARDANDO_PAGAMENTO);
+    }
+
+    /**
      * PDV-F031 — as linhas que uma junção leva desta mesa para a outra: as ainda não cobradas, mais o
      * <b>grupo inteiro</b> (sessão e roshs ligados a ela) de toda sessão de narguilé que ainda esteja
      * no salão, paga ou não.

@@ -157,6 +157,7 @@ import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledExceptio
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
@@ -1373,6 +1374,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleSessionEssenceRequired(SessionEssenceRequiredException ex,
             HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_ESSENCE_REQUIRED", req);
+    }
+
+    @ExceptionHandler(SessionNotPaidException.class)
+    public ResponseEntity<ApiError> handleSessionNotPaid(SessionNotPaidException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_PAID", req);
     }
 
     @ExceptionHandler(MenuSessionNotAllowedOnItemsException.class)
