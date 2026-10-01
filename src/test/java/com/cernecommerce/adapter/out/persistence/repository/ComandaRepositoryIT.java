@@ -504,7 +504,7 @@ class ComandaRepositoryIT {
      * os itens pelo {@code save} da comanda destino criaria ids novos e a TROCA ficaria órfã.
      */
     @Test
-    void moveOpenItems_preservesIdsAndKeepsLinkedItemIdValid() {
+    void moveItems_preservesIdsAndKeepsLinkedItemIdValid() {
         Comanda origem = comandaRepository.save(
                 Comanda.open(81L, "LOJA-01", "Mesa A", "caixa1")
                         .withAddedItem(sessionItem("SESS-BLUE", "60.00", ConsumptionMode.OPEN_ROSH, false, null)));
@@ -518,7 +518,9 @@ class ComandaRepositoryIT {
         Comanda destino = comandaRepository.save(Comanda.open(81L, "LOJA-01", "Mesa B", "caixa1"));
         flushAndClear();
 
-        int movidos = comandaRepository.moveOpenItems(origem.id(), destino.id());
+        List<Long> ids = comandaRepository.findById(origem.id()).orElseThrow().items().stream()
+                .map(ComandaItem::id).toList();
+        int movidos = comandaRepository.moveItems(origem.id(), destino.id(), ids);
         flushAndClear();
 
         assertThat(movidos).isEqualTo(2);
@@ -533,24 +535,22 @@ class ComandaRepositoryIT {
         assertThat(comandaRepository.findById(origem.id()).orElseThrow().items()).isEmpty();
     }
 
-    /** Linha já cobrada fica onde está: ela pertence a um pedido que aponta para a comanda de origem. */
+    /** Id de outra comanda não é arrastado, mesmo que chegue na lista por engano. */
     @Test
-    void moveOpenItems_leavesAlreadyChargedLinesBehind() {
+    void moveItems_onlyMovesLinesOfTheSourceComanda() {
         Comanda origem = comandaRepository.save(
                 Comanda.open(82L, "LOJA-01", "Mesa A", "caixa1").withAddedItem(essenciaItem()));
-        flushAndClear();
-        Comanda carregada = comandaRepository.findById(origem.id()).orElseThrow();
-        comandaRepository.save(carregada.withItemsClosedIn(888L, List.of(carregada.items().get(0).id())));
-        flushAndClear();
-
+        Comanda outra = comandaRepository.save(
+                Comanda.open(82L, "LOJA-01", "Mesa C", "caixa1").withAddedItem(essenciaItem()));
         Comanda destino = comandaRepository.save(Comanda.open(82L, "LOJA-01", "Mesa B", "caixa1"));
         flushAndClear();
+        Long daOutra = comandaRepository.findById(outra.id()).orElseThrow().items().get(0).id();
 
-        int movidos = comandaRepository.moveOpenItems(origem.id(), destino.id());
+        int movidos = comandaRepository.moveItems(origem.id(), destino.id(), List.of(daOutra));
         flushAndClear();
 
         assertThat(movidos).isZero();
-        assertThat(comandaRepository.findById(origem.id()).orElseThrow().items()).hasSize(1);
+        assertThat(comandaRepository.findById(outra.id()).orElseThrow().items()).hasSize(1);
         assertThat(comandaRepository.findById(destino.id()).orElseThrow().items()).isEmpty();
     }
 }

@@ -1520,16 +1520,17 @@ class ComandaServiceTest {
     @Test
     void mergeComanda_movesTheLinesWithoutAnyStockMovement() {
         Comanda origem = abertaComanda(linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null));
+        Comanda origemAposMove = abertaComanda();
         Comanda destino = Comanda.of(20L, 1L, "LOJA-01", "Mesa 9", null, ComandaStatus.ABERTA,
                 List.of(), null, "caixa1", Instant.now(), null);
-        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem), Optional.of(origemAposMove));
         when(comandaRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(destino));
         when(comandaRepository.findById(20L)).thenReturn(Optional.of(destino));
         when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         comandaService.mergeComanda(10L, 20L, "caixa1");
 
-        verify(comandaRepository).moveOpenItems(10L, 20L);
+        verify(comandaRepository).moveItems(10L, 20L, List.of(1L));
         // O ponto: a junção não gera movimento de estoque nenhum.
         verifyNoInteractions(estoqueUseCase);
         ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
@@ -1539,22 +1540,54 @@ class ComandaServiceTest {
         verify(comandaRepository).recordClosing(10L, "caixa1", "Juntada à comanda #20");
     }
 
-    /** Origem com parte da conta já cobrada não pode ser juntada — a conta ficaria partida. */
+    /**
+     * PDV-C022 — a origem salva é a RELIDA depois do move. Salvar a lida antes reinseria as linhas
+     * movidas como cópias na mesa encerrada (o save não acha par para elas).
+     */
     @Test
-    void mergeComanda_isRejectedWhenTheSourceWasPartiallyCharged() {
+    void mergeComanda_savesTheSourceAsReadAfterTheMove_notTheStaleOne() {
+        Comanda origem = abertaComanda(linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null));
+        Comanda destino = Comanda.of(20L, 1L, "LOJA-01", "Mesa 9", null, ComandaStatus.ABERTA,
+                List.of(), null, "caixa1", Instant.now(), null);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem), Optional.of(abertaComanda()));
+        when(comandaRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.findById(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.mergeComanda(10L, 20L, "caixa1");
+
+        ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository).save(saved.capture());
+        assertThat(saved.getValue().items()).as("nenhuma linha movida volta para a origem").isEmpty();
+    }
+
+    /**
+     * PDV-F031 — origem com parte já cobrada junta: vão as linhas em aberto, a cobrada fica, e a
+     * origem termina FECHADA no pedido dela (é receita, e o histórico só conta FECHADA).
+     */
+    @Test
+    void mergeComanda_withAChargedLine_movesTheOpenOnesAndClosesTheSourceOnItsOrder() {
         Comanda origem = abertaComanda(
                 linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null),
                 linha(2L, "ESS-B", "20.00", ConsumptionMode.NORMAL, false, null))
                 .withItemsClosedIn(499L, List.of(1L));
+        Comanda origemAposMove = abertaComanda(linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null))
+                .withItemsClosedIn(499L, List.of(1L));
         Comanda destino = Comanda.of(20L, 1L, "LOJA-01", "Mesa 9", null, ComandaStatus.ABERTA,
                 List.of(), null, "caixa1", Instant.now(), null);
-        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem), Optional.of(origemAposMove));
         when(comandaRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.findById(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> comandaService.mergeComanda(10L, 20L, "caixa1"))
-                .isInstanceOf(ComandaPartiallyClosedException.class);
+        comandaService.mergeComanda(10L, 20L, "caixa1");
 
-        verify(comandaRepository, never()).moveOpenItems(any(), any());
+        verify(comandaRepository).moveItems(10L, 20L, List.of(2L));
+        ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository).save(saved.capture());
+        assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(saved.getValue().orderId()).isEqualTo(499L);
+        verify(comandaRepository).recordClosing(10L, "caixa1", "Juntada à comanda #20");
     }
 
     @Test

@@ -469,19 +469,22 @@ public interface ComandaUseCase {
      * Junta duas mesas que viraram uma conta só (PDV-F016): as linhas em aberto de
      * {@code fromComandaId} passam para {@code toComandaId}, e a origem é encerrada.
      *
+     * <p><b>PDV-F031 — origem com linha já cobrada também junta.</b> Vão as linhas em aberto e o
+     * grupo inteiro de toda sessão de narguilé ainda no salão (paga ou não), com os utensílios. A
+     * linha cobrada que não está no salão fica na origem, e os pedidos pagos continuam apontando
+     * para ela: a origem termina {@code FECHADA} no último pedido dela.</p>
+     *
      * <p><b>Nenhum estoque se move.</b> A mercadoria não voltou para a prateleira nem saiu de novo —
      * ela mudou de conta. Por isso o merge <b>não</b> passa por {@code cancelComanda}, que devolveria
-     * tudo por {@code ENTRADA}: a origem termina {@code CANCELADA} por um caminho próprio, sem tocar
-     * em saldo. O status é o mesmo, o significado não, e é o evento {@code COMANDA_MERGED} que
-     * guarda a diferença na trilha.</p>
+     * tudo por {@code ENTRADA}: a origem sem nada cobrado termina {@code CANCELADA} por um caminho
+     * próprio, sem tocar em saldo. O status é o mesmo, o significado não, e é o evento
+     * {@code COMANDA_MERGED} e o motivo "Juntada à comanda #X" que guardam a diferença.</p>
      *
      * <p>As linhas mantêm os ids ao mudar de comanda, o que preserva os vínculos de
      * {@code linkedItemId} — um {@code OPEN_ROSH} e as trocas dele chegam juntos e ainda ligados.</p>
      *
      * @throws com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException se qualquer uma
      *         das duas não estiver aberta
-     * @throws com.cernecommerce.core.domain.exception.pdv.ComandaPartiallyClosedException se a
-     *         origem já teve parte da conta cobrada
      * @throws com.cernecommerce.core.domain.exception.pdv.ComandaMergeNotAllowedException se for a
      *         mesma comanda, ou se os depósitos diferirem
      */

@@ -86,6 +86,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -1095,20 +1096,32 @@ public class ComandaService implements ComandaUseCase {
                     + origem.warehouseCode() + " e " + destino.warehouseCode()
                     + ". O estoque de cada linha saiu do depósito da comanda que a recebeu.");
         }
-        // PDV-F017 — linha já cobrada tem um pedido apontando para ESTA comanda; mover o resto
-        // partiria a conta entre duas mesas e o recibo já entregue deixaria de bater.
-        if (origem.items().stream().anyMatch(i -> !i.isOpen())) {
-            throw new ComandaPartiallyClosedException(fromComandaId);
-        }
+        // PDV-F031 — com a sessão paga no lançamento (PDV-F027), recusar origem com linha cobrada
+        // tornava quase toda mesa de narguilé impossível de juntar. Vão as linhas em aberto e o
+        // grupo inteiro de toda sessão ainda no salão, paga ou não (ver itemIdsToMoveOnMerge); a
+        // linha cobrada fica onde está, e o pedido dela continua apontando para esta comanda.
+        // Decidido ANTES do move: depois dele, a origem lida aqui está velha.
+        List<Long> aMover = origem.itemIdsToMoveOnMerge();
+        Optional<Long> pedidoDaOrigem = origem.lastChargedOrderId();
 
-        // Reatribuição por FK, preservando ids — é o que mantém linkedItemId válido. Ver o javadoc
-        // de ComandaRepository.moveOpenItems.
-        comandaRepository.moveOpenItems(fromComandaId, toComandaId);
+        // Reatribuição por FK, preservando ids — é o que mantém linkedItemId e a alocação de
+        // utensílio (por comanda_item_id) válidos. Ver o javadoc de ComandaRepository.moveItems.
+        comandaRepository.moveItems(fromComandaId, toComandaId, aMover);
 
-        // Sem adjustStock: a mercadoria não voltou para a prateleira, mudou de conta. CANCELADA é o
-        // único estado terminal sem pedido que o ck_comanda_status_consistency da V104 aceita; o que
-        // distingue este cancelamento de um abandono é o evento COMANDA_MERGED na trilha.
-        comandaRepository.save(origem.cancelled(Instant.now()));
+        // PDV-C022 — RELER a origem. O objeto lido acima ainda contém as linhas movidas, e o save
+        // dele as reinseria como linhas novas na origem (o move limpou o contexto de persistência,
+        // e o save não acha par para elas): toda junção deixava cópias na mesa encerrada.
+        Comanda origemAtual = getComandaForUpdate(fromComandaId);
+
+        // Sem adjustStock: a mercadoria não voltou para a prateleira, mudou de conta. Com linha já
+        // cobrada a origem termina FECHADA no último pedido dela — é receita real, e o histórico e
+        // os indicadores só contam FECHADA. Sem nenhuma, CANCELADA, o único estado terminal sem
+        // pedido que o ck_comanda_status_consistency da V104 aceita; o que distingue este
+        // cancelamento de um abandono é o motivo gravado e o evento COMANDA_MERGED na trilha.
+        Instant agora = Instant.now();
+        comandaRepository.save(pedidoDaOrigem.isPresent()
+                ? origemAtual.closed(pedidoDaOrigem.get(), agora)
+                : origemAtual.cancelled(agora));
         comandaRepository.recordClosing(fromComandaId, username, "Juntada à comanda #" + toComandaId);
         return getComanda(toComandaId);
     }

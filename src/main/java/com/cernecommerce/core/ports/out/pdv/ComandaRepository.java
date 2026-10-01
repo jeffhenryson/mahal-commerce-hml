@@ -71,8 +71,9 @@ public interface ComandaRepository {
     List<Long> findOpenIdsOlderThan(java.time.Instant cutoff, int limit);
 
     /**
-     * Reatribui as linhas <b>ainda em aberto</b> de uma comanda para outra (PDV-F016, juntar mesas),
-     * devolvendo quantas moveram.
+     * Reatribui as linhas {@code itemIds} de uma comanda para outra (PDV-F016, juntar mesas),
+     * devolvendo quantas moveram. Quais linhas vão é decisão do domínio
+     * ({@code Comanda.itemIdsToMoveOnMerge}, PDV-F031); id que não seja da origem não se move.
      *
      * <p><b>Por que isto não é feito pelo {@code save}.</b> Passar os itens de A dentro do agregado
      * de B faria o {@code save} tratá-los como linhas novas — ids novos — e
@@ -80,8 +81,11 @@ public interface ComandaRepository {
      * passaria a apontar para uma linha que não existe mais. Reatribuindo a FK aqui, os ids são
      * preservados e o vínculo continua válido sem remapeamento nenhum. O problema desaparece em vez
      * de ser resolvido.</p>
+     *
+     * <p><b>Depois desta chamada, o agregado da origem lido antes está velho</b> (PDV-C022): ele
+     * ainda contém as linhas movidas, e salvá-lo as reinseriria como linhas novas na origem. Releia.</p>
      */
-    int moveOpenItems(Long fromComandaId, Long toComandaId);
+    int moveItems(Long fromComandaId, Long toComandaId, java.util.Collection<Long> itemIds);
 
     Comanda save(Comanda comanda);
 

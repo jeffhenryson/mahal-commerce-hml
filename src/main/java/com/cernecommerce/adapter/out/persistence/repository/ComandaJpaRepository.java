@@ -83,15 +83,16 @@ public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long>
     Optional<ComandaEntity> findByIdForUpdate(@Param("id") Long id);
 
     /**
-     * Move as linhas em aberto de uma comanda para outra, preservando os ids (PDV-F016) — ver o
-     * javadoc de {@code ComandaRepository.moveOpenItems} para por que a preservação é o ponto todo.
+     * Move as linhas escolhidas de uma comanda para outra, preservando os ids (PDV-F016) — ver o
+     * javadoc de {@code ComandaRepository.moveItems} para por que a preservação é o ponto todo.
      *
-     * <p>Linha já cobrada ({@code closed_in_order_id} não nulo) fica onde está: ela pertence a um
-     * pedido que já aponta para a comanda de origem. Na prática o service nem chega aqui nesse caso
-     * — o merge é recusado antes —, mas a cláusula garante que um caminho futuro não a arraste.</p>
+     * <p>A cláusula {@code comanda.id = :fromComandaId} garante que um id de outra mesa, vindo por
+     * engano, não seja arrastado. Quais linhas vão (inclusive sessão paga ainda no salão, PDV-F031)
+     * é decisão do domínio.</p>
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE ComandaItemEntity i SET i.comanda.id = :toComandaId "
-            + "WHERE i.comanda.id = :fromComandaId AND i.closedInOrderId IS NULL")
-    int moveOpenItems(@Param("fromComandaId") Long fromComandaId, @Param("toComandaId") Long toComandaId);
+            + "WHERE i.comanda.id = :fromComandaId AND i.id IN :itemIds")
+    int moveItems(@Param("fromComandaId") Long fromComandaId, @Param("toComandaId") Long toComandaId,
+            @Param("itemIds") java.util.Collection<Long> itemIds);
 }

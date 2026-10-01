@@ -38,6 +38,7 @@ import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -382,6 +383,38 @@ class ComandaSessaoServiceTest {
         return ComandaItem.of(id, TRADICIONAL.sku(), BigDecimal.ONE, BigDecimal.ZERO, null, "2º rosh Tradicional",
                 Instant.now().plusSeconds(1), ConsumptionMode.ROSH_EXTRA, true, parentId, "Pred Menta", null,
                 closedIn, null, null, null, null, null, progress);
+    }
+
+    /**
+     * PDV-F031 — mesa de narguilé real: uma sessão paga e já recolhida, outra paga ainda na mesa com
+     * o 2º rosh na fila, e uma água em aberto. Vão a água e o GRUPO da sessão no salão (os
+     * utensílios estão alocados na raiz); a recolhida fica, e a origem fecha no último pedido.
+     */
+    @Test
+    void mergeComanda_levaASessaoPagaAindaNoSalaoComOGrupoEFechaAOrigem() {
+        Instant t = Instant.now();
+        SessionProgress recolhido = new SessionProgress(SessionStatus.RECOLHIDO, t, t, t);
+        Comanda origem = comanda(
+                sessaoEm(1L, PREMIUM, recolhido, 400L),
+                sessaoEm(2L, PREMIUM, entregue(), 401L),
+                roshEm(3L, 2L, SessionProgress.queued(), 401L),
+                catalogo(4L, "8.00"));
+        Comanda origemAposMove = comanda(sessaoEm(1L, PREMIUM, recolhido, 400L));
+        Comanda destino = Comanda.of(20L, 1L, "LOJA-01", "Mesa 9", null, ComandaStatus.ABERTA, List.of(), null,
+                "caixa1", Instant.now(), null);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(origem), Optional.of(origemAposMove));
+        when(comandaRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.findById(20L)).thenReturn(Optional.of(destino));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.mergeComanda(10L, 20L, "caixa1");
+
+        verify(comandaRepository).moveItems(10L, 20L, List.of(2L, 3L, 4L));
+        ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository).save(saved.capture());
+        assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(saved.getValue().orderId()).isEqualTo(401L);
+        verify(sessionMenu, never()).release(any());
     }
 
     private static ComandaItem catalogo(Long id, String price) {

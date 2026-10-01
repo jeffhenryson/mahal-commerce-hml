@@ -167,8 +167,11 @@ public class ComandaRepositoryImpl implements ComandaRepository {
     }
 
     @Override
-    public int moveOpenItems(Long fromComandaId, Long toComandaId) {
-        return comandaJpaRepository.moveOpenItems(fromComandaId, toComandaId);
+    public int moveItems(Long fromComandaId, Long toComandaId, java.util.Collection<Long> itemIds) {
+        if (itemIds == null || itemIds.isEmpty()) {
+            return 0;
+        }
+        return comandaJpaRepository.moveItems(fromComandaId, toComandaId, itemIds);
     }
 
     @Override

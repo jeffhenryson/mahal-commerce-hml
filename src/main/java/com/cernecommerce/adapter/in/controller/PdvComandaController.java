@@ -592,15 +592,17 @@ public class PdvComandaController {
     @Operation(summary = "Junta esta mesa em outra, que passa a ter a conta inteira (PDV-F016)",
             description = "As linhas em aberto desta comanda passam para a de destino e esta é "
                     + "encerrada. **Nenhum estoque se move**: a mercadoria não voltou para a "
-                    + "prateleira nem saiu de novo, ela mudou de conta — por isso a origem termina "
-                    + "CANCELADA sem a devolução que POST /cancel faria. Os ids das linhas são "
+                    + "prateleira nem saiu de novo, ela mudou de conta. Os ids das linhas são "
                     + "preservados, então um OPEN_ROSH e as TROCA dele chegam juntos e ainda "
-                    + "ligados. As duas mesas precisam estar ABERTAS e no mesmo depósito, e a "
-                    + "origem não pode ter tido parte da conta cobrada (PDV-F017).")
+                    + "ligados. As duas mesas precisam estar ABERTAS e no mesmo depósito. "
+                    + "PDV-F031: origem com parte já cobrada também junta — vão as linhas em aberto "
+                    + "e toda sessão de narguilé ainda no salão (paga ou não, com os utensílios); "
+                    + "os pedidos pagos ficam na origem, que termina FECHADA. Sem nada cobrado, a "
+                    + "origem termina CANCELADA, sem a devolução que POST /cancel faria.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Juntadas — devolve a comanda de destino", content = @Content(schema = @Schema(implementation = ComandaResponseDTO.class))),
             @ApiResponse(responseCode = "404", description = "Comanda de origem ou destino não encontrada", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Alguma das duas não está aberta, depósitos diferentes ou mesma comanda (COMANDA_MERGE_NOT_ALLOWED), ou a origem já teve parte cobrada (COMANDA_PARTIALLY_CLOSED)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Alguma das duas não está aberta, depósitos diferentes ou mesma comanda (COMANDA_MERGE_NOT_ALLOWED)", content = @Content)
     })
     @PostMapping("/{id}/merge-into/{targetId}")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")

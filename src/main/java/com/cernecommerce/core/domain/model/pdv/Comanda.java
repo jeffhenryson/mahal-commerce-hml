@@ -371,6 +371,31 @@ public record Comanda(
     }
 
     /**
+     * PDV-F031 — as linhas que uma junção leva desta mesa para a outra: as ainda não cobradas, mais o
+     * <b>grupo inteiro</b> (sessão e roshs ligados a ela) de toda sessão de narguilé que ainda esteja
+     * no salão, paga ou não.
+     *
+     * <p>Grupo inteiro, e não só a linha ativa, porque o utensílio é alocado no id da sessão raiz e a
+     * liberação ao recolher procura a raiz <b>na mesma comanda</b>: separar um rosh ativo da raiz já
+     * recolhida deixaria o vaso preso para sempre. A linha cobrada que vai junto continua cobrada —
+     * o pedido dela segue apontando para esta mesa.</p>
+     */
+    public List<Long> itemIdsToMoveOnMerge() {
+        Set<Long> roots = new HashSet<>();
+        for (ComandaItem item : items) {
+            if (item.isActiveSession()) {
+                roots.add(item.mode() == ConsumptionMode.SESSAO ? item.id() : item.linkedItemId());
+            }
+        }
+        return items.stream()
+                .filter(i -> i.isOpen() || roots.contains(i.id())
+                        || (i.linkedItemId() != null && roots.contains(i.linkedItemId())))
+                .map(ComandaItem::id)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    /**
      * O pedido que cobrou por último alguma linha desta mesa — é ele que fica no cabeçalho quando a
      * mesa, já toda paga em fechamentos parciais, é encerrada por {@code finish} (PDV-F023).
      */
