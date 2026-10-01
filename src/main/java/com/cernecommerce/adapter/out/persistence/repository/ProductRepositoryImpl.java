@@ -59,6 +59,8 @@ public class ProductRepositoryImpl implements ProductRepository {
             "order_item.sku",
             "goods_receipt_item.sku",
             "replenishment_list_item.sku",
+            // CRM-F010 — o item do marcado guarda o SKU para a ficha do cliente (V137).
+            "receivable_item.sku",
             "nfe_import_line.matched_sku");
 
     private final ProductJpaRepository productJpaRepository;
