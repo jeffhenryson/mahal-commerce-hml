@@ -98,6 +98,17 @@ class PdvDeliveryPostgresIT {
         return new String[] {String.valueOf(session.id()), "CARV-" + s, operator};
     }
 
+    /** PED-F003 — operador de cada caixa em lote, para a lista de pedidos. */
+    @Test
+    void sessionOperatorsAreResolvedInBatch() {
+        String[] ctx = givenOpenSessionWithStock();
+        Long sessionId = Long.valueOf(ctx[0]);
+
+        Map<Long, String> operators = pdvUseCase.getSessionOperators(List.of(sessionId, -1L));
+
+        assertThat(operators).containsExactly(Map.entry(sessionId, ctx[2]));
+    }
+
     @Test
     void customerPhoneIsNormalized_andLookupMatchesAnyMaskAndEmailCase() {
         String phone = uniquePhone();

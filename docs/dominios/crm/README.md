@@ -6,7 +6,7 @@ consultas (CRM-F003), todos em 2026-07-29
 **Pacote Java:** `com.cernecommerce.core.domain.model.crm` (cashback em
 `com.cernecommerce.core.domain.model.cashback`, controller próprio `CashbackController` em `/cashback`)
 **Rota HTTP base:** `/crm` (mais `/cashback`, ver CRM-F003)
-**Última atualização deste doc:** 2026-08-18 (CRM-C003 revisado, CRM-F004/F005/F006 — auditoria `/1-analise ambas`)
+**Última atualização deste doc:** 2026-10-01 ("Marcar", CRM-F010)
 
 > ⚠️ **Este README ainda não passou por auditoria de código.** Ele foi criado em 2026-07-26 na
 > descentralização do `docs/backlog.md` para receber os itens `F001–F009`, que estavam órfãos.
@@ -37,6 +37,9 @@ por WhatsApp/e-mail e tags.
 - **Automações e campanhas:** regras por gatilho/segmento/canal com template e log de envios. ✅ Implementado (F006).
 - **Tags e exportação.** ✅ Implementado (F007, F009).
 - **Status de canal de envio.** ✅ Implementado (F008).
+- **"Marcar" — venda a prazo para cliente VIP:** recebível por pedido, limite de crédito, quitação
+  no caixa, vencidos. ✅ Implementado (CRM-F010, 2026-09-30). Falta mostrar os marcados como "a
+  receber" no Financeiro.
 
 ## Segurança e Infraestrutura
 
@@ -67,6 +70,12 @@ das permissões acima: `CashbackController` em `/cashback`, sob `CASHBACK_RATE_M
 (mutação de taxa) e `CASHBACK_READ` (saldo, extrato, diagnóstico de margem). `GET
 /crm/customers/{id}/cashback` continua sob `CRM_CUSTOMER_READ` — delega ao mesmo caso de uso, não
 duplica a checagem.
+
+O "Marcar" (CRM-F010) também tem controller e permissões próprios: `ReceivableController`, com
+`RECEIVABLE_READ` (leituras, ADMIN e ATENDENTE) e `RECEIVABLE_MANAGE` (vencimento, cancelamento e
+`PUT /crm/customers/{id}/credit-limit`, só ADMIN), ambas da V137. Marcar na venda exige
+`PDV_SALE_ON_ACCOUNT` (só ADMIN) e receber exige `PDV_SALE_MANAGE`. Nenhuma das três está em
+`SeedConfig`: em `dev`, com o Flyway desligado, os endpoints respondem 403 ao admin local.
 
 **Granularidade:** `CRM_CUSTOMER_LOOKUP` resolveu o caso do balcão — quem atende ali agora pode
 achar **um** cliente por CPF/email/contato sem precisar de `CRM_CUSTOMER_READ`.
@@ -116,6 +125,11 @@ O `CrmController` publica `AuditEvent` em 12 operações:
 | `POST /crm/automacoes/{id}/disparar` | `CAMPAIGN_AUTOMATION_DISPATCHED` |
 | `GET /crm/customers/export` | `CUSTOMER_LIST_EXPORTED` |
 
+O "Marcar" (CRM-F010) publica `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha
+`MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante),
+`RECEIVABLE_DUE_DATE_CHANGED` (de/para e motivo), `RECEIVABLE_CANCELLED` (saldo e motivo) e
+`CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual).
+
 É a melhor cobertura de auditoria entre os domínios de negócio. Nenhuma outra leitura gera
 evento — só o export, por expor a base inteira de PII em um único download (CRM-C002).
 
@@ -150,6 +164,53 @@ do canal.
 ### Riscos conhecidos
 
 - **CRM-C001** — README ainda sem Modelo de Domínio, Regras, API, Schema e Testes.
+
+## "Marcar" — venda a prazo para cliente VIP (CRM-F010)
+
+O cliente VIP leva o produto (ou consome a sessão na mesa) e paga até uma data combinada. Pacotes:
+`core/domain/model/recebivel`, `ReceivableService` (port `ReceivableUseCase`), `ReceivableController`,
+`OnAccountGuard` (borda do PDV e da mesa) e `ReceivableOverdueJob`.
+
+**Fluxo.** A venda **conclui** normalmente — a mercadoria saiu. A parte marcada vira uma linha
+`order_payment` `MARCADO`/`ON_ACCOUNT` (fora de toda soma de caixa) e um `customer_receivable` com o
+snapshot dos itens do pedido inteiro. A quitação entra no caixa de **quem recebe**, por
+`receivable_payment`, e aparece em `payment-totals` como `receivableReceived`. O cashback da parte
+marcada só é creditado na quitação, proporcional ao que foi pago.
+
+**Estados:** `ABERTO → PARCIAL → QUITADO`; `VENCIDO` (gravado pelo job às 00:05 de São Paulo; a
+checagem de "tem vencido" calcula na leitura e não depende dele); `CANCELADO` (manual ou pelo
+reembolso do pedido).
+
+| Regra | Onde | Teste |
+|---|---|---|
+| No máximo uma linha `MARCADO`, com vencimento hoje ou depois | `ReceivableService.validateOnAccount` | `ReceivableServiceTest.validate_refusesTwoOnAccountLines`, `validate_refusesMissingOrPastDueDate` |
+| Exige cliente, tag `VIP` (enquanto não houver campo próprio), nenhum vencido e limite | `ReceivableService.validateOnAccount` | `validate_refusesAnonymousSale`, `validate_refusesNonVip`, `validate_refusesCustomerWithOverdue`, `validate_refusesAboveLimit_withTheNumbersForTheScreen` |
+| Limite efetivo: o individual ou o padrão da loja (`pdv.on-account.default-credit-limit`, padrão 0 = sem limite individual não marca); `null` no `PUT` volta ao padrão | `ReceivableService` | `validate_defaultLimitZero_requiresAnIndividualLimit`, `setCreditLimit_nullReturnsToTheDefault` |
+| Quitação: FIFO por vencimento sem ids; com ids, só neles e na ordem; parcial fica `PARCIAL` | `ReceivableService.pay` | `pay_withoutIds_appliesFifoAndLeavesThePartialOnTheLastOne`, `pay_withIds_appliesOnlyThoseInTheGivenOrder` |
+| Só dinheiro passa do saldo (troco do lote); outros métodos acima do saldo → 409 | `ReceivableService.pay` | `pay_cashAboveTheBalance_givesChange`, `pay_nonCashAboveTheBalance_isRefused` |
+| Sessão de quem recebe: aberta, do operador e de hoje | `ReceivableService.pay` | `pay_inASessionFromAPreviousDay_isRefused` |
+| Renegociar vencido o reabre | `ReceivableService.changeDueDate` | `changeDueDate_reopensAnOverdueReceivable` |
+| Reembolso do pedido cancela o marcado em aberto | `ReceivableService.cancelOpenForOrder` | `cancelOpenForOrder_cancelsOnlyWhenOpen`; `ReceivableCycleIT.refundingTheOrder_cancelsTheOpenReceivable` |
+| Vencido pela data da loja (São Paulo) | `ReceivableService.markOverdue` | `markOverdue_usesTheStoreDate` |
+| `MARCADO` não vale na liquidação do app, na correção de pagamento nem na quitação → 400 `INVALID_PAYMENT_METHOD` | `OnAccountNotSupportedException` | — |
+
+**Schema (V137):** `customer_credit_limit`, `customer_receivable` (único por pedido),
+`receivable_item`, `receivable_payment_batch`, `receivable_payment`; em `order_payment`, `due_date`,
+`MARCADO` e `ON_ACCOUNT`; `system_config` `pdv.on-account.default-due-days=30` e
+`pdv.on-account.default-credit-limit=0` (sem tela: `/system/config` só aceita `auth.*`). Colunas
+em [`persistence.md`](../../persistence.md).
+
+**API:** `/receivables` (lista, resumo por cliente, detalhe, quitação, vencimento, cancelamento),
+`GET /crm/customers/{id}/receivables`, `GET /crm/customers/{id}/on-account-eligibility`,
+`PUT /crm/customers/{id}/credit-limit`, e `creditLimit`/`openBalance`/`overdueBalance` no
+`GET /crm/customers/{id}`. Contrato em [`api-reference.md`](../../api-reference.md).
+
+**Testes:** `ReceivableServiceTest`, `ReceivableControllerSecurityTest`, `ReceivableCycleIT`,
+`PagamentoPostgresIT` (V137 contra Postgres) e os casos de `CashbackServiceTest` do crédito
+proporcional.
+
+**Pendências:** os marcados não aparecem como "a receber" no Financeiro (o cash-flow é ledger manual
+e não lê `order_payment`); as permissões novas faltam no `SeedConfig` de `dev`.
 
 ## Testes no Postman
 
@@ -198,6 +259,16 @@ Novas features e correções do CRM seguem as séries `CRM-F001+` e `CRM-C002+`.
 `F001–F009` está congelada (todos concluídos, ver histórico).
 
 ## Histórico de Implementações
+
+- **2026-09-30** — `marcar-venda-a-prazo-vip` (CRM-F010 / PDV-F028, **V137**): venda a prazo para
+  cliente VIP no balcão e na mesa, recebível com snapshot dos itens, limite de crédito em tabela
+  própria, quitação no caixa de quem recebe (`receivableReceived`), cashback proporcional na
+  quitação, job diário de vencidos e saldo do marcado na ficha. Commit `05d5ec8`; correção da troca
+  de SKU para `receivable_item` em `4445b69`.
+
+- **2026-10-01** — `busca-de-cliente-500-no-postgres` (CRM-C008): a busca sem dígitos de
+  `GET /crm/customers` (e do export) caía em 500 no Postgres (`cpfDigits` nulo virava `bytea`). Duas
+  consultas, com e sem CPF; `CustomerSearchPostgresIT`.
 
 - **2026-09-26** — `cadastro-sem-duplicado-por-telefone-ou-email` (CRM-C007): `GET
   /crm/customers/lookup/contact?phone=&email=&cpf=` devolve todos os clientes que batem, com

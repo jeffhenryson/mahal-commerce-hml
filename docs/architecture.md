@@ -344,3 +344,34 @@ mahaltabacaria/
 3. `docker compose up -d` em `../mahal-commerce-ui-market` (market UI, porta 4300)
 
 Em **produção**, os três serviços são unificados em `docker-compose.prod.yml` (raiz deste repo) — os serviços `cerne-commerce-ui` e `mahal-commerce-ui-market` usam `build.context` relativo (`./cerne-commerce-ui`, `./mahal-commerce-ui-market`), então o host de deploy precisa ter os dois repositórios de frontend clonados como diretórios sibling do backend antes de rodar `docker compose -f docker-compose.prod.yml up -d` (tipicamente via script de deploy, não documentado neste repositório).
+
+### "Marcar" (CRM-F010): a quitação não é pedido nem `CashMovement`
+
+A venda marcada **conclui** — a mercadoria saiu — e a parte a prazo vira uma linha `order_payment`
+`MARCADO`/`ON_ACCOUNT`, que nenhuma soma de caixa conta. A quitação, depois, entra no caixa de quem
+recebe por `receivable_payment` (agrupado em `receivable_payment_batch`, que guarda o troco).
+
+- **Não é `order_payment`:** a quitação não tem pedido próprio, e entra no caixa de quem recebe,
+  que pode ser outro operador em outro dia.
+- **Não é `CashMovement`:** o movimento de caixa só existe para dinheiro e já entra no esperado do
+  fechamento; somado ao `payment-totals`, a quitação seria contada duas vezes. Ela aparece em
+  `payment-totals` como `receivableReceived`, por método, e já entra em `netAmount`.
+- **Limite de crédito em tabela própria** (`customer_credit_limit`), não em `customers`: o `save` do
+  cliente regrava a ficha inteira e zeraria a coluna.
+
+Pendência conhecida: o Financeiro (`/financeiro/cash-flow`) é ledger manual e não lê
+`order_payment` nem `customer_receivable`, então os marcados ainda não aparecem como "a receber".
+
+### Correção de pagamento (PDV-F030): lastro em vez de update
+
+A forma errada não é apagada: vira `CORRECTED` e continua no pedido, com `correction_id` apontando
+para a correção que a aposentou. Caixa já fechado não tem o esperado reescrito — a divergência por
+método vai para `cash_session_adjustment`. O preço é uma tabela a mais e um endpoint de leitura dos
+ajustes ainda pendente; o ganho é que o fechamento assinado continua sendo o que foi assinado.
+
+### Campos só do histórico ficam fora do record de domínio (PDV-F029)
+
+`comanda.closed_by` e `cancel_reason` estão em `ComandaEntity` e chegam ao serviço por
+`ClosedComanda(comanda, closedBy, cancelReason)`, sem entrar no record `Comanda`, que tem dezenas de
+pontos de construção e nenhum uso para eles. São gravados por `ComandaRepository.recordClosing` na
+entidade gerenciada — um `UPDATE` em lote deixaria a cópia já carregada na transação desatualizada.

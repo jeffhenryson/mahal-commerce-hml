@@ -104,7 +104,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
                 Sort.by(Sort.Order.desc("cadastradoEm"), Sort.Order.desc("id")));
         Page<CustomerEntity> result = (search == null || search.isBlank())
                 ? customerJpaRepository.findAll(pageRequest)
-                : customerJpaRepository.search(search.trim(), cpfSearchDigits(search), pageRequest);
+                : searchPage(search.trim(), cpfSearchDigits(search), pageRequest);
         List<Customer> content = result.getContent().stream().map(this::toDomain).toList();
         return new PageResult<>(content, page, size, result.getTotalElements(), result.getTotalPages());
     }
@@ -114,7 +114,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     public List<Customer> findAllForExport(String search) {
         List<CustomerEntity> entities = (search == null || search.isBlank())
                 ? customerJpaRepository.findAll()
-                : customerJpaRepository.searchAll(search.trim(), cpfSearchDigits(search));
+                : searchAll(search.trim(), cpfSearchDigits(search));
         return entities.stream().map(this::toDomain).toList();
     }
 
@@ -150,6 +150,19 @@ public class CustomerRepositoryImpl implements CustomerRepository {
      * CPF é gravado só com dígitos; a busca por CPF só entra quando o termo tem dígitos suficientes
      * para não casar qualquer cliente cujo CPF contenha "1".
      */
+    // CRM-C008: cpfDigits nulo nunca vai para a consulta — ver CustomerJpaRepository.
+    private Page<CustomerEntity> searchPage(String search, String cpfDigits, PageRequest pageRequest) {
+        return cpfDigits == null
+                ? customerJpaRepository.search(search, pageRequest)
+                : customerJpaRepository.searchWithCpf(search, cpfDigits, pageRequest);
+    }
+
+    private List<CustomerEntity> searchAll(String search, String cpfDigits) {
+        return cpfDigits == null
+                ? customerJpaRepository.searchAll(search)
+                : customerJpaRepository.searchAllWithCpf(search, cpfDigits);
+    }
+
     private static String cpfSearchDigits(String search) {
         String digits = CustomerIdentifiers.digitsOrNull(search);
         return digits != null && digits.length() >= 3 ? digits : null;

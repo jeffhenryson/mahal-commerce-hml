@@ -47,7 +47,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 public class PdvService implements PdvUseCase {
 
@@ -143,6 +145,12 @@ public class PdvService implements PdvUseCase {
     public CashRegisterSession getSession(Long sessionId) {
         return cashRegisterRepository.findById(sessionId)
                 .orElseThrow(() -> new CashRegisterSessionNotFoundException(sessionId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, String> getSessionOperators(Collection<Long> sessionIds) {
+        return cashRegisterRepository.findOperatorsByIds(sessionIds);
     }
 
     @Override

@@ -93,21 +93,23 @@ registro de vendas no balcão.
 | `POST` | `/pdv/sessions/{id}/movements` | `PDV_SESSION_MANAGE` | Sangria ou suprimento. Exige sessão aberta **e do próprio operador** |
 | `GET` | `/pdv/sessions/{id}/movements` | `PDV_READ` | Movimentos da sessão, paginados (`page` ≥ 0, `size` 1–100), na ordem de lançamento (PDV-C012) |
 | `POST` | `/pdv/sessions/{id}/close` | `PDV_SESSION_CLOSE` | Fecha confrontando contado × esperado. **Divergência não bloqueia** — mas **mesa aberta sim** (PDV-C005): `409 SESSION_HAS_OPEN_COMANDAS`, checado antes de calcular o esperado |
-| `GET` | `/pdv/sessions/{id}/payment-totals` | `PDV_READ` | Total recebido na sessão por forma de pagamento — `amount` é o bruto `CAPTURED`. As quatro formas sempre aparecem, mesmo zeradas. PDV-F026: `refundedAmount`, `changeAmount` (só DINHEIRO) e `netAmount = amount - refundedAmount - changeAmount` |
+| `GET` | `/pdv/sessions/{id}/payment-totals` | `PDV_READ` | Total recebido na sessão por forma de pagamento — `amount` é o bruto `CAPTURED`. As quatro formas sempre aparecem, mesmo zeradas. PDV-F026: `refundedAmount`, `changeAmount` (só DINHEIRO) e `netAmount = amount - refundedAmount - changeAmount`. CRM-F010: `receivableReceived` (quitação de marcado recebida na sessão, já líquida do troco), somado em `netAmount`. `CORRECTED` (PDV-F030) e `ON_ACCOUNT` não contam |
 | `GET` | `/pdv/pending-online-orders` | `PDV_READ` | Pedidos do app aguardando pagamento, para o caixa localizar quem chegou na loja |
 | `POST` | `/pdv/sessions/{id}/orders/{orderId}/settle` | `PDV_SALE_MANAGE` | Liquida no balcão um pedido do app: consome a reserva, **registra o pagamento recebido** e conclui. **Corpo obrigatório desde PDV-C015** (`payments`, mesmo shape da venda de balcão), somando **exatamente** o líquido — aqui não há onde guardar troco. Encerra a cobrança de gateway aberta no checkout. Erros: `400 INSUFFICIENT_PAYMENT`, `400 CHANGE_NOT_SUPPORTED` |
-| `POST` | `/pdv/sessions/{id}/sales` | `PDV_SALE_MANAGE` (+ `PDV_SALE_DISCOUNT` se houver desconto) | Registra venda na sessão, **captura o pagamento** e **dá baixa no estoque** item a item. Preço e custo vêm do catálogo, não do request. Exige sessão `OPEN` e ao menos uma linha em `payments`. Desconto de linha acima do bruto dela: `409 ITEM_DISCOUNT_EXCEEDS_GROSS` (PDV-C016 — era um 400 genérico). PDV-F022: `delivery` (RETIRADA/ENTREGA → `RESERVADO`; `fee` em `totalPayable`, fora do líquido), `items[].note` (≤200) e `409 SESSION_STALE` para sessão aberta em dia anterior (data de São Paulo) |
+| `POST` | `/pdv/sessions/{id}/sales` | `PDV_SALE_MANAGE` (+ `PDV_SALE_DISCOUNT` se houver desconto) | Registra venda na sessão, **captura o pagamento** e **dá baixa no estoque** item a item. Preço e custo vêm do catálogo, não do request. Exige sessão `OPEN` e ao menos uma linha em `payments`. Desconto de linha acima do bruto dela: `409 ITEM_DISCOUNT_EXCEEDS_GROSS` (PDV-C016 — era um 400 genérico). PDV-F022: `delivery` (`ENTREGA` → `RESERVADO`; `RETIRADA` → `CONCLUIDO`, ou `RESERVADO` com `reserveForPickup=true` desde 2026-09-30; `fee` em `totalPayable`, fora do líquido). PDV-F028/CRM-F010: linha `MARCADO` com `dueDate` (exige `PDV_SALE_ON_ACCOUNT`), `items[].note` (≤200) e `409 SESSION_STALE` para sessão aberta em dia anterior (data de São Paulo) |
 | `GET` | `/pdv/sales/{id}` | `PDV_READ` | Consulta um pedido, com os pagamentos. Antes de PDV-F005 a venda era write-only |
 | `GET` | `/pdv/sales/{id}/receipt` | `PDV_READ` | Comprovante interno da venda — **não é documento fiscal** (isso é a NFC-e, Fatia 11) |
 | `GET` | `/pdv/sessions/{id}/sales` | `PDV_READ` | Pedidos da sessão, paginados, do mais recente para o mais antigo |
 | `POST` | `/pdv/comandas?sessionId=` | `PDV_COMANDA_MANAGE` | Abre comanda de mesa (PDV-F009). Controller próprio (`PdvComandaController`). Exige a **própria** sessão: a mesa nasce na gaveta de quem a abriu, e é esse depósito que vai baixar estoque. Aceita `customerId` opcional (PDV-F010) — é ele que faz o pedido da mesa sair com nome e gerar cashback |
 | `POST` | `/pdv/comandas/{id}/items` | `PDV_COMANDA_MANAGE` (+ `PDV_COMANDA_COURTESY` se a linha for cortesia, + `PDV_COMANDA_SURCHARGE` se houver acréscimo positivo) | Lança item na comanda aberta — **debita estoque na hora**, não no fechamento. Aceita `mode` (`NORMAL`/`OPEN_ROSH`/`SABOR_EXTRA`/`TROCA`), `courtesy` e `linkedItemId` (PDV-F010), mais `notes` (máx. 200, sem efeito em preço) e `surchargeAmount` (só em `OPEN_ROSH`, soma sobre o `openRoshPrice` do produto **pai**) (PDV-F011). Erros: `400 NOT_AVAILABLE_FOR_TABLE`, `400 NOT_A_SESSION_PRODUCT`, `400 OPEN_ROSH_NOT_PRICED`, `400 LINKED_ITEM_REQUIRED`, `403 COURTESY_NOT_ALLOWED`, `409 NOT_AN_OPEN_ROSH`, `400 NOTES_TOO_LONG`, `403 SURCHARGE_NOT_ALLOWED`, `400 SURCHARGE_ON_COURTESY`, `400 SURCHARGE_NOT_APPLICABLE`, `400 SURCHARGE_INVALID`. **EST-F027:** quando o SKU é produto de sessão com `sessionsPerUnit` declarado, a linha consome **uso de lata aberta** em vez de baixar unidade, e a resposta ecoa `packageUses`/`packageSessionsPerUnit` — o "3 de 5" da tela. `400 NOT_A_PACKAGED_SESSION_PRODUCT` só alcança os endpoints de `/estoque/open-packages`; aqui, produto sem `sessionsPerUnit` simplesmente segue o caminho antigo. |
 | `DELETE` | `/pdv/comandas/{id}/items/{itemId}` | `PDV_COMANDA_MANAGE` | Remove uma linha da comanda aberta, devolvendo o estoque dela (`ENTRADA`) — PDV-F012. **As `TROCA` penduradas nela saem junto**; um `SABOR_EXTRA` pendurado **barra** a remoção (`409 LINKED_ITEM_IS_CHARGED`), porque é linha própria e pode estar cobrada. Erros: `404 COMANDA_ITEM_NOT_FOUND`, `409 COMANDA_NOT_OPEN` |
-| `GET` | `/pdv/comandas/{id}` | `PDV_READ` | Detalhe da comanda, com o total corrente (`runningTotal`), o cliente (`customerId`/`customerName`, resolvido no CRM) e o `mode`/`courtesy`/`linkedItemId` de cada linha |
+| `GET` | `/pdv/comandas/{id}` | `PDV_READ` ou `ORDER_READ` | Detalhe da comanda, com o total corrente (`runningTotal`), o cliente (`customerId`/`customerName`, resolvido no CRM) e o `mode`/`courtesy`/`linkedItemId` de cada linha. PDV-F029: em **qualquer status**, com os campos do histórico e `orders[]` (pedidos da mesa, inclusive parciais, com `payments`) |
+| `GET` | `/pdv/comandas/history` | `PDV_READ` ou `ORDER_READ` | PDV-F029 — mesas `FECHADA`/`CANCELADA` por `closedAt desc`. Filtros `from`/`to` (encerramento), `status` (`ABERTA` → 400), `customerId`, `openedBy`, `closedBy`, `tableLabel` (sem caixa e espaços), `warehouseCode`, `page`/`size` (1–100). Item com `closedBy`, `durationMinutes`, `cancelReason`, `orderIds`, `totalPaid`, `serviceFeeTotal`, `discountTotal`, `courtesyTotal` (custo), `sessionsCount` |
+| `GET` | `/pdv/comandas/analytics` | `PDV_READ` ou `ORDER_READ` | PDV-F029 — indicadores das `FECHADA` com encerramento em `from`..`to` (obrigatórios, máx. 366 dias → 400) e `warehouseCode` opcional: `mesas`, `ticketMedio`, `permanenciaMediaMin`, `receitaTotal`, `taxaServicoTotal`, `descontoTotal`, `sessoesNarguile`, `porAtendente` (quem abriu), `porMesa` (rótulo normalizado), `porHora` (hora de abertura em São Paulo) |
 | `GET` | `/pdv/comandas` | `PDV_READ` | As "mesas ocupadas". **`sessionId` é opcional desde PDV-C007**: sem ele a listagem é da **loja inteira**, que é o que a decisão de mesas compartilhadas pede — era a obrigatoriedade do parâmetro que forçava o cliente ao merge N+1 de uma chamada por sessão. Aceita também `warehouseCode`, e pagina (`page` ≥ 0, `size` 1–100, default 50). **Não checa posse.** Devolve `PageResult` — ver a nota de contrato abaixo |
 | `POST` | `/pdv/comandas/{id}/close` | `PDV_COMANDA_MANAGE` (+ `PDV_COMANDA_DISCOUNT` se `discountAmount > 0`) | Fecha a comanda: converte os itens acumulados num pedido concluído que **nasce `channel = MESA`**, com `comandaId` e `tableLabel`. Mesmo contrato de pagamento de `POST /pdv/sessions/{id}/sales`; **sem novo débito de estoque** — já saiu item a item. O pedido entra na sessão de **quem fecha**, não na que abriu. Aceita `discountAmount` (abatimento na **conta inteira**, rateado entre as linhas pelo servidor — PDV-F014) e `applyServiceFee` (taxa de serviço, **`true` por omissão** — PDV-F015). O pagamento é validado contra `netAmount + serviceFeeAmount`. Erros: `409 COMANDA_EMPTY`, `409 COMANDA_ONLY_COURTESY`, `409 NO_OPEN_CASH_REGISTER_SESSION`, `409 DISCOUNT_LIMIT_EXCEEDED`, `409 DISCOUNT_EXCEEDS_BILL` (PDV-C016 — era um 400 genérico), `403 COMANDA_DISCOUNT_NOT_ALLOWED` |
 | `GET` | `/pdv/comandas/service-fee` | `PDV_READ` | Percentual da taxa de serviço vigente (PDV-F015), para a tela mostrar o valor **antes** de fechar. Zero significa que a casa não cobra |
-| `POST` | `/pdv/comandas/{id}/cancel` | `PDV_COMANDA_MANAGE` | Abandona a comanda sem cobrança, devolvendo ao estoque cada item já lançado (`ENTRADA`) |
+| `POST` | `/pdv/comandas/{id}/cancel` | `PDV_COMANDA_MANAGE` | Abandona a comanda sem cobrança, devolvendo ao estoque cada item já lançado (`ENTRADA`). PDV-F029: corpo opcional `{reason}` (≤ 500), gravado aparado em `cancel_reason` |
 
 > **Contrato alterado em PDV-F004/F006** (sem consumidor real — o PDV do `frontend-admin` é
 > protótipo mockado): `unitPrice` saiu do corpo de `POST /pdv/sessions/{id}/sales`,
@@ -281,6 +283,11 @@ registro de vendas no balcão.
 | Reembolso concorrente: só um sucede | `OrderRefundConcurrencyIT` | `OrderRefundConcurrencyIT.concurrentRefunds_onlyOneSucceedsAndEffectsAreNotDuplicated` |
 | **Concorrência** | | |
 | Vendas concorrentes nunca vendem além do saldo disponível | `EstoqueUseCase.adjustStock` (`@Version` otimista, ver [`estoque`](../estoque/README.md)) | `PdvSaleConcurrencyIT.concurrentSales_neverOversellBeyondAvailableStock` |
+| **Histórico de mesas (PDV-F029)** | | |
+| Todo encerramento grava quem encerrou; o fechamento parcial não grava nada (a mesa segue aberta) | `ComandaService.closeComanda`/`finishComanda`/`cancelComanda`/`mergeComanda`/`sweepStaleComandas` → `ComandaRepository.recordClosing` | `ComandaServiceTest.closeComanda_doesNotAdjustStockAgain`, `closeComanda_lastPartialClose_keepsTheComandaOpen`, `mergeComanda_movesTheLinesWithoutAnyStockMovement`, `sweepStaleComandas_cancelsTheEmptyOnes`; `ComandaSessaoServiceTest.finishComanda_withEverythingPaidAndCollected_closesWithTheLastOrder` |
+| Motivo do cancelamento é aparado; em branco vira nulo | `ComandaService.cancelComanda(id, user, reason)` | `ComandaServiceTest.cancelComanda_recordsWhoCancelledAndTheTrimmedReason`, `cancelComanda_blankReasonIsRecordedAsNull` |
+| Totais da mesa vêm dos pedidos MESA dela, inclusive parciais; reembolsado fica fora; cortesia medida pelo custo | `ComandaService.historyEntry` | `ComandaServiceTest.listHistory_derivesTheTotalsFromTheOrders` |
+| Indicadores: mesa pelo rótulo normalizado, hora pela abertura em São Paulo, atendente por quem abriu; período ≤ 366 dias | `ComandaService.analytics` | `ComandaServiceTest.analytics_groupsByNormalizedTableAndOpeningHourInSaoPaulo`, `analytics_refusesAnInvertedPeriod`, `analytics_refusesMoreThan366Days` |
 
 ## Segurança e Infraestrutura
 
@@ -301,6 +308,7 @@ registro de vendas no balcão.
 | `PDV_COMANDA_MANAGE` | `POST`/`.../items`/`.../close`/`.../cancel` de `/pdv/comandas` | V105 (`ROLE_ADMIN`) + **V111** (`ROLE_ATENDENTE`) | ✅ `SeedConfig` (`ROLE_ADMIN` e `ROLE_ATENDENTE`) + `DevRoleBootstrapConfig` |
 | `PDV_COMANDA_COURTESY` | linha `courtesy: true` (ou `mode = TROCA`) em `POST /pdv/comandas/{id}/items` | **V115** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
 | `PDV_COMANDA_SURCHARGE` | `surchargeAmount > 0` em `POST /pdv/comandas/{id}/items` | **V117** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
+| `PDV_SALE_ON_ACCOUNT` | linha `MARCADO` em `POST /pdv/sessions/{id}/sales` e em `POST /pdv/comandas/{id}/close` (CRM-F010) — checada no controller por `OnAccountGuard` | **V137** (`ROLE_ADMIN` apenas) | ❌ falta em `SeedConfig` — em `dev` (Flyway desligado) o admin local toma 403. O mesmo vale para `ORDER_PAYMENT_CORRECT[_CLOSED]` (V136) e `RECEIVABLE_READ`/`MANAGE` (V137) |
 | `PDV_COMANDA_DISCOUNT` | `discountAmount > 0` em `POST /pdv/comandas/{id}/close` | **V119** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
 
 Comanda (PDV-F009) ganhou permissão **própria**, separada de `PDV_SALE_MANAGE` — é uma superfície
@@ -404,7 +412,8 @@ esperado/contado/diferença — o ciclo de caixa é auditado ponta a ponta. Cash
 
 ✅ **A comanda tem `EventType` próprio desde PDV-C014**: `COMANDA_OPENED`, `COMANDA_ITEM_ADDED`,
 `COMANDA_ITEM_REMOVED`, `COMANDA_CLOSED` e `COMANDA_CANCELLED`, todos com o `comandaId` na frente do
-payload — é a chave por onde se procura a mesa depois de um fechamento estranho.
+payload — é a chave por onde se procura a mesa depois de um fechamento estranho. Desde PDV-F029,
+`COMANDA_CANCELLED` leva também o `reason` opcional.
 
 Antes disso a comanda inteira andava pendurada em `STOCK_MOVEMENT_REGISTERED`, discriminada por
 `origin`, e **abrir a mesa não deixava rastro nenhum**, ao contrário de abrir caixa. No lançamento e
@@ -795,6 +804,20 @@ mudam juntos.
 - `comanda_item.vaso_grande BOOLEAN NOT NULL DEFAULT FALSE` (só `SESSAO`, CHECK), com backfill pelo
   sufixo ` · Vaso grande` da nota — base do "repetir sessão".
 
+**V136 — `pagamento_correcao`** (PDV-F030; o comentário da migration ainda diz PDV-F027)
+- `order_payment_correction` e `cash_session_adjustment`; em `order_payment`, `correction_id`,
+  `origin_correction_id`, `corrected_at`, `corrected_by` e o status `CORRECTED`. Detalhe em
+  [`persistence.md`](../../persistence.md). Permissões `ORDER_PAYMENT_CORRECT` (ADMIN, ATENDENTE) e
+  `ORDER_PAYMENT_CORRECT_CLOSED` (ADMIN).
+
+**V137 — `crm_marcar_recebiveis`** (CRM-F010 / PDV-F028)
+- `order_payment.due_date`, método `MARCADO`, status `ON_ACCOUNT` (`ck_order_payment_on_account`).
+  Tabelas do recebível descritas no README do [CRM](../crm/README.md).
+
+**V138 — `pdv_comanda_historico`** (PDV-F029)
+- `comanda.closed_by VARCHAR(80)`, `comanda.cancel_reason VARCHAR(500)` e
+  `idx_comanda_status_closed_at (status, closed_at DESC)`.
+
 **Nota de modelagem:** `sales_order`/`order_item`/`order_payment` referenciam depósito só por
 texto livre (`warehouse_code`), sem FK — mesmo padrão de `stock_balance`/`stock_movement` em
 `estoque` (ver EST-C002 no README daquele domínio). Nenhuma validação equivalente a
@@ -826,6 +849,9 @@ texto livre (`warehouse_code`), sem FK — mesmo padrão de `stock_balance`/`sto
 | `ComandaServiceTest` | Unit (Mockito) | Abertura com posse, débito imediato, ordem das validações antes do estoque, os quatro modos de consumo (incl. open rosh cobrando o preço do pai), cortesia e `TROCA` implícita, vínculo de linha, não-repreçamento no fechamento, gaveta de quem fecha, `COMANDA_ONLY_COURTESY`, carimbo da taxa de cashback, devolução no cancelamento, e (PDV-F011) acréscimo somando sobre o preço do pai, recusa em cortesia/fora de `OPEN_ROSH`/negativo, `notes` recusada acima de 200 |
 | `ComandaRepositoryIT` | `@SpringBootTest` + `@Transactional` | Round-trip da comanda e dos itens com preços congelados, transições `FECHADA`/`CANCELADA`, campos de sessão e cliente, linha de cortesia com custo congelado, estabilidade dos ids de item (para `linkedItemId` sobreviver) e, desde PDV-C007/C009/C012, a listagem de mesas: loja inteira sem `sessionId`, filtro por `warehouseCode`, paginação estável entre páginas, página além do fim, a consulta não-paginada da guarda de fechamento, e a **contagem de consultas** que prova o fim do N+1 |
 | `ComandaCashCycleIT` | `@SpringBootTest` | Ciclo completo contra banco real: abrir → lançar com débito verificado a cada item → fechar com pagamento dividido; devolução de todos os itens no cancelamento; mesa com cliente e duplo em cortesia gerando pedido `MESA` com cashback; e (PDV-F014/F015) o fechamento com desconto rateado **e** taxa, com round-trip da taxa no banco e a prova de que o `expectedAmount` do caixa enxerga a gorjeta paga em dinheiro |
+| `ComandaHistoryIT` | `@SpringBootTest` | PDV-F029 — mesa fechada em parcial + total e mesa cancelada com motivo: `closedBy`/`cancelReason` gravados, filtros do histórico, detalhe com pagamentos por pedido, indicadores só com a FECHADA |
+| `ComandaHistoryPostgresIT` | Testcontainers | PDV-F029 — V138 contra Postgres: recorte por data com um lado só, ordem `closed_at desc`, paginação, indicadores, índice |
+| `ReceivableCycleIT` | `@SpringBootTest` | CRM-F010 — venda com parte marcada quitada no caixa de outro operador (`receivableReceived` e esperado), recusas antes da venda, reembolso cancelando o marcado |
 | `PdvComandaControllerTest` | MockMvc standalone | Contrato HTTP das 5 rotas, `runningTotal`, 403 de cortesia (com e sem a flag, incluindo `TROCA`), resolução do nome do cliente no CRM (uma consulta em lote para a página inteira), o `PageResult` da listagem, a listagem da loja sem `sessionId` e o `mode` serializado como enum |
 | `PdvComandaControllerSecurityTest` | MockMvc + Security | 401/403 por autoridade em cada rota (`PDV_COMANDA_MANAGE` para escrita, `PDV_READ` para leitura), os 404s, e (PDV-C011/C012) os 400 de `size` acima do teto, `page` negativa e rótulo de mesa acima de 100 caracteres — casos que só valem na cadeia real, porque o setup standalone não monta a validação de parâmetro |
 | `ComandaConcurrencyIT` | `@SpringBootTest`, **sem `@Transactional`** | PDV-C008: seis lançamentos simultâneos na mesma mesa sem perder linha (um SKU por thread, para isolar da contenção de saldo); os mesmos seis no **mesmo** SKU, onde quem perde a corrida otimista do estoque toma `STOCK_UPDATE_CONFLICT` e a comanda ainda fecha a conta com o que passou; seis fechamentos simultâneos gerando **um** pedido; fechar × cancelar com exatamente um vencedor |
@@ -947,6 +973,23 @@ Convenções, variáveis e o environment compartilhado estão em
 
 ## Histórico de Implementações
 
+- **2026-10-01** — `historico-e-indicadores-de-mesas` (PDV-F029): **V138** (`comanda.closed_by`,
+  `cancel_reason`, índice `(status, closed_at)`); todo encerramento grava quem encerrou (fechamento
+  total, finish, cancel com motivo opcional, junção, varredura `system`); `GET /pdv/comandas/history`,
+  `GET /pdv/comandas/analytics` e o detalhe em qualquer status com `orders[]`. Leitura com `PDV_READ`
+  ou `ORDER_READ`. `courtesyTotal` é medido pelo custo (a cortesia é gravada a preço zero). Coberto
+  por `ComandaServiceTest`, `PdvComandaControllerSecurityTest`, `ComandaHistoryIT` e
+  `ComandaHistoryPostgresIT`. Commit `f6b45a4`.
+- **2026-09-30** — `marcar-no-pdv-e-na-mesa` (PDV-F028, borda do CRM-F010): linha `MARCADO` na venda
+  de balcão e no fechamento de mesa, `OnAccountGuard`, `receivableReceived` em `payment-totals`.
+  **V137**. Detalhes no README do [CRM](../crm/README.md). Commit `05d5ec8`.
+- **2026-09-30** — `correcao-da-forma-de-pagamento` (PDV-F030): ver o README de
+  [pedido](../pedido/README.md). Para o caixa: `CORRECTED` sai de `payment-totals` e do esperado; com
+  o caixa fechado, o delta vai para `cash_session_adjustment` (**V136**), ainda sem endpoint de
+  leitura. Commit `b1bdc90`.
+- **2026-09-30** — `retirada-conclui-a-venda`: `RETIRADA` grava `CONCLUIDO` (ou `RESERVADO` com
+  `reserveForPickup=true`); `ENTREGA` continua `RESERVADO`; saiu o 400 para `delivery` +
+  `reserveForPickup=false`. Commit `dbee52a`.
 - **2026-09-28** — `sessoes-paralelas-e-pagamento` (PDV-F027): a mesa aceita sessões em paralelo
   (limite = utensílio livre); a sessão nasce `AGUARDANDO_PAGAMENTO` e o fechamento parcial que a
   cobra a leva a `PREPARANDO`; a fila de rosh passou a ser por sessão (recolher uma não começa o

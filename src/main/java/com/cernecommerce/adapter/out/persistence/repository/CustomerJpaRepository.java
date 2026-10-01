@@ -27,26 +27,30 @@ public interface CustomerJpaRepository extends JpaRepository<CustomerEntity, Lon
     @Query("SELECT c FROM CustomerEntity c WHERE lower(c.email) = :email ORDER BY c.id")
     List<CustomerEntity> findByEmailLower(@Param("email") String email);
 
-    /** Busca livre por nome, contato, email ou CPF (CRM-C006 incluiu email e CPF). */
-    @Query("""
-            SELECT c FROM CustomerEntity c
-            WHERE lower(c.nome) LIKE lower(concat('%', :search, '%'))
+    /*
+     * Busca livre por nome, contato, email ou CPF (CRM-C006 incluiu email e CPF). CRM-C008: a variante
+     * com CPF só é chamada com cpfDigits preenchido — um parâmetro nulo em ":p IS NOT NULL" chega ao
+     * Postgres sem tipo (bytea) e o LIKE quebra com 500. Por isso são duas consultas, não um filtro opcional.
+     */
+    String SEARCH_TEXT = """
+            lower(c.nome) LIKE lower(concat('%', :search, '%'))
                OR c.contato LIKE concat('%', :search, '%')
-               OR lower(c.email) LIKE lower(concat('%', :search, '%'))
-               OR (:cpfDigits IS NOT NULL AND c.cpf LIKE concat('%', :cpfDigits, '%'))
-            """)
-    Page<CustomerEntity> search(@Param("search") String search, @Param("cpfDigits") String cpfDigits,
+               OR lower(c.email) LIKE lower(concat('%', :search, '%'))""";
+
+    @Query("SELECT c FROM CustomerEntity c WHERE " + SEARCH_TEXT)
+    Page<CustomerEntity> search(@Param("search") String search, Pageable pageable);
+
+    @Query("SELECT c FROM CustomerEntity c WHERE " + SEARCH_TEXT
+            + " OR c.cpf LIKE concat('%', :cpfDigits, '%')")
+    Page<CustomerEntity> searchWithCpf(@Param("search") String search, @Param("cpfDigits") String cpfDigits,
             Pageable pageable);
 
-    @Query("""
-            SELECT c FROM CustomerEntity c
-            WHERE lower(c.nome) LIKE lower(concat('%', :search, '%'))
-               OR c.contato LIKE concat('%', :search, '%')
-               OR lower(c.email) LIKE lower(concat('%', :search, '%'))
-               OR (:cpfDigits IS NOT NULL AND c.cpf LIKE concat('%', :cpfDigits, '%'))
-            ORDER BY c.cadastradoEm DESC
-            """)
-    List<CustomerEntity> searchAll(@Param("search") String search, @Param("cpfDigits") String cpfDigits);
+    @Query("SELECT c FROM CustomerEntity c WHERE " + SEARCH_TEXT + " ORDER BY c.cadastradoEm DESC")
+    List<CustomerEntity> searchAll(@Param("search") String search);
+
+    @Query("SELECT c FROM CustomerEntity c WHERE " + SEARCH_TEXT
+            + " OR c.cpf LIKE concat('%', :cpfDigits, '%') ORDER BY c.cadastradoEm DESC")
+    List<CustomerEntity> searchAllWithCpf(@Param("search") String search, @Param("cpfDigits") String cpfDigits);
 
     long countByEstagioNot(CustomerStage estagio);
 

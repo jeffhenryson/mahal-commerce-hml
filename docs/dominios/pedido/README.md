@@ -155,12 +155,15 @@ Dois caminhos levam a `PAGO`, e nenhum dos dois é o cliente afirmando "eu pague
 
 | Método | Rota | Permissão | Descrição |
 |---|---|---|---|
-| `GET` | `/orders` | `ORDER_READ` | Filtros por `channel`, `status`, `customerId`, `from`, `to` e — PDV-F026 — `sessionId`, `comandaId`, `orderNumber` (exato); paginado. Cada linha traz `paymentMethods` (métodos `CAPTURED`, uma consulta por página) |
+| `GET` | `/orders` | `ORDER_READ` | Filtros por `channel`, `status`, `customerId`, `from`, `to` e — PDV-F026 — `sessionId`, `comandaId`, `orderNumber` (exato); paginado. Cada linha traz `paymentMethods` (métodos `CAPTURED`, uma consulta por página) e — PED-F003 — `operatorName`, o usuário do caixa que liquidou o pedido |
 | `GET` | `/orders/{id}` | `ORDER_READ` | Detalhe **com custo e margem**, e — PDV-F026 — `payments` (todas as linhas, com `channel`/`provider` de PDV-F025) |
 | `POST` | `/orders/{id}/status` | `ORDER_FULFILL` | `SEPARADO`/`ENVIADO`/`ENTREGUE` |
 | `PATCH` | `/orders/{id}/delivery` | `ORDER_FULFILL` | PDV-F022 — edita a entrega depois da venda (códigos da 99, rastreio, entregador, endereço); `type`/`fee` congelados |
 | `POST` | `/orders/{id}/cancel` | `ORDER_CANCEL` | Cancela (só pré-pagamento) e **devolve a mercadoria ao estoque** |
 | `POST` | `/orders/{id}/refund` | `ORDER_REFUND` | Reembolsa (só pós-pagamento): devolve estoque (com suporte a lote via `itemLots`), estorna cada pagamento `CAPTURED` com uma linha `REFUNDED` nova e reverte o cashback ganho — tudo em uma transação |
+| `POST` | `/orders/bulk-status` | `ORDER_FULFILL` | `{orderIds (≤200), status}` — o "Liberar selecionados/todos". Cada pedido na própria transação; recusados em `failed` com `code` |
+| `POST` | `/orders/{id}/payments/correction` | `ORDER_PAYMENT_CORRECT` ou `ORDER_PAYMENT_CORRECT_CLOSED` | PDV-F030 — corrige a forma de pagamento: `CAPTURED` → `CORRECTED` (lastro) + linhas novas `CAPTURED`; soma exata, sem troco; caixa fechado exige a segunda permissão e grava o delta em `cash_session_adjustment` |
+| `GET` | `/orders/{id}/payment-history` | `ORDER_READ` | PDV-F030 — correções do pedido (`correctionId`, `at`, `by`, `reason`, `before`, `after`); `[]` sem correção |
 
 Detalhes em [`docs/api-reference.md`](../../api-reference.md#pedidos-visão-do-administrador--orders).
 
@@ -234,6 +237,13 @@ não ter número.
 | Reembolso funciona em pedido já entregue — é devolução, não desfazer venda | `OrderService.refundOrder` | `OrderServiceTest.refundOrder_worksOnADeliveredOrderBecauseThatIsAReturn` |
 | Duplo cancelamento/reembolso é barrado pela própria máquina de estados, não por flag | propagação de `InvalidOrderStatusTransitionException` | `OrderServiceTest.cancelOrder_refusesToCancelTwiceAndDoesNotReleaseAgain`, `refundOrder_refusesToRefundTwiceAndDoesNotTouchStock` |
 | Reembolso concorrente: só um sucede | `@Version` em `sales_order` | `OrderRefundConcurrencyIT.concurrentRefunds_onlyOneSucceedsAndEffectsAreNotDuplicated` |
+| **Correção da forma de pagamento (PDV-F030)** | | |
+| Nada é apagado: as `CAPTURED` vigentes viram `CORRECTED` (com `correction_id`) e as novas nascem `CAPTURED` (com `origin_correction_id`) | `OrderService.correctPayments`, `OrderPayment` | `OrderServiceTest.correctPayments_retiresCapturedLinesAndCapturesTheNewOnes`; `PagamentoPostgresIT.correction_writesCorrectedAndNewRowsThatSatisfyTheV136Checks` |
+| Soma exata (`totalPayable − marcado`), sem troco nem em dinheiro; o troco antigo vai a zero | `OrderService.correctPayments` | `correctPayments_refusesASumDifferentFromTotalPayable_evenInCash`, `correctPayments_cashWithChangeBecomesExactAndZeroesTheChange` |
+| Motivo obrigatório; pedido cancelado/reembolsado ou pago pelo app não se corrige; `GATEWAY_PIX`/`MARCADO` não entram | `OrderService.correctPayments` | `correctPayments_requiresAReason`, `correctPayments_refusesRefundedOrder`, `correctPayments_refusesGatewayPaidOrder` |
+| Caixa fechado exige `ORDER_PAYMENT_CORRECT_CLOSED` e grava o delta por método, sem reescrever o esperado | `OrderService.correctPayments` | `correctPayments_closedSessionWithoutManagerPermission_isRefused`, `correctPayments_closedSessionWithManagerPermission_recordsTheDivergencePerMethod`; `PdvCashCycleIT.correctPayments_afterClose_recordsTheAdjustmentOnTheClosedSession` |
+| **Liberação em lote** | | |
+| Um pedido recusado não desfaz os outros; ids repetidos contam uma vez | `OrdersController.changeStatusInBulk` (sem `@Transactional`; cada `changeStatus` é a sua transação) | `OrdersControllerTest.changeStatusInBulk_cadaPedidoFalhaSozinho`, `changeStatusInBulk_listaVazia_retorna400` |
 | **Leitura (`GET /orders`)** | | |
 | A listagem carrega os itens em **duas fases** (página sem fetch → `JOIN FETCH` por ids): o número de consultas não cresce com o tamanho da página (PED-C002) | `OrderRepositoryImpl.withItems`, `OrderJpaRepository.findAllByIdsWithItems` | `PedidoRepositoryIT.findAll_doesNotScaleQueriesWithThePageSize`, `findBySessionId_doesNotScaleQueriesWithThePageSize` |
 | Filtro opcional usa `Specification`, não `(:param IS NULL OR ...)` — o padrão antigo fazia o Postgres recusar inferir o tipo do bind de `Instant` nulo | `OrderRepositoryImpl.findAll` | `PedidoRepositoryPostgresIT.findAll_withoutFilters_doesNotThrowOnRealPostgres` e os dois irmãos |
@@ -288,6 +298,8 @@ não ter número.
 | **V114** | `order_item.mode` e `order_item.courtesy` — o modo de consumo e a cortesia atravessam o fechamento da comanda |
 | **V116** | `order_item.notes` e `order_item.surcharge_amount` (PDV-F011) — o setup da mesa e a parcela de acréscimo manual, herdados no fechamento |
 | **V118** | `sales_order.service_fee_amount` (PDV-F015), `NOT NULL DEFAULT 0` + `CHECK ck_sales_order_service_fee_only_mesa`. **Coluna própria, fora de `net_amount`** — ver "netAmount é receita" acima |
+| **V136** | PDV-F030 — `order_payment_correction`, `cash_session_adjustment`, colunas de correção em `order_payment`, status `CORRECTED`, permissões `ORDER_PAYMENT_CORRECT`/`_CLOSED`. O comentário da migration diz "PDV-F027", número trocado depois para não colidir com as sessões paralelas |
+| **V137** | CRM-F010 — `order_payment.due_date`, método `MARCADO`, status `ON_ACCOUNT`; o recebível em si está no README do [CRM](../crm/README.md) |
 
 > As migrations de permissão do fechamento de mesa (V115 `PDV_COMANDA_COURTESY`, V117
 > `PDV_COMANDA_SURCHARGE`, V119 `PDV_COMANDA_DISCOUNT`) pertencem a
@@ -326,6 +338,16 @@ ao menos um pedido.
 
 ## Histórico de Implementações
 
+- **2026-10-01** — `operador-na-lista-de-pedidos` (**PED-F003**): `operatorName` em `GET /orders`
+  e `GET /orders/{id}`, vindo de `cash_register_session.operator` (uma consulta por página). Coberto
+  por `OrdersControllerTest` e `PdvDeliveryPostgresIT`.
+
+- **2026-09-30** — `correcao-da-forma-de-pagamento` (**PDV-F030**, **V136**): `POST
+  /orders/{id}/payments/correction` e `GET /orders/{id}/payment-history`, com lastro (`CORRECTED`) em
+  vez de update e ajuste em caixa fechado. `GET /orders/{id}` ganhou `paymentStatus`/`receivableId`
+  (CRM-F010). Coberto por `OrderServiceTest`, `OrdersControllerSecurityTest`, `PdvCashCycleIT` e
+  `PagamentoPostgresIT`. Commits `b1bdc90` e `32e0c87` (renumeração).
+- **2026-09-30** — `liberar-reservas-em-lote`: `POST /orders/bulk-status`. Commit `dbee52a`.
 - **2026-08-30** — `n-mais-1-e-divida-de-documentacao` (**PED-C002 + C003 + C001**).
   **C002 era o único 🔴 acionável do projeto**, e não era uma rota só: `OrderRepositoryImpl.findAll`
   e `findBySessionId` alimentam `GET /orders`, `GET /pdv/sessions/{id}/sales` e

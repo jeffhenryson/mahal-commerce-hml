@@ -124,6 +124,21 @@ Permissões criadas em `V45__estoque_product_permissions.sql` (`ESTOQUE_PRODUCT_
 
 ---
 
+### Permissões — correção de pagamento e "Marcar" (V136, V137)
+
+| Permissão | Libera | Perfis |
+|---|---|---|
+| `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto | ADMIN, ATENDENTE |
+| `ORDER_PAYMENT_CORRECT_CLOSED` | A mesma correção com o caixa já fechado. O controller confere a authority para decidir, porque o endpoint aceita as duas | ADMIN |
+| `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda e no fechamento de mesa. Checada no controller (`OnAccountGuard`), antes do service | ADMIN |
+| `RECEIVABLE_READ` | Leituras de marcados | ADMIN, ATENDENTE |
+| `RECEIVABLE_MANAGE` | Renegociar, cancelar marcado e definir limite de crédito | ADMIN |
+
+Não existe perfil "gerente" no banco; a alçada maior fica com `ROLE_ADMIN`. O histórico e os
+indicadores de mesas (PDV-F029) não criaram permissão: aceitam `PDV_READ` **ou** `ORDER_READ`.
+
+---
+
 ## Senhas
 
 - Hash: BCrypt via `BcryptPasswordHashAdapter`
@@ -386,6 +401,14 @@ Todos os eventos publicados via `ApplicationEventPublisher` e persistidos pelo `
 | OAuth | `OAUTH_GOOGLE_LOGIN` |
 | Estoque | `PRODUCT_CREATED`, `WAREHOUSE_CREATED` |
 | CRM | `CUSTOMER_CREATED`, `CUSTOMER_NOTE_ADDED`, `CUSTOMER_STAGE_CHANGED`, `TAG_CREATED`, `TAG_DELETED`, `CUSTOMER_TAG_ADDED`, `CUSTOMER_TAG_REMOVED`, `CAMPAIGN_AUTOMATION_CREATED`, `CAMPAIGN_AUTOMATION_DELETED`, `CAMPAIGN_AUTOMATION_DISPATCHED` |
+| Pedido (PDV-F030) | `ORDER_PAYMENT_CORRECTED` — antes/depois por método, motivo, `correctionId` e `sessionWasClosed`. O `POST /orders/bulk-status` reaproveita `ORDER_STATUS_CHANGED`, um por pedido movido, com `"bulk": true` |
+| Marcados (CRM-F010) | `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha `MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante), `RECEIVABLE_DUE_DATE_CHANGED`, `RECEIVABLE_CANCELLED`, `CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual) |
+
+`COMANDA_CANCELLED` passou a levar o `reason` opcional do cancelamento (PDV-F029).
+
+> **`AuditEvent.of` usa `Map.copyOf`**: valor nulo no payload derruba a requisição com 500. Quem monta
+> payload com campo opcional remove os nulos antes (ver `OnAccountGuard`, `PdvComandaController.auditPayload`
+> e o `HashMap` de `CUSTOMER_CREDIT_LIMIT_CHANGED`).
 
 **`ACCESS_DENIED`:** publicado por `GlobalExceptionHandler.handleAccessDenied` sempre que uma `AccessDeniedException` for lançada. O evento inclui o `username` do contexto de segurança (ou `"anonymous"`) e o `path` da requisição no campo `details`.
 

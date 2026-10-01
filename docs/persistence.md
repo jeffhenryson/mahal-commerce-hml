@@ -465,6 +465,127 @@ segunda lata aberta do mesmo par.
 
 ---
 
+### OrderPaymentCorrectionEntity — tabela `order_payment_correction` (V136, PDV-F030)
+
+Correção da forma de pagamento de um pedido: quem, quando, por quê e em que caixa. Nada é apagado —
+as linhas `CAPTURED` vigentes de `order_payment` passam a `CORRECTED` e as novas nascem `CAPTURED`.
+
+| Coluna | Tipo | Constraint |
+|--------|------|-----------|
+| id | BIGSERIAL | PK |
+| order_id | BIGINT | NOT NULL, FK → `sales_order (id)` |
+| reason | VARCHAR(500) | NOT NULL, `CHECK (length(trim(reason)) > 0)` |
+| corrected_by | VARCHAR(80) | NOT NULL |
+| corrected_at | TIMESTAMPTZ | NOT NULL |
+| cash_session_id | BIGINT | NOT NULL, FK → `cash_register_session (id)` — o caixa do pedido |
+| session_was_closed | BOOLEAN | NOT NULL — a correção aconteceu depois do fechamento |
+
+Índice `idx_order_payment_correction_order (order_id, id)`.
+
+**Colunas novas em `order_payment` (V136):** `correction_id` (a correção que **aposentou** a linha,
+só em `CORRECTED`), `origin_correction_id` (a correção que **criou** a linha; nulo nas linhas da
+venda), `corrected_at`, `corrected_by`. São duas referências porque uma linha pode nascer de uma
+correção e ser aposentada por outra. CHECKs: `ck_order_payment_status` aceita `CORRECTED`;
+`ck_order_payment_captured` exige `captured_at` em `CAPTURED` **e** `CORRECTED` (a captura original
+continua sendo história); `ck_order_payment_corrected` amarra `CORRECTED` ⇔ `correction_id`,
+`corrected_at` e `corrected_by` preenchidos.
+
+### CashSessionAdjustmentEntity — tabela `cash_session_adjustment` (V136, PDV-F030)
+
+Divergência por método deixada num caixa **já fechado** por uma correção posterior. O esperado
+gravado no fechamento não é reescrito.
+
+| Coluna | Tipo | Constraint |
+|--------|------|-----------|
+| id | BIGSERIAL | PK |
+| session_id | BIGINT | NOT NULL, FK → `cash_register_session (id)` |
+| order_id | BIGINT | NOT NULL, FK → `sales_order (id)` |
+| correction_id | BIGINT | NOT NULL, FK → `order_payment_correction (id)` |
+| method | VARCHAR(30) | NOT NULL |
+| delta_amount | NUMERIC(14,2) | NOT NULL, `CHECK (delta_amount <> 0)` |
+| created_by | VARCHAR(80) | NOT NULL |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+Índice `idx_cash_session_adjustment_session (session_id)`. Ainda não há endpoint de leitura.
+
+### CustomerCreditLimitEntity — tabela `customer_credit_limit` (V137, CRM-F010)
+
+Limite de crédito do "Marcar" por cliente. **Tabela própria, e não coluna em `customers`**: o `PUT`
+do cadastro regrava a ficha inteira e zeraria o limite. Sem linha = limite padrão
+(`system_config` `pdv.on-account.default-credit-limit`, semeado `0`).
+
+| Coluna | Tipo | Constraint |
+|--------|------|-----------|
+| customer_id | BIGINT | PK, FK → `customers (id)` ON DELETE CASCADE |
+| credit_limit | NUMERIC(14,2) | NOT NULL, `CHECK (credit_limit >= 0)` |
+| updated_by | VARCHAR(80) | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### CustomerReceivableEntity — tabela `customer_receivable` (V137, CRM-F010)
+
+O marcado: a parte de uma venda que o cliente VIP paga depois.
+
+| Coluna | Tipo | Constraint |
+|--------|------|-----------|
+| id | BIGSERIAL | PK |
+| customer_id | BIGINT | NOT NULL, FK → `customers (id)` |
+| order_id | BIGINT | NOT NULL, FK → `sales_order (id)`, **único** (`uk_customer_receivable_order`) — no máximo um marcado por pedido |
+| comanda_id | BIGINT | nullable, FK → `comanda (id)` — quando marcado na mesa |
+| session_id | BIGINT | NOT NULL, FK → `cash_register_session (id)` |
+| amount | NUMERIC(14,2) | NOT NULL, `CHECK (amount > 0)` |
+| amount_paid | NUMERIC(14,2) | NOT NULL DEFAULT 0, `CHECK (0 <= amount_paid <= amount)` |
+| due_date | DATE | NOT NULL |
+| status | VARCHAR(20) | NOT NULL, `ABERTO`/`PARCIAL`/`QUITADO`/`VENCIDO`/`CANCELADO` |
+| created_at / created_by | TIMESTAMPTZ / VARCHAR(80) | NOT NULL |
+| settled_at | TIMESTAMPTZ | `CHECK ((status = 'QUITADO') = (settled_at IS NOT NULL))` |
+| cancel_reason / cancelled_by / cancelled_at | | `CHECK ((status = 'CANCELADO') = (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL))` |
+| version | BIGINT | NOT NULL DEFAULT 0 — `@Version` |
+
+Índices `idx_customer_receivable_customer_status (customer_id, status)` e
+`idx_customer_receivable_status_due (status, due_date)`.
+
+### ReceivableItemEntity — tabela `receivable_item` (V137, CRM-F010)
+
+Snapshot dos itens do pedido **inteiro** no momento do marcar, mesmo quando só parte foi marcada
+("R$ 30 de R$ 80 marcados"): `receivable_id` (FK, ON DELETE CASCADE), `order_item_id` (sem FK),
+`sku` (NOT NULL — entra em `ProductRepositoryImpl.SKU_COLUMNS` para a troca de SKU),
+`product_name`, `quantity`, `subtotal`, `mode`. Índice `idx_receivable_item_receivable`.
+
+### ReceivablePaymentBatchEntity / ReceivablePaymentEntity — tabelas `receivable_payment_batch` e `receivable_payment` (V137, CRM-F010)
+
+A quitação entra no caixa de **quem recebe**, por `receivable_payment`, e **não** por
+`order_payment`: ela não tem pedido próprio. Um recebimento no balcão (`batch`) pode abater vários
+marcados; o troco é do lote (`change_amount ≥ 0`), não do marcado.
+
+| `receivable_payment` | Tipo | Constraint |
+|--------|------|-----------|
+| receivable_id | BIGINT | NOT NULL, FK → `customer_receivable` |
+| batch_id | BIGINT | NOT NULL, FK → `receivable_payment_batch` |
+| customer_id | BIGINT | NOT NULL, FK → `customers` |
+| amount | NUMERIC(14,2) | NOT NULL, `> 0` — já o abatido, líquido do troco |
+| method | VARCHAR(30) | NOT NULL, `DINHEIRO`/`DEBITO`/`CREDITO`/`PIX` |
+| installments | INTEGER | só `CREDITO`, 1–24 |
+| channel / provider | VARCHAR(20) | como em `order_payment` (V134) |
+| cash_session_id | BIGINT | NOT NULL, FK → `cash_register_session` |
+| received_by / received_at | | NOT NULL |
+
+Índices `idx_receivable_payment_receivable` e `idx_receivable_payment_session_method
+(cash_session_id, method)` — este último é o que `payment-totals` lê (`receivableReceived`).
+
+**Mudanças em `order_payment` (V137):** coluna `due_date DATE`; `method` aceita `MARCADO`; `status`
+aceita `ON_ACCOUNT`; `ck_order_payment_on_account` amarra `MARCADO` ⇔ `ON_ACCOUNT` ⇔ `due_date`
+preenchido. A linha `ON_ACCOUNT` nunca é capturada e fica fora de toda soma de caixa.
+
+### Colunas novas em `comanda` (V138, PDV-F029)
+
+`closed_by VARCHAR(80)` (quem fechou, finalizou ou cancelou; `system` na varredura automática) e
+`cancel_reason VARCHAR(500)`. Índice `idx_comanda_status_closed_at (status, closed_at DESC)` para o
+histórico. Ficam em `ComandaEntity`, **fora** do record de domínio `Comanda`: só o histórico os lê,
+e são gravados por `ComandaRepository.recordClosing` na entidade gerenciada (não por `UPDATE` em
+lote, que deixaria a cópia já carregada na transação sem o valor).
+
+---
+
 ## Repositórios
 
 Cada port OUT tem uma implementação `*RepositoryImpl` que:
@@ -726,6 +847,8 @@ Um único `JOIN FETCH` traz usuários, roles e permissões em uma só query. O `
 | `ComandaRepositoryImpl.findOpen()` | `findOpenIds()` → `findAllByIdsWithItems()` (JOIN FETCH em `items`) — PDV-C009 |
 | `ComandaRepositoryImpl.moveOpenItems()` | `UPDATE` de `comanda_item.comanda_id` (PDV-F016) — **não** passa pelo `save` do agregado. Reatribuir a FK preserva os ids das linhas; movê-las dentro do agregado destino criaria ids novos e quebraria `linked_item_id`, que é FK auto-referente (V114) |
 | `StockCountRepositoryImpl.findByWarehouseId()` | `findIdsByWarehouseId()` → `findAllByIdsWithItems()` |
+| `ComandaRepositoryImpl.findHistory()` | página por `Specification` (`closedAt desc, id desc`), sem tocar em `items` → `findAllByIdsWithItems()` — PDV-F029. Specification e não JPQL com `:from IS NULL`: `Instant` nulo como parâmetro vira `bytea` no Postgres |
+| `OrderRepositoryImpl.findByComandaIds()` | `findIdsByComandaIdIn()` → `findAllByIdsWithItems()` — os pedidos MESA de uma página de comandas numa consulta (PDV-F029) |
 
 ### `findFiltered` e a Criteria API
 
@@ -771,6 +894,7 @@ Todos usam **ShedLock** para garantir execução em apenas uma instância.
 | `AuditLogCleanupService` | `0 45 3 * * *` (`audit.cleanup.cron`) | Audit logs mais antigos que `audit.retention-days` | lockAtMostFor PT55M |
 | `DevChallengeCleanupService` | `0 45 3 * * *` (`dev.challenge.cleanup.cron`) | Dev challenge tokens (duplo TOTP) expirados | lockAtMostFor PT15M |
 | `NotificationCleanupService` | `0 0 4 * * *` (`notification.cleanup.cron`) | Notificações lidas mais antigas que `notification.read.retention-days` | lockAtMostFor PT15M |
+| `ReceivableOverdueJob` | `0 5 0 * * *` America/Sao_Paulo (`pdv.on-account.overdue.cron`) | Não remove: marca `VENCIDO` o marcado em aberto com prazo vencido (CRM-F010). A regra "quem tem vencido não marca" calcula o vencido na leitura e não depende dele | lockAtMostFor PT10M |
 
 ### Pool de threads dos jobs (C019)
 

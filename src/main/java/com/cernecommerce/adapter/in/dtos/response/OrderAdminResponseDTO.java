@@ -38,6 +38,11 @@ public class OrderAdminResponseDTO {
             + "em pedido do app pago na loja.")
     private Long sessionId;
 
+    @Schema(description = "PED-F003 — usuário (funcionário ou administrador) que operava o caixa "
+            + "da venda: quem fez o pedido no PDV ou fechou a mesa. Nulo em pedido do app ainda "
+            + "não pago na loja.")
+    private String operatorName;
+
     private String warehouseCode;
     private BigDecimal grossAmount;
     private BigDecimal discountAmount;

@@ -157,6 +157,9 @@ Controladores (MockMvc com contexto parcial):
 | `SystemConfigControllerTest` | GET /system/config/public, GET/PUT /system/config |
 | `SystemInfoControllerTest` | GET /system/info — DEV_ELEVATED obrigatório |
 | `NotificationControllerTest` | Lista paginada (+ `unreadOnly`), unread-count, markAsRead, markAllAsRead, delete, SSE stream (verifica registro no `SseEmitterRegistry`) |
+| `ReceivableServiceTest` | CRM-F010 — validação do "Marcar" (sem linha, VIP no limite, duas linhas, vencimento ausente/passado, venda anônima, não-VIP, vencido, acima do limite com os números da tela, limite padrão zero), elegibilidade, quitação (FIFO sem ids, troco só em dinheiro, ids na ordem dada, sessão de outro dia), renegociação, cancelamento, limite nulo volta ao padrão, `markOverdue` pela data da loja |
+| `OrderServiceTest` (correção) | PDV-F030 — linhas `CAPTURED` viram `CORRECTED`, dinheiro com troco vira valor exato e zera o troco, soma ≠ `totalPayable` recusada, motivo obrigatório, pedido reembolsado ou pago pelo app recusado, caixa fechado com e sem a permissão de gerente, histórico separando quem aposentou e quem criou cada linha |
+| `ComandaServiceTest` (histórico) | PDV-F029 — `recordClosing` no fechamento total (não no parcial), cancelamento com motivo aparado, junção e varredura; totais do histórico (reembolsado fora, cortesia pelo custo, sessões); detalhe com pagamentos por pedido; indicadores por mesa normalizada e por hora de abertura em São Paulo; período invertido ou acima de 366 dias recusado |
 | `NotificationPreferenceControllerTest` | GET preferências (lista completa e vazia), PUT com type válido (verifica delegação ao use case) e com type inválido (→ 400 `INVALID_ENUM_VALUE` com lista de valores) |
 
 Adapters com contexto Spring parcial (cache/AOP):
@@ -193,6 +196,8 @@ Sobem o contexto Spring completo com MockMvc contra H2 in-memory (perfil `dev`),
 | `RbacEndToEndIT` | RBAC de ponta a ponta pelo pipeline real (C007): `POST /users` (USER_CREATE) → `POST /roles/{role}/permissions/{perm}` (ROLE_MANAGE_PERMISSIONS) → `POST /users/{username}/roles/{role}` (USER_ROLE_ASSIGN) → `POST /auth/login` real (sem authorities injetadas) → JWT emitido usado via header `Authorization` em `GET /pdv/sessions` (`PDV_READ`) retorna 200; usuário sem a role/permissão retorna 403 com o mesmo JWT real |
 | `RefreshTokenRepositoryImplIT` | Primeiro teste dedicado a uma classe `*RepositoryImpl` do projeto (C009), contra o banco real: `revokeByIdForUser` — usuário A tentando revogar sessão de B lança `SessionNotFoundException` e a sessão de B continua ativa (prova o isolamento IDOR de `findActiveByIdAndUsername`); dono revogando a própria sessão tem sucesso e ela some de `findActiveSessions`; id inexistente lança `SessionNotFoundException` |
 | `EstoqueRepositoryIT` | Os 5 `*RepositoryImpl` de estoque contra banco real (EST-C007): round-trip de produto com variações/atributos, `existsBySku` em SKU pai e de variação, paginação ID-first, propagação do `version`, ordem do ledger e upsert do ponto de reposição. Usa `flush()` + `clear()` explícitos para não ler do cache de primeiro nível |
+| `ReceivableCycleIT` | CRM-F010 de ponta a ponta: venda com parte marcada e quitação em dinheiro no caixa de **outro** operador (entra em `receivableReceived` e no esperado), recusa de não-VIP e de quem passa do limite antes da venda, reembolso do pedido cancelando o marcado em aberto |
+| `ComandaHistoryIT` | PDV-F029: mesa fechada em duas vezes (parcial com taxa + total) e mesa cancelada com motivo; `closedBy`/`cancelReason` gravados, filtros do histórico (status, mesa sem caixa, quem fechou, período), detalhe com os pagamentos de cada pedido, indicadores contando só a FECHADA |
 | `StockBalanceConcurrencyIT` | Optimistic locking do saldo de estoque (EST-C007): 8 threads dando `SAIDA` no mesmo par SKU/depósito — o saldo final tem que bater exatamente com as baixas confirmadas (sem lost update) e os perdedores da corrida têm que falhar como conflito tratado, não 500. Segundo teste cobre a corrida na *primeira* movimentação do par, onde não existe `version` ainda e quem protege é a unique constraint |
 
 ---
@@ -213,6 +218,20 @@ ENABLE_TC=true ./mvnw test -Dtest=AuthFlowPostgresIT
 ```
 
 A anotação `@EnabledIfEnvironmentVariable(named = "ENABLE_TC", matches = "true")` garante que não seja executado em pipelines de CI padrão.
+
+Depois disso vieram os `*PostgresIT` de domínio, no mesmo molde (container próprio, Flyway ligado,
+`ddl-auto=none`, `spring.sql.init.mode=never`). Existem porque **o H2 do perfil `dev` monta o schema
+pelas entidades**: CHECKs, índices e seeds das migrations só são exercitados aqui. Entre eles:
+
+| Arquivo | O que prova contra o DDL real |
+|---|---|
+| `PagamentoPostgresIT` | V136 e V137: correção grava `CORRECTED` + linhas novas que passam nos CHECKs; `CORRECTED` sem referência é recusado; permissões novas semeadas nos perfis certos; venda marcada, quitação e job de vencidos; `MARCADO` sem `due_date` recusado |
+| `ComandaHistoryPostgresIT` | V138: `closed_by`/`cancel_reason` gravados, recorte por data com um lado só (o caso em que `Instant` nulo em JPQL viraria `bytea`), ordem `closed_at desc`, paginação, indicadores lendo pedido e item pelo `comanda_id`, índice criado |
+
+```bash
+# Todos os Postgres ITs (nesta máquina o Docker exige -Dapi.version=1.44)
+ENABLE_TC=true ./mvnw test -Dapi.version=1.44 -Dtest='*PostgresIT'
+```
 
 ---
 
@@ -240,6 +259,9 @@ Testes que validam comportamento de autorização independentemente do fluxo de 
 | `FinanceiroControllerSecurityTest` | GET /financeiro/cash-flow — 401 sem auth, 403 sem `FINANCEIRO_READ`, 200 com `FINANCEIRO_READ` (C004) |
 | `LogisticaControllerSecurityTest` | GET /logistica/shipments — 401 sem auth, 403 sem `LOGISTICA_READ`, 200 com `LOGISTICA_READ` (C004) |
 | `PdvControllerSecurityTest` | GET /pdv/sessions — 401 sem auth, 403 sem `PDV_READ`, 200 com `PDV_READ` (C004) |
+| `ReceivableControllerSecurityTest` | CRM-F010 — 401/403 em `/receivables`, 200 com `RECEIVABLE_READ` (lista e resumo), 404 `RECEIVABLE_NOT_FOUND`, limite e cancelamento exigem `RECEIVABLE_MANAGE`, limite negativo 400, quitação exige `PDV_SALE_MANAGE`, elegibilidade de cliente inexistente 404 |
+| `PdvComandaControllerSecurityTest` (histórico) | PDV-F029 — `history` e `analytics` com `ORDER_READ` → 200, sem permissão → 403, `analytics` sem período ou invertido → 400, `history?status=ABERTA` e `size` acima do teto → 400, detalhe com `ORDER_READ` → 404 para comanda inexistente |
+| `OrdersControllerSecurityTest` (correção) | PDV-F030 — `POST /orders/{id}/payments/correction`: 403 só com `ORDER_FULFILL`, 404 com `ORDER_PAYMENT_CORRECT` para pedido inexistente |
 
 ---
 

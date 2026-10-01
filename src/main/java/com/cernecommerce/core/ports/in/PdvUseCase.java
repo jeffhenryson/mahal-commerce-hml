@@ -15,7 +15,9 @@ import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Port de entrada do domínio <b>vendas-balcao (PDV)</b>.
@@ -60,6 +62,12 @@ public interface PdvUseCase {
      *         se não existir
      */
     CashRegisterSession getSession(Long sessionId);
+
+    /**
+     * PED-F003 — quem operava cada caixa, em lote: é o funcionário que fez a venda na lista de
+     * pedidos. Sessões inexistentes ficam fora do mapa.
+     */
+    Map<Long, String> getSessionOperators(Collection<Long> sessionIds);
 
     /**
      * Registra sangria ou suprimento. Exige sessão aberta <b>e do próprio operador</b>.

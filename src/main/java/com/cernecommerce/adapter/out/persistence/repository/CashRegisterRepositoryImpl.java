@@ -15,6 +15,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -83,6 +86,19 @@ public class CashRegisterRepositoryImpl implements CashRegisterRepository {
     @Transactional(readOnly = true)
     public Optional<CashRegisterSession> findById(Long id) {
         return cashRegisterSessionJpaRepository.findById(id).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, String> findOperatorsByIds(Collection<Long> ids) {
+        Map<Long, String> operators = new HashMap<>();
+        if (ids.isEmpty()) {
+            return operators;
+        }
+        for (Object[] row : cashRegisterSessionJpaRepository.findOperatorsByIds(ids)) {
+            operators.put((Long) row[0], (String) row[1]);
+        }
+        return operators;
     }
 
     @Override

@@ -117,6 +117,48 @@ public class OrdersControllerTest {
                 && "000000123".equals(f.orderNumber())), eq(0), eq(20));
     }
 
+    /** PED-F003 — operador de cada linha pelo caixa, numa consulta só; sem caixa fica nulo. */
+    @Test
+    void listOrders_fillsOperatorNameFromTheSession_inOneCall() throws Exception {
+        PageResult<Order> orderPage = new PageResult<>(List.of(), 0, 20, 3L, 1);
+        when(orderUseCase.listOrders(any(OrderFilter.class), eq(0), eq(20))).thenReturn(orderPage);
+        OrderAdminResponseDTO balcao = new OrderAdminResponseDTO();
+        balcao.setId(1L);
+        balcao.setSessionId(3L);
+        OrderAdminResponseDTO mesmoCaixa = new OrderAdminResponseDTO();
+        mesmoCaixa.setId(2L);
+        mesmoCaixa.setSessionId(3L);
+        OrderAdminResponseDTO app = new OrderAdminResponseDTO();
+        app.setId(3L);
+        when(orderConverter.toAdminResponse(orderPage))
+                .thenReturn(new PageResult<>(List.of(balcao, mesmoCaixa, app), 0, 20, 3L, 1));
+        when(pdvUseCase.getSessionOperators(List.of(3L))).thenReturn(Map.of(3L, "caixa1"));
+        when(orderUseCase.getCapturedPaymentMethods(any())).thenReturn(Map.of());
+
+        mockMvc.perform(get("/orders").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].operatorName").value("caixa1"))
+                .andExpect(jsonPath("$.content[1].operatorName").value("caixa1"))
+                .andExpect(jsonPath("$.content[2].operatorName").doesNotExist());
+
+        verify(pdvUseCase).getSessionOperators(List.of(3L));
+    }
+
+    @Test
+    void getOrder_fillsOperatorName() throws Exception {
+        Order order = mock(Order.class);
+        when(orderUseCase.getOrder(1L)).thenReturn(order);
+        OrderAdminResponseDTO dto = new OrderAdminResponseDTO();
+        dto.setId(1L);
+        dto.setSessionId(3L);
+        when(orderConverter.toAdminResponse(order)).thenReturn(dto);
+        when(pdvUseCase.getSessionOperators(List.of(3L))).thenReturn(Map.of(3L, "caixa1"));
+
+        mockMvc.perform(get("/orders/1").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.operatorName").value("caixa1"));
+    }
+
     @Test
     void getOrder_returns_200() throws Exception {
         Order mockOrder = mock(Order.class);

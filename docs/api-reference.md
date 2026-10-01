@@ -1826,6 +1826,26 @@ Exige sessão aberta **e do próprio operador**.
 > **Contrato alterado em PDV-C012** (2026-08-30): devolvia a lista na raiz do corpo e passa a
 > devolver `PageResult` — os itens saíram da raiz para `content`.
 
+### GET /pdv/sessions/{id}/payment-totals — Permissão: PDV_READ
+
+Totais da sessão por forma de pagamento. As quatro formas (`DINHEIRO`, `DEBITO`, `CREDITO`, `PIX`)
+aparecem sempre, mesmo zeradas. Só pagamento `CAPTURED` conta — `CORRECTED` (PDV-F030) e
+`ON_ACCOUNT` (CRM-F010) ficam fora.
+
+```json
+[ { "method": "DINHEIRO", "amount": 300.00, "refundedAmount": 0.00, "changeAmount": 12.00,
+    "receivableReceived": 50.00, "netAmount": 338.00 } ]
+```
+
+| Campo | Descrição |
+|---|---|
+| `amount` | Bruto das vendas `CAPTURED` |
+| `refundedAmount` / `changeAmount` | Estornos e troco (troco só em `DINHEIRO`) — PDV-F026 |
+| `receivableReceived` | **CRM-F010** — quitação de marcado recebida nesta sessão neste método, já líquida do troco. Separado de `amount` porque não é venda. A quitação **não** é `CashMovement` (que contaria duas vezes) |
+| `netAmount` | `amount + receivableReceived − refundedAmount − changeAmount`. Em `DINHEIRO`, é o que entra no esperado do fechamento |
+
+`MARCADO` nunca aparece aqui: é dinheiro que não entrou. `404` se a sessão não existe.
+
 ### POST /pdv/sessions/{id}/close — Permissão: PDV_SESSION_CLOSE
 
 ```json
@@ -1923,7 +1943,10 @@ desconhecido não são a mesma coisa.
 
 > **PDV-F008 (reserva para retirada):** o request aceita `"reserveForPickup": true` (default
 > `false`) — grava `RESERVADO` em vez de `CONCLUIDO`: mercadoria já baixada e pagamento já
-> capturado, só a retirada fica pendente. Marcar como retirado depois é
+> capturado, só a retirada fica pendente. Com `delivery` (PDV-F022, revisto em 2026-09-30):
+> `ENTREGA` grava sempre `RESERVADO` e segue a esteira; `RETIRADA` grava `CONCLUIDO`, ou
+> `RESERVADO` com `reserveForPickup=true`. O antigo `400` para `delivery` + `reserveForPickup=false`
+> deixou de existir. Marcar como retirado depois é
 > `POST /orders/{id}/status` com `{"status": "CONCLUIDO"}` — mesmo endpoint da esteira de
 > fulfillment. `RESERVADO` só é alcançável a partir de venda de balcão (`CRIADO`); pedido de
 > marketplace nunca alcança esse status.
@@ -1959,6 +1982,33 @@ desconhecido não são a mesma coisa.
 
 Custo e margem **não** são expostos aqui: são dado de gestão, e `PDV_READ` é a permissão mais
 distribuída do módulo.
+
+#### "Marcar" — venda a prazo para cliente VIP (CRM-F010)
+
+Uma linha de `payments` com `"method": "MARCADO"` e `"dueDate": "AAAA-MM-DD"` deixa parte ou toda a
+venda para o cliente pagar depois. A venda **conclui normalmente** (a mercadoria saiu); a linha fica
+`ON_ACCOUNT`, fora do caixa, e nasce um marcado em `GET /receivables`. Vale também no fechamento de
+mesa (`POST /pdv/comandas/{id}/close`).
+
+```json
+{ "customerId": 42, "items": [ ... ],
+  "payments": [ { "method": "DINHEIRO", "amount": 50.00 },
+                { "method": "MARCADO", "amount": 30.00, "dueDate": "2026-10-31" } ] }
+```
+
+| Situação | HTTP | Código |
+|---|---|---|
+| Operador sem `PDV_SALE_ON_ACCOUNT` | 403 | `ON_ACCOUNT_NOT_ALLOWED` |
+| Venda sem `customerId` | 400 | `CUSTOMER_REQUIRED_FOR_ON_ACCOUNT` |
+| Cliente sem a tag VIP | 403 | `CUSTOMER_NOT_ELIGIBLE` |
+| Cliente com marcado vencido | 409 | `CUSTOMER_HAS_OVERDUE` (corpo traz `overdueBalance`) |
+| Passa do limite de crédito | 409 | `CREDIT_LIMIT_EXCEEDED` (corpo traz `limit`, `openBalance`, `available`) |
+| `dueDate` ausente ou no passado | 400 | `INVALID_DUE_DATE` |
+| Mais de uma linha `MARCADO` | 400 | `DUPLICATE_ON_ACCOUNT_PAYMENT` |
+| `MARCADO` onde não vale (liquidação do app, correção de pagamento, quitação) | 400 | `INVALID_PAYMENT_METHOD` |
+
+Para a tela checar antes de vender: `GET /crm/customers/{id}/on-account-eligibility`. Nas respostas
+de venda, `paymentStatus` vem `PENDENTE` quando há linha `MARCADO`.
 
 ### GET /pdv/sales/{id} — Permissão: PDV_READ
 
@@ -2013,9 +2063,65 @@ sendo cobrada, e apagá-la em cascata tiraria valor da conta sem o operador pedi
 Reusa `PDV_COMANDA_MANAGE` sem permissão nova: quem já pode cancelar a mesa inteira não precisa de
 alçada maior para remover uma linha dela.
 
-### GET /pdv/comandas/{id} — Permissão: PDV_READ
+### GET /pdv/comandas/{id} — Permissão: PDV_READ ou ORDER_READ
 
-`ComandaResponseDTO`, com os itens lançados e o `runningTotal`. `404 COMANDA_NOT_FOUND`.
+`ComandaResponseDTO` em **qualquer status** (PDV-F029), com os itens lançados, o `runningTotal`, os
+campos do histórico (ver `GET /pdv/comandas/history`) e `orders[]` — os pedidos que a mesa gerou,
+inclusive os parciais, cada um com os pagamentos:
+
+```json
+"orders": [ { "id": 500, "orderNumber": "000001000", "closedAt": "2026-10-01T01:30:00Z",
+              "totalPayable": 27.50, "status": "CONCLUIDO", "payments": [ { "method": "DINHEIRO", "...": "..." } ] } ]
+```
+`404 COMANDA_NOT_FOUND`.
+
+### GET /pdv/comandas/history — Permissão: PDV_READ ou ORDER_READ
+
+`PageResult<ComandaResponseDTO>` das mesas **encerradas** (`FECHADA` e `CANCELADA`), da mais recente
+para a mais antiga por `closedAt` (PDV-F029).
+
+| Parâmetro | Descrição |
+|---|---|
+| `from`, `to` | ISO-8601, recortam pelo **encerramento** (`closedAt`). Cada um opcional |
+| `status` | `FECHADA` ou `CANCELADA`; sem ele, as duas. `ABERTA` é `400` |
+| `customerId`, `openedBy`, `closedBy`, `warehouseCode` | igualdade |
+| `tableLabel` | compara sem caixa e sem espaços nas pontas ("Mesa 4" = " mesa 4 ") |
+| `page`, `size` | ≥ 0 / 1–100, default 0 / 50 |
+
+Campos que o DTO ganhou (também no detalhe):
+
+| Campo | Descrição |
+|---|---|
+| `closedBy` | Quem fechou, finalizou ou cancelou. `system` na varredura automática |
+| `durationMinutes` | `closedAt − openedAt`; nulo em mesa aberta |
+| `cancelReason` | Motivo do cancelamento. Junção grava "Juntada à comanda #X"; varredura, "Mesa vazia esquecida (varredura automática)" |
+| `orderIds` | Todos os pedidos MESA da comanda, inclusive os parciais |
+| `totalPaid` | Σ `totalPayable` dos pedidos **não reembolsados** |
+| `serviceFeeTotal`, `discountTotal` | Σ taxa de serviço e desconto dos mesmos pedidos |
+| `courtesyTotal` | Σ quantidade × **custo** das linhas de cortesia. A cortesia é gravada a preço zero e o preço de venda não fica guardado |
+| `sessionsCount` | Linhas `SESSAO` da comanda |
+
+### GET /pdv/comandas/analytics — Permissão: PDV_READ ou ORDER_READ
+
+Indicadores das mesas **FECHADAS** com encerramento entre `from` e `to` (obrigatórios, ISO-8601,
+máximo **366 dias**), opcionalmente por `warehouseCode` (PDV-F029).
+
+```json
+{
+  "mesas": 42, "ticketMedio": 118.50, "permanenciaMediaMin": 96,
+  "receitaTotal": 4977.00, "taxaServicoTotal": 402.30, "descontoTotal": 35.00,
+  "sessoesNarguile": { "quantidade": 61, "receita": 2135.00 },
+  "porAtendente": [ { "username": "ana", "mesas": 20, "receita": 2400.00 } ],
+  "porMesa":      [ { "tableLabel": "Mesa 4", "mesas": 7, "receita": 910.00, "permanenciaMediaMin": 110 } ],
+  "porHora":      [ { "hora": 21, "mesasAbertas": 9, "receita": 1100.00 } ]
+}
+```
+
+`receita` é o `totalPayable` dos pedidos não reembolsados (inclui a taxa de serviço). `porAtendente`
+usa quem **abriu** a mesa; `porMesa` agrupa pelo rótulo sem caixa e sem espaços (exibe o primeiro
+visto); `porHora` usa a hora de **abertura** em America/Sao_Paulo. `porAtendente` e `porMesa` vêm
+por receita decrescente; `porHora`, por hora. Sem `from`/`to`, invertido ou acima de 366 dias:
+`400`.
 
 ### GET /pdv/comandas — Permissão: PDV_READ
 
@@ -2104,7 +2210,8 @@ e a origem não pode ter tido parte da conta cobrada. `404 COMANDA_NOT_FOUND`;
 ### POST /pdv/comandas/{id}/cancel — Permissão: PDV_COMANDA_MANAGE
 
 Abandona a comanda sem cobrança, devolvendo ao estoque (`ENTRADA`) cada item já lançado. `200`
-com a comanda `CANCELADA`. `403 SESSION_NOT_OWNED`; `404 COMANDA_NOT_FOUND`; `409 COMANDA_NOT_OPEN`.
+com a comanda `CANCELADA`. Corpo **opcional** `{ "reason": "Cliente desistiu" }` (≤ 500): o motivo
+vai, aparado, para `cancelReason` no histórico (PDV-F029); em branco vale como ausente. `403 SESSION_NOT_OWNED`; `404 COMANDA_NOT_FOUND`; `409 COMANDA_NOT_OPEN`.
 
 ---
 
@@ -2122,6 +2229,9 @@ cancelar **devolve mercadoria ao estoque**.
 Filtros, todos opcionais: `channel` (`BALCAO`/`MARKETPLACE`), `status`, `customerId`, `from`, `to`
 (ISO-8601, sobre a data de criação), `page`, `size`. Ordenado do mais recente para o mais antigo.
 
+Cada linha traz `operatorName` (PED-F003): o usuário que operava o caixa do pedido (`null` sem
+caixa, como pedido do app ainda não pago). Também vem em `GET /orders/{id}`.
+
 ### GET /orders/{id} — Permissão: ORDER_READ
 
 ```json
@@ -2137,6 +2247,10 @@ Filtros, todos opcionais: `channel` (`BALCAO`/`MARKETPLACE`), `status`, `custome
 `marginAmount` é **nulo, não parcial**, quando algum item não tem custo congelado (pedidos anteriores
 à V65): somar só os itens conhecidos produziria um número que parece a margem do pedido e não é.
 
+CRM-F010: `paymentStatus` (`PAGO`, `PENDENTE` = marcado sem quitação, `PARCIAL`) e `receivableId`
+vêm do marcado do pedido, se houver. Nas listagens `paymentStatus` fica nulo. Em `payments`, as
+linhas `CORRECTED` (PDV-F030) aparecem como lastro, fora de qualquer total.
+
 ### POST /orders/{id}/status — Permissão: ORDER_FULFILL
 
 ```json
@@ -2145,6 +2259,64 @@ Filtros, todos opcionais: `channel` (`BALCAO`/`MARKETPLACE`), `status`, `custome
 ```
 
 `SEPARADO → ENVIADO → ENTREGUE`, nesta ordem. Consulte `allowedTransitions` no detalhe do pedido.
+
+### POST /orders/bulk-status — Permissão: ORDER_FULFILL
+
+O "Liberar selecionados/todos" de Vendas › Reservas. Equivale a `POST /orders/{id}/status` para cada
+id, na ordem dada (ids repetidos contam uma vez): cada pedido segue a máquina de estados e é gravado
+na **própria transação**, então um recusado não desfaz os outros.
+
+```json
+{ "orderIds": [101, 102, 103], "status": "CONCLUIDO" }
+// 200 → { "ok": [101, 103],
+//         "failed": [ { "orderId": 102, "code": "INVALID_STATUS_TRANSITION", "message": "..." } ] }
+// 400 lista vazia, mais de 200 ids, id nulo ou status ausente
+```
+
+`code` em `failed` (o mesmo `errorCode` do endpoint unitário): `ORDER_NOT_FOUND`, `INVALID_STATUS_TRANSITION` ou `CONCURRENT_UPDATE`. Cada
+sucesso publica `ORDER_STATUS_CHANGED` com `"bulk": true`.
+
+### POST /orders/{id}/payments/correction — Permissão: ORDER_PAYMENT_CORRECT ou ORDER_PAYMENT_CORRECT_CLOSED
+
+Corrige a forma de pagamento lançada errada (PIX que foi débito, dinheiro que foi crédito) **sem
+apagar o registro do erro** (PDV-F030). As linhas `CAPTURED` vigentes passam a `CORRECTED` (ficam no
+pedido como lastro e saem de `payment-totals` e da conferência do caixa); as informadas nascem
+`CAPTURED`.
+
+```json
+{ "payments": [ { "method": "DEBITO", "amount": 80.00 } ],
+  "reason": "Cliente pagou no débito, operador marcou PIX" }
+// 200 → OrderAdminResponseDTO com payments
+```
+
+- A soma tem que ser **exatamente** o `totalPayable` (ou `totalPayable − marcado`, se o pedido tem
+  parte marcada) — sem troco, nem em `DINHEIRO`. Se o pedido tinha troco, `changeAmount` vai a zero.
+- Caixa do pedido aberto: basta `ORDER_PAYMENT_CORRECT`. Caixa já fechado: exige
+  `ORDER_PAYMENT_CORRECT_CLOSED`, e a divergência por método fica registrada em
+  `cash_session_adjustment` (o esperado do fechamento não é reescrito).
+
+| Situação | HTTP | Código |
+|---|---|---|
+| Soma diferente do alvo | 400 | `PAYMENT_TOTAL_MISMATCH` |
+| `reason` ausente ou em branco | 400 | `REASON_REQUIRED` |
+| `GATEWAY_PIX` ou `MARCADO` na correção | 400 | `INVALID_PAYMENT_METHOD` |
+| Caixa fechado sem `ORDER_PAYMENT_CORRECT_CLOSED` | 409 | `CASH_SESSION_CLOSED` |
+| Pedido `CANCELADO`/`REEMBOLSADO` ou sem pagamento capturado | 409 | `ORDER_NOT_CORRECTABLE` |
+| Pago pelo app (sem sessão, ou `GATEWAY_PIX` capturado) | 409 | `GATEWAY_PAYMENT_NOT_CORRECTABLE` |
+
+Publica `ORDER_PAYMENT_CORRECTED` com antes/depois, motivo e `sessionWasClosed`.
+
+### GET /orders/{id}/payment-history — Permissão: ORDER_READ
+
+As correções do pedido, da mais antiga para a mais recente; `[]` se nunca foi corrigido.
+
+```json
+[ { "correctionId": 3, "at": "...", "by": "ana", "reason": "...",
+    "before": [ /* OrderPaymentResponseDTO */ ], "after": [ /* ... */ ] } ]
+```
+
+Campos novos em `OrderPaymentResponseDTO`: `correctionId`, `originCorrectionId`, `correctedAt`,
+`correctedBy` (PDV-F030) e `dueDate` (linha `MARCADO`, CRM-F010).
 
 ### POST /orders/{id}/cancel — Permissão: ORDER_CANCEL
 
@@ -2216,6 +2388,9 @@ uma devolução, e devolução é entrada de estoque.
 ```
 // Response 200 → CustomerResponse (tags reais do cliente) / 404 CUSTOMER_NOT_FOUND
 ```
+
+CRM-F010: só aqui (não na listagem) vêm `creditLimit` (limite **efetivo**: o individual ou o padrão
+`pdv.on-account.default-credit-limit`; nunca nulo), `openBalance` e `overdueBalance` do "Marcar".
 
 ---
 
@@ -2549,6 +2724,108 @@ Cada transição é registrada com autor (username autenticado, nunca informado 
   }
 ]
 ```
+
+---
+
+## Marcados (CRM-F010) — `/receivables` e `/crm/customers/{id}/...`
+
+Venda a prazo para cliente VIP. O marcado nasce da linha `MARCADO` na venda de balcão ou no
+fechamento de mesa (ver `POST /pdv/sessions/{id}/sales`). Estados: `ABERTO → PARCIAL → QUITADO`,
+`VENCIDO` (marcado pelo `ReceivableOverdueJob` às 00:05 de São Paulo) e `CANCELADO`.
+
+### GET /receivables — Permissão: RECEIVABLE_READ
+
+`PageResult<ReceivableResponseDTO>`, um item por pedido marcado, com os itens do pedido. Ordem:
+vencimento mais próximo primeiro. Filtros opcionais: `customerId`, `status`, `overdue` (true = só
+em aberto vencidos), `dueFrom`/`dueTo` (data), `createdFrom`/`createdTo` (ISO-8601), `page` (≥ 0),
+`size` (1–200, default 50).
+
+```json
+{ "id": 9, "customerId": 42, "customerName": "Ana", "orderId": 500, "orderNumber": "000001000",
+  "comandaId": null, "tableLabel": null,
+  "items": [ { "orderItemId": 1, "sku": "ESS-MENTA", "productName": "...", "quantity": 1,
+               "subtotal": 80.00, "mode": "NORMAL" } ],
+  "amount": 30.00, "amountPaid": 10.00, "amountOpen": 20.00, "dueDate": "2026-10-31",
+  "status": "PARCIAL", "daysOverdue": 0, "createdAt": "...", "createdBy": "caixa1",
+  "settledAt": null, "cancelReason": null, "cancelledBy": null, "cancelledAt": null,
+  "payments": [ { "id": 1, "batchId": 4, "amount": 10.00, "method": "PIX", "installments": null,
+                  "channel": null, "provider": null, "cashSessionId": 7, "receivedBy": "caixa2",
+                  "receivedAt": "..." } ] }
+```
+
+`items` é o pedido **inteiro** no momento do marcar, mesmo quando só parte foi marcada.
+
+### GET /receivables/summary — Permissão: RECEIVABLE_READ
+
+Marcados agrupados por cliente: `[{ customerId, customerName, openBalance, overdueBalance,
+creditLimit, nextDueDate, count }]`. Sem `status`, só os em aberto (`ABERTO`, `PARCIAL`,
+`VENCIDO`); `overdue=true`, só clientes com saldo vencido. Ordem: mais vencido primeiro.
+
+### GET /receivables/{id} — Permissão: RECEIVABLE_READ
+
+`ReceivableResponseDTO` com as quitações. `404 RECEIVABLE_NOT_FOUND`.
+
+### GET /crm/customers/{id}/receivables — Permissão: RECEIVABLE_READ
+
+Marcados do cliente, mais recentes primeiro (aba "Marcados" da ficha).
+
+### GET /crm/customers/{id}/on-account-eligibility — Permissão: PDV_SALE_MANAGE, PDV_COMANDA_MANAGE ou RECEIVABLE_READ
+
+Pré-checagem do "Marcar" para o PDV:
+
+```json
+{ "eligible": false, "reasons": ["CUSTOMER_HAS_OVERDUE"], "creditLimit": 300.00,
+  "openBalance": 120.00, "overdueBalance": 40.00, "available": 180.00, "defaultDueDate": "2026-10-31" }
+```
+
+`reasons`: `CUSTOMER_NOT_ELIGIBLE` (sem tag VIP), `ON_ACCOUNT_NOT_ALLOWED` (operador sem
+`PDV_SALE_ON_ACCOUNT`), `CUSTOMER_HAS_OVERDUE`, `CREDIT_LIMIT_EXCEEDED` (nada disponível).
+`creditLimit` é o limite efetivo; `defaultDueDate` vem de `pdv.on-account.default-due-days`.
+
+### POST /receivables/payments?sessionId= — Permissão: PDV_SALE_MANAGE
+
+Recebe marcado no caixa de **quem recebe**. Exige a sessão `OPEN`, do operador e de hoje (as mesmas
+regras da venda).
+
+```json
+{ "customerId": 42, "payments": [ { "method": "DINHEIRO", "amount": 50.00 } ], "receivableIds": [9, 12] }
+// 200 → { "batchId": 4, "applied": [ { "receivableId": 9, "amount": 20.00, "statusAfter": "QUITADO" } ],
+//         "changeAmount": 0.00, "openBalanceAfter": 0.00 }
+```
+
+- Sem `receivableIds`, abate do mais antigo (vencimento, depois criação); com eles, só neles e na
+  ordem dada.
+- Parcial deixa o marcado `PARCIAL`; zerado, `QUITADO`.
+- Só `DINHEIRO` pode passar do saldo e gera troco; os demais acima do saldo dão
+  `409 PAYMENT_EXCEEDS_BALANCE`. `MARCADO` aqui é `400 INVALID_PAYMENT_METHOD`.
+- O valor entra em `payment-totals` como `receivableReceived` e, em dinheiro, no esperado do
+  fechamento. O cashback da parte marcada é creditado agora, proporcional.
+
+`403` sessão de outro operador; `409 RECEIVABLE_NOT_OPEN`, sessão fechada ou de dia anterior.
+`batchId` é numérico.
+
+### PATCH /receivables/{id}/due-date — Permissão: RECEIVABLE_MANAGE
+
+`{ "dueDate": "2026-11-15", "reason": "..." }` — renegocia o vencimento de um marcado em aberto
+(hoje ou depois; `reason` obrigatório, ≤ 500). `200` com o marcado. Publica
+`RECEIVABLE_DUE_DATE_CHANGED`.
+
+### POST /receivables/{id}/cancel — Permissão: RECEIVABLE_MANAGE
+
+`{ "reason": "Lançado no cliente errado" }` — perdão ou erro de lançamento. **Não mexe em estoque**:
+para devolver a mercadoria, o caminho é o reembolso do pedido, que já cancela o marcado em aberto.
+`409 RECEIVABLE_NOT_OPEN` se não está em aberto. Publica `RECEIVABLE_CANCELLED`.
+
+### PUT /crm/customers/{id}/credit-limit — Permissão: RECEIVABLE_MANAGE
+
+`{ "creditLimit": 300.00 }` (≥ 0, 2 casas). `null` volta ao limite padrão da loja. `204`. Endpoint
+próprio, e não campo do `PUT /crm/customers/{id}`: o limite é decisão do gerente e o `PUT` do
+cadastro regrava a ficha inteira. `400` valor negativo; `404` cliente inexistente. Publica
+`CUSTOMER_CREDIT_LIMIT_CHANGED`.
+
+**Configuração** (`system_config`, sem tela — `/system/config` só aceita chaves `auth.*`):
+`pdv.on-account.default-due-days` (default `30`) e `pdv.on-account.default-credit-limit` (default
+`0`, ou seja, sem limite individual o cliente não marca).
 
 ---
 
@@ -3201,6 +3478,12 @@ interface TotpConfirmResponse {
 | `PDV_READ` | `GET /pdv/sessions` |
 | `PDV_SALE_MANAGE` | `POST /pdv/sessions/{id}/sales` — venda com baixa de estoque |
 | `PDV_COMANDA_MANAGE` | `POST /pdv/comandas` e `.../items`/`.../close`/`.../cancel` — comanda de mesa (PDV-F009) |
+| `PDV_READ` **ou** `ORDER_READ` | `GET /pdv/comandas/{id}`, `/pdv/comandas/history` e `/pdv/comandas/analytics` (PDV-F029) |
+| `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda ou no fechamento de mesa (CRM-F010). Só ADMIN |
+| `RECEIVABLE_READ` | Leituras de `/receivables/**` e `GET /crm/customers/{id}/receivables` (CRM-F010). ADMIN e ATENDENTE |
+| `RECEIVABLE_MANAGE` | Renegociar e cancelar marcado, `PUT /crm/customers/{id}/credit-limit` (CRM-F010). Só ADMIN |
+| `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto (PDV-F030). ADMIN e ATENDENTE |
+| `ORDER_PAYMENT_CORRECT_CLOSED` | A mesma correção com o caixa já fechado (PDV-F030). Só ADMIN |
 | `ECOMMERCE_READ` | Acesso ao endpoint stub `GET /ecommerce/carts` |
 | `FINANCEIRO_READ` | `GET /financeiro/cash-flow` e `.../cash-flow/summary` |
 | `FINANCEIRO_CASH_FLOW_MANAGE` | `POST`/`PATCH`/`DELETE /financeiro/cash-flow` — criar, editar e remover lançamento |

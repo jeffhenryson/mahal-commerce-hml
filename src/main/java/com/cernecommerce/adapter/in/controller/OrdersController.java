@@ -141,7 +141,23 @@ public class OrdersController {
                 new OrderFilter(channel, status, customerId, from, to, sessionId, comandaId, orderNumber), page, size));
         enrichCustomerNames(result.content());
         enrichPaymentMethods(result.content());
+        enrichOperatorNames(result.content());
         return ResponseEntity.ok(result);
+    }
+
+    /** PED-F003 — o operador vem do caixa que liquidou o pedido; uma consulta por página. */
+    private void enrichOperatorNames(List<OrderAdminResponseDTO> content) {
+        List<Long> sessionIds = content.stream()
+                .map(OrderAdminResponseDTO::getSessionId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (sessionIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> operators = pdvUseCase.getSessionOperators(sessionIds);
+        content.stream().filter(dto -> dto.getSessionId() != null)
+                .forEach(dto -> dto.setOperatorName(operators.get(dto.getSessionId())));
     }
 
     /** PDV-F026 — uma consulta por página, não um recibo por pedido. */
@@ -208,6 +224,7 @@ public class OrdersController {
     public ResponseEntity<OrderAdminResponseDTO> getOrder(@PathVariable("id") Long orderId) {
         OrderAdminResponseDTO dto = orderConverter.toAdminResponse(orderUseCase.getOrder(orderId));
         enrichCustomerNames(List.of(dto));
+        enrichOperatorNames(List.of(dto));
         // PDV-F026 — o detalhe deixa de precisar do recibo só para saber como o pedido foi pago.
         dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
         // CRM-F010 — situação do marcado, se houver.
