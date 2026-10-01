@@ -71,6 +71,14 @@ public interface ComandaRepository {
     List<Long> findOpenIdsOlderThan(java.time.Instant cutoff, int limit);
 
     /**
+     * PDV-F032 / PDV-C024 — dentre as ABERTAS há mais tempo que {@code cutoff}, as que <b>não devem
+     * nada</b>: sem linha a cobrar e sem sessão de narguilé no salão. São as vazias e as todas pagas
+     * que ninguém encerrou — as únicas em que a varredura age. Consulta própria para que as mesas com
+     * consumo, que a varredura só alerta, não ocupem o lote e deixem estas de fora.
+     */
+    List<Long> findStaleIdsWithNothingOwed(java.time.Instant cutoff, int limit);
+
+    /**
      * Reatribui as linhas {@code itemIds} de uma comanda para outra (PDV-F016, juntar mesas),
      * devolvendo quantas moveram. Quais linhas vão é decisão do domínio
      * ({@code Comanda.itemIdsToMoveOnMerge}, PDV-F031); id que não seja da origem não se move.

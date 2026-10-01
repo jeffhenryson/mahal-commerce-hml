@@ -41,12 +41,14 @@ public class StaleComandaSweepService {
 
     // lockAtMostFor cobre uma varredura anormalmente lenta sem travar a próxima passada para
     // sempre; lockAtLeastFor evita reexecução imediata em caso de falha rápida logo no início.
-    @Scheduled(cron = "${pdv.comanda.stale.cron:0 0 5 * * *}")
+    // PDV-C024 — fuso explícito: a imagem (alpine) roda em UTC, e o "5h" virava 02:00 em São Paulo,
+    // com o salão aberto. Mesmo critério de ReceivableOverdueJob.
+    @Scheduled(cron = "${pdv.comanda.stale.cron:0 0 5 * * *}", zone = "America/Sao_Paulo")
     @SchedulerLock(name = "staleComandaSweep", lockAtMostFor = "PT55M", lockAtLeastFor = "PT5M")
     public void sweep() {
         log.info("scheduler.pdv.comanda.stale.start staleHours={} batchSize={}", staleHours, batchSize);
         ComandaUseCase.StaleComandaSweepResult result = comandaUseCase.sweepStaleComandas(staleHours, batchSize);
-        log.info("scheduler.pdv.comanda.stale.done cancelled={} flagged={}",
-                result.cancelled(), result.flagged());
+        log.info("scheduler.pdv.comanda.stale.done cancelled={} finished={} flagged={}",
+                result.cancelled(), result.finished(), result.flagged());
     }
 }

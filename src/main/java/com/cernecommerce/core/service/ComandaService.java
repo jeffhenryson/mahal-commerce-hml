@@ -1172,25 +1172,28 @@ public class ComandaService implements ComandaUseCase {
 
     /**
      * PDV-F013 — a varredura de mesa esquecida. Ver o javadoc de
-     * {@link ComandaUseCase#sweepStaleComandas} para o porquê de só a comanda <b>vazia</b> ser
-     * cancelada, e de esta ser a única operação de comanda que não exige caixa aberto.
+     * {@link ComandaUseCase#sweepStaleComandas} para o porquê de só a mesa que não deve nada ser
+     * encerrada, e de esta ser a única operação de comanda que não exige caixa aberto.
      */
     @Override
     @Transactional
     public StaleComandaSweepResult sweepStaleComandas(int staleHours, int batchSize) {
         Instant cutoff = Instant.now().minus(staleHours, ChronoUnit.HOURS);
-        List<Long> candidates = comandaRepository.findOpenIdsOlderThan(cutoff, batchSize);
 
+        // 1. As que não devem nada — vazias e todas pagas sem sessão no salão. Só nelas a varredura
+        //    age, e por isso vêm de consulta própria: misturadas às com consumo (que a varredura só
+        //    alerta), 200 mesas esquecidas com consumo esgotavam o lote e estas nunca eram vistas.
         int cancelled = 0;
-        List<Comanda> withConsumption = new ArrayList<>();
-        for (Long id : candidates) {
-            // Mesma trava de addItem/close/cancel (PDV-C008). Sem ela a varredura poderia cancelar
+        int finished = 0;
+        for (Long id : comandaRepository.findStaleIdsWithNothingOwed(cutoff, batchSize)) {
+            // Mesma trava de addItem/close/cancel (PDV-C008). Sem ela a varredura poderia encerrar
             // uma mesa no instante em que um atendente lança o primeiro item nela — e o item cairia
-            // numa comanda já CANCELADA, com o estoque debitado e ninguém para cobrar. Com a trava o
+            // numa comanda já encerrada, com o estoque debitado e ninguém para cobrar. Com a trava o
             // addItem espera e depois falha com ComandaNotOpenException: o operador VÊ o erro.
             Comanda comanda = comandaRepository.findByIdForUpdate(id).orElse(null);
-            // Entre a consulta e a trava a mesa pode ter sido fechada ou cancelada por alguém.
-            if (comanda == null || !comanda.isOpen()) {
+            // Entre a consulta e a trava a mesa pode ter mudado: reconfere tudo sobre o estado travado.
+            if (comanda == null || !comanda.isOpen() || !comanda.openItems().isEmpty()
+                    || comanda.hasActiveSession()) {
                 continue;
             }
             if (comanda.items().isEmpty()) {
@@ -1199,14 +1202,27 @@ public class ComandaService implements ComandaUseCase {
                 comandaRepository.recordClosing(id, "system", "Mesa vazia esquecida (varredura automática)");
                 cancelled++;
             } else {
-                withConsumption.add(comanda);
+                // PDV-F032 — toda paga e nada no salão: é o finish que ninguém apertou. Encerrar não
+                // cobra nem devolve nada, e tira a mesa do caminho do fechamento do caixa (PDV-C005).
+                releaseSessionAssets(comanda.items());
+                comandaRepository.save(comanda.closed(comanda.lastChargedOrderId().orElseThrow(), Instant.now()));
+                comandaRepository.recordClosing(id, "system", "Mesa paga encerrada (varredura automática)");
+                finished++;
             }
         }
 
+        // 2. As que devem algo: só alerta. Lidas SEM trava — a varredura não decide nada sobre elas,
+        //    e segurar a linha de cada mesa enquanto as notificações saem travaria o salão à toa.
+        List<Comanda> withConsumption = new ArrayList<>();
+        for (Long id : comandaRepository.findOpenIdsOlderThan(cutoff, batchSize)) {
+            comandaRepository.findById(id)
+                    .filter(c -> c.isOpen() && (!c.openItems().isEmpty() || c.hasActiveSession()))
+                    .ifPresent(withConsumption::add);
+        }
         if (!withConsumption.isEmpty()) {
             dispatchStaleComandaAlerts(withConsumption, staleHours);
         }
-        return new StaleComandaSweepResult(cancelled, withConsumption.size());
+        return new StaleComandaSweepResult(cancelled, finished, withConsumption.size());
     }
 
     /**
@@ -1221,7 +1237,7 @@ public class ComandaService implements ComandaUseCase {
                 : comandas.size() + " mesas estão abertas com consumo e não foram fechadas:");
         comandas.forEach(c -> body.append("\n- ").append(c.tableOrCustomerLabel())
                 .append(" (comanda #").append(c.id()).append("): ")
-                .append(c.items().size()).append(" item(ns), total ").append(c.runningTotal())
+                .append(c.openItems().size()).append(" item(ns) a cobrar, total ").append(c.runningTotal())
                 .append(", aberta em ").append(c.openedAt()));
         // O estoque destas NÃO foi devolvido de propósito: a essência foi consumida. Quem receber o
         // aviso decide entre cobrar, fechar como perda ou cancelar assumindo a devolução.

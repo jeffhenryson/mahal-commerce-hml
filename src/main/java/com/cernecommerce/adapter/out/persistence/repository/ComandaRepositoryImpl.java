@@ -182,6 +182,13 @@ public class ComandaRepositoryImpl implements ComandaRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<Long> findStaleIdsWithNothingOwed(Instant cutoff, int limit) {
+        return comandaJpaRepository.findStaleIdsWithNothingOwed(ComandaStatus.ABERTA.name(), cutoff,
+                com.cernecommerce.core.domain.model.pdv.SessionStatus.RECOLHIDO.name(), PageRequest.of(0, limit));
+    }
+
+    @Override
     public Comanda save(Comanda comanda) {
         ComandaEntity entity = comanda.id() == null
                 ? new ComandaEntity()

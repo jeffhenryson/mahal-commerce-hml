@@ -319,31 +319,6 @@ public interface ComandaUseCase {
     }
 
     /**
-     * Varre as comandas esquecidas abertas (PDV-F013) — as que passaram de {@code staleHours} sem
-     * serem fechadas nem canceladas.
-     *
-     * <p><b>Cancela apenas as VAZIAS, e essa assimetria é o desenho, não uma etapa faltando.</b>
-     * Cancelar devolve o estoque por {@code ENTRADA}; numa mesa com consumo real a essência já foi
-     * <i>queimada</i> e não voltou para a prateleira, então a devolução automática criaria saldo que
-     * fisicamente não existe. Trocaria um problema visível — a mesa pendurada, que desde PDV-C005
-     * impede o fechamento do caixa — por um invisível: o saldo mentindo para cima, que só apareceria
-     * no próximo balanço, sem ninguém saber de onde veio. Comanda vazia não tem esse dilema: não há
-     * o que devolver, e o único efeito dela é travar o turno.</p>
-     *
-     * <p>As que têm consumo geram <b>uma</b> notificação agregada para quem tem
-     * {@code PDV_COMANDA_MANAGE}, e ficam como estavam. A decisão entre cobrar, fechar como perda ou
-     * cancelar assumindo a devolução é humana — o sistema levanta a mão, não resolve sozinho.</p>
-     *
-     * <p><b>Não exige sessão de caixa aberta</b>, ao contrário de {@link #cancelComanda}. É
-     * deliberado: a comanda mais presa de todas é a órfã de um caixa já fechado (possível para o que
-     * existia antes de PDV-C005), e exigir sessão aberta faria a varredura recusar exatamente o caso
-     * que ela existe para resolver.</p>
-     *
-     * @param staleHours horas desde a abertura a partir das quais a mesa conta como esquecida
-     * @param batchSize teto de comandas examinadas por passada
-     * @return quantas foram canceladas e quantas foram só sinalizadas
-     */
-    /**
      * Troca o rótulo da mesa (PDV-F016) — o cliente mudou de lugar no salão.
      *
      * <p>Antes disto {@code tableOrCustomerLabel} era imutável, e trocar de mesa só era possível
@@ -490,12 +465,39 @@ public interface ComandaUseCase {
      */
     Comanda mergeComanda(Long fromComandaId, Long toComandaId, String username);
 
+    /**
+     * Varre as comandas esquecidas abertas (PDV-F013) — as que passaram de {@code staleHours} sem
+     * serem fechadas nem canceladas.
+     *
+     * <p><b>Age apenas nas que não devem nada, e essa assimetria é o desenho, não uma etapa
+     * faltando.</b> As VAZIAS são canceladas; as TODAS PAGAS sem sessão no salão são encerradas como
+     * um {@link #finishComanda} que ninguém apertou (PDV-F032, {@code closedBy = system}). Nenhuma das
+     * duas mexe em estoque nem em dinheiro, e o único efeito delas abertas é travar o fechamento do
+     * caixa (PDV-C005).</p>
+     *
+     * <p>Mesa que ainda deve algo não é tocada. Cancelar devolveria o estoque por {@code ENTRADA}, e
+     * numa mesa com consumo real a essência já foi <i>queimada</i>: a devolução automática criaria
+     * saldo que fisicamente não existe — o saldo mentindo para cima, que só apareceria no próximo
+     * balanço. Essas geram <b>uma</b> notificação agregada para quem tem {@code PDV_COMANDA_MANAGE};
+     * a decisão entre cobrar, fechar como perda ou cancelar é humana. Vêm de consulta separada, lidas
+     * sem trava, para não ocuparem o lote das que a varredura resolve (PDV-C024).</p>
+     *
+     * <p><b>Não exige sessão de caixa aberta</b>, ao contrário de {@link #cancelComanda}. É
+     * deliberado: a comanda mais presa de todas é a órfã de um caixa já fechado (possível para o que
+     * existia antes de PDV-C005), e exigir sessão aberta faria a varredura recusar exatamente o caso
+     * que ela existe para resolver.</p>
+     *
+     * @param staleHours horas desde a abertura a partir das quais a mesa conta como esquecida
+     * @param batchSize teto de comandas por consulta (as resolvidas e as alertadas, cada uma)
+     * @return quantas foram canceladas, encerradas e só sinalizadas
+     */
     StaleComandaSweepResult sweepStaleComandas(int staleHours, int batchSize);
 
     /**
-     * Resultado de uma passada da varredura: {@code cancelled} são as vazias que foram encerradas,
-     * {@code flagged} as que têm consumo e só entraram no alerta.
+     * Resultado de uma passada da varredura: {@code cancelled} são as vazias que foram canceladas,
+     * {@code finished} as todas pagas que foram encerradas (PDV-F032), e {@code flagged} as que
+     * ainda devem algo e só entraram no alerta.
      */
-    record StaleComandaSweepResult(int cancelled, int flagged) {
+    record StaleComandaSweepResult(int cancelled, int finished, int flagged) {
     }
 }

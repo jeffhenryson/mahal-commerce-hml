@@ -78,6 +78,15 @@ public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long>
     List<Long> findOpenIdsOlderThan(@Param("status") String status, @Param("cutoff") Instant cutoff,
             Pageable pageable);
 
+    /** Ver {@code ComandaRepository.findStaleIdsWithNothingOwed}. */
+    @Query("SELECT c.id FROM ComandaEntity c "
+            + "WHERE c.status = :status AND c.openedAt < :cutoff AND NOT EXISTS ("
+            + "  SELECT 1 FROM ComandaItemEntity i WHERE i.comanda = c AND (i.closedInOrderId IS NULL"
+            + "    OR (i.sessionStatus IS NOT NULL AND i.sessionStatus <> :recolhido))) "
+            + "ORDER BY c.id ASC")
+    List<Long> findStaleIdsWithNothingOwed(@Param("status") String status, @Param("cutoff") Instant cutoff,
+            @Param("recolhido") String recolhido, Pageable pageable);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM ComandaEntity c WHERE c.id = :id")
     Optional<ComandaEntity> findByIdForUpdate(@Param("id") Long id);

@@ -5,6 +5,8 @@ import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
+import com.cernecommerce.core.domain.model.pdv.SessionProgress;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import jakarta.persistence.EntityManager;
@@ -472,6 +474,38 @@ class ComandaRepositoryIT {
         List<Long> ids = comandaRepository.findOpenIdsOlderThan(Instant.now().minus(12, ChronoUnit.HOURS), 2);
 
         assertThat(ids).hasSize(2);
+    }
+
+    /**
+     * PDV-F032 / PDV-C024 — a consulta das mesas em que a varredura AGE: só as que não devem nada.
+     * Vazia e toda paga entram; linha a cobrar ou sessão ainda no salão (mesmo paga) ficam de fora.
+     */
+    @Test
+    void findStaleIdsWithNothingOwed_returnsOnlyEmptyAndFullyPaidWithNothingOnTheFloor() {
+        Instant velha = Instant.now().minus(20, ChronoUnit.HOURS);
+        Comanda vazia = comandaRepository.save(comandaAbertaEm(velha));
+        Comanda aCobrar = comandaRepository.save(comandaAbertaEm(velha, linhaSessao(null, null)));
+        Comanda paga = comandaRepository.save(comandaAbertaEm(velha, linhaSessao(901L,
+                new SessionProgress(SessionStatus.RECOLHIDO, velha, velha, velha))));
+        Comanda pagaNoSalao = comandaRepository.save(comandaAbertaEm(velha, linhaSessao(902L,
+                SessionProgress.preparing(velha))));
+        flushAndClear();
+
+        List<Long> ids = comandaRepository.findStaleIdsWithNothingOwed(Instant.now().minus(12, ChronoUnit.HOURS), 100);
+
+        assertThat(ids).contains(vazia.id(), paga.id());
+        assertThat(ids).doesNotContain(aCobrar.id(), pagaNoSalao.id());
+    }
+
+    private static ComandaItem linhaSessao(Long closedInOrderId, SessionProgress progress) {
+        return ComandaItem.of(null, "SESS-1", BigDecimal.ONE, new BigDecimal("30.00"), null, "Sessão",
+                Instant.now(), ConsumptionMode.SESSAO, false, null, "Zomo", null, closedInOrderId,
+                null, null, null, null, null, progress);
+    }
+
+    private static Comanda comandaAbertaEm(Instant openedAt, ComandaItem... items) {
+        return Comanda.of(null, 90L, "LOJA-01", "Mesa esquecida", null, ComandaStatus.ABERTA,
+                List.of(items), null, "caixa1", openedAt, null);
     }
 
     private static Comanda comandaAbertaEm(Instant openedAt) {

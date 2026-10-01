@@ -20,7 +20,7 @@ class StaleComandaSweepServiceTest {
     void sweep_delegatesToUseCase_withConfiguredWindowAndBatchSize() {
         StaleComandaSweepService service = new StaleComandaSweepService(comandaUseCase, 12, 200);
         when(comandaUseCase.sweepStaleComandas(12, 200))
-                .thenReturn(new ComandaUseCase.StaleComandaSweepResult(2, 1));
+                .thenReturn(new ComandaUseCase.StaleComandaSweepResult(2, 1, 1));
 
         service.sweep();
 
@@ -35,7 +35,7 @@ class StaleComandaSweepServiceTest {
     void sweep_honoursANonDefaultWindow() {
         StaleComandaSweepService service = new StaleComandaSweepService(comandaUseCase, 24, 50);
         when(comandaUseCase.sweepStaleComandas(24, 50))
-                .thenReturn(new ComandaUseCase.StaleComandaSweepResult(0, 0));
+                .thenReturn(new ComandaUseCase.StaleComandaSweepResult(0, 0, 0));
 
         service.sweep();
 

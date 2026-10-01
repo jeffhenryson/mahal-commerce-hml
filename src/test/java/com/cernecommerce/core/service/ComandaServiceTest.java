@@ -1209,12 +1209,13 @@ class ComandaServiceTest {
     @Test
     void sweepStaleComandas_cancelsTheEmptyOnes() {
         Comanda vazia = staleComanda();
-        when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(vazia));
 
         ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
 
         assertThat(result.cancelled()).isEqualTo(1);
+        assertThat(result.finished()).isZero();
         assertThat(result.flagged()).isZero();
 
         ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
@@ -1228,6 +1229,30 @@ class ComandaServiceTest {
     }
 
     /**
+     * PDV-F032 — mesa toda paga que ninguém encerrou: é o finish que faltou. Fecha no último pedido,
+     * sem estoque e sem alerta — e para de travar o fechamento do caixa.
+     */
+    @Test
+    void sweepStaleComandas_finishesTheFullyPaidOnes() {
+        ComandaItem linha = linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null);
+        Comanda paga = staleComanda(linha).withItemsClosedIn(400L, List.of(1L));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(paga));
+
+        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+
+        assertThat(result.finished()).isEqualTo(1);
+        assertThat(result.cancelled()).isZero();
+        ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository).save(saved.capture());
+        assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(saved.getValue().orderId()).isEqualTo(400L);
+        verify(comandaRepository).recordClosing(10L, "system", "Mesa paga encerrada (varredura automática)");
+        verifyNoInteractions(estoqueUseCase);
+        verifyNoInteractions(notificationUseCase);
+    }
+
+    /**
      * <b>O caso que define a feature.</b> Mesa velha COM consumo não é cancelada: a essência já foi
      * queimada, e uma {@code ENTRADA} automática devolveria ao sistema um saldo que não existe na
      * prateleira. O sistema levanta a mão e para — cobrar, perder ou cancelar é decisão humana.
@@ -1236,7 +1261,7 @@ class ComandaServiceTest {
     void sweepStaleComandas_neverTouchesStockOfAComandaWithConsumption() {
         Comanda comConsumo = staleComanda(essenciaItem());
         when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of(10L));
-        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comConsumo));
+        when(comandaRepository.findById(10L)).thenReturn(Optional.of(comConsumo));
         when(userRepository.findUsernamesByPermission("PDV_COMANDA_MANAGE")).thenReturn(Set.of("gerente"));
 
         ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
@@ -1246,6 +1271,8 @@ class ComandaServiceTest {
         // Nem devolução de estoque, nem mudança de status: a mesa fica exatamente como estava.
         verifyNoInteractions(estoqueUseCase);
         verify(comandaRepository, never()).save(any());
+        // PDV-C024 — e o alerta sai sem segurar a linha da mesa.
+        verify(comandaRepository, never()).findByIdForUpdate(any());
         verify(notificationUseCase).notify(eq("gerente"), eq(NotificationType.SYSTEM), anyString(), anyString());
     }
 
@@ -1254,8 +1281,8 @@ class ComandaServiceTest {
     void sweepStaleComandas_sendsOneAggregatedAlertPerRecipient() {
         when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200)))
                 .thenReturn(List.of(10L, 11L));
-        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
-        when(comandaRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
+        when(comandaRepository.findById(10L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
+        when(comandaRepository.findById(11L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
         when(userRepository.findUsernamesByPermission("PDV_COMANDA_MANAGE")).thenReturn(Set.of("gerente"));
 
         ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
@@ -1273,13 +1300,26 @@ class ComandaServiceTest {
     @Test
     void sweepStaleComandas_skipsWhatStoppedBeingOpenBeforeTheLock() {
         Comanda jaCancelada = staleComanda().cancelled(Instant.now());
-        when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(jaCancelada));
 
         ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
 
         assertThat(result.cancelled()).isZero();
         assertThat(result.flagged()).isZero();
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** Entre a consulta e a trava a mesa ganhou consumo: a varredura reconfere e não a encerra. */
+    @Test
+    void sweepStaleComandas_skipsWhatGotSomethingOwedBeforeTheLock() {
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
+
+        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+
+        assertThat(result.cancelled()).isZero();
+        assertThat(result.finished()).isZero();
         verify(comandaRepository, never()).save(any());
     }
 
@@ -1290,7 +1330,7 @@ class ComandaServiceTest {
      */
     @Test
     void sweepStaleComandas_doesNotRequireAnOpenCashRegisterSession() {
-        when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(staleComanda()));
 
         comandaService.sweepStaleComandas(12, 200);
@@ -1301,12 +1341,11 @@ class ComandaServiceTest {
     /** O corte vira o {@code cutoff} passado ao repositório: 12h atrás, não "agora". */
     @Test
     void sweepStaleComandas_cutsByTheConfiguredWindow() {
-        when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(50))).thenReturn(List.of());
-
         comandaService.sweepStaleComandas(12, 50);
 
         ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
-        verify(comandaRepository).findOpenIdsOlderThan(cutoff.capture(), eq(50));
+        verify(comandaRepository).findStaleIdsWithNothingOwed(cutoff.capture(), eq(50));
+        verify(comandaRepository).findOpenIdsOlderThan(cutoff.getValue(), 50);
         assertThat(cutoff.getValue()).isBefore(Instant.now().minus(11, ChronoUnit.HOURS));
         assertThat(cutoff.getValue()).isAfter(Instant.now().minus(13, ChronoUnit.HOURS));
     }
@@ -1314,11 +1353,10 @@ class ComandaServiceTest {
     /** Nada esquecido: nem alerta, nem escrita. */
     @Test
     void sweepStaleComandas_withNothingStaleDoesNothing() {
-        when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of());
-
         ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
 
         assertThat(result.cancelled()).isZero();
+        assertThat(result.finished()).isZero();
         assertThat(result.flagged()).isZero();
         verifyNoInteractions(notificationUseCase);
         verifyNoInteractions(estoqueUseCase);
