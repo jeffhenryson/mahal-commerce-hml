@@ -86,9 +86,9 @@ public class SessionMenuService implements SessionMenuUseCase {
 
     @Override
     @Transactional
-    public SessionTier updateTier(Long id, String nome, BigDecimal preco, String marcas, int ordem, boolean ativo) {
+    public SessionTier updateTier(Long id, String nome, BigDecimal preco, String marcas, Integer ordem, boolean ativo) {
         SessionTier current = repository.findTierById(id).orElseThrow(() -> new SessionTierNotFoundException(id));
-        SessionTier updated = current.withData(nome, preco, marcas, ordem, ativo);
+        SessionTier updated = current.withData(nome, preco, marcas, ordem == null ? current.ordem() : ordem, ativo);
         ensureTierNameFree(updated.nome(), id);
         return repository.saveTier(updated);
     }
@@ -109,9 +109,9 @@ public class SessionMenuService implements SessionMenuUseCase {
 
     @Override
     @Transactional
-    public SessionAddon updateAddon(Long id, String nome, BigDecimal preco, int ordem, boolean ativo) {
+    public SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo) {
         SessionAddon current = repository.findAddonById(id).orElseThrow(() -> new SessionAddonNotFoundException(id));
-        SessionAddon updated = current.withData(nome, preco, ordem, ativo);
+        SessionAddon updated = current.withData(nome, preco, ordem == null ? current.ordem() : ordem, ativo);
         ensureAddonNameFree(updated.nome(), id);
         return repository.saveAddon(updated);
     }
@@ -157,11 +157,13 @@ public class SessionMenuService implements SessionMenuUseCase {
 
     @Override
     @Transactional
-    public SessionAssetType updateAssetType(Long id, String nome, int quantidadeTotal, boolean incluso,
+    public SessionAssetType updateAssetType(Long id, String nome, Integer quantidadeTotal, Boolean incluso,
             boolean ativo) {
         SessionAssetType current = repository.findAssetTypeById(id)
                 .orElseThrow(() -> new SessionAssetTypeNotFoundException(id));
-        return repository.saveAssetType(current.withData(nome, quantidadeTotal, incluso, ativo));
+        return repository.saveAssetType(current.withData(nome,
+                quantidadeTotal == null ? current.quantidadeTotal() : quantidadeTotal,
+                incluso == null ? current.incluso() : incluso, ativo));
     }
 
     @Override

@@ -220,7 +220,7 @@ public class PdvSessaoController {
     public ResponseEntity<SessionTierResponseDTO> createTier(@Valid @RequestBody SessionTierRequest request,
             Authentication authentication) {
         var tier = sessionMenuUseCase.createTier(request.getNome(), request.getPreco(), request.getMarcas(),
-                request.getOrdem());
+                request.getOrdem() == null ? 0 : request.getOrdem());
         audit(authentication, "faixa", tier.id());
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionTierResponseDTO.of(tier));
     }
@@ -249,7 +249,8 @@ public class PdvSessaoController {
     @PreAuthorize("hasAuthority('PDV_SESSAO_MANAGE')")
     public ResponseEntity<SessionAddonResponseDTO> createAddon(@Valid @RequestBody SessionAddonRequest request,
             Authentication authentication) {
-        var addon = sessionMenuUseCase.createAddon(request.getNome(), request.getPreco(), request.getOrdem());
+        var addon = sessionMenuUseCase.createAddon(request.getNome(), request.getPreco(),
+                request.getOrdem() == null ? 0 : request.getOrdem());
         audit(authentication, "adicional", addon.id());
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionAddonResponseDTO.of(addon));
     }
@@ -283,7 +284,8 @@ public class PdvSessaoController {
             throw new IllegalArgumentException("código do utensílio é obrigatório");
         }
         var type = sessionMenuUseCase.createAssetType(request.getCodigo(), request.getNome(),
-                request.getQuantidadeTotal(), request.isIncluso());
+                request.getQuantidadeTotal() == null ? 0 : request.getQuantidadeTotal(),
+                Boolean.TRUE.equals(request.getIncluso()));
         audit(authentication, "utensilio", type.id());
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionAssetTypeResponseDTO.of(type));
     }
@@ -294,7 +296,7 @@ public class PdvSessaoController {
     public ResponseEntity<SessionAssetTypeResponseDTO> updateAssetType(@PathVariable Long id,
             @Valid @RequestBody SessionAssetTypeRequest request, Authentication authentication) {
         var type = sessionMenuUseCase.updateAssetType(id, request.getNome(), request.getQuantidadeTotal(),
-                request.isIncluso(), request.getAtivo() == null || request.getAtivo());
+                request.getIncluso(), request.getAtivo() == null || request.getAtivo());
         audit(authentication, "utensilio", id);
         return ResponseEntity.ok(SessionAssetTypeResponseDTO.of(type));
     }

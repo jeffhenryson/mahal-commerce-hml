@@ -20,11 +20,11 @@ public class SessionAssetTypeRequest {
     private String nome;
 
     @Min(0)
-    @Schema(description = "Quantas a casa tem.", example = "12")
-    private int quantidadeTotal;
+    @Schema(description = "Quantas a casa tem. No PUT, omitido mantém o valor atual (PDV-C028); no POST, 0.", example = "12")
+    private Integer quantidadeTotal;
 
-    @Schema(description = "Acompanha toda sessão (pinça, prato, tapete). Vaso não é incluso: vem da configuração.")
-    private boolean incluso;
+    @Schema(description = "Acompanha toda sessão (pinça, prato, tapete). Vaso não é incluso: vem da configuração. No PUT, omitido mantém o valor atual (PDV-C028); no POST, false.")
+    private Boolean incluso;
 
     @Schema(description = "Só no PUT.", defaultValue = "true")
     private Boolean ativo;

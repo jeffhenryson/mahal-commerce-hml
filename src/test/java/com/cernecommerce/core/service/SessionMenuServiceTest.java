@@ -164,6 +164,34 @@ class SessionMenuServiceTest {
         assertThat(salvo.preco()).isEqualByComparingTo("32.00");
     }
 
+    /**
+     * PDV-C028 — PUT que só renomeia a pinça não zera a quantidade nem desmarca "incluso". Com os
+     * primitivos, o campo omitido virava 0/false, e todo lançamento seguinte recusava por falta de
+     * utensílio.
+     */
+    @Test
+    void updateAssetType_omittedQuantityAndIncluso_keepTheCurrentValues() {
+        SessionAssetType atual = new SessionAssetType(5L, "PINCA", "Pinça", 12, true, true);
+        when(repository.findAssetTypeById(5L)).thenReturn(Optional.of(atual));
+        when(repository.saveAssetType(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SessionAssetType salvo = service.updateAssetType(5L, "Pinça inox", null, null, true);
+
+        assertThat(salvo.nome()).isEqualTo("Pinça inox");
+        assertThat(salvo.quantidadeTotal()).isEqualTo(12);
+        assertThat(salvo.incluso()).isTrue();
+    }
+
+    @Test
+    void updateTier_omittedOrdem_keepsTheCurrentOne() {
+        SessionTier atual = new SessionTier(2L, "Premium", new BigDecimal("30.00"), null, 2, true);
+        when(repository.findTierById(2L)).thenReturn(Optional.of(atual));
+        when(repository.findTierByNome("Premium")).thenReturn(Optional.of(atual));
+        when(repository.saveTier(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.updateTier(2L, "Premium", new BigDecimal("30.00"), null, null, true).ordem()).isEqualTo(2);
+    }
+
     @Test
     void requireActiveTier_refusesInactiveTier() {
         when(repository.findTierById(9L))

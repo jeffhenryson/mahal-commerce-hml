@@ -27,7 +27,8 @@ public interface SessionMenuUseCase {
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionTierNotFoundException se não existir
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException nome repetido
      */
-    SessionTier updateTier(Long id, String nome, BigDecimal preco, String marcas, int ordem, boolean ativo);
+    /** PDV-C028 — {@code ordem} nula mantém a atual. */
+    SessionTier updateTier(Long id, String nome, BigDecimal preco, String marcas, Integer ordem, boolean ativo);
 
     /** PDV-F024 — adicionais pagos (ativos e inativos). */
     List<SessionAddon> listAddons();
@@ -39,7 +40,8 @@ public interface SessionMenuUseCase {
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionAddonNotFoundException se não existir
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException nome repetido
      */
-    SessionAddon updateAddon(Long id, String nome, BigDecimal preco, int ordem, boolean ativo);
+    /** PDV-C028 — {@code ordem} nula mantém a atual. */
+    SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo);
 
     List<SessionAssetType> listAssetTypes();
 
@@ -47,7 +49,12 @@ public interface SessionMenuUseCase {
     SessionAssetType createAssetType(String codigo, String nome, int quantidadeTotal, boolean incluso);
 
     /** @throws com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundException se não existir */
-    SessionAssetType updateAssetType(Long id, String nome, int quantidadeTotal, boolean incluso, boolean ativo);
+    /**
+     * PDV-C028 — {@code quantidadeTotal} e {@code incluso} nulos mantêm os atuais. Primitivos, um PUT
+     * que só renomeava a pinça zerava a quantidade dela, e todo lançamento seguinte recusava por
+     * falta de utensílio.
+     */
+    SessionAssetType updateAssetType(Long id, String nome, Integer quantidadeTotal, Boolean incluso, boolean ativo);
 
     SessionSettings getSettings();
 

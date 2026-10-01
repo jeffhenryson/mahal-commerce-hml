@@ -25,7 +25,7 @@ public class SessionAddonRequest {
     private BigDecimal preco;
 
     @Min(0)
-    private int ordem;
+    private Integer ordem;
 
     @Schema(description = "Só no PUT; adicional inativo some do cardápio da mesa.", defaultValue = "true")
     private Boolean ativo;

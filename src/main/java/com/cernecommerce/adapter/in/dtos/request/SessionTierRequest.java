@@ -29,7 +29,7 @@ public class SessionTierRequest {
     private String marcas;
 
     @Min(0)
-    private int ordem;
+    private Integer ordem;
 
     @Schema(description = "Só no PUT; faixa inativa some do cardápio da mesa.", defaultValue = "true")
     private Boolean ativo;
