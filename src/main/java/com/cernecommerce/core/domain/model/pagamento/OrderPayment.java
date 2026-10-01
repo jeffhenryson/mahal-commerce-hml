@@ -17,7 +17,8 @@ import java.time.Instant;
 public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
         PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
         Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
-        Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy) {
+        Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+        java.time.LocalDate dueDate) {
 
     public OrderPayment {
         if (orderId == null) {
@@ -56,6 +57,11 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             throw new IllegalArgumentException(
                     "status CAPTURED e capturedAt têm que coexistir: status=" + status + ", capturedAt=" + capturedAt);
         }
+        // CRM-F010 — espelha ck_order_payment_on_account.
+        if ((method == PaymentMethod.MARCADO) != (status == PaymentStatus.ON_ACCOUNT)
+                || (method == PaymentMethod.MARCADO) != (dueDate != null)) {
+            throw new IllegalArgumentException("MARCADO, ON_ACCOUNT e dueDate andam juntos");
+        }
         // PDV-F027 — espelha ck_order_payment_corrected.
         if ((status == PaymentStatus.CORRECTED)
                 != (correctionId != null && correctedAt != null && correctedBy != null)) {
@@ -86,7 +92,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             Integer installments, PaymentChannel channel, PaymentProvider provider, Long originCorrectionId) {
         Instant now = Instant.now();
         return new OrderPayment(null, orderId, method, amount, PaymentStatus.CAPTURED, installments,
-                null, now, now, now, channel, provider, null, originCorrectionId, null, null);
+                null, now, now, now, channel, provider, null, originCorrectionId, null, null, null);
     }
 
     /**
@@ -105,7 +111,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         Instant now = Instant.now();
         return new OrderPayment(null, original.orderId(), original.method(), original.amount(),
                 PaymentStatus.REFUNDED, original.installments(), null, now, null, now, original.channel(),
-                original.provider(), null, null, null, null);
+                original.provider(), null, null, null, null, null);
     }
 
     /** Reconstitui um pagamento a partir de persistência. */
@@ -129,9 +135,19 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
             Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
             Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy) {
+        return of(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt,
+                createdAt, channel, provider, correctionId, originCorrectionId, correctedAt, correctedBy, null);
+    }
+
+    /** Reconstitui um pagamento completo, inclusive o vencimento do MARCADO (CRM-F010). */
+    public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+            java.time.LocalDate dueDate) {
         return new OrderPayment(id, orderId, method, amount, status, installments, gatewayRef,
                 authorizedAt, capturedAt, createdAt, channel, provider, correctionId, originCorrectionId,
-                correctedAt, correctedBy);
+                correctedAt, correctedBy, dueDate);
     }
 
     /**
@@ -142,7 +158,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     public static OrderPayment pending(Long orderId, PaymentMethod method, BigDecimal amount) {
         Instant now = Instant.now();
         return new OrderPayment(null, orderId, method, amount, PaymentStatus.PENDING, null,
-                null, null, null, now, null, null, null, null, null, null);
+                null, null, null, now, null, null, null, null, null, null, null);
     }
 
     /**
@@ -165,7 +181,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             throw new IllegalArgumentException("capturedAt é obrigatório na confirmação");
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CAPTURED, installments,
-                gatewayRef, capturedAt, capturedAt, createdAt, channel, provider, null, null, null, null);
+                gatewayRef, capturedAt, capturedAt, createdAt, channel, provider, null, null, null, null, null);
     }
 
     /**
@@ -183,7 +199,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             throw new IllegalArgumentException("só se cancela uma cobrança PENDING");
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CANCELLED, installments,
-                gatewayRef, authorizedAt, null, createdAt, channel, provider, null, null, null, null);
+                gatewayRef, authorizedAt, null, createdAt, channel, provider, null, null, null, null, null);
     }
 
     /**
@@ -197,6 +213,15 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CORRECTED, installments,
                 gatewayRef, authorizedAt, capturedAt, createdAt, channel, provider, correctionId,
-                originCorrectionId, correctedAt, correctedBy);
+                originCorrectionId, correctedAt, correctedBy, dueDate);
+    }
+
+    /**
+     * A parte marcada da venda (CRM-F010): ON_ACCOUNT, com vencimento, sem captura — não há dinheiro
+     * nenhum na gaveta. Quem acompanha o recebimento é o recebível, não esta linha.
+     */
+    public static OrderPayment onAccount(Long orderId, BigDecimal amount, java.time.LocalDate dueDate) {
+        return new OrderPayment(null, orderId, PaymentMethod.MARCADO, amount, PaymentStatus.ON_ACCOUNT, null,
+                null, null, null, Instant.now(), null, null, null, null, null, null, dueDate);
     }
 }

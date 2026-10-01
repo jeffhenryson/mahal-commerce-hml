@@ -365,7 +365,8 @@ public class PdvComandaController {
     @Operation(summary = "Fecha a comanda, convertendo os itens acumulados num pedido concluído",
             description = "Mesmo contrato de pagamento de POST /pdv/sessions/{id}/sales: payments "
                     + "exige pelo menos uma linha, e só DINHEIRO pode ser tendido a mais para gerar "
-                    + "troco. O estoque já foi debitado item a item em cada lançamento — o "
+                    + "troco. CRM-F010: aceita uma linha MARCADO (com dueDate), com ou sem itemIds — "
+                    + "mesmas regras e códigos de erro do balcão; o cliente é o da mesa. O estoque já foi debitado item a item em cada lançamento — o "
                     + "fechamento não toca em saldo de novo. O pedido gerado NASCE com channel = "
                     + "MESA (o canal é imutável), carregando comandaId, tableLabel e o cliente da "
                     + "mesa. Qualquer atendente com PDV_COMANDA_MANAGE pode fechar, e o pedido "
@@ -400,8 +401,10 @@ public class PdvComandaController {
         List<PaymentCommand> payments = request.getPayments().stream()
                 .map(p -> new PaymentCommand(
                         com.cernecommerce.core.domain.model.pagamento.PaymentMethod.valueOf(p.getMethod()),
-                        p.getAmount(), p.getInstallments(), p.getChannel(), p.getProvider()))
+                        p.getAmount(), p.getInstallments(), p.getChannel(), p.getProvider(),
+                        "MARCADO".equals(p.getMethod()) ? p.getDueDate() : null))
                 .toList();
+        OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
         // A sobrecarga completa, sempre: as de conveniência de ComandaUseCase são `default` da
         // interface e perdem a transação quando chamadas pelo proxy (PLAT-C047).
         Order order = comandaUseCase.closeComanda(comandaId, payments, request.getDiscountAmount(),
@@ -417,6 +420,7 @@ public class PdvComandaController {
                         "netAmount", order.netAmount(),
                         "serviceFeeAmount", order.serviceFeeAmount(),
                         "discountAmount", order.discountAmount())));
+        OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         if (order.totalCashbackEarned().signum() > 0) {
             publisher.publishEvent(AuditEvent.of(EventType.CASHBACK_EARNED, authentication.getName(),
                     Map.of("orderId", order.id(), "orderNumber", order.orderNumber(),

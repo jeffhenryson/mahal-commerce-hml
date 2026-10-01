@@ -47,6 +47,7 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
         entity.setOriginCorrectionId(payment.originCorrectionId());
         entity.setCorrectedAt(payment.correctedAt());
         entity.setCorrectedBy(payment.correctedBy());
+        entity.setDueDate(payment.dueDate());
         return toDomain(orderPaymentJpaRepository.save(entity));
     }
 
@@ -97,6 +98,7 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
                 e.getAuthorizedAt(), e.getCapturedAt(), e.getCreatedAt(),
                 e.getChannel() == null ? null : PaymentChannel.valueOf(e.getChannel()),
                 e.getProvider() == null ? null : PaymentProvider.valueOf(e.getProvider()),
-                e.getCorrectionId(), e.getOriginCorrectionId(), e.getCorrectedAt(), e.getCorrectedBy());
+                e.getCorrectionId(), e.getOriginCorrectionId(), e.getCorrectedAt(), e.getCorrectedBy(),
+                e.getDueDate());
     }
 }

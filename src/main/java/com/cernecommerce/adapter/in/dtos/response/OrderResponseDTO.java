@@ -84,4 +84,11 @@ public class OrderResponseDTO {
             + "cliente é redirecionado para pagar. Ausente/nulo em toda resposta exceto a de "
             + "POST /shop/checkout, que é o único momento em que ela existe.")
     private String checkoutUrl;
+
+    @Schema(description = "CRM-F010 — PAGO, PENDENTE (marcado sem nenhuma quitação) ou PARCIAL. Só nas "
+            + "respostas que trazem payments.")
+    private String paymentStatus;
+
+    @Schema(description = "CRM-F010 — o marcado do pedido, se houver. Só em GET /orders/{id}.")
+    private Long receivableId;
 }

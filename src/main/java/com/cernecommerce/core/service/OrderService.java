@@ -27,6 +27,7 @@ import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentCorrectionRepository;
 import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
@@ -52,10 +53,13 @@ public class OrderService implements OrderUseCase {
     private final CashbackUseCase cashbackUseCase;
     private final CashRegisterRepository cashRegisterRepository;
     private final OrderPaymentCorrectionRepository correctionRepository;
+    private final ReceivableUseCase receivableUseCase;
 
     public OrderService(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
             OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
-            CashRegisterRepository cashRegisterRepository, OrderPaymentCorrectionRepository correctionRepository) {
+            CashRegisterRepository cashRegisterRepository, OrderPaymentCorrectionRepository correctionRepository,
+            ReceivableUseCase receivableUseCase) {
+        this.receivableUseCase = receivableUseCase;
         this.orderRepository = orderRepository;
         this.estoqueUseCase = estoqueUseCase;
         this.orderPaymentRepository = orderPaymentRepository;
@@ -192,6 +196,9 @@ public class OrderService implements OrderUseCase {
         // resgate) não é desfeito por aqui.
         cashbackUseCase.reverseEarningsForOrder(order);
 
+        // CRM-F010 — devolvida a mercadoria, o marcado em aberto do pedido deixa de ser devido.
+        receivableUseCase.cancelOpenForOrder(orderId, "Pedido reembolsado: " + reason, username);
+
         return orderRepository.save(refunded);
     }
 
@@ -224,15 +231,21 @@ public class OrderService implements OrderUseCase {
         }
 
         // Valor exato, sem troco: o troco já foi devolvido na venda. Nem DINHEIRO pode exceder.
+        // CRM-F010 — a parte MARCADA não foi paga e não se corrige por aqui: o alvo é o que entrou.
+        BigDecimal onAccount = current.stream()
+                .filter(p -> p.status() == PaymentStatus.ON_ACCOUNT)
+                .map(OrderPayment::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal target = order.totalPayable().subtract(onAccount);
         BigDecimal informed = BigDecimal.ZERO;
         for (PaymentCommand payment : payments) {
-            if (payment.method() == PaymentMethod.GATEWAY_PIX) {
+            if (payment.method() == PaymentMethod.GATEWAY_PIX || payment.method() == PaymentMethod.MARCADO) {
                 throw new InvalidCorrectionPaymentMethodException(payment.method());
             }
             informed = informed.add(payment.amount());
         }
-        if (informed.compareTo(order.totalPayable()) != 0) {
-            throw new PaymentTotalMismatchException(informed, order.totalPayable());
+        if (informed.compareTo(target) != 0) {
+            throw new PaymentTotalMismatchException(informed, target);
         }
 
         CashRegisterSession session = cashRegisterRepository.findById(order.sessionId())

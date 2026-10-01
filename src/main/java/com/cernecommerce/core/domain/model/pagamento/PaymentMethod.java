@@ -19,5 +19,10 @@ public enum PaymentMethod {
     CREDITO,
     PIX,
     /** PIX confirmado pelo webhook do gateway (ECM-F004) — nunca lançado pelo operador. */
-    GATEWAY_PIX
+    GATEWAY_PIX,
+    /**
+     * "Marcar" (CRM-F010): o cliente VIP paga depois. A linha nasce ON_ACCOUNT, com vencimento, e
+     * nunca entra em caixa — quem entra é a quitação, no caixa de quem recebe.
+     */
+    MARCADO
 }

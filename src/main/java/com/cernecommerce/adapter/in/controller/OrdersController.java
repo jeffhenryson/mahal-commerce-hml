@@ -30,6 +30,7 @@ import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.OrderReportUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -87,10 +88,12 @@ public class OrdersController {
     private final PdvUseCase pdvUseCase;
     private final OrderDTOConverter orderConverter;
     private final ApplicationEventPublisher publisher;
+    private final ReceivableUseCase receivableUseCase;
 
     public OrdersController(OrderUseCase orderUseCase, OrderReportUseCase orderReportUseCase,
             CrmUseCase crmUseCase, PdvUseCase pdvUseCase, OrderDTOConverter orderConverter,
-            ApplicationEventPublisher publisher) {
+            ApplicationEventPublisher publisher, ReceivableUseCase receivableUseCase) {
+        this.receivableUseCase = receivableUseCase;
         this.orderUseCase = orderUseCase;
         this.orderReportUseCase = orderReportUseCase;
         this.crmUseCase = crmUseCase;
@@ -207,6 +210,10 @@ public class OrdersController {
         enrichCustomerNames(List.of(dto));
         // PDV-F026 — o detalhe deixa de precisar do recibo só para saber como o pedido foi pago.
         dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
+        // CRM-F010 — situação do marcado, se houver.
+        var receivable = receivableUseCase.findByOrderId(orderId).orElse(null);
+        dto.setPaymentStatus(OrderDTOConverter.paymentStatus(receivable));
+        dto.setReceivableId(receivable == null ? null : receivable.id());
         return ResponseEntity.ok(dto);
     }
 

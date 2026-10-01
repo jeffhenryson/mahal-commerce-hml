@@ -93,4 +93,11 @@ public class OrderAdminResponseDTO {
     @Schema(description = "PDV-F026 — métodos com pagamento CAPTURED, sem repetição. Só na listagem "
             + "GET /orders; com changeAmount, diz como o pedido foi pago sem abrir o recibo.")
     private List<PaymentMethod> paymentMethods;
+
+    @Schema(description = "CRM-F010 — PAGO, PENDENTE (marcado sem nenhuma quitação) ou PARCIAL. Só nas "
+            + "respostas que trazem payments.")
+    private String paymentStatus;
+
+    @Schema(description = "CRM-F010 — o marcado do pedido, se houver. Só em GET /orders/{id}.")
+    private Long receivableId;
 }

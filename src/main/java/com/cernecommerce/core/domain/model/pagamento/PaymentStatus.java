@@ -31,5 +31,11 @@ public enum PaymentStatus {
      * Linha capturada na forma errada e aposentada por uma correção (PDV-F027). Fica de pé como
      * lastro — as leituras do pedido a devolvem, riscada — mas não soma em caixa nem em total.
      */
-    CORRECTED
+    CORRECTED,
+    /**
+     * A parte "marcada" da venda (CRM-F010): devida pelo cliente até {@code dueDate}, sem dinheiro
+     * nenhum na gaveta. Não soma em caixa; o recebível em {@code customer_receivable} acompanha a
+     * quitação.
+     */
+    ON_ACCOUNT
 }

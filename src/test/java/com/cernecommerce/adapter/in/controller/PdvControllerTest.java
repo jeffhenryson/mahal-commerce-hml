@@ -302,6 +302,47 @@ public class PdvControllerTest {
     }
 
     @Test
+    void registerSale_marcadoSemPermissao_retorna403OnAccountNotAllowed() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerId":123,"items":[{"sku":"CARV-001","quantity":2}],
+                                 "payments":[{"method":"MARCADO","amount":44.00,"dueDate":"2099-10-15"}]}"""))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("ON_ACCOUNT_NOT_ALLOWED"));
+        verifyNoInteractions(pdvUseCase);
+    }
+
+    @Test
+    void registerSale_marcadoComPermissao_repassaODueDate() throws Exception {
+        when(pdvUseCase.registerSale(eq(1L), eq(123L), any(), any(), anyString(), eq(false), isNull()))
+                .thenReturn(Order.openBalcao(1L, "LOJA-01", 123L, List.of(
+                                com.cernecommerce.core.domain.model.pedido.OrderItem.fromCatalog("CARV-001",
+                                        new BigDecimal("2.000"),
+                                        com.cernecommerce.core.domain.model.estoque.Pricing.of(
+                                                new BigDecimal("18.00"), null, new BigDecimal("22.00")), null)))
+                        .concluded("000001002", null, Instant.now()));
+        when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
+
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                                "caixa1", null, List.of(new org.springframework.security.core.authority
+                                        .SimpleGrantedAuthority("PDV_SALE_ON_ACCOUNT"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerId":123,"items":[{"sku":"CARV-001","quantity":2}],
+                                 "payments":[{"method":"PIX","amount":14.00},
+                                             {"method":"MARCADO","amount":30.00,"dueDate":"2099-10-15"}]}"""))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<List<PdvUseCase.PaymentCommand>> payments = ArgumentCaptor.forClass(List.class);
+        verify(pdvUseCase).registerSale(eq(1L), eq(123L), any(), payments.capture(), anyString(), eq(false), isNull());
+        assertThat(payments.getValue().get(0).dueDate()).isNull();
+        assertThat(payments.getValue().get(1).dueDate()).isEqualTo(java.time.LocalDate.of(2099, 10, 15));
+    }
+
+    @Test
     void registerSale_entregaSemEndereco_retorna400() throws Exception {
         mockMvc.perform(post("/pdv/sessions/1/sales")
                         .principal(AUTH)

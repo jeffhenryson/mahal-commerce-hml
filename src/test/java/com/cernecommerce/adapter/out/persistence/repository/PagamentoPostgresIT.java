@@ -33,8 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Pagamentos contra Postgres real: as CHECKs da V136 (correção de forma de pagamento) só existem no
- * Flyway — o H2 do perfil dev monta o schema pelas entidades.
+ * Pagamentos contra Postgres real: as CHECKs da V136 (correção de forma de pagamento) e da V137
+ * ("Marcar") só existem no Flyway — o H2 do perfil dev monta o schema pelas entidades.
  * Habilitar com: {@code ENABLE_TC=true ./mvnw test -Dapi.version=1.44}
  */
 @SpringBootTest
@@ -62,6 +62,9 @@ class PagamentoPostgresIT {
     @Autowired OrderUseCase orderUseCase;
     @Autowired EstoqueUseCase estoqueUseCase;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.cernecommerce.core.ports.in.CrmUseCase crmUseCase;
+    @Autowired com.cernecommerce.core.ports.in.ReceivableUseCase receivableUseCase;
+    @Autowired com.cernecommerce.core.ports.out.crm.TagRepository tagRepository;
 
     private static String suffix() {
         return UUID.randomUUID().toString().substring(0, 8);
@@ -132,5 +135,66 @@ class PagamentoPostgresIT {
                 JOIN permissions p ON p.id = rp.permission_id
                 WHERE p.name = 'ORDER_PAYMENT_CORRECT_CLOSED'""", String.class))
                 .containsExactly("ROLE_ADMIN");
+    }
+
+    // ── CRM-F010: "Marcar" (V137) ───────────────────────────────────────────────────────────
+
+    private Long givenVip(String creditLimit) {
+        String cpf = String.valueOf(10000000000L + (System.nanoTime() % 89999999999L));
+        Long id = crmUseCase.createCustomer("VIP " + suffix(), null, null, cpf, "PDV").id();
+        var tag = tagRepository.findByNome("VIP")
+                .orElseGet(() -> tagRepository.save(new com.cernecommerce.core.domain.model.crm.Tag(null, "VIP")));
+        crmUseCase.addTagToCustomer(id, tag.id());
+        receivableUseCase.setCreditLimit(id, new BigDecimal(creditLimit), "gerente");
+        return id;
+    }
+
+    @Test
+    void onAccountSale_paymentAndOverdueJob_againstTheRealSchema() {
+        String[] ctx = givenOpenSessionWithStock();
+        Long vip = givenVip("100.00");
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("America/Sao_Paulo"));
+
+        Order sold = pdvUseCase.registerSale(Long.valueOf(ctx[0]), vip,
+                List.of(new SaleItemCommand(ctx[1], new BigDecimal("1.000"), null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("22.00"), today)), ctx[2]);
+
+        Map<String, Object> line = jdbc.queryForMap(
+                "SELECT method, status, due_date, captured_at FROM order_payment WHERE order_id = ?", sold.id());
+        assertThat(line).containsEntry("method", "MARCADO").containsEntry("status", "ON_ACCOUNT");
+        assertThat(line.get("due_date")).isNotNull();
+        assertThat(line.get("captured_at")).isNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM receivable_item ri JOIN customer_receivable r "
+                + "ON r.id = ri.receivable_id WHERE r.order_id = ?", Integer.class, sold.id())).isEqualTo(1);
+
+        // Resumo e listagem com filtros de data (Specification + LocalDate no Postgres).
+        assertThat(receivableUseCase.summary(null, null))
+                .anySatisfy(row -> assertThat(row.customerId()).isEqualTo(vip));
+        assertThat(receivableUseCase.list(new com.cernecommerce.core.domain.model.recebivel.ReceivableFilter(
+                vip, null, null, today, today, null, null), 0, 20).content()).hasSize(1);
+
+        // Simula o vencimento e roda o job: o marcado passa a VENCIDO e bloqueia novo marcar.
+        jdbc.update("UPDATE customer_receivable SET due_date = due_date - 1 WHERE order_id = ?", sold.id());
+        assertThat(receivableUseCase.markOverdue()).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM customer_receivable WHERE order_id = ?", String.class,
+                sold.id())).isEqualTo("VENCIDO");
+        assertThat(receivableUseCase.eligibility(vip, true).reasons()).contains("CUSTOMER_HAS_OVERDUE");
+
+        // Quitação em PIX no mesmo caixa: zera e volta a QUITADO.
+        var result = receivableUseCase.pay(Long.valueOf(ctx[0]), ctx[2], vip,
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("22.00"), null)), null);
+        assertThat(result.openBalanceAfter()).isEqualByComparingTo("0");
+        assertThat(jdbc.queryForObject("SELECT status FROM customer_receivable WHERE order_id = ?", String.class,
+                sold.id())).isEqualTo("QUITADO");
+    }
+
+    @Test
+    void marcadoWithoutDueDate_isRejectedByTheCheck() {
+        String[] ctx = givenOpenSessionWithStock();
+        Order sold = sell(ctx, PaymentMethod.PIX, "22.00");
+
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO order_payment (order_id, method, amount, status, created_at) "
+                + "VALUES (?, 'MARCADO', 10, 'ON_ACCOUNT', now())", sold.id()))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

@@ -42,6 +42,7 @@ import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentTotal;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
@@ -84,6 +85,11 @@ class PdvServiceTest {
     @Mock CashbackUseCase cashbackUseCase;
     // PDV-C005 — o fechamento consulta as mesas abertas da sessão antes de deixar fechar.
     @Mock ComandaRepository comandaRepository;
+    /** CRM-F010 — somas de quitação zeradas por padrão: os testes de caixa existentes não marcam. */
+    ReceivableUseCase receivableUseCase = mock(ReceivableUseCase.class, invocation ->
+            invocation.getMethod().getReturnType() == BigDecimal.class
+                    ? BigDecimal.ZERO
+                    : org.mockito.Mockito.RETURNS_DEFAULTS.answer(invocation));
 
     PdvService pdvService;
 
@@ -91,7 +97,7 @@ class PdvServiceTest {
     void setUp() {
         pdvService = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
-                MAX_DISCOUNT_PERCENT);
+                MAX_DISCOUNT_PERCENT, receivableUseCase);
     }
 
     /** Uma linha de pagamento em dinheiro, exata — o caso comum dos testes que não testam pagamento. */
@@ -421,6 +427,77 @@ class PdvServiceTest {
         assertThat(pix.refundedAmount()).isEqualByComparingTo("30.00");
         assertThat(pix.changeAmount()).isEqualByComparingTo("0");
         assertThat(pix.netAmount()).isEqualByComparingTo("50.00");
+    }
+
+    // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────
+
+    @Test
+    void registerSale_withOnAccountLine_savesItOnAccountAndCreatesTheReceivable() {
+        givenOpenSessionAndPersistence();
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+        java.time.LocalDate due = java.time.LocalDate.now().plusDays(15);
+        List<PaymentCommand> payments = List.of(
+                new PaymentCommand(PaymentMethod.PIX, new BigDecimal("20.00"), null),
+                PaymentCommand.onAccount(new BigDecimal("24.00"), due));
+
+        Order order = pdvService.registerSale(1L, 123L, List.of(twoCharcoals(null)), payments, "caixa1");
+
+        assertThat(order.status()).isEqualTo(OrderStatus.CONCLUIDO);
+        assertThat(order.changeAmount()).isNull();
+        ArgumentCaptor<OrderPayment> lines = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository, times(2)).save(lines.capture());
+        assertThat(lines.getAllValues()).extracting(OrderPayment::method, OrderPayment::status)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(PaymentMethod.PIX, PaymentStatus.CAPTURED),
+                        org.assertj.core.groups.Tuple.tuple(PaymentMethod.MARCADO, PaymentStatus.ON_ACCOUNT));
+        assertThat(lines.getAllValues().get(1).dueDate()).isEqualTo(due);
+        verify(receivableUseCase).validateOnAccount(123L, payments);
+        verify(receivableUseCase).createFromOrder(order, null, payments.get(1), "caixa1");
+    }
+
+    @Test
+    void registerSale_onAccountRefused_neverTouchesStock() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+        List<PaymentCommand> payments = List.of(PaymentCommand.onAccount(new BigDecimal("44.00"),
+                java.time.LocalDate.now().plusDays(1)));
+        doThrow(new com.cernecommerce.core.domain.exception.recebivel.CustomerRequiredForOnAccountException())
+                .when(receivableUseCase).validateOnAccount(null, payments);
+
+        assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)), payments, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.recebivel.CustomerRequiredForOnAccountException.class);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void registerSale_onAccountAboveTheTotal_isRefusedLikeAnyNonCash() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+
+        assertThatThrownBy(() -> pdvService.registerSale(1L, 123L, List.of(twoCharcoals(null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("50.00"), java.time.LocalDate.now())), "caixa1"))
+                .isInstanceOf(PaymentExceedsOrderTotalException.class);
+    }
+
+    @Test
+    void getSessionPaymentTotals_neverListsMarcado_andAddsReceivablesReceivedHere() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(new BigDecimal("100.00"));
+        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(new BigDecimal("10.00"));
+        when(receivableUseCase.receivedInSession(1L, PaymentMethod.DINHEIRO)).thenReturn(new BigDecimal("28.00"));
+
+        List<PaymentTotal> totals = pdvService.getSessionPaymentTotals(1L);
+
+        assertThat(totals).extracting(PaymentTotal::method).doesNotContain(PaymentMethod.MARCADO);
+        PaymentTotal dinheiro = totals.stream().filter(t -> t.method() == PaymentMethod.DINHEIRO).findFirst().orElseThrow();
+        assertThat(dinheiro.amount()).isEqualByComparingTo("100.00");
+        assertThat(dinheiro.receivableReceived()).isEqualByComparingTo("28.00");
+        assertThat(dinheiro.changeAmount()).isEqualByComparingTo("10.00");
+        assertThat(dinheiro.netAmount()).isEqualByComparingTo("118.00");
     }
 
     @Test
@@ -1202,7 +1279,7 @@ class PdvServiceTest {
         Clock clock = Clock.fixed(Instant.parse("2026-09-26T03:30:00Z"), ZoneOffset.UTC);
         PdvService service = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
-                MAX_DISCOUNT_PERCENT, clock);
+                MAX_DISCOUNT_PERCENT, clock, receivableUseCase);
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(CashRegisterSession.of(1L, "caixa1",
                 Instant.parse("2026-09-26T01:00:00Z"), BigDecimal.TEN, "LOJA-01",
                 null, null, null, null, null, CashRegisterSession.Status.OPEN)));
@@ -1217,7 +1294,7 @@ class PdvServiceTest {
         Clock clock = Clock.fixed(Instant.parse("2026-09-27T02:00:00Z"), ZoneOffset.UTC); // 26/09 23:00 SP
         PdvService service = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
-                MAX_DISCOUNT_PERCENT, clock);
+                MAX_DISCOUNT_PERCENT, clock, receivableUseCase);
         givenOpenSessionAndPersistence();
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(CashRegisterSession.of(1L, "caixa1",
                 Instant.parse("2026-09-26T11:00:00Z"), BigDecimal.TEN, "LOJA-01", // 26/09 08:00 SP

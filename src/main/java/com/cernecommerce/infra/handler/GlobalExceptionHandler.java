@@ -110,6 +110,17 @@ import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
+import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
+import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
+import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
+import com.cernecommerce.core.domain.exception.recebivel.CustomerRequiredForOnAccountException;
+import com.cernecommerce.core.domain.exception.recebivel.DuplicateOnAccountPaymentException;
+import com.cernecommerce.core.domain.exception.recebivel.InvalidDueDateException;
+import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotAllowedException;
+import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotSupportedException;
+import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotFoundException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
 import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
 import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
@@ -950,6 +961,74 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleCashRegisterSessionNotFound(CashRegisterSessionNotFoundException ex,
             HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CASH_REGISTER_SESSION_NOT_FOUND", req);
+    }
+
+    // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────
+
+    @ExceptionHandler(CustomerRequiredForOnAccountException.class)
+    public ResponseEntity<ApiError> handleCustomerRequiredForOnAccount(CustomerRequiredForOnAccountException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "CUSTOMER_REQUIRED_FOR_ON_ACCOUNT", req);
+    }
+
+    @ExceptionHandler(InvalidDueDateException.class)
+    public ResponseEntity<ApiError> handleInvalidDueDate(InvalidDueDateException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_DUE_DATE", req);
+    }
+
+    @ExceptionHandler(DuplicateOnAccountPaymentException.class)
+    public ResponseEntity<ApiError> handleDuplicateOnAccount(DuplicateOnAccountPaymentException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "DUPLICATE_ON_ACCOUNT_PAYMENT", req);
+    }
+
+    @ExceptionHandler(OnAccountNotSupportedException.class)
+    public ResponseEntity<ApiError> handleOnAccountNotSupported(OnAccountNotSupportedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_PAYMENT_METHOD", req);
+    }
+
+    @ExceptionHandler(CustomerNotEligibleForOnAccountException.class)
+    public ResponseEntity<ApiError> handleCustomerNotEligible(CustomerNotEligibleForOnAccountException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "CUSTOMER_NOT_ELIGIBLE", req);
+    }
+
+    @ExceptionHandler(OnAccountNotAllowedException.class)
+    public ResponseEntity<ApiError> handleOnAccountNotAllowed(OnAccountNotAllowedException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "ON_ACCOUNT_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(CreditLimitExceededException.class)
+    public ResponseEntity<CreditLimitError> handleCreditLimitExceeded(CreditLimitExceededException ex,
+            HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new CreditLimitError(ex.getMessage(),
+                "CREDIT_LIMIT_EXCEEDED", Instant.now(), req.getRequestURI(), MDC.get("traceId"),
+                ex.getLimit(), ex.getOpenBalance(), ex.getAvailable()));
+    }
+
+    @ExceptionHandler(CustomerHasOverdueException.class)
+    public ResponseEntity<OverdueError> handleCustomerHasOverdue(CustomerHasOverdueException ex,
+            HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new OverdueError(ex.getMessage(),
+                "CUSTOMER_HAS_OVERDUE", Instant.now(), req.getRequestURI(), MDC.get("traceId"),
+                ex.getOverdueBalance()));
+    }
+
+    @ExceptionHandler(ReceivableNotFoundException.class)
+    public ResponseEntity<ApiError> handleReceivableNotFound(ReceivableNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "RECEIVABLE_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(ReceivableNotOpenException.class)
+    public ResponseEntity<ApiError> handleReceivableNotOpen(ReceivableNotOpenException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "RECEIVABLE_NOT_OPEN", req);
+    }
+
+    @ExceptionHandler(PaymentExceedsBalanceException.class)
+    public ResponseEntity<ApiError> handlePaymentExceedsBalance(PaymentExceedsBalanceException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PAYMENT_EXCEEDS_BALANCE", req);
     }
 
     // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────

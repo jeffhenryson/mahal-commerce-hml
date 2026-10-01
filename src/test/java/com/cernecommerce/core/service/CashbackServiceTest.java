@@ -51,13 +51,14 @@ class CashbackServiceTest {
     @Mock EstoqueUseCase estoqueUseCase;
     @Mock CustomerRepository customerRepository;
     @Mock SystemConfigPort systemConfigPort;
+    @Mock com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository orderPaymentRepository;
 
     CashbackService cashbackService;
 
     @BeforeEach
     void setUp() {
         cashbackService = new CashbackService(cashbackRateRepository, cashbackEntryRepository, estoqueUseCase,
-                customerRepository, systemConfigPort);
+                customerRepository, systemConfigPort, orderPaymentRepository);
     }
 
     // ── Taxas ────────────────────────────────────────────────────────────────────────────────
@@ -389,6 +390,52 @@ class CashbackServiceTest {
     }
 
     // ── Fixtures ─────────────────────────────────────────────────────────────────────────────
+
+    // ── CRM-F010: cashback da parte marcada ─────────────────────────────────────────────────
+
+    @Test
+    void recordEarnedForOrder_creditsOnlyThePaidFractionWhenPartIsOnAccount() {
+        Order order = orderWithCustomer(42L); // 100,00 com 10% → 10,00 de cashback
+        when(customerRepository.findById(42L)).thenReturn(Optional.of(officialCustomer()));
+        when(systemConfigPort.getInt("cashback.carencia.dias", 7)).thenReturn(7);
+        when(systemConfigPort.getInt("cashback.expiracao.dias", 180)).thenReturn(180);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(
+                com.cernecommerce.core.domain.model.pagamento.OrderPayment.captured(1L,
+                        com.cernecommerce.core.domain.model.pagamento.PaymentMethod.PIX, new BigDecimal("30.00"), null),
+                com.cernecommerce.core.domain.model.pagamento.OrderPayment.onAccount(1L, new BigDecimal("70.00"),
+                        java.time.LocalDate.of(2026, 10, 15))));
+
+        cashbackService.recordEarnedForOrder(order);
+
+        ArgumentCaptor<CashbackEntry> captor = ArgumentCaptor.forClass(CashbackEntry.class);
+        verify(cashbackEntryRepository).save(captor.capture());
+        assertThat(captor.getValue().amount()).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    void recordEarnedForReceivablePayment_creditsTheSettledShareWithoutItem() {
+        Order order = orderWithCustomer(42L);
+        when(customerRepository.findById(42L)).thenReturn(Optional.of(officialCustomer()));
+        when(systemConfigPort.getInt("cashback.carencia.dias", 7)).thenReturn(7);
+        when(systemConfigPort.getInt("cashback.expiracao.dias", 180)).thenReturn(180);
+
+        cashbackService.recordEarnedForReceivablePayment(order, new BigDecimal("35.00"));
+
+        ArgumentCaptor<CashbackEntry> captor = ArgumentCaptor.forClass(CashbackEntry.class);
+        verify(cashbackEntryRepository).save(captor.capture());
+        assertThat(captor.getValue().amount()).isEqualByComparingTo("3.50");
+        assertThat(captor.getValue().orderId()).isEqualTo(1L);
+        assertThat(captor.getValue().orderItemId()).isNull();
+    }
+
+    @Test
+    void recordEarnedForReceivablePayment_skipsCustomerWithoutCpf() {
+        when(customerRepository.findById(42L)).thenReturn(Optional.of(lightCustomer()));
+
+        cashbackService.recordEarnedForReceivablePayment(orderWithCustomer(42L), new BigDecimal("35.00"));
+
+        verifyNoInteractions(cashbackEntryRepository);
+    }
 
     private static Customer officialCustomer() {
         return Customer.of(42L, "Cliente Oficial", "11999999999", null, "12345678900", "balcao",

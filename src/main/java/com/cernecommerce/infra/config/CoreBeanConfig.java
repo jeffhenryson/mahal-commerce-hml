@@ -1,5 +1,9 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.ports.out.recebivel.CustomerCreditLimitRepository;
+import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
+import com.cernecommerce.core.service.ReceivableService;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -254,9 +258,10 @@ class CoreBeanConfig {
     OrderUseCase orderUseCase(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
             OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
             CashRegisterRepository cashRegisterRepository,
-            OrderPaymentCorrectionRepository orderPaymentCorrectionRepository) {
+            OrderPaymentCorrectionRepository orderPaymentCorrectionRepository,
+            ReceivableUseCase receivableUseCase) {
         return new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
-                cashRegisterRepository, orderPaymentCorrectionRepository);
+                cashRegisterRepository, orderPaymentCorrectionRepository, receivableUseCase);
     }
 
     @Bean
@@ -280,10 +285,24 @@ class CoreBeanConfig {
             // Teto de desconto por pedido (PDV-F004). Acima dele, 409 em vez de um segundo nível de
             // permissão — dois níveis só criariam a tentação de distribuir o maior. Migra para
             // system_config junto com o painel de configuração.
-            @Value("${pdv.sale.max-discount-percent:10}") BigDecimal maxDiscountPercent) {
+            @Value("${pdv.sale.max-discount-percent:10}") BigDecimal maxDiscountPercent,
+            // CRM-F010 — o marcar na venda e a quitação no caixa de quem recebe.
+            ReceivableUseCase receivableUseCase) {
         return new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
-                maxDiscountPercent, Clock.systemUTC());
+                maxDiscountPercent, Clock.systemUTC(), receivableUseCase);
+    }
+
+    /** CRM-F010 — "Marcar": venda a prazo para cliente VIP. Não depende do PdvService (sem ciclo). */
+    @Bean
+    ReceivableUseCase receivableUseCase(CustomerReceivableRepository customerReceivableRepository,
+            CustomerCreditLimitRepository customerCreditLimitRepository, CustomerRepository customerRepository,
+            CustomerTagRepository customerTagRepository, OrderRepository orderRepository,
+            CashRegisterRepository cashRegisterRepository, CashbackUseCase cashbackUseCase,
+            SystemConfigPort systemConfigPort) {
+        return new ReceivableService(customerReceivableRepository, customerCreditLimitRepository,
+                customerRepository, customerTagRepository, orderRepository, cashRegisterRepository,
+                cashbackUseCase, systemConfigPort, Clock.systemUTC());
     }
 
     @Bean
@@ -420,9 +439,10 @@ class CoreBeanConfig {
     @Bean
     CashbackUseCase cashbackUseCase(CashbackRateRepository cashbackRateRepository,
             CashbackEntryRepository cashbackEntryRepository, EstoqueUseCase estoqueUseCase,
-            CustomerRepository customerRepository, SystemConfigPort systemConfigPort) {
+            CustomerRepository customerRepository, SystemConfigPort systemConfigPort,
+            OrderPaymentRepository orderPaymentRepository) {
         return new CashbackService(cashbackRateRepository, cashbackEntryRepository, estoqueUseCase,
-                customerRepository, systemConfigPort);
+                customerRepository, systemConfigPort, orderPaymentRepository);
     }
 
     @Bean

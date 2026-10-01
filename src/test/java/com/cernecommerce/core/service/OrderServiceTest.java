@@ -67,13 +67,14 @@ class OrderServiceTest {
     @Mock CashbackUseCase cashbackUseCase;
     @Mock CashRegisterRepository cashRegisterRepository;
     @Mock OrderPaymentCorrectionRepository correctionRepository;
+    @Mock com.cernecommerce.core.ports.in.ReceivableUseCase receivableUseCase;
 
     OrderService orderService;
 
     @BeforeEach
     void setUp() {
         orderService = new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
-                cashRegisterRepository, correctionRepository);
+                cashRegisterRepository, correctionRepository, receivableUseCase);
     }
 
     private static List<OrderItem> twoCharcoals() {

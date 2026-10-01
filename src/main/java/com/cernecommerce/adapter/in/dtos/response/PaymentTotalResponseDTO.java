@@ -22,9 +22,14 @@ public class PaymentTotalResponseDTO {
     @Schema(description = "PDV-F026 — soma dos estornos (REFUNDED) deste método na sessão.")
     private BigDecimal refundedAmount;
 
-    @Schema(description = "PDV-F026 — troco devolvido na sessão. Só em DINHEIRO; zero nos demais.")
+    @Schema(description = "PDV-F026 — troco devolvido nas vendas da sessão. Só em DINHEIRO; zero nos demais.")
     private BigDecimal changeAmount;
 
-    @Schema(description = "PDV-F026 — o que ficou: amount - refundedAmount - changeAmount.")
+    @Schema(description = "PDV-F026 — o que ficou: amount + receivableReceived - refundedAmount - changeAmount.")
     private BigDecimal netAmount;
+
+    @Schema(description = "CRM-F010 — quitação de marcado recebida nesta sessão, neste método. Separada "
+            + "de amount (venda) para o relatório do caixa; já líquida do troco e somada em netAmount. MARCADO em si nunca "
+            + "aparece aqui: é dinheiro que não entrou.")
+    private BigDecimal receivableReceived;
 }

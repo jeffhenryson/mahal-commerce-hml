@@ -247,7 +247,7 @@ public interface PdvUseCase {
      * @param installments só faz sentido com {@code method == CREDITO}; {@code null} nos demais
      */
     record PaymentCommand(PaymentMethod method, BigDecimal amount, Integer installments,
-            PaymentChannel channel, PaymentProvider provider) {
+            PaymentChannel channel, PaymentProvider provider, java.time.LocalDate dueDate) {
 
         /**
          * PDV-F025 — recusa na borda, com código próprio, o que o CHECK da V134 recusaria como 500:
@@ -262,8 +262,22 @@ public interface PdvUseCase {
             }
         }
 
+        public PaymentCommand(PaymentMethod method, BigDecimal amount, Integer installments,
+                PaymentChannel channel, PaymentProvider provider) {
+            this(method, amount, installments, channel, provider, null);
+        }
+
         public PaymentCommand(PaymentMethod method, BigDecimal amount, Integer installments) {
-            this(method, amount, installments, null, null);
+            this(method, amount, installments, null, null, null);
+        }
+
+        /** CRM-F010 — a linha MARCADO da venda: sem canal, sem parcela, com vencimento. */
+        public static PaymentCommand onAccount(BigDecimal amount, java.time.LocalDate dueDate) {
+            return new PaymentCommand(PaymentMethod.MARCADO, amount, null, null, null, dueDate);
+        }
+
+        public boolean isOnAccount() {
+            return method == PaymentMethod.MARCADO;
         }
     }
 
@@ -273,14 +287,22 @@ public interface PdvUseCase {
      * @param amount bruto: soma dos {@code CAPTURED} — em DINHEIRO é o valor entregue, troco dentro
      * @param refundedAmount soma dos estornos ({@code REFUNDED}) do método (PDV-F026)
      * @param changeAmount troco devolvido na sessão; só em DINHEIRO, zero nos demais (PDV-F026)
-     * @param netAmount o que ficou: {@code amount - refundedAmount - changeAmount} (PDV-F026). Em
-     *        DINHEIRO é a mesma conta do esperado de {@code closeSession}, sem o fundo e os movimentos
+     * @param netAmount o que ficou: {@code amount + receivableReceived - refundedAmount - changeAmount}
+     *        (PDV-F026). Em DINHEIRO é a mesma conta do esperado de {@code closeSession}, sem o fundo
+     *        e os movimentos
+     * @param receivableReceived quitação de marcado recebida nesta sessão (CRM-F010) — separada da
+     *        venda para o relatório do caixa; já é o abatido, líquido do troco devolvido
      */
     record PaymentTotal(PaymentMethod method, BigDecimal amount, BigDecimal refundedAmount,
-            BigDecimal changeAmount, BigDecimal netAmount) {
+            BigDecimal changeAmount, BigDecimal netAmount, BigDecimal receivableReceived) {
+
+        public PaymentTotal(PaymentMethod method, BigDecimal amount, BigDecimal refundedAmount,
+                BigDecimal changeAmount, BigDecimal netAmount) {
+            this(method, amount, refundedAmount, changeAmount, netAmount, BigDecimal.ZERO);
+        }
 
         public PaymentTotal(PaymentMethod method, BigDecimal amount) {
-            this(method, amount, BigDecimal.ZERO, BigDecimal.ZERO, amount);
+            this(method, amount, BigDecimal.ZERO, BigDecimal.ZERO, amount, BigDecimal.ZERO);
         }
     }
 }

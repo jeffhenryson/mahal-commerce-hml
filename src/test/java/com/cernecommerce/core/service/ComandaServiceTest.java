@@ -410,6 +410,29 @@ class ComandaServiceTest {
      * O desconto é pedido sobre a conta, mas gravado por item. Sem o rateio, o cashback seria
      * creditado sobre o valor cheio e a margem por item mostraria a venda sem o abatimento.
      */
+    /** CRM-F010 — marcar na mesa: mesma validação do balcão, linha ON_ACCOUNT e recebível com a comanda. */
+    @Test
+    void closeComanda_withOnAccountLine_validatesSavesOnAccountAndCreatesTheReceivable() {
+        Comanda comanda = abertaComanda(essenciaItem());
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        when(pdvService.getCurrentSession("caixa1")).thenReturn(openSession());
+        when(pdvService.validatePaymentsAndComputeChange(any(), eq(new BigDecimal("25.00")))).thenReturn(null);
+        givenOrderPersistenceAssignsId();
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        java.time.LocalDate due = java.time.LocalDate.now().plusDays(7);
+        List<PaymentCommand> payments = List.of(
+                new PaymentCommand(PaymentMethod.PIX, new BigDecimal("5.00"), null),
+                PaymentCommand.onAccount(new BigDecimal("20.00"), due));
+
+        Order order = comandaService.closeComanda(10L, payments, null, false, "caixa1");
+
+        verify(pdvService).validateOnAccount(comanda.customerId(), payments);
+        verify(orderPaymentRepository).save(argThat(p -> p.method() == PaymentMethod.MARCADO
+                && p.status() == com.cernecommerce.core.domain.model.pagamento.PaymentStatus.ON_ACCOUNT
+                && due.equals(p.dueDate())));
+        verify(pdvService).recordReceivableIfOnAccount(order, 10L, payments, "caixa1");
+    }
+
     @Test
     void closeComanda_proratesTheBillDiscountAcrossTheItems() {
         givenCloseablePara(comandaDeDuasLinhas());

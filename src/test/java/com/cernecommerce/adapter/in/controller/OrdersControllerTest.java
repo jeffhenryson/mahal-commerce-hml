@@ -57,6 +57,8 @@ public class OrdersControllerTest {
     private OrderDTOConverter orderConverter;
     private ApplicationEventPublisher publisher;
 
+    private com.cernecommerce.core.ports.in.ReceivableUseCase receivableUseCase;
+
     private static final UsernamePasswordAuthenticationToken AUTH =
             new UsernamePasswordAuthenticationToken("admin", null, List.of());
 
@@ -68,9 +70,11 @@ public class OrdersControllerTest {
         pdvUseCase = mock(PdvUseCase.class);
         orderConverter = mock(OrderDTOConverter.class);
         publisher = mock(ApplicationEventPublisher.class);
+        receivableUseCase = mock(com.cernecommerce.core.ports.in.ReceivableUseCase.class);
+        when(receivableUseCase.findByOrderId(any())).thenReturn(java.util.Optional.empty());
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new OrdersController(orderUseCase, orderReportUseCase, crmUseCase, pdvUseCase, orderConverter,
-                        publisher))
+                        publisher, receivableUseCase))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

@@ -1,5 +1,8 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
+import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
+import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.domain.exception.cashback.CashbackRateAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.cashback.CashbackRateNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
@@ -46,6 +49,7 @@ public class CashbackService implements CashbackUseCase {
     private final EstoqueUseCase estoqueUseCase;
     private final CustomerRepository customerRepository;
     private final SystemConfigPort systemConfigPort;
+    private final OrderPaymentRepository orderPaymentRepository;
 
     /**
      * Lock em memória por {@code orderId}, exclusivo de {@link #recordEarnedForOrder} — achado
@@ -60,12 +64,14 @@ public class CashbackService implements CashbackUseCase {
 
     public CashbackService(CashbackRateRepository cashbackRateRepository,
             CashbackEntryRepository cashbackEntryRepository, EstoqueUseCase estoqueUseCase,
-            CustomerRepository customerRepository, SystemConfigPort systemConfigPort) {
+            CustomerRepository customerRepository, SystemConfigPort systemConfigPort,
+            OrderPaymentRepository orderPaymentRepository) {
         this.cashbackRateRepository = cashbackRateRepository;
         this.cashbackEntryRepository = cashbackEntryRepository;
         this.estoqueUseCase = estoqueUseCase;
         this.customerRepository = customerRepository;
         this.systemConfigPort = systemConfigPort;
+        this.orderPaymentRepository = orderPaymentRepository;
     }
 
     @Override
@@ -178,14 +184,67 @@ public class CashbackService implements CashbackUseCase {
             Instant expiresAt = availableAt.plus(expiracaoDias, ChronoUnit.DAYS);
             Instant now = Instant.now();
 
+            // CRM-F010 — a parte MARCADA ainda não foi paga: o ganho dela vem na quitação
+            // (recordEarnedForReceivablePayment). Aqui só a fração efetivamente paga.
+            BigDecimal paidFraction = paidFraction(order);
+
             for (OrderItem item : order.items()) {
                 BigDecimal amount = item.cashbackAmount();
+                if (amount != null && paidFraction.compareTo(BigDecimal.ONE) < 0) {
+                    amount = amount.multiply(paidFraction).setScale(Money.MONEY_SCALE, Money.ROUNDING);
+                }
                 if (amount != null && amount.signum() > 0) {
                     cashbackEntryRepository.save(CashbackEntry.earned(order.customerId(), order.id(),
                             item.id(), amount, now, availableAt, expiresAt));
                 }
             }
         }
+    }
+
+    /** Fração do total a pagar que não foi MARCADA: 1 numa venda sem marcar. */
+    private BigDecimal paidFraction(Order order) {
+        BigDecimal total = order.totalPayable();
+        if (total.signum() <= 0) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal onAccount = orderPaymentRepository.findByOrderId(order.id()).stream()
+                .filter(p -> p.status() == PaymentStatus.ON_ACCOUNT)
+                .map(OrderPayment::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (onAccount.signum() == 0) {
+            return BigDecimal.ONE;
+        }
+        return total.subtract(onAccount).max(BigDecimal.ZERO)
+                .divide(total, Money.INTERMEDIATE_SCALE, Money.ROUNDING);
+    }
+
+    @Override
+    @Transactional
+    public void recordEarnedForReceivablePayment(Order order, BigDecimal settledAmount) {
+        if (order.customerId() == null || settledAmount == null || settledAmount.signum() <= 0
+                || order.totalPayable().signum() <= 0) {
+            return;
+        }
+        Customer customer = customerRepository.findById(order.customerId())
+                .orElseThrow(() -> new CustomerNotFoundException(order.customerId()));
+        if (!customer.isOfficiallyRegistered()) {
+            return;
+        }
+        BigDecimal orderCashback = order.items().stream()
+                .map(OrderItem::cashbackAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal amount = orderCashback.multiply(settledAmount)
+                .divide(order.totalPayable(), Money.MONEY_SCALE, Money.ROUNDING);
+        if (amount.signum() <= 0) {
+            return;
+        }
+        Instant now = Instant.now();
+        int carenciaDias = systemConfigPort.getInt("cashback.carencia.dias", 7);
+        int expiracaoDias = systemConfigPort.getInt("cashback.expiracao.dias", 180);
+        Instant availableAt = now.plus(carenciaDias, ChronoUnit.DAYS);
+        cashbackEntryRepository.save(CashbackEntry.earned(order.customerId(), order.id(), null, amount, now,
+                availableAt, availableAt.plus(expiracaoDias, ChronoUnit.DAYS)));
     }
 
     @Override

@@ -51,8 +51,11 @@ public class OrderDTOConverter {
     /** Converte as linhas de pagamento do request em comandos (PDV-F006). */
     public List<PaymentCommand> toPaymentCommands(List<SalePaymentRequest> requests) {
         return requests.stream()
-                .map(r -> new PaymentCommand(PaymentMethod.valueOf(r.getMethod()), r.getAmount(),
-                        r.getInstallments(), r.getChannel(), r.getProvider()))
+                .map(r -> {
+                    PaymentMethod method = PaymentMethod.valueOf(r.getMethod());
+                    return new PaymentCommand(method, r.getAmount(), r.getInstallments(), r.getChannel(),
+                            r.getProvider(), method == PaymentMethod.MARCADO ? r.getDueDate() : null);
+                })
                 .toList();
     }
 
@@ -91,7 +94,19 @@ public class OrderDTOConverter {
     public OrderResponseDTO toResponse(Order order, List<OrderPayment> payments) {
         OrderResponseDTO dto = toResponse(order);
         dto.setPayments(payments.stream().map(this::toResponse).toList());
+        // CRM-F010 — na resposta da venda o marcado acabou de nascer: nada quitado ainda.
+        boolean onAccount = payments.stream()
+                .anyMatch(p -> p.status() == com.cernecommerce.core.domain.model.pagamento.PaymentStatus.ON_ACCOUNT);
+        dto.setPaymentStatus(onAccount ? "PENDENTE" : "PAGO");
         return dto;
+    }
+
+    /** CRM-F010 — situação do pagamento a partir do marcado do pedido; sem marcado, PAGO. */
+    public static String paymentStatus(com.cernecommerce.core.domain.model.recebivel.CustomerReceivable receivable) {
+        if (receivable == null || !receivable.status().isOpen()) {
+            return "PAGO";
+        }
+        return receivable.amountPaid().signum() > 0 ? "PARCIAL" : "PENDENTE";
     }
 
     /** Resposta de {@code POST /shop/checkout} (ECM-F004): o único lugar com {@code checkoutUrl}. */
@@ -121,6 +136,7 @@ public class OrderDTOConverter {
         dto.setOriginCorrectionId(payment.originCorrectionId());
         dto.setCorrectedAt(payment.correctedAt());
         dto.setCorrectedBy(payment.correctedBy());
+        dto.setDueDate(payment.dueDate());
         return dto;
     }
 
@@ -132,6 +148,7 @@ public class OrderDTOConverter {
             dto.setRefundedAmount(t.refundedAmount());
             dto.setChangeAmount(t.changeAmount());
             dto.setNetAmount(t.netAmount());
+            dto.setReceivableReceived(t.receivableReceived());
             return dto;
         }).toList();
     }

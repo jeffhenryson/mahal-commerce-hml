@@ -230,7 +230,12 @@ public class PdvController {
                     + "`reserveForPickup=true`); ENTREGA grava RESERVADO e segue "
                     + "RESERVADO → SEPARADO → ENVIADO → ENTREGUE, e `delivery.fee` entra no total a "
                     + "pagar (fora do líquido). `items[].note` grava a observação da linha. Sessão "
-                    + "aberta num dia anterior (data de America/Sao_Paulo) é recusada com 409 SESSION_STALE.")
+                    + "aberta num dia anterior (data de America/Sao_Paulo) é recusada com 409 SESSION_STALE. "
+                    + "CRM-F010: uma linha `MARCADO` (com `dueDate`) deixa parte ou tudo para o cliente VIP "
+                    + "pagar depois — exige PDV_SALE_ON_ACCOUNT (403 ON_ACCOUNT_NOT_ALLOWED), cliente "
+                    + "(400 CUSTOMER_REQUIRED_FOR_ON_ACCOUNT), tag VIP (403 CUSTOMER_NOT_ELIGIBLE), "
+                    + "nenhum vencido (409 CUSTOMER_HAS_OVERDUE) e limite (409 CREDIT_LIMIT_EXCEEDED). "
+                    + "A linha fica ON_ACCOUNT, fora do caixa; o pedido conclui normalmente.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Criada", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Saldo ou pagamento insuficiente para a venda", content = @Content),
@@ -245,6 +250,7 @@ public class PdvController {
         List<SaleItemCommand> items = orderConverter.toCommands(request.getItems());
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         requireDiscountAuthority(items, authentication);
+        OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
         Order order = pdvUseCase.registerSale(sessionId, request.getCustomerId(), items, payments,
@@ -261,6 +267,7 @@ public class PdvController {
                         "skus", items.stream().map(SaleItemCommand::sku).toList(),
                         "itemCount", items.size())));
         publishCashbackEarnedIfAny(order, authentication.getName());
+        OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         return ResponseEntity.status(201)
                 .body(orderConverter.toResponse(order, pdvUseCase.getOrderPayments(order.id())));
     }

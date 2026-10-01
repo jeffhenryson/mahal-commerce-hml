@@ -39,6 +39,7 @@ import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerNote;
 import com.cernecommerce.core.domain.model.crm.LeadResolution;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.infra.handler.CustomerConflictError;
 import io.swagger.v3.oas.annotations.Operation;
@@ -76,6 +77,7 @@ public class CrmController {
 
     private final CrmUseCase crmUseCase;
     private final CashbackUseCase cashbackUseCase;
+    private final ReceivableUseCase receivableUseCase;
     private final CustomerDTOConverter converter;
     private final CustomerNoteDTOConverter noteConverter;
     private final StageTransitionDTOConverter stageConverter;
@@ -86,13 +88,15 @@ public class CrmController {
     private final CashbackDTOConverter cashbackConverter;
     private final ApplicationEventPublisher publisher;
 
-    public CrmController(CrmUseCase crmUseCase, CashbackUseCase cashbackUseCase, CustomerDTOConverter converter,
+    public CrmController(CrmUseCase crmUseCase, CashbackUseCase cashbackUseCase, ReceivableUseCase receivableUseCase,
+            CustomerDTOConverter converter,
             CustomerNoteDTOConverter noteConverter, StageTransitionDTOConverter stageConverter,
             TagDTOConverter tagConverter, CustomerCsvConverter csvConverter,
             CampaignDTOConverter campaignConverter, ChannelStatusDTOConverter channelStatusConverter,
             CashbackDTOConverter cashbackConverter, ApplicationEventPublisher publisher) {
         this.crmUseCase = crmUseCase;
         this.cashbackUseCase = cashbackUseCase;
+        this.receivableUseCase = receivableUseCase;
         this.converter = converter;
         this.noteConverter = noteConverter;
         this.stageConverter = stageConverter;
@@ -232,6 +236,11 @@ public class CrmController {
         // CRM-F003: só a busca por id paga a consulta de saldo — a listagem paginada mantém o
         // placeholder de propósito, para não virar um N+1 de saldo por linha da página.
         dto.setCashback(cashbackUseCase.getCustomerBalance(id).available());
+        // CRM-F010 — saldo do "Marcar" na ficha.
+        ReceivableUseCase.CustomerBalance balance = receivableUseCase.balance(id);
+        dto.setCreditLimit(balance.creditLimit());
+        dto.setOpenBalance(balance.openBalance());
+        dto.setOverdueBalance(balance.overdueBalance());
         return ResponseEntity.ok(dto);
     }
 

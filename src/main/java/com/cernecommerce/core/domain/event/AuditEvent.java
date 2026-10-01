@@ -102,6 +102,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,
         // Pedido
         ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
+        RECEIVABLE_CREATED, RECEIVABLE_PAID, RECEIVABLE_DUE_DATE_CHANGED, RECEIVABLE_CANCELLED,
+        CUSTOMER_CREDIT_LIMIT_CHANGED,
         // PDV-F022 — códigos da 99, rastreio, entregador preenchidos depois da venda.
         ORDER_DELIVERY_UPDATED,
         // Cashback (CRM-F003)

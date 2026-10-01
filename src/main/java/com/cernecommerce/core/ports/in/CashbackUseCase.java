@@ -74,6 +74,14 @@ public interface CashbackUseCase {
     void recordEarnedForOrder(Order order);
 
     /**
+     * CRM-F010 — cashback da parte MARCADA de um pedido, creditado na quitação: a fração do
+     * cashback total do pedido proporcional a {@code settledAmount / totalPayable}. Entrada sem
+     * item ({@code orderItemId} nulo), uma por quitação; o reembolso do pedido a reverte junto com
+     * as demais, porque carrega o {@code orderId}.
+     */
+    void recordEarnedForReceivablePayment(Order order, java.math.BigDecimal settledAmount);
+
+    /**
      * Reverte os ganhos {@code EARNED} de um pedido reembolsado (PDV-F007): uma entrada
      * {@code REVERSED} por {@code EARNED} ainda não revertido. Não repete a checagem de
      * elegibilidade do cliente — se a entrada {@code EARNED} existe, ela já passou por essa

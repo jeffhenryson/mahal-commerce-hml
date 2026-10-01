@@ -72,4 +72,8 @@ public class OrderPaymentEntity {
 
     @Column(name = "corrected_by", length = 80)
     private String correctedBy;
+
+    // CRM-F010 — vencimento da linha MARCADO (V137).
+    @Column(name = "due_date")
+    private java.time.LocalDate dueDate;
 }

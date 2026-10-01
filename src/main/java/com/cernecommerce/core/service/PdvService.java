@@ -32,6 +32,8 @@ import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
+import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotSupportedException;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pdv.CashMovementRepository;
 import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
@@ -71,21 +73,25 @@ public class PdvService implements PdvUseCase {
     /** Fuso do dia de caixa: é a data da loja que conta, não a do servidor em UTC. */
     static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
 
+    private final ReceivableUseCase receivableUseCase;
+
     public PdvService(CashRegisterRepository cashRegisterRepository,
             CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
             OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
             CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
-            BigDecimal maxDiscountPercent) {
+            BigDecimal maxDiscountPercent, ReceivableUseCase receivableUseCase) {
         this(cashRegisterRepository, cashMovementRepository, orderRepository, orderPaymentRepository,
-                estoqueUseCase, cashbackUseCase, comandaRepository, maxDiscountPercent, Clock.systemUTC());
+                estoqueUseCase, cashbackUseCase, comandaRepository, maxDiscountPercent, Clock.systemUTC(),
+                receivableUseCase);
     }
 
     public PdvService(CashRegisterRepository cashRegisterRepository,
             CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
             OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
             CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
-            BigDecimal maxDiscountPercent, Clock clock) {
+            BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase) {
         this.clock = clock;
+        this.receivableUseCase = receivableUseCase;
         this.cashRegisterRepository = cashRegisterRepository;
         this.cashMovementRepository = cashMovementRepository;
         this.orderRepository = orderRepository;
@@ -207,7 +213,10 @@ public class PdvService implements PdvUseCase {
                 .add(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, PaymentMethod.DINHEIRO))
                 .subtract(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(sessionId, PaymentMethod.DINHEIRO))
                 .subtract(orderRepository.sumChangeAmountBySessionId(sessionId))
-                .add(cashMovementRepository.sumSignedAmountBySessionId(sessionId));
+                .add(cashMovementRepository.sumSignedAmountBySessionId(sessionId))
+                // CRM-F010 — quitação de marcado em dinheiro recebida neste caixa. receivable_payment
+                // guarda o abatido, já líquido do troco devolvido.
+                .add(receivableUseCase.receivedInSession(sessionId, PaymentMethod.DINHEIRO));
 
         // Divergência não bloqueia — é o achado do fechamento, como no balanço de inventário.
         return cashRegisterRepository.save(session.closedWith(expected, countedAmount, username, notes));
@@ -225,15 +234,23 @@ public class PdvService implements PdvUseCase {
             if (method == PaymentMethod.GATEWAY_PIX) {
                 continue;
             }
+            // CRM-F010 — MARCADO é dinheiro que NÃO entrou: nunca aparece no caixa. O que entra é
+            // a quitação, somada abaixo no método em que foi recebida.
+            if (method == PaymentMethod.MARCADO) {
+                continue;
+            }
             // PDV-F026 — além do bruto, o estorno e (em dinheiro) o troco, para a aba Caixas mostrar o
             // líquido sem abrir recibo nenhum. Mesmas somas do esperado de closeSession.
             BigDecimal captured = orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, method);
             BigDecimal refunded = orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(sessionId, method);
+            // CRM-F010 — quitação de marcado recebida NESTA sessão (o caixa de quem recebe). Já é o
+            // valor abatido, líquido do troco: o troco da quitação não entra de novo na conta.
+            BigDecimal receivable = receivableUseCase.receivedInSession(sessionId, method);
             BigDecimal change = method == PaymentMethod.DINHEIRO
                     ? orderRepository.sumChangeAmountBySessionId(sessionId)
                     : BigDecimal.ZERO;
             totals.add(new PaymentTotal(method, captured, refunded, change,
-                    captured.subtract(refunded).subtract(change)));
+                    captured.add(receivable).subtract(refunded).subtract(change), receivable));
         }
         return totals;
     }
@@ -276,6 +293,8 @@ public class PdvService implements PdvUseCase {
         // PDV-F022: contra totalPayable(), que inclui a taxa de entrega — no balcão sem entrega é
         // igual ao líquido, como sempre foi.
         BigDecimal changeAmount = validatePaymentsAndComputeChange(payments, order.totalPayable());
+        // CRM-F010 — o marcar é validado junto com o pagamento, antes do estoque.
+        validateOnAccount(customerId, payments);
 
         for (OrderItem item : order.items()) {
             estoqueUseCase.adjustStock(item.sku(), warehouseCode, MovementType.SAIDA, item.quantity(),
@@ -294,11 +313,36 @@ public class PdvService implements PdvUseCase {
                 : order.concluded(orderRepository.nextOrderNumber(), changeAmount, Instant.now()));
 
         for (PaymentCommand payment : payments) {
-            orderPaymentRepository.save(OrderPayment.captured(saved.id(), payment.method(),
-                    payment.amount(), payment.installments(), payment.channel(), payment.provider()));
+            orderPaymentRepository.save(toPaymentLine(saved.id(), payment));
         }
+        recordReceivableIfOnAccount(saved, null, payments, username);
+        // Depois das linhas: o cashback desconta a fração marcada (ver CashbackService).
         cashbackUseCase.recordEarnedForOrder(saved);
         return saved;
+    }
+
+    // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────
+
+    /**
+     * Linha de pagamento da venda: MARCADO nasce ON_ACCOUNT (fora do caixa); as demais, CAPTURED.
+     * Package-private — {@code ComandaService} grava as linhas do fechamento de mesa pelo mesmo molde.
+     */
+    static OrderPayment toPaymentLine(Long orderId, PaymentCommand payment) {
+        return payment.isOnAccount()
+                ? OrderPayment.onAccount(orderId, payment.amount(), payment.dueDate())
+                : OrderPayment.captured(orderId, payment.method(), payment.amount(), payment.installments(),
+                        payment.channel(), payment.provider());
+    }
+
+    /** Package-private — a mesa valida o marcar pela mesma regra do balcão. */
+    void validateOnAccount(Long customerId, List<PaymentCommand> payments) {
+        receivableUseCase.validateOnAccount(customerId, payments);
+    }
+
+    /** Package-private — cria o recebível do pedido, se a venda teve linha MARCADO. */
+    void recordReceivableIfOnAccount(Order saved, Long comandaId, List<PaymentCommand> payments, String username) {
+        payments.stream().filter(PaymentCommand::isOnAccount).findFirst()
+                .ifPresent(line -> receivableUseCase.createFromOrder(saved, comandaId, line, username));
     }
 
     @Override
@@ -378,6 +422,9 @@ public class PdvService implements PdvUseCase {
         // gravá-lo faria a linha de pagamento afirmar que entrou na gaveta mais do que ficou — o
         // mesmo defeito que PDV-C017 acabou de tirar do fechamento, entrando de novo por outra
         // porta. Ver ChangeNotSupportedException.
+        if (payments.stream().anyMatch(PaymentCommand::isOnAccount)) {
+            throw new OnAccountNotSupportedException("liquidação de pedido do app");
+        }
         BigDecimal change = validatePaymentsAndComputeChange(payments, order.netAmount());
         if (change != null && change.signum() > 0) {
             throw new ChangeNotSupportedException(order.netAmount().add(change), order.netAmount());

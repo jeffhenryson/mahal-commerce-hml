@@ -35,6 +35,7 @@ import com.cernecommerce.core.domain.model.crm.StageTransition;
 import com.cernecommerce.core.domain.model.crm.Tag;
 import com.cernecommerce.core.domain.model.crm.TagSummary;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
+import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.infra.handler.GlobalExceptionHandler;
 
@@ -65,9 +66,13 @@ public class CrmControllerTest {
     void setup() {
         crmUseCase = mock(CrmUseCase.class);
         cashbackUseCase = mock(CashbackUseCase.class);
+        ReceivableUseCase receivableUseCase = mock(ReceivableUseCase.class);
+        when(receivableUseCase.balance(any())).thenReturn(new ReceivableUseCase.CustomerBalance(
+                java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO));
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new CrmController(crmUseCase, cashbackUseCase, new CustomerDTOConverter(),
+                .standaloneSetup(new CrmController(crmUseCase, cashbackUseCase, receivableUseCase,
+                        new CustomerDTOConverter(),
                         new CustomerNoteDTOConverter(), new StageTransitionDTOConverter(),
                         new TagDTOConverter(), new CustomerCsvConverter(), new CampaignDTOConverter(),
                         new ChannelStatusDTOConverter(), new CashbackDTOConverter(), publisher))

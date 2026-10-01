@@ -831,14 +831,17 @@ public class ComandaService implements ComandaUseCase {
         // Valida contra totalPayable, não contra netAmount: o cliente paga a mercadoria MAIS a
         // taxa, e o troco sai dessa conta. É o único lugar do módulo em que os dois números diferem.
         BigDecimal changeAmount = pdvService.validatePaymentsAndComputeChange(payments, order.totalPayable());
+        // CRM-F010 — marcar na mesa segue a regra do balcão: VIP, prazo, limite, sem vencido. A taxa
+        // de serviço e o desconto já incidiram — o MARCADO cobre o que sobrou a pagar.
+        pdvService.validateOnAccount(comanda.customerId(), payments);
 
         // Sem novo adjustStock aqui: o estoque já saiu item a item em addItem.
         Order saved = orderRepository.save(
                 order.concluded(orderRepository.nextOrderNumber(), changeAmount, Instant.now()));
         for (PaymentCommand payment : payments) {
-            orderPaymentRepository.save(OrderPayment.captured(saved.id(), payment.method(),
-                    payment.amount(), payment.installments(), payment.channel(), payment.provider()));
+            orderPaymentRepository.save(PdvService.toPaymentLine(saved.id(), payment));
         }
+        pdvService.recordReceivableIfOnAccount(saved, comandaId, payments, username);
         cashbackUseCase.recordEarnedForOrder(saved);
 
         // PDV-F017 — marca as linhas cobradas e só ENCERRA a mesa quando não sobra nenhuma aberta.

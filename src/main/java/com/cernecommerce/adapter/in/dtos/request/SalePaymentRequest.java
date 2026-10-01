@@ -20,7 +20,8 @@ import java.math.BigDecimal;
 public class SalePaymentRequest {
 
     @NotBlank
-    @Schema(description = "DINHEIRO, DEBITO, CREDITO ou PIX.", example = "DINHEIRO")
+    @Schema(description = "DINHEIRO, DEBITO, CREDITO, PIX ou MARCADO (CRM-F010: venda a prazo para "
+            + "cliente VIP; no máximo uma linha, com dueDate, e exige PDV_SALE_ON_ACCOUNT).", example = "DINHEIRO")
     private String method;
 
     @NotNull
@@ -41,4 +42,8 @@ public class SalePaymentRequest {
 
     @Schema(description = "Operadora: CIELO ou INFINITYPAY (PDV-F025). Exige channel.", example = "CIELO")
     private PaymentProvider provider;
+
+    @Schema(description = "CRM-F010 — vencimento da linha MARCADO (AAAA-MM-DD, hoje ou depois). "
+            + "Obrigatório em MARCADO; ignorado nos demais métodos.", example = "2026-10-15")
+    private java.time.LocalDate dueDate;
 }

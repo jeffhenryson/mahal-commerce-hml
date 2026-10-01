@@ -12,7 +12,7 @@ import java.time.Instant;
 public class OrderPaymentResponseDTO {
     private Long id;
 
-    @Schema(description = "DINHEIRO, DEBITO, CREDITO ou PIX.")
+    @Schema(description = "DINHEIRO, DEBITO, CREDITO, PIX ou MARCADO (CRM-F010).")
     private String method;
 
     private BigDecimal amount;
@@ -45,4 +45,8 @@ public class OrderPaymentResponseDTO {
 
     @Schema(description = "PDV-F027 — só em CORRECTED.")
     private String correctedBy;
+
+    @Schema(description = "CRM-F010 — vencimento da linha MARCADO (status ON_ACCOUNT). O recibo mostra "
+            + "\"Marcado — vence em dd/mm\".")
+    private java.time.LocalDate dueDate;
 }
