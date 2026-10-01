@@ -318,6 +318,7 @@ public class PdvComandaController {
                     + "mesa inteira não precisa de permissão maior para remover uma linha dela.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Removida, com a comanda atualizada", content = @Content(schema = @Schema(implementation = ComandaResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "A linha já foi cobrada num fechamento parcial (ITEM_NOT_OPEN_IN_COMANDA, PDV-C023): está num pedido pago, e desfazer venda paga é reembolso do pedido", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda ou item não encontrado (COMANDA_ITEM_NOT_FOUND)", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sessão de caixa encerrada, ou a linha tem SABOR_EXTRA pendurado (LINKED_ITEM_IS_CHARGED)", content = @Content)
     })
@@ -623,7 +624,7 @@ public class PdvComandaController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Cancelada", content = @Content(schema = @Schema(implementation = ComandaResponseDTO.class))),
             @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não está aberta", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não está aberta, ou já teve linha cobrada (COMANDA_PARTIALLY_CLOSED, PDV-C021): remova as linhas abertas e use POST /finish", content = @Content)
     })
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")

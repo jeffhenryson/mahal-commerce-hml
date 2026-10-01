@@ -417,6 +417,37 @@ class ComandaSessaoServiceTest {
         verify(sessionMenu, never()).release(any());
     }
 
+    /**
+     * PDV-C021 — mesa com sessão já paga não é cancelada: cancelar devolveria estoque de linha
+     * vendida e tiraria do histórico uma mesa com pedido pago. 409, nada gravado, nada liberado.
+     */
+    @Test
+    void cancelComanda_comLinhaJaCobrada_eRecusadaSemMexerEmNada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), catalogo(2L, "8.00"))));
+
+        assertThatThrownBy(() -> comandaService.cancelComanda(10L, "caixa1", "desistiu"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaPartiallyClosedException.class);
+
+        verify(comandaRepository, never()).save(any());
+        verify(comandaRepository, never()).recordClosing(any(), any(), any());
+        verify(sessionMenu, never()).release(any());
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** PDV-C023 — linha já cobrada não sai da comanda: o pedido pago continua com ela. */
+    @Test
+    void removeItem_linhaJaCobrada_eRecusada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L))));
+
+        assertThatThrownBy(() -> comandaService.removeItem(10L, 1L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ItemNotOpenInComandaException.class);
+
+        verify(comandaRepository, never()).save(any());
+        verify(sessionMenu, never()).release(any());
+    }
+
     private static ComandaItem catalogo(Long id, String price) {
         return ComandaItem.of(id, "AGUA", BigDecimal.ONE, new BigDecimal(price), new BigDecimal("1.00"), "Água",
                 Instant.now());

@@ -673,6 +673,12 @@ public class ComandaService implements ComandaUseCase {
                 .filter(i -> itemId != null && itemId.equals(i.id()))
                 .findFirst()
                 .orElseThrow(() -> new ComandaItemNotFoundException(itemId, comandaId));
+        // PDV-C023 — linha já cobrada pertence a um pedido pago: tirá-la da comanda liberaria o
+        // utensílio de uma sessão que pode estar na mesa e, no catálogo, devolveria ao estoque
+        // mercadoria vendida. Quem quer desfazer uma venda paga reembolsa o pedido.
+        if (!alvo.isOpen()) {
+            throw new ItemNotOpenInComandaException(comandaId, List.of(itemId));
+        }
         // PDV-F019 — linha de kit sai só com o pacote inteiro.
         if (alvo.inKit()) {
             throw new KitItemRemovalNotAllowedException(itemId, alvo.kitBundleId());
@@ -1005,6 +1011,13 @@ public class ComandaService implements ComandaUseCase {
         // PDV-F010: mesa compartilhada — ver PdvService.requireOpenSession.
         pdvService.requireOpenSession(comanda.sessionId());
         requireOpen(comanda);
+        // PDV-C021 — com linha cobrada, cancelar mentiria nas duas pontas: devolveria ao estoque
+        // mercadoria vendida e encerraria como abandono uma mesa com pedido pago (que sairia do
+        // histórico e dos indicadores, que contam só FECHADA). Com a sessão paga no lançamento
+        // (PDV-F027) isso é o normal do salão. A saída é remover as linhas abertas e encerrar.
+        if (comanda.items().stream().anyMatch(i -> !i.isOpen())) {
+            throw new ComandaPartiallyClosedException(comandaId);
+        }
 
         // Devolve cada item já debitado — mesmo padrão de OrderService.refundOrder.
         for (ComandaItem item : comanda.items()) {
