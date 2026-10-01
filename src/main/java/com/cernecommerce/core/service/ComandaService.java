@@ -46,6 +46,8 @@ import com.cernecommerce.core.domain.exception.pdv.NotASessionProductException;
 import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeNotApplicableException;
@@ -272,8 +274,7 @@ public class ComandaService implements ComandaUseCase {
 
         // PDV-F021 — a linha do cardápio não tem produto: entra só por addSession/addRoshExtra.
         if (resolvedMode.isMenuSession()) {
-            throw new IllegalArgumentException(
-                    "sessão do cardápio é lançada por POST /pdv/comandas/{id}/sessoes, não por /items");
+            throw new MenuSessionNotAllowedOnItemsException(resolvedMode.name());
         }
 
         EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(sku);
@@ -616,7 +617,7 @@ public class ComandaService implements ComandaUseCase {
     /** Essência obrigatória (é o que a casa quer saber depois) e o vaso, na nota da linha. */
     private String sessionNotes(String essencia, boolean vasoGrande) {
         if (essencia == null || essencia.isBlank()) {
-            throw new IllegalArgumentException("essência é obrigatória na sessão");
+            throw new SessionEssenceRequiredException("essência");
         }
         String notes = essencia.trim() + (vasoGrande ? ComandaItem.VASO_GRANDE_NOTE_SUFFIX : "");
         validateNotes(notes);

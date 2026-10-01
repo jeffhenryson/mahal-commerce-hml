@@ -49,6 +49,33 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(jsonPath("$.duploRoshHoje").isBoolean());
     }
 
+    /**
+     * PDV-C025 — o 2º rosh do duplo é cortesia: sem PDV_COMANDA_COURTESY, 403 antes de qualquer
+     * leitura da mesa (a comanda nem existe aqui). Com a permissão, passa da checagem e cai no 404.
+     */
+    @Test
+    void session_duplo_without_courtesy_returns_403() throws Exception {
+        String body = "{\"tierId\":1,\"essencia\":\"Zomo\",\"modo\":\"DUPLO\",\"essenciaRosh\":\"Pred\"}";
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("gerente").authorities(COMANDA,
+                                new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    /** PDV-C031 — duplo sem o sabor do 2º rosh tem código próprio, não o 400 genérico. */
+    @Test
+    void session_duplo_without_rosh_flavor_returns_session_essence_required() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tierId\":1,\"essencia\":\"Zomo\",\"modo\":\"DUPLO\"}")
+                        .with(user("gerente").authorities(COMANDA, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_ESSENCE_REQUIRED"));
+    }
+
     @Test
     void manage_tiers_with_only_comanda_manage_returns_403() throws Exception {
         mockMvc.perform(get("/pdv/sessao/faixas").with(user("atendente").authorities(COMANDA)))

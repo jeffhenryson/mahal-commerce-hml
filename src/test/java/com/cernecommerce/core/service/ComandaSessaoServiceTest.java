@@ -189,7 +189,7 @@ class ComandaSessaoServiceTest {
         when(sessionMenu.settings()).thenReturn(SETTINGS);
 
         assertThatThrownBy(() -> comandaService.addSession(10L, 2L, "  ", false, "caixa1"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException.class);
         verify(comandaRepository, never()).save(any());
     }
 
@@ -367,7 +367,7 @@ class ComandaSessaoServiceTest {
 
         assertThatThrownBy(() -> comandaService.addItem(10L, "SESS-2", BigDecimal.ONE, ConsumptionMode.SESSAO,
                 false, null, null, null, "caixa1"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException.class);
         verifyNoInteractions(estoqueUseCase);
     }
 
@@ -754,7 +754,7 @@ class ComandaSessaoServiceTest {
 
         assertThatThrownBy(() -> comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(2L, "Zomo",
                 false, null, List.of(), true, " ", null), "caixa1"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException.class);
         verify(sessionMenu, never()).reserveAssetsForSession(any(), anyBoolean());
         verify(comandaRepository, never()).save(any());
     }

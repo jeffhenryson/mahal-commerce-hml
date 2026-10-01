@@ -1,5 +1,11 @@
 package com.cernecommerce.adapter.in.controller;
 
+import org.springframework.security.core.GrantedAuthority;
+
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+
+import com.cernecommerce.core.domain.exception.pdv.CourtesyNotAllowedException;
+
 import com.cernecommerce.adapter.in.converter.ComandaDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.AddRoshExtraRequest;
 import com.cernecommerce.adapter.in.dtos.request.RepeatSessionRequest;
@@ -94,7 +100,8 @@ public class PdvSessaoController {
                     + "itemIds do close.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
-            @ApiResponse(responseCode = "400", description = "Essência vazia, ou DUPLO sem essenciaRosh", content = @Content),
+            @ApiResponse(responseCode = "400", description = "Essência vazia, ou DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
     })
@@ -102,9 +109,7 @@ public class PdvSessaoController {
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> addSession(@PathVariable("id") Long comandaId,
             @Valid @RequestBody AddSessionRequest request, Authentication authentication) {
-        if (request.isDuplo() && (request.getEssenciaRosh() == null || request.getEssenciaRosh().isBlank())) {
-            throw new IllegalArgumentException("essenciaRosh é obrigatória no rosh duplo");
-        }
+        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
         Comanda comanda = comandaUseCase.addSession(comandaId, new ComandaUseCase.AddSessionCommand(
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
                 request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh()),
@@ -128,7 +133,8 @@ public class PdvSessaoController {
                     + "como no lançamento normal.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
-            @ApiResponse(responseCode = "400", description = "DUPLO sem essenciaRosh", content = @Content),
+            @ApiResponse(responseCode = "400", description = "DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado ou inativo", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, a linha não é uma sessão desta comanda (NOT_A_SESSION_LINE), sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
     })
@@ -137,9 +143,7 @@ public class PdvSessaoController {
     public ResponseEntity<ComandaResponseDTO> repeatSession(@PathVariable("id") Long comandaId,
             @PathVariable("itemId") Long sourceItemId, @Valid @RequestBody RepeatSessionRequest request,
             Authentication authentication) {
-        if (request.isDuplo() && (request.getEssenciaRosh() == null || request.getEssenciaRosh().isBlank())) {
-            throw new IllegalArgumentException("essenciaRosh é obrigatória no rosh duplo");
-        }
+        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
         Comanda comanda = comandaUseCase.repeatSession(comandaId, sourceItemId,
                 new ComandaUseCase.RepeatSessionCommand(request.getEssencia(), request.isDuplo(),
                         request.getEssenciaRosh(), request.getTierIdRosh()),
@@ -326,4 +330,27 @@ public class PdvSessaoController {
         }
         return dto;
     }
+
+    /**
+     * PDV-C025 — o 2º rosh do duplo é uma linha de cortesia a R$ 0, em qualquer dia. Cortesia na mesa
+     * exige {@code PDV_COMANDA_COURTESY} desde PDV-F010; sem a mesma exigência aqui, qualquer
+     * atendente lançava toda sessão como duplo. Decisão do dono (01/10/2026). O sabor do 2º rosh
+     * vem depois da permissão: quem não pode lançar não precisa saber o que faltou no corpo.
+     */
+    private void requireDuploAllowed(boolean duplo, String essenciaRosh, Authentication authentication) {
+        if (!duplo) {
+            return;
+        }
+        boolean allowed = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(COURTESY_AUTHORITY::equals);
+        if (!allowed) {
+            throw new CourtesyNotAllowedException(authentication.getName());
+        }
+        if (essenciaRosh == null || essenciaRosh.isBlank()) {
+            throw new SessionEssenceRequiredException("essenciaRosh");
+        }
+    }
+
+    private static final String COURTESY_AUTHORITY = "PDV_COMANDA_COURTESY";
 }

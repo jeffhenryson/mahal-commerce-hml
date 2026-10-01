@@ -156,6 +156,8 @@ import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaDiscountNotAllowedException;
@@ -1364,6 +1366,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotesTooLongException.class)
     public ResponseEntity<ApiError> handleNotesTooLong(NotesTooLongException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "NOTES_TOO_LONG", req);
+    }
+
+    // PDV-C031 — erros da sessão do cardápio com código próprio, em vez do 400 genérico.
+    @ExceptionHandler(SessionEssenceRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionEssenceRequired(SessionEssenceRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_ESSENCE_REQUIRED", req);
+    }
+
+    @ExceptionHandler(MenuSessionNotAllowedOnItemsException.class)
+    public ResponseEntity<ApiError> handleMenuSessionNotAllowedOnItems(MenuSessionNotAllowedOnItemsException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "MENU_SESSION_NOT_ALLOWED_ON_ITEMS", req);
     }
 
     /** PDV-F010 — SKU sem disponibilidade para mesa lançado numa comanda. */
