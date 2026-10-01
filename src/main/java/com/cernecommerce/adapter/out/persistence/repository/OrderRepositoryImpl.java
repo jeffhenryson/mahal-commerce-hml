@@ -106,6 +106,11 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public Optional<Order> findByIdForUpdate(Long id) {
+        return orderJpaRepository.lockById(id).flatMap(orderJpaRepository::findById).map(this::toDomain);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public PageResult<Order> findBySessionId(Long sessionId, int page, int size) {
         return withItems(orderJpaRepository

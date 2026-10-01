@@ -11,9 +11,23 @@ import org.springframework.data.repository.query.Param;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
         JpaSpecificationExecutor<OrderEntity> {
+
+    /**
+     * PED-C011 — trava a linha de {@code sales_order} para os caminhos que decidem sobre os pagamentos
+     * do pedido (reembolso e correção).
+     *
+     * <p>Nativo, e não {@code @Lock(PESSIMISTIC_WRITE)} na entidade: o Hibernate 7 estende a trava às
+     * tabelas da entidade ("follow-on locking"), e a {@code @SecondaryTable} de entrega não tem linha
+     * no pedido sem entrega — a trava falha com {@code AssertionFailure: Expecting results}. A
+     * linha do cabeçalho é o que serializa os dois caminhos; a entrega não entra na decisão.</p>
+     */
+    @Query(value = "SELECT id FROM sales_order WHERE id = :id FOR UPDATE", nativeQuery = true)
+    Optional<Long> lockById(@Param("id") Long id);
+
 
     /** PDV-F029 — ids dos pedidos das comandas; os itens vêm por findAllByIdsWithItems. */
     @Query("SELECT o.id FROM OrderEntity o WHERE o.comandaId IN :comandaIds ORDER BY o.id ASC")

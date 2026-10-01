@@ -23,6 +23,14 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /**
+     * PED-C011 — o pedido com a linha travada até o fim da transação. Reembolso e correção de
+     * pagamento decidem sobre as linhas de pagamento que leram; sem a trava, os dois em paralelo
+     * deixavam o pedido REEMBOLSADO com um pagamento novo da correção nunca estornado. O
+     * {@code @Version} não pega: a correção normalmente não regrava o cabeçalho.
+     */
+    Optional<Order> findByIdForUpdate(Long id);
+
     /** PDV-F029 — os pedidos MESA gerados pelas comandas, com itens, numa consulta só. */
     java.util.List<Order> findByComandaIds(java.util.Collection<Long> comandaIds);
 

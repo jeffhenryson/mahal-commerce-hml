@@ -100,6 +100,10 @@ public class OrderService implements OrderUseCase {
         return orderRepository.findById(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
     }
 
+    private Order getOrderForUpdate(Long orderId) {
+        return orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> new OrderNotFoundException(orderId));
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<OrderPayment> getOrderPayments(Long orderId) {
@@ -175,7 +179,8 @@ public class OrderService implements OrderUseCase {
     @Override
     @Transactional
     public Order refundOrder(Long orderId, String reason, String username, List<RefundItemLot> itemLots) {
-        Order order = getOrder(orderId);
+        // PED-C011 — travado: decide sobre as linhas de pagamento, como a correção.
+        Order order = getOrderForUpdate(orderId);
 
         // refunded() valida a transição (só sai de estado pós-pagamento) e recusa reembolsar duas
         // vezes. Chamá-lo ANTES de mexer em estoque/pagamento/cashback é o que impede um segundo
@@ -189,7 +194,12 @@ public class OrderService implements OrderUseCase {
         // Devolução é entrada de estoque legítima, inclusive para pedido já entregue. O motivo
         // carrega o número do pedido: sem ele, a trilha do movimento não é reconstruível.
         String movementReason = "Reembolso do pedido " + order.orderNumber();
-        for (OrderItem item : order.items()) {
+        // PED-C007 — pedido de MESA não devolve nada: o consumo foi servido e queimado. A essência de
+        // lata consumiu USO, não unidade (EST-F027), e o OrderItem não carrega o contador; cortesia e
+        // TROCA também voltariam como mercadoria. É a mesma assimetria de ComandaService.undoStock.
+        // Reposição real, se houver (bebida fechada devolvida), é ajuste manual de estoque.
+        List<OrderItem> returnable = order.channel() == SalesChannel.MESA ? List.of() : order.items();
+        for (OrderItem item : returnable) {
             // PDV-F021 — sessão do cardápio não saiu do estoque (SKU sintético): nada a devolver.
             if (!item.mode().isCatalogLine()) {
                 continue;
@@ -231,7 +241,9 @@ public class OrderService implements OrderUseCase {
         if (reason == null || reason.isBlank()) {
             throw new CorrectionReasonRequiredException();
         }
-        Order order = getOrder(orderId);
+        // PED-C011 — travado: um reembolso em paralelo estornaria a linha que esta correção aposenta
+        // e deixaria a linha nova CAPTURED num pedido REEMBOLSADO.
+        Order order = getOrderForUpdate(orderId);
         if (order.status() == OrderStatus.CANCELADO || order.status() == OrderStatus.REEMBOLSADO) {
             throw new OrderNotCorrectableException(orderId, "pedido " + order.status());
         }

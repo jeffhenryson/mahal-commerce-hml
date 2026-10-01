@@ -75,6 +75,10 @@ class OrderServiceTest {
     void setUp() {
         orderService = new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
                 cashRegisterRepository, correctionRepository, receivableUseCase);
+        // PED-C011 — reembolso e correção leem travado; nos testes de unidade a leitura travada é a
+        // mesma do findById que cada teste já prepara.
+        org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(any()))
+                .thenAnswer(inv -> orderRepository.findById(inv.getArgument(0)));
     }
 
     private static List<OrderItem> twoCharcoals() {
@@ -302,6 +306,24 @@ class OrderServiceTest {
         verify(estoqueUseCase, never()).adjustStock(eq("SESS-2"), any(), any(), any(), any(), any(), any(), any());
         verify(estoqueUseCase).adjustStock(eq("CARV-001"), eq("LOJA-01"), eq(MovementType.ENTRADA),
                 eq(new BigDecimal("2.000")), any(), eq("gerente"), isNull(), isNull());
+    }
+
+    @Test
+    void refundOrder_mesaOrderIsOnlyFinancial_noStockMovement() {
+        // PED-C007, decisão do dono (01/10/2026): o consumo de mesa foi servido/queimado. Devolver
+        // unidade aqui inventaria saldo — a essência de lata consumiu USO, não unidade, e o OrderItem
+        // não sabe disso; cortesia e TROCA também voltariam. Pagamento e cashback seguem estornados.
+        Order order = Order.openMesa(1L, "LOJA-01", null, 7L, "Mesa 3", twoCharcoals())
+                .concluded("000001000", null, NOW);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of());
+
+        Order refunded = orderService.refundOrder(1L, "cliente reclamou", "gerente");
+
+        assertThat(refunded.status()).isEqualTo(OrderStatus.REEMBOLSADO);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(cashbackUseCase).reverseEarningsForOrder(order);
     }
 
     @Test
