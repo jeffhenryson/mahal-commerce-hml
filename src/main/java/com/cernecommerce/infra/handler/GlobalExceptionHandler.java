@@ -1031,7 +1031,7 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "PAYMENT_EXCEEDS_BALANCE", req);
     }
 
-    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+    // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────
 
     @ExceptionHandler(PaymentTotalMismatchException.class)
     public ResponseEntity<ApiError> handlePaymentTotalMismatch(PaymentTotalMismatchException ex, HttpServletRequest req) {

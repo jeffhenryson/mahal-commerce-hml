@@ -490,7 +490,7 @@ class PdvCashCycleIT {
         assertThat(rows.intValue()).isZero();
     }
 
-    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+    // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────
 
     private static BigDecimal netOf(List<PdvUseCase.PaymentTotal> totals, PaymentMethod method) {
         return totals.stream().filter(t -> t.method() == method).findFirst().orElseThrow().netAmount();

@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 import lombok.Data;
 
-/** Corpo do {@code POST /orders/{id}/payments/correction} (PDV-F027). */
+/** Corpo do {@code POST /orders/{id}/payments/correction} (PDV-F030). */
 @Data
 public class OrderPaymentCorrectionRequest {
 

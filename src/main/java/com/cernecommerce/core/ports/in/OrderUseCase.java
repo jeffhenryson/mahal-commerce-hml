@@ -125,7 +125,7 @@ public interface OrderUseCase {
     Order refundOrder(Long orderId, String reason, String username, List<RefundItemLot> itemLots);
 
     /**
-     * Corrige a forma de pagamento de um pedido sem perder o registro do erro (PDV-F027).
+     * Corrige a forma de pagamento de um pedido sem perder o registro do erro (PDV-F030).
      *
      * <p>As linhas {@code CAPTURED} vigentes passam a {@code CORRECTED}; as informadas nascem
      * {@code CAPTURED}. A soma tem que ser exatamente {@code totalPayable} — sem troco, que já foi

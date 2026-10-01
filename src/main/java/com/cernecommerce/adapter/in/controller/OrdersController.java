@@ -217,7 +217,7 @@ public class OrdersController {
         return ResponseEntity.ok(dto);
     }
 
-    @Operation(summary = "Corrige a forma de pagamento do pedido, sem perder o registro do erro (PDV-F027)",
+    @Operation(summary = "Corrige a forma de pagamento do pedido, sem perder o registro do erro (PDV-F030)",
             description = "As linhas CAPTURED vigentes passam a CORRECTED (ficam no pedido como lastro e "
                     + "saem de payment-totals e da conferência do caixa); as informadas nascem CAPTURED. "
                     + "A soma tem que ser exatamente totalPayable — sem troco, nem em DINHEIRO; se o "
@@ -260,7 +260,7 @@ public class OrdersController {
         return Map.of("method", payment.method().name(), "amount", payment.amount());
     }
 
-    @Operation(summary = "Histórico de correções da forma de pagamento (PDV-F027)",
+    @Operation(summary = "Histórico de correções da forma de pagamento (PDV-F030)",
             description = "Da mais antiga para a mais recente. Pedido sem correção responde [].")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),

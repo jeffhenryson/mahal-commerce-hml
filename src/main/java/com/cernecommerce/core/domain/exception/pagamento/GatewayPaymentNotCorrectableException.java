@@ -2,7 +2,7 @@ package com.cernecommerce.core.domain.exception.pagamento;
 
 /**
  * Pedido pago pelo gateway (app), fora de caixa: quem confirmou foi o webhook, não o operador, e
- * não há gaveta a reconciliar (PDV-F027).
+ * não há gaveta a reconciliar (PDV-F030).
  */
 public class GatewayPaymentNotCorrectableException extends RuntimeException {
 

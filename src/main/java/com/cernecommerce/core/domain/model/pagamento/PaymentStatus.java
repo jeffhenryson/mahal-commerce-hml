@@ -28,7 +28,7 @@ public enum PaymentStatus {
      */
     CANCELLED,
     /**
-     * Linha capturada na forma errada e aposentada por uma correção (PDV-F027). Fica de pé como
+     * Linha capturada na forma errada e aposentada por uma correção (PDV-F030). Fica de pé como
      * lastro — as leituras do pedido a devolvem, riscada — mas não soma em caixa nem em total.
      */
     CORRECTED,

@@ -5,7 +5,7 @@ import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
 
 import java.util.List;
 
-/** Correções de forma de pagamento e os ajustes que elas deixam em caixa fechado (PDV-F027). */
+/** Correções de forma de pagamento e os ajustes que elas deixam em caixa fechado (PDV-F030). */
 public interface OrderPaymentCorrectionRepository {
 
     OrderPaymentCorrection save(OrderPaymentCorrection correction);

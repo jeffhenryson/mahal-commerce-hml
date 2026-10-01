@@ -127,7 +127,7 @@ public class OrdersControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
-    // PDV-F027 — correção da forma de pagamento.
+    // PDV-F030 — correção da forma de pagamento.
     @Test
     void correct_payments_without_permission_returns_403() throws Exception {
         mockMvc.perform(post("/orders/999999/payments/correction")

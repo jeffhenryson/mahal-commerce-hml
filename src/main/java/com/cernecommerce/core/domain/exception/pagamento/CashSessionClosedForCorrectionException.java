@@ -2,7 +2,7 @@ package com.cernecommerce.core.domain.exception.pagamento;
 
 /**
  * O caixa do pedido já fechou e quem corrige não tem {@code ORDER_PAYMENT_CORRECT_CLOSED}
- * (PDV-F027).
+ * (PDV-F030).
  */
 public class CashSessionClosedForCorrectionException extends RuntimeException {
 

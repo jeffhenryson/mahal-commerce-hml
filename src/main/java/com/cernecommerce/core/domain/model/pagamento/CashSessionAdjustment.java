@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * Divergência registrada num caixa já fechado por uma correção de pagamento (PDV-F027).
+ * Divergência registrada num caixa já fechado por uma correção de pagamento (PDV-F030).
  *
  * <p>O esperado gravado no fechamento não é reescrito — ele foi o que o operador conferiu. O delta
  * por método diz quanto aquele fechamento teria sido diferente com a forma certa: positivo, o

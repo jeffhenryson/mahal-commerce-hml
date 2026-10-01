@@ -2,7 +2,7 @@ package com.cernecommerce.core.domain.exception.pagamento;
 
 import java.math.BigDecimal;
 
-/** Correção de pagamento cuja soma difere do que o cliente pagou de fato (PDV-F027). */
+/** Correção de pagamento cuja soma difere do que o cliente pagou de fato (PDV-F030). */
 public class PaymentTotalMismatchException extends RuntimeException {
 
     public PaymentTotalMismatchException(BigDecimal informed, BigDecimal totalPayable) {

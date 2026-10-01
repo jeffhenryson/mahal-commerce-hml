@@ -498,7 +498,7 @@ public record Order(
     }
 
     /**
-     * Troca o troco registrado — a correção de forma de pagamento (PDV-F027) o zera quando a forma
+     * Troca o troco registrado — a correção de forma de pagamento (PDV-F030) o zera quando a forma
      * certa não era dinheiro: o troco já foi devolvido, e o novo lançamento é pelo valor exato.
      */
     public Order withChangeAmount(BigDecimal newChangeAmount) {

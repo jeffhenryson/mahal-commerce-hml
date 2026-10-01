@@ -4,7 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.List;
 
-/** Uma correção da forma de pagamento no {@code GET /orders/{id}/payment-history} (PDV-F027). */
+/** Uma correção da forma de pagamento no {@code GET /orders/{id}/payment-history} (PDV-F030). */
 public record PaymentCorrectionHistoryDTO(
         Long correctionId,
         @Schema(description = "Quando a correção foi feita.") Instant at,

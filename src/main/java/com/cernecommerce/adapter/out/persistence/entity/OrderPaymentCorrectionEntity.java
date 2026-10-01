@@ -5,7 +5,7 @@ import lombok.*;
 
 import java.time.Instant;
 
-/** Correção da forma de pagamento de um pedido (PDV-F027). Tabela {@code order_payment_correction} (V136). */
+/** Correção da forma de pagamento de um pedido (PDV-F030). Tabela {@code order_payment_correction} (V136). */
 @Getter
 @Setter
 @AllArgsConstructor

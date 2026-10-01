@@ -466,7 +466,7 @@ class OrderServiceTest {
                 .isInstanceOf(OrderDeliveryNotEditableException.class);
     }
 
-    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+    // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────
 
     private static OrderPayment capturedLine(long id, PaymentMethod method, String amount) {
         return OrderPayment.of(id, 7L, method, new BigDecimal(amount), PaymentStatus.CAPTURED, null, null,

@@ -60,7 +60,7 @@ public class OrderPaymentEntity {
     @Column(length = 20)
     private String provider;
 
-    // PDV-F027 — lastro da correção de forma de pagamento (V136).
+    // PDV-F030 — lastro da correção de forma de pagamento (V136).
     @Column(name = "correction_id")
     private Long correctionId;
 

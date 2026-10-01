@@ -3,7 +3,7 @@ package com.cernecommerce.core.domain.model.pagamento;
 import java.time.Instant;
 
 /**
- * Uma correção da forma de pagamento de um pedido (PDV-F027): quem, quando, por quê e em que caixa.
+ * Uma correção da forma de pagamento de um pedido (PDV-F030): quem, quando, por quê e em que caixa.
  * As linhas que ela aposentou carregam {@code correctionId}; as que ela lançou,
  * {@code originCorrectionId}.
  *

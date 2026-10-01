@@ -62,7 +62,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
                 || (method == PaymentMethod.MARCADO) != (dueDate != null)) {
             throw new IllegalArgumentException("MARCADO, ON_ACCOUNT e dueDate andam juntos");
         }
-        // PDV-F027 — espelha ck_order_payment_corrected.
+        // PDV-F030 — espelha ck_order_payment_corrected.
         if ((status == PaymentStatus.CORRECTED)
                 != (correctionId != null && correctedAt != null && correctedBy != null)) {
             throw new IllegalArgumentException("CORRECTED exige correctionId, correctedAt e correctedBy");
@@ -85,7 +85,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     }
 
     /**
-     * Pagamento lançado por uma correção (PDV-F027): nasce CAPTURED, como o do balcão, mas carrega
+     * Pagamento lançado por uma correção (PDV-F030): nasce CAPTURED, como o do balcão, mas carrega
      * a correção que o criou — é o "depois" do histórico de pagamento.
      */
     public static OrderPayment captured(Long orderId, PaymentMethod method, BigDecimal amount,
@@ -130,7 +130,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
                 createdAt, channel, provider, null, null, null, null);
     }
 
-    /** Reconstitui um pagamento com o lastro de correção (PDV-F027). */
+    /** Reconstitui um pagamento com o lastro de correção (PDV-F030). */
     public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
             PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
             Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
@@ -203,7 +203,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
     }
 
     /**
-     * Aposenta um pagamento {@link PaymentStatus#CAPTURED} lançado na forma errada (PDV-F027).
+     * Aposenta um pagamento {@link PaymentStatus#CAPTURED} lançado na forma errada (PDV-F030).
      * Atualiza a MESMA linha — a correção é o evento, registrado em {@code order_payment_correction};
      * a linha antiga fica de pé, riscada, como lastro. Sai de toda soma de caixa, que só conta CAPTURED.
      */

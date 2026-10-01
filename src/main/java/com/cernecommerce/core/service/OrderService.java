@@ -202,7 +202,7 @@ public class OrderService implements OrderUseCase {
         return orderRepository.save(refunded);
     }
 
-    // ── PDV-F027: correção da forma de pagamento ────────────────────────────────────────────
+    // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────
 
     @Override
     @Transactional

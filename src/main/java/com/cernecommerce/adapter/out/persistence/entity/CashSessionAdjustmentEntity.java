@@ -6,7 +6,7 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-/** Divergência em caixa fechado deixada por uma correção de pagamento (PDV-F027). Tabela V136. */
+/** Divergência em caixa fechado deixada por uma correção de pagamento (PDV-F030). Tabela V136. */
 @Getter
 @Setter
 @AllArgsConstructor
