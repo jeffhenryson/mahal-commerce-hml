@@ -71,9 +71,14 @@ public class OrderRepositoryImpl implements OrderRepository {
         entity.setServiceFeeAmount(order.serviceFeeAmount());
         writeDelivery(entity, order.delivery());
 
-        // Os itens são reescritos por inteiro: o pedido é imutável depois de concluído, então este
-        // caminho só é exercitado antes da conclusão. orphanRemoval limpa os antigos.
-        entity.getItems().clear();
+        // PED-C005 — os itens só são escritos na CRIAÇÃO. Depois disso o pedido muda de status,
+        // pagamento e entrega, mas nunca de linhas (todo with* de Order repassa a lista como veio), e
+        // regravá-las seria apagar e reinserir order_item: cashback_entry.order_item_id (V70) aponta
+        // para elas, e no Postgres o reembolso ou a retirada de pedido com cashback morriam na FK.
+        // O H2 das ITs não tem essa FK — OrderCashbackPostgresIT é a prova.
+        if (entity.getId() != null) {
+            return toDomain(orderJpaRepository.save(entity));
+        }
         for (OrderItem item : order.items()) {
             OrderItemEntity itemEntity = new OrderItemEntity();
             itemEntity.setOrder(entity);
