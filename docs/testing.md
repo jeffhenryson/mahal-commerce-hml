@@ -323,5 +323,13 @@ Utilitário de teste para computar SHA-256 de tokens e comparar com o que foi pe
 
 - Nomes de métodos em snake_case descrevendo comportamento: `login_com_senha_incorreta_retorna_401`
 - ITs com `@DirtiesContext` quando o estado do H2 pode contaminar outros testes (ex: `VerifyEmailConcurrencyIT`)
+- ⚠️ O `@DirtiesContext` fecha o contexto, e o `create-drop` derruba o schema do H2 `demo` **compartilhado** — os
+  outros contextos em cache ficam sem tabelas (PLAT-C052). IT com `@TestPropertySource` próprio deve usar um
+  banco próprio, como `ComandaMergeIT` (`jdbc:h2:mem:comanda-prod-flags`)
+- ITs de mesa novas rodam com as flags de **produção** (`pdv.mesa.catalog-items-enabled=false`,
+  `pdv.sessao.legacy-enabled=false`) — o perfil `dev` liga as duas, e boa parte da suíte de mesa exercita
+  caminhos desligados em produção (PDV-C032). Exemplo: `ComandaMergeIT`
+- `OrderCashbackPostgresIT` (Testcontainers): a FK `cashback_entry.order_item_id` só existe no Flyway; prova que
+  reembolso e retirada de pedido com cashback não regravam `order_item` (PED-C005)
 - Mocks de `EmailPort` para evitar tentativas reais de envio em unit tests
 - `@ActiveProfiles("dev")` em todos os ITs — garante H2, Caffeine e LoggingEmailAdapter

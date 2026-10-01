@@ -2059,6 +2059,11 @@ sendo cobrada, e apagá-la em cascata tiraria valor da conta sem o operador pedi
 | Linha inexistente, ou de outra comanda | 404 | `COMANDA_ITEM_NOT_FOUND` |
 | Há `SABOR_EXTRA` pendurado na linha | 409 | `LINKED_ITEM_IS_CHARGED` |
 | Comanda já fechada ou cancelada | 409 | `COMANDA_NOT_OPEN` |
+| Linha já cobrada num fechamento parcial (PDV-C023) — está num pedido pago; desfazer é reembolso | 400 | `ITEM_NOT_OPEN_IN_COMANDA` |
+
+Removido um `ROSH_EXTRA` (PDV-C027), o grupo do narguilé se acerta como num recolhimento: se a sessão
+e os roshs que sobraram estão todos recolhidos, os utensílios voltam; se o narguilé ficou livre, o
+próximo rosh da fila já pago entra no preparo.
 
 Reusa `PDV_COMANDA_MANAGE` sem permissão nova: quem já pode cancelar a mesa inteira não precisa de
 alçada maior para remover uma linha dela.
@@ -2196,22 +2201,36 @@ cancelando a comanda — o que devolvia tudo ao estoque — e relançando item a
 Junta esta mesa em outra (PDV-F016): as linhas em aberto passam para o destino e esta é encerrada.
 `200` com a comanda **de destino**.
 
+**PDV-F031 — origem já paga em parte também junta.** Vão as linhas em aberto **e o grupo inteiro**
+(sessão e roshs) de toda sessão de narguilé ainda no salão, paga ou não, com os utensílios — que
+estão alocados na sessão raiz e por isso seguem com ela. A linha cobrada que já saiu do salão fica na
+origem, e os pedidos pagos continuam apontando para a origem, que termina **`FECHADA`** no último
+deles (é receita, e o histórico e os indicadores só contam `FECHADA`). Sem nada cobrado, a origem
+termina `CANCELADA`, como antes. Nos dois casos o motivo gravado é "Juntada à comanda #X".
+
 **Nenhum estoque se move.** A mercadoria não voltou para a prateleira nem saiu de novo — mudou de
-conta. Por isso a origem termina `CANCELADA` **sem** a `ENTRADA` que `POST /cancel` faria; o que
-distingue os dois casos na trilha é o evento `COMANDA_MERGED`.
+conta. Por isso a origem não recebe a `ENTRADA` que `POST /cancel` faria; o que distingue a junção na
+trilha é o evento `COMANDA_MERGED`.
+
+> PDV-C022: até 01/10/2026 a junção deixava **cópias** das linhas movidas na origem. A consulta
+> [`dominios/vendas-balcao/diagnostico-pdv-c022.sql`](dominios/vendas-balcao/diagnostico-pdv-c022.sql)
+> acha as gravadas antes da correção.
 
 Os ids das linhas são **preservados** na mudança de comanda, então um `OPEN_ROSH` e as `TROCA` dele
 chegam juntos e ainda ligados.
 
-As duas mesas precisam estar `ABERTA` e no **mesmo depósito** (o estoque de cada linha saiu de um só),
-e a origem não pode ter tido parte da conta cobrada. `404 COMANDA_NOT_FOUND`;
-`409 COMANDA_NOT_OPEN`/`COMANDA_MERGE_NOT_ALLOWED`/`COMANDA_PARTIALLY_CLOSED`.
+As duas mesas precisam estar `ABERTA` e no **mesmo depósito** (o estoque de cada linha saiu de um só).
+`404 COMANDA_NOT_FOUND`; `409 COMANDA_NOT_OPEN`/`COMANDA_MERGE_NOT_ALLOWED`.
 
 ### POST /pdv/comandas/{id}/cancel — Permissão: PDV_COMANDA_MANAGE
 
 Abandona a comanda sem cobrança, devolvendo ao estoque (`ENTRADA`) cada item já lançado. `200`
 com a comanda `CANCELADA`. Corpo **opcional** `{ "reason": "Cliente desistiu" }` (≤ 500): o motivo
 vai, aparado, para `cancelReason` no histórico (PDV-F029); em branco vale como ausente. `403 SESSION_NOT_OWNED`; `404 COMANDA_NOT_FOUND`; `409 COMANDA_NOT_OPEN`.
+
+**PDV-C021 — mesa com linha já cobrada não é cancelada:** `409 COMANDA_PARTIALLY_CLOSED`. Cancelar
+devolveria ao estoque mercadoria vendida e tiraria do histórico uma mesa com pedido pago. A saída é
+remover as linhas ainda abertas e encerrar com `POST /pdv/comandas/{id}/finish`.
 
 ---
 
@@ -2258,7 +2277,13 @@ linhas `CORRECTED` (PDV-F030) aparecem como lastro, fora de qualquer total.
 // 200 → OrderAdminResponseDTO / 404 / 409 INVALID_STATUS_TRANSITION
 ```
 
-`SEPARADO → ENVIADO → ENTREGUE`, nesta ordem. Consulte `allowedTransitions` no detalhe do pedido.
+`SEPARADO → ENVIADO → ENTREGUE`, nesta ordem, mais a retirada `RESERVADO → CONCLUIDO`. Consulte
+`allowedTransitions` no detalhe do pedido.
+
+**PED-C006 — esta rota só anda a esteira.** Qualquer outro destino é `409 INVALID_STATUS_TRANSITION`,
+mesmo que a tabela de estados o permita: `AGUARDANDO_PAGAMENTO → PAGO/CONCLUIDO` é do webhook e da
+liquidação no balcão (que gravam o pagamento, numeram o pedido e consomem a reserva), e reembolso e
+cancelamento têm rota própria. A mensagem lista os destinos válidos **por esta rota**.
 
 ### POST /orders/bulk-status — Permissão: ORDER_FULFILL
 
@@ -2273,7 +2298,9 @@ na **própria transação**, então um recusado não desfaz os outros.
 // 400 lista vazia, mais de 200 ids, id nulo ou status ausente
 ```
 
-`code` em `failed` (o mesmo `errorCode` do endpoint unitário): `ORDER_NOT_FOUND`, `INVALID_STATUS_TRANSITION` ou `CONCURRENT_UPDATE`. Cada
+`code` em `failed` (o mesmo `errorCode` do endpoint unitário): `ORDER_NOT_FOUND`, `INVALID_STATUS_TRANSITION` ou `CONCURRENT_UPDATE`,
+mais `INVALID_ORDER_STATE` para invariante de domínio de um pedido (PED-C008 — antes ela parava o
+laço no meio, com os anteriores já gravados). Cada
 sucesso publica `ORDER_STATUS_CHANGED` com `"bulk": true`.
 
 ### POST /orders/{id}/payments/correction — Permissão: ORDER_PAYMENT_CORRECT ou ORDER_PAYMENT_CORRECT_CLOSED
