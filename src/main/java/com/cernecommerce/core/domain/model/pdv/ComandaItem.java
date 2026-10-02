@@ -395,6 +395,11 @@ public record ComandaItem(
         return session == null ? null : session.status();
     }
 
+    /** PDV-F034 — sessão (ou rosh dela) que foi ao salão antes de paga. */
+    public boolean isPayLater() {
+        return session != null && session.payLater();
+    }
+
     public boolean inKit() {
         return kitBundleId != null;
     }

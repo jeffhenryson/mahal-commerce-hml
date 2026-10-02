@@ -40,6 +40,9 @@ import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
+import com.cernecommerce.core.domain.model.pdv.SessionProgress;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
+import com.cernecommerce.core.domain.model.pdv.StorePurchase;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
@@ -2062,5 +2065,148 @@ class ComandaServiceTest {
         assertThatThrownBy(() -> comandaService.analytics(from, from.plus(367, ChronoUnit.DAYS), null))
                 .isInstanceOf(InvalidReportPeriodException.class);
         verifyNoInteractions(comandaRepository);
+    }
+
+    // ── PDV-F035 / PDV-F036 — linha do tempo e "comprou na loja?" ───────────────────────────
+
+    private static ComandaItem sessaoComHorarios(Long id, Instant lancada, SessionProgress progress, Long closedIn) {
+        return ComandaItem.of(id, "SESS-2", BigDecimal.ONE, new BigDecimal("30.00"), null, "Sessão Premium",
+                lancada, ConsumptionMode.SESSAO, false, null, "Zomo Uva", null, closedIn, null, null, null, null,
+                null, progress);
+    }
+
+    /**
+     * O detalhe traz a linha do tempo de cada sessão, com o pagamento vindo do pedido que a cobrou,
+     * e os dois intervalos da mesa: abertura → 1ª sessão e último recolhimento → encerramento.
+     */
+    @Test
+    void getHistoryEntry_montaALinhaDoTempoDasSessoes() {
+        Instant aberta = Instant.parse("2026-10-02T22:00:00Z");
+        Instant lancada = aberta.plus(10, ChronoUnit.MINUTES);
+        Instant inicio = lancada.plus(5, ChronoUnit.MINUTES);
+        SessionProgress p = new SessionProgress(SessionStatus.RECOLHIDO, inicio, inicio.plus(10, ChronoUnit.MINUTES),
+                inicio.plus(70, ChronoUnit.MINUTES));
+        Comanda mesa = fechadaEm(10L, "Mesa 4", "caixa1", aberta, 100,
+                sessaoComHorarios(1L, lancada, p, 500L),
+                linha(2L, "BEB-COLA", "12.00", ConsumptionMode.NORMAL, false, null));
+        when(comandaRepository.findWithClosing(10L)).thenReturn(Optional.of(
+                new ClosedComanda(mesa, "caixa1", null, new StorePurchase(true, "caixa1", aberta))));
+        Order pedido = pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "0.00", "0.00",
+                itemPedido("SESS-2", "30.00", "0.00", 1, ConsumptionMode.SESSAO, false));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of(pedido));
+        when(orderPaymentRepository.findByOrderId(500L)).thenReturn(List.of());
+
+        ComandaUseCase.ComandaHistoryEntry entry = comandaService.getHistoryEntry(10L);
+
+        assertThat(entry.sessions()).singleElement().satisfies(t -> {
+            assertThat(t.itemId()).isEqualTo(1L);
+            assertThat(t.pagaEm()).isEqualTo(pedido.concludedAt());
+            assertThat(t.esperaMin()).isEqualTo(5L);
+            assertThat(t.preparoMin()).isEqualTo(10L);
+            assertThat(t.naMesaMin()).isEqualTo(60L);
+            assertThat(t.totalMin()).isEqualTo(75L);
+        });
+        assertThat(entry.aberturaAtePrimeiraSessaoMin()).isEqualTo(10L);
+        // Recolhida 85 min depois da abertura, mesa encerrada aos 100.
+        assertThat(entry.ultimoRecolhimentoAteEncerramentoMin()).isEqualTo(15L);
+        assertThat(entry.storePurchase().bought()).isTrue();
+    }
+
+    /** A listagem continua leve: sem linha do tempo, mas com a resposta da loja. */
+    @Test
+    void listHistory_naoMontaALinhaDoTempo_masTrazACompraNaLoja() {
+        Comanda mesa = fechadaEm(10L, "Mesa 4", "caixa1", Instant.now().minus(2, ChronoUnit.HOURS), 60,
+                sessaoComHorarios(1L, Instant.now().minus(2, ChronoUnit.HOURS), recolhidaHa(), 500L));
+        ComandaHistoryFilter filter = new ComandaHistoryFilter(null, null, null, null, null, null, null, null, true);
+        when(comandaRepository.findHistory(filter, 0, 50)).thenReturn(new PageResult<>(List.of(
+                new ClosedComanda(mesa, "caixa1", null, new StorePurchase(true, "caixa1", Instant.now()))),
+                0, 50, 1, 1));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of());
+
+        ComandaUseCase.ComandaHistoryEntry entry = comandaService.listHistory(filter, 0, 50).content().get(0);
+
+        assertThat(entry.sessions()).isEmpty();
+        assertThat(entry.storePurchase().bought()).isTrue();
+    }
+
+    private static SessionProgress recolhidaHa() {
+        Instant t = Instant.now().minus(90, ChronoUnit.MINUTES);
+        return new SessionProgress(SessionStatus.RECOLHIDO, t, t.plus(5, ChronoUnit.MINUTES),
+                t.plus(65, ChronoUnit.MINUTES));
+    }
+
+    /**
+     * A conversão conta só mesas com sessão, e a taxa só sobre as respondidas: "não respondido" não é
+     * "não comprou". As médias de fase ignoram a espera da sessão paga no final, que não espera.
+     */
+    @Test
+    void analytics_conversaoNaLoja_eMediasDeFase() {
+        Instant from = Instant.parse("2026-10-01T00:00:00Z");
+        Instant to = Instant.parse("2026-10-03T00:00:00Z");
+        Instant abre = Instant.parse("2026-10-02T22:00:00Z");
+        // Paga antes: espera 10, preparo 6, na mesa 60.
+        SessionProgress antes = new SessionProgress(SessionStatus.RECOLHIDO, abre.plus(10, ChronoUnit.MINUTES),
+                abre.plus(16, ChronoUnit.MINUTES), abre.plus(76, ChronoUnit.MINUTES));
+        // Paga no final: espera 0 (fora da média), preparo 4, na mesa 40.
+        SessionProgress depois = new SessionProgress(SessionStatus.RECOLHIDO, abre, abre.plus(4, ChronoUnit.MINUTES),
+                abre.plus(44, ChronoUnit.MINUTES), true);
+        Comanda comprou = fechadaEm(10L, "Mesa 1", "ana", abre, 90, sessaoComHorarios(1L, abre, antes, 500L));
+        Comanda naoComprou = fechadaEm(11L, "Mesa 2", "ana", abre, 90, sessaoComHorarios(2L, abre, depois, 501L));
+        Comanda semResposta = fechadaEm(12L, "Mesa 3", "ana", abre, 90, sessaoComHorarios(3L, abre, antes, 502L));
+        Comanda semSessao = fechadaEm(13L, "Mesa 4", "ana", abre, 30,
+                linha(4L, "BEB-COLA", "12.00", ConsumptionMode.NORMAL, false, null));
+        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of(
+                new ClosedComanda(comprou, "ana", null, new StorePurchase(true, "ana", abre)),
+                new ClosedComanda(naoComprou, "ana", null, new StorePurchase(false, "ana", abre)),
+                new ClosedComanda(semResposta, "ana", null),
+                new ClosedComanda(semSessao, "ana", null, new StorePurchase(true, "ana", abre))));
+        when(orderRepository.findByComandaIds(List.of(10L, 11L, 12L, 13L))).thenReturn(List.of());
+
+        ComandaUseCase.ComandaAnalytics result = comandaService.analytics(from, to, null);
+
+        ComandaUseCase.CompraNaLoja loja = result.compraNaLoja();
+        assertThat(loja.mesasComSessao()).isEqualTo(3);
+        assertThat(loja.respondidas()).isEqualTo(2);
+        assertThat(loja.compraram()).isEqualTo(1);
+        assertThat(loja.taxaConversao()).isEqualByComparingTo("50.00");
+        ComandaUseCase.SessoesNarguile s = result.sessoesNarguile();
+        assertThat(s.esperaMediaMin()).isEqualTo(10L);
+        assertThat(s.preparoMedioMin()).isEqualTo(5L);
+        assertThat(s.naMesaMediaMin()).isEqualTo(53L);
+        assertThat(s.pagasNoFinal()).isEqualTo(1);
+        assertThat(s.desistidas()).isZero();
+    }
+
+    @Test
+    void analytics_semNenhumaResposta_taxaNula() {
+        Instant from = Instant.parse("2026-10-01T00:00:00Z");
+        Instant to = Instant.parse("2026-10-03T00:00:00Z");
+        Comanda mesa = fechadaEm(10L, "Mesa 1", "ana", Instant.parse("2026-10-02T22:00:00Z"), 60,
+                linha(1L, "SESS-2", "30.00", ConsumptionMode.SESSAO, false, null));
+        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of(new ClosedComanda(mesa, "ana", null)));
+        when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of());
+
+        ComandaUseCase.CompraNaLoja loja = comandaService.analytics(from, to, null).compraNaLoja();
+
+        assertThat(loja.mesasComSessao()).isEqualTo(1);
+        assertThat(loja.respondidas()).isZero();
+        assertThat(loja.taxaConversao()).isNull();
+    }
+
+    @Test
+    void recordStorePurchase_gravaComQuemRespondeu() {
+        when(comandaRepository.recordStorePurchase(eq(10L), eq(true), eq("caixa1"), any())).thenReturn(true);
+
+        comandaService.recordStorePurchase(10L, true, "caixa1");
+
+        verify(comandaRepository).recordStorePurchase(eq(10L), eq(true), eq("caixa1"), any());
+    }
+
+    @Test
+    void recordStorePurchase_comandaInexistente() {
+        when(comandaRepository.recordStorePurchase(eq(999L), eq(false), eq("caixa1"), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> comandaService.recordStorePurchase(999L, false, "caixa1"))
+                .isInstanceOf(ComandaNotFoundException.class);
     }
 }

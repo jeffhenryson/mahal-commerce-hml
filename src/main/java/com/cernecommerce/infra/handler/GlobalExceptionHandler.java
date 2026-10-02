@@ -145,6 +145,7 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CourtesyNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionProductException;
 import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
@@ -1176,6 +1177,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleCourtesyNotAllowed(CourtesyNotAllowedException ex,
             HttpServletRequest req) {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "COURTESY_NOT_ALLOWED", req);
+    }
+
+    /** PDV-F034 — sessão paga no final sem {@code PDV_SESSION_PAY_LATER}. */
+    @ExceptionHandler(SessionPayLaterNotAllowedException.class)
+    public ResponseEntity<ApiError> handleSessionPayLaterNotAllowed(SessionPayLaterNotAllowedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "SESSION_PAY_LATER_NOT_ALLOWED", req);
     }
 
     /** PDV-F010 — segundo sabor ou troca sem linha de origem válida na mesma comanda. */

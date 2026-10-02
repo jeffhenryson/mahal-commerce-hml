@@ -125,6 +125,10 @@ public class ComandaItemEntity {
     @Column(name = "collected_at")
     private Instant collectedAt;
 
+    // PDV-F034 — sessão que foi ao salão antes de paga.
+    @Column(name = "pay_later", nullable = false)
+    private boolean payLater;
+
     // PDV-F024 — carvão (só registro) e adicionais cobrados na sessão.
     @Column(length = 10)
     private String charcoal;

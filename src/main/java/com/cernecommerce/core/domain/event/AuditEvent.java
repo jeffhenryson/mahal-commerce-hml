@@ -100,6 +100,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,
+        // PDV-F036 — resposta a "o cliente comprou algo na loja?".
+        COMANDA_STORE_PURCHASE_RECORDED,
         // Pedido
         ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
         RECEIVABLE_CREATED, RECEIVABLE_PAID, RECEIVABLE_DUE_DATE_CHANGED, RECEIVABLE_CANCELLED,

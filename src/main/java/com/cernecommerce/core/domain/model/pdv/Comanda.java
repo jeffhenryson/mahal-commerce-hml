@@ -376,7 +376,8 @@ public record Comanda(
      * o 2º rosh do duplo é cortesia, mas pertence a uma sessão que ainda pode não ter sido paga.
      */
     public boolean isReleasedForPreparation(ComandaItem item) {
-        if (!item.courtesy() && item.isOpen()) {
+        // PDV-F034 — o rosh de uma sessão paga no final vai ao preparo a receber, como ela foi.
+        if (!item.courtesy() && item.isOpen() && !item.isPayLater()) {
             return false;
         }
         Long rootId = item.mode() == ConsumptionMode.SESSAO ? null : item.linkedItemId();

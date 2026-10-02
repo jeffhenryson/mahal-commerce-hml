@@ -78,6 +78,10 @@ public class ComandaItemResponseDTO {
     private Instant deliveredAt;
     private Instant collectedAt;
 
+    @Schema(description = "PDV-F034 — a sessão foi ao salão antes de paga. Com closedInOrderId nulo, "
+            + "ainda está a receber: o front destaca a linha.")
+    private boolean pagarNoFinal;
+
     @Schema(description = "Faixa da sessão (SESSAO/ROSH_EXTRA), lida do SKU SESS-{id} (PDV-F027). "
             + "Nulo em linha de catálogo.", example = "1")
     private Long tierId;

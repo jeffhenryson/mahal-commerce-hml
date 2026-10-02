@@ -4,6 +4,8 @@ import com.cernecommerce.core.ports.in.ComandaUseCase.PorHora;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorMesa;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorAtendente;
 import com.cernecommerce.core.ports.in.ComandaUseCase.SessoesNarguile;
+import com.cernecommerce.core.ports.in.ComandaUseCase.CompraNaLoja;
+import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
 import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaAnalytics;
 import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaHistoryEntry;
 import java.util.TreeMap;
@@ -526,8 +528,12 @@ public class ComandaService implements ComandaUseCase {
             productName.append(" + vaso grande");
         }
         addons.forEach(a -> productName.append(" + ").append(a.nome()));
+        // PDV-F034 — paga no final vai direto ao preparo; o resto espera o pagamento (PDV-F027).
+        SessionProgress progress = command.pagarNoFinal()
+                ? SessionProgress.preparingPayLater(Instant.now())
+                : SessionProgress.awaitingPayment();
         ComandaItem item = ComandaItem.forMenuSession(tier.sku(), price, productName.toString(),
-                ConsumptionMode.SESSAO, false, null, notes, SessionProgress.awaitingPayment(), setup);
+                ConsumptionMode.SESSAO, false, null, notes, progress, setup);
 
         Comanda saved = comandaRepository.save(comanda.withAddedItem(item));
         Long sessionItemId = newItemId(comanda, saved);
@@ -539,7 +545,8 @@ public class ComandaService implements ComandaUseCase {
         // o duplo é um modo da casa, não mais a promoção de diasDuploRosh.
         ComandaItem rosh = ComandaItem.forMenuSession(tierRosh.sku(), BigDecimal.ZERO,
                 "2º rosh " + tierRosh.nome() + " (duplo rosh)", ConsumptionMode.ROSH_EXTRA, true, sessionItemId,
-                notesRosh, SessionProgress.queued(), SessionSetup.of(command.carvao(), List.of()));
+                notesRosh, SessionProgress.queued(command.pagarNoFinal()),
+                SessionSetup.of(command.carvao(), List.of()));
         return comandaRepository.save(saved.withAddedItem(rosh));
     }
 
@@ -563,7 +570,7 @@ public class ComandaService implements ComandaUseCase {
         AddSessionCommand add = new AddSessionCommand(tierIdOf(origem), essencia, vasoGrande,
                 setup == null ? null : setup.charcoal(),
                 setup == null ? List.of() : setup.addons().stream().map(SessionSetup.Addon::addonId).toList(),
-                command.duplo(), command.essenciaRosh(), command.tierIdRosh());
+                command.duplo(), command.essenciaRosh(), command.tierIdRosh(), command.pagarNoFinal());
         return addSession(comandaId, add, username);
     }
 
@@ -594,10 +601,11 @@ public class ComandaService implements ComandaUseCase {
                 .anyMatch(i -> sessionItemId.equals(i.linkedItemId()) && i.mode() == ConsumptionMode.ROSH_EXTRA
                         && i.courtesy());
         boolean promo = !promoJaUsada && menu.isDuploRoshDay(menu.settings(), comanda.openedAt());
+        // PDV-F034 — rosh de sessão paga no final herda a marca: a mesa paga tudo na conta.
 
         ComandaItem item = ComandaItem.forMenuSession(tier.sku(), promo ? BigDecimal.ZERO : tier.preco(),
                 "2º rosh " + tier.nome() + (promo ? " (duplo rosh)" : ""), ConsumptionMode.ROSH_EXTRA, promo,
-                sessionItemId, notes, SessionProgress.queued(), null);
+                sessionItemId, notes, SessionProgress.queued(sessao.isPayLater()), null);
         return comandaRepository.save(comanda.withAddedItem(item));
     }
 
@@ -1281,7 +1289,46 @@ public class ComandaService implements ComandaUseCase {
         for (Order order : orders) {
             payments.put(order.id(), orderPaymentRepository.findByOrderId(order.id()));
         }
-        return historyEntry(closed, orders, payments);
+        return withTimeline(historyEntry(closed, orders, payments));
+    }
+
+    /** PDV-F036 — ver {@link ComandaUseCase#recordStorePurchase}. */
+    @Override
+    @Transactional
+    public void recordStorePurchase(Long comandaId, boolean boughtInStore, String username) {
+        if (!comandaRepository.recordStorePurchase(comandaId, boughtInStore, username, Instant.now())) {
+            throw new ComandaNotFoundException(comandaId);
+        }
+    }
+
+    /**
+     * PDV-F035 — a linha do tempo de cada sessão da mesa e os dois intervalos dela: da abertura à
+     * 1ª sessão e do último recolhimento ao encerramento. O pagamento de cada linha é a conclusão do
+     * pedido que a cobrou.
+     */
+    private static ComandaHistoryEntry withTimeline(ComandaHistoryEntry e) {
+        Comanda comanda = e.comanda();
+        Map<Long, Instant> paidAt = new HashMap<>();
+        for (Order order : e.orders()) {
+            paidAt.put(order.id(), order.concludedAt() != null ? order.concludedAt() : order.createdAt());
+        }
+        List<SessionTimeline> sessions = comanda.items().stream()
+                .map(i -> SessionTimeline.of(i, i.closedInOrderId() == null ? null : paidAt.get(i.closedInOrderId())))
+                .filter(Objects::nonNull)
+                .toList();
+        Instant primeira = comanda.items().stream()
+                .filter(i -> i.mode() == ConsumptionMode.SESSAO)
+                .map(ComandaItem::addedAt)
+                .min(Comparator.naturalOrder()).orElse(null);
+        Instant ultimoRecolhimento = sessions.stream()
+                .allMatch(t -> t.recolhidaEm() != null)
+                ? sessions.stream().map(SessionTimeline::recolhidaEm).max(Comparator.naturalOrder()).orElse(null)
+                : null;
+        return new ComandaHistoryEntry(comanda, e.closedBy(), e.cancelReason(), e.orders(), e.paymentsByOrder(),
+                e.durationMinutes(), e.totalPaid(), e.serviceFeeTotal(), e.discountTotal(), e.courtesyTotal(),
+                e.sessionsCount(), e.storePurchase(), sessions,
+                SessionTimeline.minutes(comanda.openedAt(), primeira),
+                SessionTimeline.minutes(ultimoRecolhimento, comanda.closedAt()));
     }
 
     @Override
@@ -1345,11 +1392,44 @@ public class ComandaService implements ComandaUseCase {
                         sum(en.getValue(), ComandaHistoryEntry::totalPaid)))
                 .toList();
 
+        // PDV-F035 — médias de fase sobre as linhas SESSAO (o rosh extra divide o narguilé com ela).
+        List<SessionTimeline> timelines = entries.stream()
+                .flatMap(e -> e.comanda().items().stream())
+                .filter(i -> i.mode() == ConsumptionMode.SESSAO)
+                .map(i -> SessionTimeline.of(i, null))
+                .filter(Objects::nonNull)
+                .toList();
+        SessoesNarguile sessoesNarguile = new SessoesNarguile(sessoes, receitaSessoes,
+                averageOf(timelines.stream().filter(t -> !t.pagarNoFinal()).map(SessionTimeline::esperaMin)),
+                averageOf(timelines.stream().map(SessionTimeline::preparoMin)),
+                averageOf(timelines.stream().map(SessionTimeline::naMesaMin)),
+                (int) timelines.stream().filter(SessionTimeline::pagarNoFinal).count(),
+                (int) timelines.stream().filter(SessionTimeline::desistida).count());
+
         BigDecimal ticket = entries.isEmpty() ? BigDecimal.ZERO
                 : receita.divide(BigDecimal.valueOf(entries.size()), 2, java.math.RoundingMode.HALF_UP);
         return new ComandaAnalytics(entries.size(), ticket, averageMinutes(entries), receita,
                 sum(entries, ComandaHistoryEntry::serviceFeeTotal), sum(entries, ComandaHistoryEntry::discountTotal),
-                new SessoesNarguile(sessoes, receitaSessoes), porAtendente, porMesa, porHora);
+                sessoesNarguile, porAtendente, porMesa, porHora, compraNaLoja(entries));
+    }
+
+    /**
+     * PDV-F036 — conversão de quem fez sessão em compra na loja. Só mesas com sessão, e a taxa só
+     * sobre as respondidas: "não respondido" não é "não comprou".
+     */
+    private static CompraNaLoja compraNaLoja(List<ComandaHistoryEntry> entries) {
+        List<ComandaHistoryEntry> comSessao = entries.stream().filter(e -> e.sessionsCount() > 0).toList();
+        List<ComandaHistoryEntry> respondidas = comSessao.stream().filter(e -> e.storePurchase() != null).toList();
+        int compraram = (int) respondidas.stream().filter(e -> e.storePurchase().bought()).count();
+        BigDecimal taxa = respondidas.isEmpty() ? null
+                : BigDecimal.valueOf(compraram * 100L)
+                        .divide(BigDecimal.valueOf(respondidas.size()), 2, java.math.RoundingMode.HALF_UP);
+        return new CompraNaLoja(comSessao.size(), respondidas.size(), compraram, taxa);
+    }
+
+    private static Long averageOf(java.util.stream.Stream<Long> minutes) {
+        java.util.OptionalDouble avg = minutes.filter(Objects::nonNull).mapToLong(Long::longValue).average();
+        return avg.isPresent() ? Math.round(avg.getAsDouble()) : null;
     }
 
     private Map<Long, List<Order>> ordersByComanda(List<ClosedComanda> comandas) {
@@ -1382,7 +1462,7 @@ public class ComandaService implements ComandaUseCase {
                 paid.stream().map(Order::totalPayable).reduce(BigDecimal.ZERO, BigDecimal::add),
                 paid.stream().map(Order::serviceFeeAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
                 paid.stream().map(Order::discountAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
-                courtesy, sessions);
+                courtesy, sessions, closed.storePurchase(), List.of(), null, null);
     }
 
     private static BigDecimal sum(List<ComandaHistoryEntry> entries,

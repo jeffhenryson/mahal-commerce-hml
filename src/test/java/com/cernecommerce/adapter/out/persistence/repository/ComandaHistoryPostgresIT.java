@@ -148,4 +148,37 @@ class ComandaHistoryPostgresIT {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pg_indexes WHERE indexname = "
                 + "'idx_comanda_status_closed_at'", Integer.class)).isEqualTo(1);
     }
+
+    /**
+     * PDV-F034/F036 — a V139: "comprou na loja?" grava e filtra o histórico (Boolean nulo na
+     * Specification não pode virar parâmetro), a permissão nova existe e o CHECK do pay_later recusa
+     * a marca em linha de catálogo.
+     */
+    @Test
+    void storePurchase_filtersTheHistory_andPayLaterIsOnlyForSessionLines() {
+        String s = UUID.randomUUID().toString().substring(0, 8);
+        String operator = "caixa-" + s;
+        String warehouseCode = "LOJA-" + s;
+        estoqueUseCase.createWarehouse(warehouseCode, "Loja " + s, WarehouseType.LOJA_FISICA);
+        CashRegisterSession session = pdvUseCase.openSession(operator, new BigDecimal("0.00"), warehouseCode);
+        Comanda comprou = comandaUseCase.openComanda(session.id(), "Mesa 1", operator);
+        Comanda naoRespondeu = comandaUseCase.openComanda(session.id(), "Mesa 2", operator);
+        comandaUseCase.cancelComanda(comprou.id(), operator, null);
+        comandaUseCase.cancelComanda(naoRespondeu.id(), operator, null);
+        comandaUseCase.recordStorePurchase(comprou.id(), true, operator);
+
+        assertThat(jdbc.queryForObject("SELECT bought_in_store_by FROM comanda WHERE id = ?", String.class,
+                comprou.id())).isEqualTo(operator);
+        assertThat(comandaUseCase.listHistory(new ComandaHistoryFilter(null, null, null, null, null, null, null,
+                warehouseCode, true), 0, 50).content()).extracting(e -> e.comanda().id()).containsExactly(comprou.id());
+        assertThat(comandaUseCase.listHistory(new ComandaHistoryFilter(null, null, null, null, null, null, null,
+                warehouseCode, false), 0, 50).content()).isEmpty();
+        assertThat(comandaUseCase.listHistory(periodo(null, null, warehouseCode), 0, 50).content()).hasSize(2);
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM permissions WHERE name = 'PDV_SESSION_PAY_LATER'",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                + "WHERE conname = 'ck_comanda_item_pay_later_by_mode'", String.class))
+                .contains("SESSAO").contains("ROSH_EXTRA");
+    }
 }

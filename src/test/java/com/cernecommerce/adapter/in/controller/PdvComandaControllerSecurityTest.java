@@ -424,4 +424,38 @@ class PdvComandaControllerSecurityTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("COMANDA_NOT_FOUND"));
     }
+
+    // ── PDV-F036 — "comprou na loja?" ────────────────────────────────────────────────────────
+
+    @Test
+    void store_purchase_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/999999/store-purchase")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"boughtInStore\":true}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void store_purchase_on_nonexistent_comanda_returns_404() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/999999/store-purchase")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"boughtInStore\":true}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("COMANDA_NOT_FOUND"));
+    }
+
+    @Test
+    void store_purchase_without_answer_returns_400() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/999999/store-purchase")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void history_filtered_by_store_purchase_returns_200() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/history?boughtInStore=true")
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isOk());
+    }
 }

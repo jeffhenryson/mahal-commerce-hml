@@ -57,6 +57,7 @@ public class ComandaDTOConverter {
             dto.setStartedAt(item.session().startedAt());
             dto.setDeliveredAt(item.session().deliveredAt());
             dto.setCollectedAt(item.session().collectedAt());
+            dto.setPagarNoFinal(item.session().payLater());
         }
         dto.setTierId(item.sessionTierId());
         dto.setEssencia(item.sessionEssencia());

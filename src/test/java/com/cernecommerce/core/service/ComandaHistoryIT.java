@@ -8,13 +8,18 @@ import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
+import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
+import com.cernecommerce.core.domain.model.pdv.SessionSettings;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
+import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaHistoryEntry;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
@@ -28,6 +33,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,6 +55,7 @@ class ComandaHistoryIT {
     @Autowired PdvUseCase pdvUseCase;
     @Autowired ComandaUseCase comandaUseCase;
     @Autowired EstoqueUseCase estoqueUseCase;
+    @Autowired SessionMenuUseCase sessionMenuUseCase;
 
     @PersistenceContext EntityManager em;
 
@@ -148,5 +155,71 @@ class ComandaHistoryIT {
                 .satisfies(m -> assertThat(m.tableLabel()).isEqualTo("Mesa 4"));
         assertThat(indicadores.porAtendente()).singleElement()
                 .satisfies(a -> assertThat(a.username()).isEqualTo(operator));
+    }
+
+    /**
+     * PDV-F034..F036 de ponta a ponta: sessão paga no final vai direto ao preparo, é recolhida, a conta
+     * é fechada depois do consumo, a mesa responde "comprou na loja" e o histórico devolve a linha do
+     * tempo, o filtro pela resposta e a conversão nos indicadores.
+     */
+    @Test
+    void sessaoPagaNoFinal_linhaDoTempo_eCompraNaLoja() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String operator = "caixa-" + suffix;
+        String warehouseCode = "HSES-" + suffix;
+        sessionMenuUseCase.createAssetType("VP" + suffix, "Vaso pequeno " + suffix, 2, false);
+        sessionMenuUseCase.createAssetType("VG" + suffix, "Vaso grande " + suffix, 1, false);
+        sessionMenuUseCase.updateSettings(new SessionSettings("VP" + suffix, "VG" + suffix,
+                new BigDecimal("10.00"), Set.of()));
+        SessionTier premium = sessionMenuUseCase.createTier("Premium " + suffix, new BigDecimal("30.00"),
+                "Luk, Nay", 2);
+        estoqueUseCase.createWarehouse(warehouseCode, "Lounge " + suffix, WarehouseType.LOJA_FISICA);
+        CashRegisterSession caixa = pdvUseCase.openSession(operator, BigDecimal.ZERO, warehouseCode);
+        Instant inicio = Instant.now().minus(1, ChronoUnit.MINUTES);
+
+        Comanda mesa = comandaUseCase.openComanda(caixa.id(), "Mesa 8", operator);
+        Comanda comSessao = comandaUseCase.addSession(mesa.id(), new ComandaUseCase.AddSessionCommand(premium.id(),
+                "Luk Uva", false, null, List.of(), false, null, null, true), operator);
+        flushAndClear();
+        ComandaItem sessao = comSessao.items().get(0);
+        assertThat(sessao.sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(sessao.isPayLater()).isTrue();
+        assertThat(comandaUseCase.getComanda(mesa.id()).items().get(0).isPayLater()).isTrue();
+
+        comandaUseCase.updateSessionStatus(mesa.id(), sessao.id(), SessionStatus.ENTREGUE, operator);
+        comandaUseCase.updateSessionStatus(mesa.id(), sessao.id(), SessionStatus.RECOLHIDO, operator);
+        flushAndClear();
+        // A conta depois do consumo: recolhida, o fechamento total encerra a mesa.
+        Order pedido = comandaUseCase.closeComanda(mesa.id(), dinheiro("30.00"), null, false, null, operator);
+        flushAndClear();
+        comandaUseCase.recordStorePurchase(mesa.id(), true, operator);
+        flushAndClear();
+
+        ComandaHistoryEntry detalhe = comandaUseCase.getHistoryEntry(mesa.id());
+        assertThat(detalhe.comanda().status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(detalhe.storePurchase().bought()).isTrue();
+        assertThat(detalhe.storePurchase().answeredBy()).isEqualTo(operator);
+        assertThat(detalhe.sessions()).singleElement().satisfies(t -> {
+            assertThat(t.pagarNoFinal()).isTrue();
+            assertThat(t.esperouPor()).isNull();
+            assertThat(t.pagaEm()).isNotNull();
+            assertThat(t.entregueEm()).isNotNull();
+            assertThat(t.recolhidaEm()).isNotNull();
+            assertThat(t.totalMin()).isNotNull();
+        });
+        assertThat(detalhe.aberturaAtePrimeiraSessaoMin()).isNotNull();
+        assertThat(detalhe.ultimoRecolhimentoAteEncerramentoMin()).isNotNull();
+        assertThat(detalhe.orders()).extracting(Order::id).containsExactly(pedido.id());
+
+        assertThat(comandaUseCase.listHistory(new ComandaHistoryFilter(null, null, null, null, null, null, null,
+                warehouseCode, true), 0, 50).content()).extracting(e -> e.comanda().id()).containsExactly(mesa.id());
+        assertThat(comandaUseCase.listHistory(new ComandaHistoryFilter(null, null, null, null, null, null, null,
+                warehouseCode, false), 0, 50).content()).isEmpty();
+
+        ComandaUseCase.ComandaAnalytics indicadores = comandaUseCase.analytics(inicio,
+                Instant.now().plus(1, ChronoUnit.MINUTES), warehouseCode);
+        assertThat(indicadores.compraNaLoja().mesasComSessao()).isEqualTo(1);
+        assertThat(indicadores.compraNaLoja().taxaConversao()).isEqualByComparingTo("100.00");
+        assertThat(indicadores.sessoesNarguile().pagasNoFinal()).isEqualTo(1);
     }
 }

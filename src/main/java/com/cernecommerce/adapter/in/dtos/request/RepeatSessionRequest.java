@@ -21,4 +21,8 @@ public class RepeatSessionRequest {
 
     @Schema(description = "Faixa do 2º rosh; nula usa a da sessão.", example = "1")
     private Long tierIdRosh;
+
+    @Schema(description = "PDV-F034 — paga no final, como em POST /sessoes. Não herda da origem; exige "
+            + "PDV_SESSION_PAY_LATER.")
+    private boolean pagarNoFinal;
 }

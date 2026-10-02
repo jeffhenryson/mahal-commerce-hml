@@ -43,6 +43,10 @@ public class AddSessionRequest {
     @Schema(description = "Faixa do 2º rosh no DUPLO; nula usa a da sessão.")
     private Long tierIdRosh;
 
+    @Schema(description = "PDV-F034 — a sessão vai direto ao preparo e fica a receber até a conta. Exige "
+            + "PDV_SESSION_PAY_LATER (403 SESSION_PAY_LATER_NOT_ALLOWED). O front avisa o risco antes.")
+    private boolean pagarNoFinal;
+
     public enum Modo { NORMAL, DUPLO }
 
     public boolean isDuplo() {

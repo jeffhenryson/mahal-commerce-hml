@@ -66,6 +66,31 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * PDV-F034 — sessão paga no final sem PDV_SESSION_PAY_LATER: 403 antes de ler a mesa. Com a
+     * permissão, passa da checagem e cai no 404 da comanda inexistente.
+     */
+    @Test
+    void session_pay_later_without_permission_returns_403() throws Exception {
+        String body = "{\"tierId\":1,\"essencia\":\"Zomo\",\"pagarNoFinal\":true}";
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_PAY_LATER_NOT_ALLOWED"));
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("gerente").authorities(COMANDA,
+                                new SimpleGrantedAuthority("PDV_SESSION_PAY_LATER"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void repeat_session_pay_later_without_permission_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/repetir").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"pagarNoFinal\":true}").with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_PAY_LATER_NOT_ALLOWED"));
+    }
+
     /** PDV-C031 — duplo sem o sabor do 2º rosh tem código próprio, não o 400 genérico. */
     @Test
     void session_duplo_without_rosh_flavor_returns_session_essence_required() throws Exception {

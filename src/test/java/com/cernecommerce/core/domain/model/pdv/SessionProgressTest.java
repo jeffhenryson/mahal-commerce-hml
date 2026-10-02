@@ -59,4 +59,32 @@ class SessionProgressTest {
                 null, null, null, null, null, null, null, null, SessionProgress.preparing(T0)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ── PDV-F034 — sessão paga no final ─────────────────────────────────────────────────────
+
+    @Test
+    void payLater_startsPreparing_andKeepsTheMarkThroughEveryStep() {
+        SessionProgress p = SessionProgress.preparingPayLater(T0);
+
+        assertThat(p.status()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(p.startedAt()).isEqualTo(T0);
+        assertThat(p.payLater()).isTrue();
+        SessionProgress recolhida = p.advanceTo(SessionStatus.ENTREGUE, T1).advanceTo(SessionStatus.RECOLHIDO, T1);
+        assertThat(recolhida.payLater()).isTrue();
+        assertThat(recolhida.isCollected()).isTrue();
+    }
+
+    @Test
+    void payLater_queuedRosh_carriesTheMarkIntoPreparation() {
+        SessionProgress rosh = SessionProgress.queued(true).advanceTo(SessionStatus.PREPARANDO, T1);
+
+        assertThat(rosh.payLater()).isTrue();
+        assertThat(SessionProgress.queued().payLater()).isFalse();
+    }
+
+    @Test
+    void payLater_neverAwaitsPayment() {
+        assertThatThrownBy(() -> new SessionProgress(SessionStatus.AGUARDANDO_PAGAMENTO, null, null, null, true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

@@ -5,6 +5,7 @@ import org.springframework.security.core.GrantedAuthority;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
 
 import com.cernecommerce.core.domain.exception.pdv.CourtesyNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException;
 
 import com.cernecommerce.adapter.in.converter.ComandaDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.AddRoshExtraRequest;
@@ -97,11 +98,12 @@ public class PdvSessaoController {
                     + "PREPARANDO quando é paga (close com itemIds); a mesa aceita sessões em paralelo, "
                     + "limitadas ao utensílio livre. modo=DUPLO cria também o 2º rosh a R$ 0 ligado à "
                     + "sessão, em NA_FILA, na mesma transação — para pagar a sessão, mande os dois ids em "
-                    + "itemIds do close.")
+                    + "itemIds do close. PDV-F034: pagarNoFinal=true leva a sessão direto a PREPARANDO, "
+                    + "a receber na conta (o 2º rosh herda), e exige PDV_SESSION_PAY_LATER.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
             @ApiResponse(responseCode = "400", description = "Essência vazia, ou DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
-            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia", content = @Content),
+            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia; pagarNoFinal sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED, PDV-F034)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
     })
@@ -109,16 +111,19 @@ public class PdvSessaoController {
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> addSession(@PathVariable("id") Long comandaId,
             @Valid @RequestBody AddSessionRequest request, Authentication authentication) {
+        requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
         requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
         Comanda comanda = comandaUseCase.addSession(comandaId, new ComandaUseCase.AddSessionCommand(
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
-                request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh()),
+                request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh(),
+                request.isPagarNoFinal()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
         payload.put("tierId", request.getTierId());
         payload.put("vasoGrande", request.isVasoGrande());
         payload.put("duplo", request.isDuplo());
+        payload.put("pagarNoFinal", request.isPagarNoFinal());
         if (request.getAdicionalIds() != null && !request.getAdicionalIds().isEmpty()) {
             payload.put("adicionalIds", request.getAdicionalIds());
         }
@@ -134,7 +139,7 @@ public class PdvSessaoController {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
             @ApiResponse(responseCode = "400", description = "DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
-            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025); pagarNoFinal sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED, PDV-F034)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado ou inativo", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, a linha não é uma sessão desta comanda (NOT_A_SESSION_LINE), sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
     })
@@ -143,15 +148,17 @@ public class PdvSessaoController {
     public ResponseEntity<ComandaResponseDTO> repeatSession(@PathVariable("id") Long comandaId,
             @PathVariable("itemId") Long sourceItemId, @Valid @RequestBody RepeatSessionRequest request,
             Authentication authentication) {
+        requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
         requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
         Comanda comanda = comandaUseCase.repeatSession(comandaId, sourceItemId,
                 new ComandaUseCase.RepeatSessionCommand(request.getEssencia(), request.isDuplo(),
-                        request.getEssenciaRosh(), request.getTierIdRosh()),
+                        request.getEssenciaRosh(), request.getTierIdRosh(), request.isPagarNoFinal()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
         payload.put("repeatedFromItemId", sourceItemId);
         payload.put("duplo", request.isDuplo());
+        payload.put("pagarNoFinal", request.isPagarNoFinal());
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_ADDED, authentication.getName(), payload));
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(comanda));
     }
@@ -354,5 +361,15 @@ public class PdvSessaoController {
         }
     }
 
+    /** PDV-F034 — sessão paga no final é risco de calote, e o risco tem dono (decisão de 02/10/2026). */
+    private void requirePayLaterAllowed(boolean pagarNoFinal, Authentication authentication) {
+        if (pagarNoFinal && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .noneMatch(PAY_LATER_AUTHORITY::equals)) {
+            throw new SessionPayLaterNotAllowedException(authentication.getName());
+        }
+    }
+
     private static final String COURTESY_AUTHORITY = "PDV_COMANDA_COURTESY";
+    private static final String PAY_LATER_AUTHORITY = "PDV_SESSION_PAY_LATER";
 }

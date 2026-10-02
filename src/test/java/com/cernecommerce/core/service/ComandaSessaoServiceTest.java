@@ -941,4 +941,94 @@ class ComandaSessaoServiceTest {
                 .isInstanceOf(NotASessionLineException.class);
         verify(sessionMenu, never()).reserveAssetsForSession(any(), anyBoolean());
     }
+
+    // ── PDV-F034 — sessão paga no final ─────────────────────────────────────────────────────
+
+    private static ComandaUseCase.AddSessionCommand pagaNoFinal(boolean duplo) {
+        return new ComandaUseCase.AddSessionCommand(2L, "Zomo Uva", false, null, List.of(), duplo,
+                duplo ? "Pred Menta" : null, null, true);
+    }
+
+    @Test
+    void addSession_pagaNoFinal_vaiDiretoAoPreparo_eORoshDoDuploHerdaAMarca() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.addSession(10L, pagaNoFinal(true), "caixa1");
+
+        ComandaItem sessao = result.items().get(0);
+        assertThat(sessao.sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(sessao.session().startedAt()).isNotNull();
+        assertThat(sessao.isPayLater()).isTrue();
+        assertThat(sessao.isOpen()).isTrue();
+        ComandaItem rosh = result.items().get(1);
+        assertThat(rosh.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(rosh.isPayLater()).isTrue();
+        verify(sessionMenu).allocate(100L, KIT_PADRAO);
+    }
+
+    @Test
+    void repeatSession_pagaNoFinal_naoHerdaDaOrigem_masObedeceOPedido() {
+        when(comandaRepository.findByIdForUpdate(10L))
+                .thenReturn(Optional.of(comanda(sessaoEm(1L, PREMIUM, recolhido(), 400L))));
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null, true), "caixa1");
+
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(result.items().get(1).isPayLater()).isTrue();
+    }
+
+    @Test
+    void addRoshExtra_deSessaoPagaNoFinal_herdaAMarca() {
+        Comanda comanda = comanda(sessaoEm(1L, PREMIUM, SessionProgress.preparingPayLater(Instant.now()), null));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.isDuploRoshDay(any(), any())).thenReturn(false);
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.addRoshExtra(10L, 1L, null, "Pred Menta", "caixa1");
+
+        assertThat(result.items().get(1).isPayLater()).isTrue();
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+    }
+
+    /** O rosh cobrável de uma sessão paga no final vai ao preparo a receber, como ela foi. */
+    @Test
+    void updateSessionStatus_recolherSessaoPagaNoFinal_promoveORoshAReceber() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null),
+                roshPagoEm(2L, 1L, SessionProgress.queued(true), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda depois = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(depois.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(depois.items().get(1).isOpen()).isTrue();
+    }
+
+    /** Cobrar depois do consumo não mexe no ciclo físico: a sessão já estava na mesa. */
+    @Test
+    void closeComanda_parcialDeSessaoPagaNoFinalJaEntregue_naoMudaOStatus() {
+        Instant t = Instant.now().minusSeconds(3600);
+        Comanda comanda = comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        givenClosingSucceeds();
+
+        comandaService.closeComanda(10L, dinheiro("30.00"), null, false, List.of(1L), "caixa1");
+
+        verify(comandaRepository).save(argThat(c -> c.status() == ComandaStatus.ABERTA
+                && c.items().get(0).sessionStatus() == SessionStatus.ENTREGUE
+                && t.equals(c.items().get(0).session().startedAt())
+                && Long.valueOf(500L).equals(c.items().get(0).closedInOrderId())));
+        verify(sessionMenu, never()).release(any());
+    }
 }

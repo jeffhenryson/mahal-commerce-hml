@@ -62,6 +62,24 @@ public class ComandaResponseDTO {
     @Schema(description = "Só em GET /pdv/comandas/{id}: os pedidos gerados, com os pagamentos.")
     private List<ComandaOrder> orders;
 
+    // ── PDV-F035: linha do tempo — só em GET /pdv/comandas/{id} ─────────────────────────────
+
+    @Schema(description = "Só em GET /pdv/comandas/{id}: a linha do tempo de cada sessão da mesa.")
+    private List<ComandaSessionTimelineDTO> sessions;
+
+    @Schema(description = "Minutos da abertura da mesa à 1ª sessão lançada. Nulo sem sessão.")
+    private Long aberturaAtePrimeiraSessaoMin;
+
+    @Schema(description = "Minutos do último recolhimento ao encerramento. Nulo enquanto ABERTA ou com sessão no salão.")
+    private Long ultimoRecolhimentoAteEncerramentoMin;
+
+    // ── PDV-F036: "comprou na loja?" ─────────────────────────────────────────────────────────
+
+    @Schema(description = "O cliente comprou algo na loja? Nulo = não respondido.")
+    private Boolean boughtInStore;
+    private String boughtInStoreBy;
+    private Instant boughtInStoreAt;
+
     @Data
     public static class ComandaOrder {
         private Long id;

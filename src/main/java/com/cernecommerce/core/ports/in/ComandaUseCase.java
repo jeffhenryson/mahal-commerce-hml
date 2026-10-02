@@ -6,6 +6,8 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
+import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
+import com.cernecommerce.core.domain.model.pdv.StorePurchase;
 import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.domain.model.pedido.Order;
@@ -292,21 +294,60 @@ public interface ComandaUseCase {
     ComandaAnalytics analytics(java.time.Instant from, java.time.Instant to, String warehouseCode);
 
     /**
+     * PDV-F036 — grava a resposta a "o cliente comprou algo na loja?". Uma por mesa, em qualquer
+     * status: a pergunta é feita ao recolher a última sessão ou ao encerrar, e pode ser corrigida pelo
+     * histórico. Responder de novo sobrescreve.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException
+     */
+    void recordStorePurchase(Long comandaId, boolean boughtInStore, String username);
+
+    /**
      * Uma mesa encerrada com o que ela gerou. Os totais vêm dos pedidos MESA (inclusive os parciais);
      * {@code totalPaid} ignora pedido reembolsado. {@code paymentsByOrder} só vem no detalhe.
+     *
+     * <p>PDV-F035: {@code sessions} (a linha do tempo de cada sessão) e os dois intervalos da mesa só
+     * vêm no detalhe; na listagem, {@code sessions} é vazia.</p>
      */
     record ComandaHistoryEntry(Comanda comanda, String closedBy, String cancelReason, List<Order> orders,
             java.util.Map<Long, List<OrderPayment>> paymentsByOrder, Long durationMinutes, BigDecimal totalPaid,
-            BigDecimal serviceFeeTotal, BigDecimal discountTotal, BigDecimal courtesyTotal, int sessionsCount) {
+            BigDecimal serviceFeeTotal, BigDecimal discountTotal, BigDecimal courtesyTotal, int sessionsCount,
+            StorePurchase storePurchase, List<SessionTimeline> sessions, Long aberturaAtePrimeiraSessaoMin,
+            Long ultimoRecolhimentoAteEncerramentoMin) {
+
+        public ComandaHistoryEntry {
+            sessions = sessions == null ? List.of() : List.copyOf(sessions);
+        }
+
+        public ComandaHistoryEntry(Comanda comanda, String closedBy, String cancelReason, List<Order> orders,
+                java.util.Map<Long, List<OrderPayment>> paymentsByOrder, Long durationMinutes, BigDecimal totalPaid,
+                BigDecimal serviceFeeTotal, BigDecimal discountTotal, BigDecimal courtesyTotal, int sessionsCount) {
+            this(comanda, closedBy, cancelReason, orders, paymentsByOrder, durationMinutes, totalPaid,
+                    serviceFeeTotal, discountTotal, courtesyTotal, sessionsCount, null, List.of(), null, null);
+        }
     }
 
     /** Indicadores de mesas — os nomes de campo são o contrato do front (Vendas › Mesas). */
     record ComandaAnalytics(int mesas, BigDecimal ticketMedio, long permanenciaMediaMin, BigDecimal receitaTotal,
             BigDecimal taxaServicoTotal, BigDecimal descontoTotal, SessoesNarguile sessoesNarguile,
-            List<PorAtendente> porAtendente, List<PorMesa> porMesa, List<PorHora> porHora) {
+            List<PorAtendente> porAtendente, List<PorMesa> porMesa, List<PorHora> porHora,
+            CompraNaLoja compraNaLoja) {
     }
 
-    record SessoesNarguile(int quantidade, BigDecimal receita) {
+    /**
+     * Sessões das mesas do período. PDV-F035: médias de fase em minutos, sobre as linhas SESSAO que
+     * passaram pela fase (nulas sem nenhuma). {@code esperaMediaMin} ignora as pagas no final, que
+     * não esperam.
+     */
+    record SessoesNarguile(int quantidade, BigDecimal receita, Long esperaMediaMin, Long preparoMedioMin,
+            Long naMesaMediaMin, int pagasNoFinal, int desistidas) {
+    }
+
+    /**
+     * PDV-F036 — quantas mesas com sessão terminaram em compra na loja. {@code taxaConversao} é
+     * percentual (0–100, duas casas) sobre as respondidas; nulo sem nenhuma resposta.
+     */
+    record CompraNaLoja(int mesasComSessao, int respondidas, int compraram, BigDecimal taxaConversao) {
     }
 
     record PorAtendente(String username, int mesas, BigDecimal receita) {
@@ -383,8 +424,15 @@ public interface ComandaUseCase {
      * @param essencia sabor da nova sessão; nulo repete o da origem
      * @param duplo rosh duplo: cria também o 2º rosh já pago, com {@code essenciaRosh}
      * @param tierIdRosh faixa do 2º rosh; nula usa a da sessão
+     * @param pagarNoFinal PDV-F034 — ver {@link AddSessionCommand}. Não herda da origem: é decisão
+     *        de quem lança agora, e a permissão é conferida no controller sobre o corpo.
      */
-    record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh) {
+    record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
+            boolean pagarNoFinal) {
+
+        public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh) {
+            this(essencia, duplo, essenciaRosh, tierIdRosh, false);
+        }
     }
 
     /**
@@ -393,12 +441,19 @@ public interface ComandaUseCase {
      * @param adicionalIds adicionais pagos; id repetido cobra duas vezes
      * @param duplo rosh duplo: cria também o 2º rosh já pago, com {@code essenciaRosh}
      * @param tierIdRosh faixa do 2º rosh; nula usa a da sessão
+     * @param pagarNoFinal PDV-F034 — a sessão vai direto ao preparo e fica a receber até a conta.
+     *        Quem chama confere {@code PDV_SESSION_PAY_LATER}.
      */
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
-            List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh) {
+            List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+        }
+
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, false);
         }
 
         public static AddSessionCommand simple(Long tierId, String essencia, boolean vasoGrande) {

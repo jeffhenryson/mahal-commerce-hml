@@ -64,6 +64,16 @@ public class ComandaEntity {
     @Column(name = "cancel_reason", length = 500)
     private String cancelReason;
 
+    // PDV-F036 — "comprou na loja?". Nulo = não respondido.
+    @Column(name = "bought_in_store")
+    private Boolean boughtInStore;
+
+    @Column(name = "bought_in_store_by", length = 80)
+    private String boughtInStoreBy;
+
+    @Column(name = "bought_in_store_at")
+    private Instant boughtInStoreAt;
+
     // @OrderBy porque a comanda é lida na ordem de lançamento — é assim que a tela mostra a
     // sessão antes das trocas que se penduram nela, e sem isso a ordem de um bag fica a critério
     // do banco.

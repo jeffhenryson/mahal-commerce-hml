@@ -6,6 +6,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
+import com.cernecommerce.core.domain.model.pdv.StorePurchase;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaItemEntity;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -99,6 +100,23 @@ public class ComandaRepositoryImpl implements ComandaRepository {
         });
     }
 
+    /** PDV-F036 — na entidade gerenciada, pelo mesmo motivo de {@link #recordClosing}. */
+    @Override
+    public boolean recordStorePurchase(Long comandaId, boolean bought, String username, Instant at) {
+        return comandaJpaRepository.findById(comandaId).map(entity -> {
+            entity.setBoughtInStore(bought);
+            entity.setBoughtInStoreBy(username);
+            entity.setBoughtInStoreAt(at);
+            return true;
+        }).orElse(false);
+    }
+
+    private ClosedComanda toClosed(ComandaEntity e) {
+        StorePurchase purchase = e.getBoughtInStore() == null ? null
+                : new StorePurchase(e.getBoughtInStore(), e.getBoughtInStoreBy(), e.getBoughtInStoreAt());
+        return new ClosedComanda(toDomain(e), e.getClosedBy(), e.getCancelReason(), purchase);
+    }
+
     /**
      * Specification para os filtros (Instant nulo em JPQL vira bytea no Postgres — ver
      * OrderRepositoryImpl.findAll) e, como em {@link #findOpen}, ID-first: a página sai sem tocar
@@ -118,7 +136,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
     @Transactional(readOnly = true)
     public Optional<ClosedComanda> findWithClosing(Long id) {
         return comandaJpaRepository.findById(id)
-                .map(e -> new ClosedComanda(toDomain(e), e.getClosedBy(), e.getCancelReason()));
+                .map(e -> toClosed(e));
     }
 
     @Override
@@ -143,6 +161,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             if (filter.openedBy() != null) p.add(cb.equal(root.get("openedBy"), filter.openedBy()));
             if (filter.closedBy() != null) p.add(cb.equal(root.get("closedBy"), filter.closedBy()));
             if (filter.warehouseCode() != null) p.add(cb.equal(root.get("warehouseCode"), filter.warehouseCode()));
+            if (filter.boughtInStore() != null) p.add(cb.equal(root.get("boughtInStore"), filter.boughtInStore()));
             if (filter.tableLabel() != null && !filter.tableLabel().isBlank()) {
                 // Sem cadastro fixo de mesa: "Mesa 4", "mesa 4 " e "MESA 4" são a mesma.
                 p.add(cb.equal(cb.lower(cb.trim(root.get("tableOrCustomerLabel"))),
@@ -162,7 +181,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 .collect(Collectors.toMap(ComandaEntity::getId, Function.identity(), (a, b) -> a));
         return entities.stream()
                 .map(e -> loaded.getOrDefault(e.getId(), e))
-                .map(e -> new ClosedComanda(toDomain(e), e.getClosedBy(), e.getCancelReason()))
+                .map(e -> toClosed(e))
                 .toList();
     }
 
@@ -260,6 +279,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setStartedAt(session == null ? null : session.startedAt());
             itemEntity.setDeliveredAt(session == null ? null : session.deliveredAt());
             itemEntity.setCollectedAt(session == null ? null : session.collectedAt());
+            itemEntity.setPayLater(session != null && session.payLater());
             // PDV-F024 — carvão e adicionais nascem com a linha e não mudam: os adicionais só são
             // gravados na primeira vez, e o snapshot fica como foi cobrado.
             SessionSetup setup = item.setup();
@@ -296,7 +316,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.getClosedInOrderId(), e.getPackageUses(), e.getPackageSessionsPerUnit(), e.getKitBundleId(),
                 e.getKitTemplateId(), e.getKitDiscountAmount(),
                 e.getSessionStatus() == null ? null : new SessionProgress(SessionStatus.valueOf(e.getSessionStatus()),
-                        e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt()),
+                        e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater()),
                 toSetup(e));
     }
 

@@ -3,6 +3,8 @@ package com.cernecommerce.adapter.in.controller;
 import java.time.Instant;
 import org.springframework.format.annotation.DateTimeFormat;
 import com.cernecommerce.adapter.in.dtos.request.ComandaCancelRequest;
+import com.cernecommerce.adapter.in.dtos.request.StorePurchaseRequest;
+import com.cernecommerce.adapter.in.dtos.response.ComandaSessionTimelineDTO;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.adapter.in.dtos.request.CustomerRequest;
@@ -339,7 +341,9 @@ public class PdvComandaController {
 
     @Operation(summary = "Consulta uma comanda em qualquer status, com o total corrente e os pedidos gerados",
             description = "PDV-F029 — também para comanda FECHADA ou CANCELADA: traz closedBy, durationMinutes, "
-                    + "cancelReason, os totais derivados dos pedidos e orders[] com os pagamentos de cada um.")
+                    + "cancelReason, os totais derivados dos pedidos e orders[] com os pagamentos de cada um. "
+                    + "PDV-F035: sessions[] com a linha do tempo de cada sessão (espera, preparo, na mesa). "
+                    + "PDV-F036: boughtInStore.")
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
     public ResponseEntity<ComandaResponseDTO> getComanda(@PathVariable("id") Long comandaId) {
@@ -356,6 +360,9 @@ public class PdvComandaController {
                     .map(orderConverter::toResponse).toList());
             return o;
         }).toList());
+        dto.setSessions(entry.sessions().stream().map(ComandaSessionTimelineDTO::of).toList());
+        dto.setAberturaAtePrimeiraSessaoMin(entry.aberturaAtePrimeiraSessaoMin());
+        dto.setUltimoRecolhimentoAteEncerramentoMin(entry.ultimoRecolhimentoAteEncerramentoMin());
         enrichCustomerNames(List.of(dto));
         return ResponseEntity.ok(dto);
     }
@@ -364,7 +371,8 @@ public class PdvComandaController {
             description = "FECHADA e CANCELADA, da mais recente para a mais antiga (por closedAt). from/to recortam "
                     + "pelo encerramento; tableLabel compara sem caixa e sem espaços nas pontas. Cada item traz "
                     + "closedBy, durationMinutes, cancelReason, orderIds (inclusive pedidos parciais), totalPaid, "
-                    + "serviceFeeTotal, discountTotal, courtesyTotal e sessionsCount.")
+                    + "serviceFeeTotal, discountTotal, courtesyTotal, sessionsCount e boughtInStore. "
+                    + "boughtInStore=true|false filtra pela resposta a \"comprou na loja?\" (PDV-F036).")
     @GetMapping("/history")
     @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
     public ResponseEntity<PageResult<ComandaResponseDTO>> listHistory(
@@ -376,13 +384,15 @@ public class PdvComandaController {
             @RequestParam(required = false) String closedBy,
             @RequestParam(required = false) String tableLabel,
             @RequestParam(required = false) String warehouseCode,
+            @RequestParam(required = false) Boolean boughtInStore,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size) {
         if (status == ComandaStatus.ABERTA) {
             throw new IllegalArgumentException("o histórico é de mesas encerradas: status FECHADA ou CANCELADA");
         }
         PageResult<ComandaUseCase.ComandaHistoryEntry> result = comandaUseCase.listHistory(
-                new ComandaHistoryFilter(from, to, status, customerId, openedBy, closedBy, tableLabel, warehouseCode),
+                new ComandaHistoryFilter(from, to, status, customerId, openedBy, closedBy, tableLabel, warehouseCode,
+                        boughtInStore),
                 page, size);
         List<ComandaResponseDTO> content = enrichCustomerNames(
                 result.content().stream().map(this::toHistoryResponse).toList());
@@ -394,7 +404,9 @@ public class PdvComandaController {
             description = "Sobre as mesas FECHADAS com encerramento entre from e to (máximo 366 dias). porMesa "
                     + "agrupa pelo tableLabel sem caixa e sem espaços nas pontas; porHora usa a hora de abertura "
                     + "(America/Sao_Paulo); porAtendente usa quem abriu. receita é o totalPayable dos pedidos não "
-                    + "reembolsados.")
+                    + "reembolsados. PDV-F035: sessoesNarguile traz as médias de fase (espera, preparo, na mesa), "
+                    + "pagasNoFinal e desistidas. PDV-F036: compraNaLoja é a conversão das mesas com sessão, "
+                    + "sobre as respondidas.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "400", description = "Período ausente, invertido ou acima de 366 dias", content = @Content)
@@ -419,7 +431,31 @@ public class PdvComandaController {
         dto.setDiscountTotal(entry.discountTotal());
         dto.setCourtesyTotal(entry.courtesyTotal());
         dto.setSessionsCount(entry.sessionsCount());
+        if (entry.storePurchase() != null) {
+            dto.setBoughtInStore(entry.storePurchase().bought());
+            dto.setBoughtInStoreBy(entry.storePurchase().answeredBy());
+            dto.setBoughtInStoreAt(entry.storePurchase().answeredAt());
+        }
         return dto;
+    }
+
+    @Operation(summary = "Registra se o cliente da mesa comprou algo na loja (PDV-F036)",
+            description = "Uma resposta por mesa, em qualquer status: o front pergunta ao recolher a última "
+                    + "sessão ou ao encerrar, e dá para corrigir pelo histórico. Responder de novo sobrescreve. "
+                    + "Alimenta compraNaLoja em /analytics.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Registrado"),
+            @ApiResponse(responseCode = "400", description = "boughtInStore ausente", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content)
+    })
+    @PutMapping("/{id}/store-purchase")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<Void> recordStorePurchase(@PathVariable("id") Long comandaId,
+            @Valid @RequestBody StorePurchaseRequest request, Authentication authentication) {
+        comandaUseCase.recordStorePurchase(comandaId, request.getBoughtInStore(), authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_STORE_PURCHASE_RECORDED, authentication.getName(),
+                auditPayload(comandaId, "boughtInStore", request.getBoughtInStore())));
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Lista as comandas abertas — as \"mesas ocupadas\"",

@@ -100,6 +100,13 @@ public interface ComandaRepository {
     /** PDV-F029 — grava quem encerrou a comanda e, no cancelamento, o motivo. */
     void recordClosing(Long comandaId, String closedBy, String cancelReason);
 
+    /**
+     * PDV-F036 — grava "comprou na loja?" em qualquer status; responder de novo sobrescreve.
+     *
+     * @return {@code false} se a comanda não existe
+     */
+    boolean recordStorePurchase(Long comandaId, boolean bought, String username, java.time.Instant at);
+
     /** PDV-F029 — comandas encerradas, da mais recente para a mais antiga. */
     PageResult<ClosedComanda> findHistory(ComandaHistoryFilter filter, int page, int size);
 
