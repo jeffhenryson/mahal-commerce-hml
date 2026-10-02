@@ -2091,6 +2091,7 @@ para a mais antiga por `closedAt` (PDV-F029).
 | `status` | `FECHADA` ou `CANCELADA`; sem ele, as duas. `ABERTA` é `400` |
 | `customerId`, `openedBy`, `closedBy`, `warehouseCode` | igualdade |
 | `tableLabel` | compara sem caixa e sem espaços nas pontas ("Mesa 4" = " mesa 4 ") |
+| `boughtInStore` | `true`/`false`: só as mesas que responderam isso a "comprou na loja?" (PDV-F036). Sem ele, todas, inclusive as não respondidas |
 | `page`, `size` | ≥ 0 / 1–100, default 0 / 50 |
 
 Campos que o DTO ganhou (também no detalhe):
@@ -2105,6 +2106,15 @@ Campos que o DTO ganhou (também no detalhe):
 | `serviceFeeTotal`, `discountTotal` | Σ taxa de serviço e desconto dos mesmos pedidos |
 | `courtesyTotal` | Σ quantidade × **custo** das linhas de cortesia. A cortesia é gravada a preço zero e o preço de venda não fica guardado |
 | `sessionsCount` | Linhas `SESSAO` da comanda |
+| `boughtInStore`, `boughtInStoreBy`, `boughtInStoreAt` | PDV-F036 — resposta a "comprou na loja?", quem respondeu e quando. `boughtInStore` nulo = não respondido |
+
+Só no detalhe (`GET /pdv/comandas/{id}`), PDV-F035:
+
+| Campo | Descrição |
+|---|---|
+| `sessions[]` | A linha do tempo de cada linha `SESSAO`/`ROSH_EXTRA`: `itemId`, `mode`, `linkedItemId`, `productName`, `pagarNoFinal`, `status`, `desistida` (recolhida sem entrega), `esperouPor` (`PAGAMENTO`, `FILA` ou nulo), os instantes `lancadaEm`, `pagaEm` (conclusão do pedido que cobrou a linha), `inicioEm`, `entregueEm`, `recolhidaEm` e as durações em minutos `esperaMin` (lançada → início), `preparoMin` (início → entregue, ou → recolhida se desistida), `naMesaMin` (entregue → recolhida), `totalMin` (lançada → recolhida). Fase que não terminou vem nula |
+| `aberturaAtePrimeiraSessaoMin` | Abertura da mesa → 1ª sessão lançada |
+| `ultimoRecolhimentoAteEncerramentoMin` | Último recolhimento → encerramento. Nulo com mesa aberta ou sessão no salão |
 
 ### GET /pdv/comandas/analytics — Permissão: PDV_READ ou ORDER_READ
 
@@ -2115,7 +2125,9 @@ máximo **366 dias**), opcionalmente por `warehouseCode` (PDV-F029).
 {
   "mesas": 42, "ticketMedio": 118.50, "permanenciaMediaMin": 96,
   "receitaTotal": 4977.00, "taxaServicoTotal": 402.30, "descontoTotal": 35.00,
-  "sessoesNarguile": { "quantidade": 61, "receita": 2135.00 },
+  "sessoesNarguile": { "quantidade": 61, "receita": 2135.00, "esperaMediaMin": 4, "preparoMedioMin": 7,
+                       "naMesaMediaMin": 58, "pagasNoFinal": 3, "desistidas": 1 },
+  "compraNaLoja": { "mesasComSessao": 38, "respondidas": 30, "compraram": 9, "taxaConversao": 30.00 },
   "porAtendente": [ { "username": "ana", "mesas": 20, "receita": 2400.00 } ],
   "porMesa":      [ { "tableLabel": "Mesa 4", "mesas": 7, "receita": 910.00, "permanenciaMediaMin": 110 } ],
   "porHora":      [ { "hora": 21, "mesasAbertas": 9, "receita": 1100.00 } ]
@@ -2127,6 +2139,18 @@ usa quem **abriu** a mesa; `porMesa` agrupa pelo rótulo sem caixa e sem espaço
 visto); `porHora` usa a hora de **abertura** em America/Sao_Paulo. `porAtendente` e `porMesa` vêm
 por receita decrescente; `porHora`, por hora. Sem `from`/`to`, invertido ou acima de 366 dias:
 `400`.
+
+PDV-F035: as médias de `sessoesNarguile` são sobre as linhas `SESSAO` que passaram pela fase (nulas
+sem nenhuma); `esperaMediaMin` ignora as pagas no final, que não esperam. PDV-F036: `compraNaLoja`
+conta só mesas com sessão, e `taxaConversao` (percentual, duas casas) é `compraram / respondidas` —
+"não respondido" não entra; nula sem nenhuma resposta.
+
+### PUT /pdv/comandas/{id}/store-purchase — Permissão: PDV_COMANDA_MANAGE
+
+PDV-F036 — `{ "boughtInStore": true }`. Registra se o cliente da mesa comprou algo na loja. Uma
+resposta por mesa, em **qualquer status** (o front pergunta ao recolher a última sessão ou ao
+encerrar, e corrige pelo histórico); responder de novo sobrescreve. `204`; `400` sem
+`boughtInStore`; `404 COMANDA_NOT_FOUND`. Evento `COMANDA_STORE_PURCHASE_RECORDED`.
 
 ### GET /pdv/comandas — Permissão: PDV_READ
 
