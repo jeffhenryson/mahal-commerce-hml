@@ -3,6 +3,7 @@ package com.cernecommerce.core.domain.model.pdv;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -192,5 +193,27 @@ class CashRegisterSessionTest {
         assertThatThrownBy(() -> CashRegisterSession.of(1L, "caixa1", NOW, BigDecimal.TEN, "LOJA-01",
                 null, null, null, null, null, CashRegisterSession.Status.OPEN, "nota"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ── PDV-F037: sugestão de fechar depois de 12h ───────────────────────────────────────────
+
+    @Test
+    void closeSuggested_onlyAfterTwelveHoursOpen() {
+        CashRegisterSession caixa = CashRegisterSession.of(1L, "caixa1", NOW, BigDecimal.TEN, "LOJA-01",
+                null, null, null, null, null, CashRegisterSession.Status.OPEN);
+
+        assertThat(caixa.closeSuggested(NOW.plus(Duration.ofHours(11).plusMinutes(59)))).isFalse();
+        assertThat(caixa.closeSuggested(NOW.plus(Duration.ofHours(12)))).isTrue();
+        assertThat(caixa.openHours(NOW.plus(Duration.ofHours(13).plusMinutes(30)))).isEqualTo(13);
+    }
+
+    @Test
+    void closeSuggested_neverOnClosedSession() {
+        CashRegisterSession fechado = CashRegisterSession.of(1L, "caixa1", NOW, BigDecimal.TEN, "LOJA-01",
+                NOW.plus(Duration.ofHours(14)), "caixa1", BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO,
+                CashRegisterSession.Status.CLOSED);
+
+        assertThat(fechado.closeSuggested(NOW.plus(Duration.ofHours(20)))).isFalse();
+        assertThat(fechado.openHours(NOW.plus(Duration.ofHours(20)))).isEqualTo(14);
     }
 }

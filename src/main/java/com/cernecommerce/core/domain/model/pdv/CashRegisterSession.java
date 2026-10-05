@@ -1,6 +1,7 @@
 package com.cernecommerce.core.domain.model.pdv;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 
 /**
@@ -43,6 +44,12 @@ public record CashRegisterSession(
         String closingNotes) {
 
     public enum Status { OPEN, CLOSED }
+
+    /**
+     * PDV-F037 — depois de tanto tempo aberto, sugere-se fechar e abrir outro caixa. É só aviso: o
+     * corte de meia-noite (PDV-F022) caiu, e quem fecha o caixa é quem o abriu.
+     */
+    public static final Duration SUGGEST_CLOSE_AFTER = Duration.ofHours(12);
 
     public static final int MAX_CLOSING_NOTES = 500;
 
@@ -150,6 +157,17 @@ public record CashRegisterSession(
 
     public boolean isOpen() {
         return status == Status.OPEN;
+    }
+
+    /** Horas inteiras desde a abertura; até o fechamento, se já fechada. */
+    public long openHours(Instant now) {
+        Instant end = closedAt != null ? closedAt : now;
+        return Duration.between(openedAt, end).toHours();
+    }
+
+    /** PDV-F037 — caixa aberto há {@link #SUGGEST_CLOSE_AFTER} ou mais. Fechado nunca sugere. */
+    public boolean closeSuggested(Instant now) {
+        return isOpen() && Duration.between(openedAt, now).compareTo(SUGGEST_CLOSE_AFTER) >= 0;
     }
 
     /** Indica se o operador é o dono desta sessão — base do 403 {@code SESSION_NOT_OWNED}. */

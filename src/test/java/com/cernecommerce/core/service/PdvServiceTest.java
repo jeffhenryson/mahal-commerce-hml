@@ -6,7 +6,6 @@ import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
 import com.cernecommerce.core.domain.model.pedido.DeliveryAddress;
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.exception.estoque.InsufficientStockException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
@@ -41,6 +40,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
+import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentTotal;
@@ -427,6 +427,31 @@ class PdvServiceTest {
         assertThat(pix.refundedAmount()).isEqualByComparingTo("30.00");
         assertThat(pix.changeAmount()).isEqualByComparingTo("0");
         assertThat(pix.netAmount()).isEqualByComparingTo("50.00");
+    }
+
+    /** PDV-F038 — o total vendido soma o líquido de todas as formas; o marcado fica à parte. */
+    @Test
+    void getSessionSummary_sumsNetOfAllMethodsAndKeepsOnAccountApart() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(new BigDecimal("150.00"));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
+                .thenReturn(new BigDecimal("80.00"));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.CREDITO))
+                .thenReturn(new BigDecimal("45.00"));
+        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
+                .thenReturn(new BigDecimal("30.00"));
+        when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(new BigDecimal("20.00"));
+        when(orderPaymentRepository.sumOnAccountAmountBySessionId(1L)).thenReturn(new BigDecimal("60.00"));
+
+        PdvUseCase.SessionSummary summary = pdvService.getSessionSummary(1L);
+
+        // 130 (dinheiro sem troco) + 50 (pix sem estorno) + 45 (crédito)
+        assertThat(summary.totalReceived()).isEqualByComparingTo("225.00");
+        assertThat(summary.totalOnAccount()).isEqualByComparingTo("60.00");
+        assertThat(summary.totals()).extracting(PaymentTotal::method).doesNotContain(PaymentMethod.MARCADO);
     }
 
     // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────
@@ -1273,20 +1298,21 @@ class PdvServiceTest {
     }
 
     @Test
-    void registerSale_refusesASessionOpenedOnAPreviousDayInStoreTime() {
-        // 26/09 às 00:30 em São Paulo (03:30 UTC); o caixa abriu 25/09 às 22:00 em São Paulo
-        // (01:00 UTC de 26/09 — mesmo dia em UTC, dia anterior na loja).
+    void registerSale_acceptsASessionOpenedOnAPreviousDayInStoreTime() {
+        // PDV-F037 — o corte de meia-noite caiu: o caixa aberto 25/09 às 22:00 em São Paulo
+        // continua vendendo em 26/09 às 00:30.
         Clock clock = Clock.fixed(Instant.parse("2026-09-26T03:30:00Z"), ZoneOffset.UTC);
         PdvService service = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
                 MAX_DISCOUNT_PERCENT, clock, receivableUseCase);
+        givenOpenSessionAndPersistence();
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(CashRegisterSession.of(1L, "caixa1",
                 Instant.parse("2026-09-26T01:00:00Z"), BigDecimal.TEN, "LOJA-01",
                 null, null, null, null, null, CashRegisterSession.Status.OPEN)));
+        givenCharcoalOnCatalog();
 
-        assertThatThrownBy(() -> service.registerSale(1L, null, List.of(twoCharcoals(null)), cash("44.00"), "caixa1"))
-                .isInstanceOf(CashRegisterSessionStaleException.class);
-        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+        assertThat(service.registerSale(1L, null, List.of(twoCharcoals(null)), cash("44.00"), "caixa1").status())
+                .isEqualTo(OrderStatus.CONCLUIDO);
     }
 
     @Test

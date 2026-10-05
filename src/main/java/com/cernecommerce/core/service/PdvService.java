@@ -8,7 +8,6 @@ import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedExce
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
 import com.cernecommerce.core.domain.exception.pedido.DiscountLimitExceededException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
@@ -263,6 +262,14 @@ public class PdvService implements PdvUseCase {
         return totals;
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public SessionSummary getSessionSummary(Long sessionId) {
+        List<PaymentTotal> totals = getSessionPaymentTotals(sessionId);
+        BigDecimal received = totals.stream().map(PaymentTotal::netAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new SessionSummary(totals, received, orderPaymentRepository.sumOnAccountAmountBySessionId(sessionId));
+    }
+
     // ── Venda ────────────────────────────────────────────────────────────────────────────────
 
     @Override
@@ -270,7 +277,6 @@ public class PdvService implements PdvUseCase {
     public Order registerSale(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery) {
         CashRegisterSession session = requireOwnOpenSession(sessionId, username);
-        requireSessionFromToday(session);
 
         // PDV-F004: o preço e o custo vêm do catálogo. resolveSaleInfo já lança
         // ProductNotFoundException para SKU inexistente, e fromCatalog recusa produto sem preço —
@@ -494,19 +500,6 @@ public class PdvService implements PdvUseCase {
      * mesmo pacote) reaproveita esta checagem via injeção do bean concreto {@code PdvService}, em
      * vez de duplicar a regra de posse de sessão.</p>
      */
-    /**
-     * PDV-F022 — venda só no caixa de HOJE, na data da loja. Barra o caixa de ontem esquecido
-     * aberto, que misturaria dois dias num fechamento. Só a venda de balcão passa por aqui:
-     * fechar o caixa antigo continua permitido, e a mesa que vira a madrugada não é afetada.
-     */
-    private void requireSessionFromToday(CashRegisterSession session) {
-        LocalDate openedOn = LocalDate.ofInstant(session.openedAt(), ZONA_LOJA);
-        LocalDate today = LocalDate.now(clock.withZone(ZONA_LOJA));
-        if (openedOn.isBefore(today)) {
-            throw new CashRegisterSessionStaleException(session.id(), openedOn, today);
-        }
-    }
-
     CashRegisterSession requireOwnOpenSession(Long sessionId, String username) {
         CashRegisterSession session = getSession(sessionId);
         if (!session.isOpen()) {

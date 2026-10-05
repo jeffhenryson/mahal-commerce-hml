@@ -11,6 +11,7 @@ import com.cernecommerce.adapter.in.dtos.response.CashMovementResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashRegisterSessionResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PaymentTotalResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.SessionSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
@@ -229,8 +230,8 @@ public class PdvController {
                     + "registra RETIRADA ou ENTREGA — RETIRADA grava CONCLUIDO (ou RESERVADO com "
                     + "`reserveForPickup=true`); ENTREGA grava RESERVADO e segue "
                     + "RESERVADO → SEPARADO → ENVIADO → ENTREGUE, e `delivery.fee` entra no total a "
-                    + "pagar (fora do líquido). `items[].note` grava a observação da linha. Sessão "
-                    + "aberta num dia anterior (data de America/Sao_Paulo) é recusada com 409 SESSION_STALE. "
+                    + "pagar (fora do líquido). `items[].note` grava a observação da linha. PDV-F037: caixa "
+                    + "aberto num dia anterior continua vendendo (sem corte de meia-noite). "
                     + "CRM-F010: uma linha `MARCADO` (com `dueDate`) deixa parte ou tudo para o cliente VIP "
                     + "pagar depois — exige PDV_SALE_ON_ACCOUNT (403 ON_ACCOUNT_NOT_ALLOWED), cliente "
                     + "(400 CUSTOMER_REQUIRED_FOR_ON_ACCOUNT), tag VIP (403 CUSTOMER_NOT_ELIGIBLE), "
@@ -241,7 +242,7 @@ public class PdvController {
             @ApiResponse(responseCode = "400", description = "Saldo ou pagamento insuficiente para a venda", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sessão de outro operador, ou desconto sem PDV_SALE_DISCOUNT", content = @Content),
             @ApiResponse(responseCode = "404", description = "Sessão de caixa ou SKU não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Sessão encerrada, sessão de dia anterior (SESSION_STALE), produto sem preço, desconto acima do teto ou pagamento não-dinheiro acima do total", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Sessão encerrada, produto sem preço, desconto acima do teto ou pagamento não-dinheiro acima do total", content = @Content)
     })
     @PostMapping("/sessions/{id}/sales")
     @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
@@ -314,6 +315,20 @@ public class PdvController {
             @PathVariable("id") Long sessionId) {
         return ResponseEntity.ok(
                 orderConverter.toPaymentTotalResponse(pdvUseCase.getSessionPaymentTotals(sessionId)));
+    }
+
+    @Operation(summary = "Resumo do caixa: total vendido e totais por forma de pagamento (PDV-F038)",
+            description = "totalReceived soma o líquido de todas as formas (dinheiro sem troco, estornos "
+                    + "descontados, quitações de marcado incluídas). O marcado vendido vem em totalOnAccount, "
+                    + "fora do total. Serve de prévia antes de fechar e de relatório depois.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "Sessão não encontrada", content = @Content)
+    })
+    @GetMapping("/sessions/{id}/summary")
+    @PreAuthorize("hasAuthority('PDV_READ')")
+    public ResponseEntity<SessionSummaryResponseDTO> getSessionSummary(@PathVariable("id") Long sessionId) {
+        return ResponseEntity.ok(orderConverter.toSessionSummaryResponse(pdvUseCase.getSessionSummary(sessionId)));
     }
 
     @Operation(summary = "Lista os pedidos de uma sessão de caixa, do mais recente para o mais antigo")

@@ -48,4 +48,11 @@ public class CashRegisterSessionResponseDTO {
     private boolean diverges;
 
     private String status;
+
+    @Schema(description = "PDV-F037 — horas inteiras desde a abertura (até o fechamento, se fechada).")
+    private long horasAberto;
+
+    @Schema(description = "PDV-F037 — caixa aberto há 12h ou mais: sugerir fechar e abrir outro. Só aviso, "
+            + "nada é bloqueado.")
+    private boolean fechamentoSugerido;
 }

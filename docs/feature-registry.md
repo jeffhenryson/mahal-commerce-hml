@@ -12,6 +12,7 @@ Registro de features/correções implementadas por domínio, atualizado a cada s
 | base-security | 2026-07-15 | Estrutura básica de segurança com JWT, rotação de refresh token e RBAC. |
 | mfa-totp | 2026-07-15 | Autenticação em dois fatores com TOTP e backup codes. |
 | oauth-google | 2026-07-15 | Autenticação integrada via Google Sign-In (ID Token validation). |
+| cadastro-de-usuario-confiavel (PLAT-C053..C056) | 2026-10-05 | `POST /auth/register` desfaz o cadastro quando o e-mail de verificação não sai (antes deixava conta órfã e o retry dava 409 "já existe"); `GET /users` lista só operadores e roles de conta de cliente ficam imutáveis (409 `CUSTOMER_ACCOUNT_ROLES_IMMUTABLE`); corrida no INSERT de usuário responde `USERNAME_ALREADY_EXISTS`/`EMAIL_ALREADY_EXISTS` em vez do 409 genérico. |
 
 ## notification
 *Domínio de envio e preferências de notificações do sistema.*
@@ -133,6 +134,10 @@ Registro de features/correções implementadas por domínio, atualizado a cada s
 | sessao-paga-no-final (PDV-F034) | 2026-10-02 | **V139**. `pagarNoFinal` em `POST /pdv/comandas/{id}/sessoes` e `.../repetir`, com a permissão nova `PDV_SESSION_PAY_LATER` (403 `SESSION_PAY_LATER_NOT_ALLOWED`; só `ROLE_ADMIN`). A sessão nasce `PREPARANDO`, a receber até a conta; o 2º rosh herda a marca e sai da fila sem pagamento. `comanda_item.pay_later` / `SessionProgress.payLater`; `pagarNoFinal` no item da comanda. O fechamento total segue recusando sessão no salão. |
 | linha-do-tempo-da-sessao (PDV-F035) | 2026-10-02 | `SessionTimeline` calcula espera (pagamento ou fila), preparo, na mesa e total dos horários já gravados (V132), sem coluna nova; linha do backfill da V132 (início = lançamento, sem entrega) só tem o total, para não virar "desistida". `GET /pdv/comandas/{id}` traz `sessions[]`, `aberturaAtePrimeiraSessaoMin` e `ultimoRecolhimentoAteEncerramentoMin`; `analytics.sessoesNarguile` ganhou `esperaMediaMin`, `preparoMedioMin`, `naMesaMediaMin`, `pagasNoFinal` e `desistidas`. |
 | comprou-na-loja (PDV-F036) | 2026-10-02 | **V139**: `comanda.bought_in_store`/`_by`/`_at`. `PUT /pdv/comandas/{id}/store-purchase {boughtInStore}` em qualquer status (`PDV_COMANDA_MANAGE`, evento `COMANDA_STORE_PURCHASE_RECORDED`); `boughtInStore` no histórico (campo e filtro); `analytics.compraNaLoja` = mesas com sessão, respondidas, compraram e `taxaConversao` (%) sobre as respondidas. |
+| caixa-sem-corte (PDV-F037) | 2026-10-05 | Caiu o corte de meia-noite do PDV-F022 (`SESSION_STALE` removido): o caixa vende e recebe quitação até o dono fechar. `CashRegisterSessionResponseDTO` ganhou `horasAberto` e `fechamentoSugerido` (≥ 12h), só aviso. |
+| resumo-do-caixa (PDV-F038) | 2026-10-05 | `GET /pdv/sessions/{id}/summary` (`PDV_READ`): `totals` por forma, `totalReceived` = soma dos líquidos e `totalOnAccount` (marcado, fora do total). |
+| mesa-com-nome-do-lead (PDV-F039) | 2026-10-05 | `POST /pdv/comandas` com `customerId`/`lead` e sem `tableOrCustomerLabel` abre a mesa com o nome do cliente; rótulo digitado prevalece; mesa avulsa sem rótulo continua 400. |
+| pagar-no-final-ao-recolher (PDV-F040) | 2026-10-05 | Sessão `pagarNoFinal` não vai a `RECOLHIDO` antes de cobrada: `409 SESSION_NOT_PAID_FOR_COLLECT`. "Marcar sessão" = fechamento parcial da linha com `MARCADO` (CRM-F010), sem mudança de backend. |
 
 ## pedido
 *Visão do administrador sobre pedidos de todos os canais — `/orders`.*

@@ -9,6 +9,7 @@ import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.adapter.in.dtos.request.CustomerRequest;
 import com.cernecommerce.adapter.in.dtos.request.LinkComandaCustomerRequest;
+import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.LeadResolution;
 import org.springframework.security.access.AccessDeniedException;
 import com.cernecommerce.adapter.in.converter.ComandaDTOConverter;
@@ -98,6 +99,8 @@ public class PdvComandaController {
     private static final String LEAD_CREATE_AUTHORITY = "CRM_LEAD_CREATE";
     private static final String CUSTOMER_MANAGE_AUTHORITY = "CRM_CUSTOMER_MANAGE";
     private static final String LEAD_ORIGIN = "Mesa";
+    /** comanda.table_or_customer_label VARCHAR(100) (V104), o mesmo teto de OpenComandaRequest. */
+    private static final int MAX_LABEL = 100;
 
     private final ComandaUseCase comandaUseCase;
     private final ComandaDTOConverter comandaConverter;
@@ -203,8 +206,14 @@ public class PdvComandaController {
      * vez do 409 genérico da FK), ou {@code lead} por find-or-create no CRM, ou nenhum.
      */
     private Long resolveComandaCustomer(Long customerId, CustomerRequest lead, Authentication authentication) {
+        Customer customer = resolveComandaCustomerRecord(customerId, lead, authentication);
+        return customer == null ? null : customer.id();
+    }
+
+    private Customer resolveComandaCustomerRecord(Long customerId, CustomerRequest lead,
+            Authentication authentication) {
         if (customerId != null) {
-            return crmUseCase.findCustomerById(customerId).id();
+            return crmUseCase.findCustomerById(customerId);
         }
         if (lead == null) {
             return null;
@@ -221,7 +230,22 @@ public class PdvComandaController {
             publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_CREATED, authentication.getName(),
                     Map.of("customerId", String.valueOf(resolution.customer().id()))));
         }
-        return resolution.customer().id();
+        return resolution.customer();
+    }
+
+    /**
+     * PDV-F039 — a mesa aberta com cliente ou lead e sem rótulo nasce com o nome dele. Rótulo
+     * digitado prevalece. Sem rótulo e sem cliente, a mesa avulsa cai no 400 do domínio.
+     */
+    static String comandaLabel(String informed, Customer customer) {
+        if (informed != null && !informed.isBlank()) {
+            return informed;
+        }
+        if (customer == null || customer.nome() == null || customer.nome().isBlank()) {
+            return informed;
+        }
+        String nome = customer.nome().trim();
+        return nome.length() > MAX_LABEL ? nome.substring(0, MAX_LABEL) : nome;
     }
 
     private void requireAuthority(String authority, Authentication authentication,
@@ -248,9 +272,10 @@ public class PdvComandaController {
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> openComanda(@RequestParam Long sessionId,
             @Valid @RequestBody OpenComandaRequest request, Authentication authentication) {
-        Long customerId = resolveComandaCustomer(request.getCustomerId(), request.getLead(), authentication);
-        Comanda comanda = comandaUseCase.openComanda(sessionId, request.getTableOrCustomerLabel(),
-                customerId, authentication.getName());
+        Customer customer = resolveComandaCustomerRecord(request.getCustomerId(), request.getLead(), authentication);
+        Comanda comanda = comandaUseCase.openComanda(sessionId,
+                comandaLabel(request.getTableOrCustomerLabel(), customer),
+                customer == null ? null : customer.id(), authentication.getName());
         // PDV-C014 — abrir mesa não deixava rastro nenhum, ao contrário de abrir caixa
         // (CASH_SESSION_OPENED). É o evento que responde "quem abriu a Mesa 4, e quando".
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_OPENED, authentication.getName(),

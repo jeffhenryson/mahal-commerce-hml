@@ -100,7 +100,6 @@ import com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfigure
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
@@ -159,6 +158,7 @@ import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
@@ -180,6 +180,7 @@ import com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodExcepti
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.exception.pedido.ProductNotPricedException;
 import com.cernecommerce.core.domain.event.AuditEvent;
+import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
@@ -877,7 +878,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EmailDeliveryException.class)
     public ResponseEntity<ApiError> handleEmailDelivery(EmailDeliveryException ex, HttpServletRequest req) {
-        // Conta criada, mas email não entregue. Cliente deve orientar o usuário a usar resend-verification.
+        // Em /auth/register (PLAT-C053) o cadastro é desfeito: nada foi gravado e o cliente pode
+        // simplesmente tentar de novo. Nos demais fluxos (reenvio, troca de email) o registro já
+        // existia e o cliente deve oferecer reenviar o código.
         return error(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), "EMAIL_DELIVERY_FAILED", req);
     }
 
@@ -1075,12 +1078,6 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleCashRegisterSessionClosed(CashRegisterSessionClosedException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "CASH_REGISTER_SESSION_CLOSED", req);
-    }
-
-    @ExceptionHandler(CashRegisterSessionStaleException.class)
-    public ResponseEntity<ApiError> handleCashRegisterSessionStale(CashRegisterSessionStaleException ex,
-            HttpServletRequest req) {
-        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_STALE", req);
     }
 
     @ExceptionHandler(InvalidDeliveryException.class)
@@ -1384,6 +1381,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_ESSENCE_REQUIRED", req);
     }
 
+    @ExceptionHandler(SessionNotPaidForCollectException.class)
+    public ResponseEntity<ApiError> handleSessionNotPaidForCollect(SessionNotPaidForCollectException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_PAID_FOR_COLLECT", req);
+    }
+
     @ExceptionHandler(SessionNotPaidException.class)
     public ResponseEntity<ApiError> handleSessionNotPaid(SessionNotPaidException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_PAID", req);
@@ -1509,8 +1512,35 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleDataIntegrityViolation(DataIntegrityViolationException ex,
             HttpServletRequest req) {
         log.warn("Violação de integridade em {}", req.getRequestURI(), ex);
+        // PLAT-C055: a corrida entre o findByUsername/findByEmail e o INSERT de usuário cai aqui.
+        // Para o cliente é o mesmo "já existe" das checagens de aplicação — só o nome da
+        // constraint é lido, nunca o texto do driver.
+        String constraint = constraintName(ex);
+        if (constraint.contains("uk_user_username")) {
+            return error(HttpStatus.CONFLICT, "Username já existe", "USERNAME_ALREADY_EXISTS", req);
+        }
+        if (constraint.contains("uk_user_email")) {
+            return error(HttpStatus.CONFLICT, "Email já existe", "EMAIL_ALREADY_EXISTS", req);
+        }
         return error(HttpStatus.CONFLICT, "A operação conflita com um registro já existente, tente novamente",
                 "DATA_INTEGRITY_VIOLATION", req);
+    }
+
+    private static String constraintName(Throwable ex) {
+        for (Throwable t = ex; t != null && t.getCause() != t; t = t.getCause()) {
+            if (t instanceof org.hibernate.exception.ConstraintViolationException cve
+                    && cve.getConstraintName() != null) {
+                return cve.getConstraintName().toLowerCase(java.util.Locale.ROOT);
+            }
+        }
+        return "";
+    }
+
+    @ExceptionHandler(CustomerAccountRolesImmutableException.class)
+    public ResponseEntity<ApiError> handleCustomerAccountRolesImmutable(CustomerAccountRolesImmutableException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, "Conta de cliente da loja não tem roles administráveis",
+                "CUSTOMER_ACCOUNT_ROLES_IMMUTABLE", req);
     }
 
     /**

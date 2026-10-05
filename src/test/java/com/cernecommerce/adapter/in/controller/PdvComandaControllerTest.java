@@ -572,6 +572,52 @@ class PdvComandaControllerTest {
                 .andExpect(jsonPath("$.customerName").value("Ana"));
     }
 
+    // ── PDV-F039 — a mesa com cliente nasce com o nome dele ──────────────────────────────────
+
+    @Test
+    void openComanda_withCustomerAndNoLabel_usesTheCustomerName() throws Exception {
+        Comanda daAna = Comanda.of(10L, 1L, "LOJA-01", "Ana", 42L, ComandaStatus.ABERTA,
+                List.of(), null, "caixa1", Instant.now(), null);
+        when(crmUseCase.findCustomerById(42L)).thenReturn(cliente(42L));
+        when(comandaUseCase.openComanda(eq(1L), eq("Ana"), eq(42L), anyString())).thenReturn(daAna);
+
+        mockMvc.perform(post("/pdv/comandas?sessionId=1")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":42}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.tableOrCustomerLabel").value("Ana"));
+    }
+
+    @Test
+    void openComanda_withCustomerAndLabel_keepsTheTypedLabel() throws Exception {
+        when(crmUseCase.findCustomerById(42L)).thenReturn(cliente(42L));
+        when(comandaUseCase.openComanda(eq(1L), eq("Mesa 4"), eq(42L), anyString())).thenReturn(abertaComanda());
+
+        mockMvc.perform(post("/pdv/comandas?sessionId=1")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableOrCustomerLabel\":\"Mesa 4\",\"customerId\":42}"))
+                .andExpect(status().isCreated());
+
+        verify(comandaUseCase).openComanda(eq(1L), eq("Mesa 4"), eq(42L), anyString());
+    }
+
+    @Test
+    void openComanda_withLeadAndNoLabel_usesTheLeadName() throws Exception {
+        when(crmUseCase.resolveLead(eq("Ana"), any(), any(), any(), eq("Mesa")))
+                .thenReturn(new LeadResolution(cliente(42L), true));
+        when(comandaUseCase.openComanda(eq(1L), eq("Ana"), eq(42L), anyString())).thenReturn(abertaComanda());
+
+        mockMvc.perform(post("/pdv/comandas?sessionId=1")
+                        .principal(AUTH_LEAD)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lead\":{\"nome\":\"Ana\",\"contato\":\"(83) 99999-0000\"}}"))
+                .andExpect(status().isCreated());
+
+        verify(comandaUseCase).openComanda(eq(1L), eq("Ana"), eq(42L), anyString());
+    }
+
     // ── PDV-F020 — cliente da mesa: validação, lead na abertura e vínculo posterior ──────────
 
     private static final UsernamePasswordAuthenticationToken AUTH_LEAD =

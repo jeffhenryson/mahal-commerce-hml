@@ -15,6 +15,7 @@ import com.cernecommerce.adapter.in.dtos.response.OrderPaymentResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PaymentTotalResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.SessionSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptItemResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.TopProductResponseDTO;
@@ -30,6 +31,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderSummary;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentTotal;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
+import com.cernecommerce.core.ports.in.PdvUseCase.SessionSummary;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -137,6 +139,14 @@ public class OrderDTOConverter {
         dto.setCorrectedAt(payment.correctedAt());
         dto.setCorrectedBy(payment.correctedBy());
         dto.setDueDate(payment.dueDate());
+        return dto;
+    }
+
+    public SessionSummaryResponseDTO toSessionSummaryResponse(SessionSummary summary) {
+        SessionSummaryResponseDTO dto = new SessionSummaryResponseDTO();
+        dto.setTotals(toPaymentTotalResponse(summary.totals()));
+        dto.setTotalReceived(summary.totalReceived());
+        dto.setTotalOnAccount(summary.totalOnAccount());
         return dto;
     }
 

@@ -1,6 +1,5 @@
 package com.cernecommerce.core.service;
 
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
@@ -317,17 +316,6 @@ class ReceivableServiceTest {
         assertThatThrownBy(() -> service.pay(45L, "bia", CUSTOMER,
                 List.of(new PaymentCommand(PaymentMethod.PIX, BigDecimal.TEN, null)), List.of(9L)))
                 .isInstanceOf(ReceivableNotOpenException.class);
-    }
-
-    @Test
-    void pay_inASessionFromAPreviousDay_isRefused() {
-        when(cashRegisterRepository.findById(45L)).thenReturn(Optional.of(CashRegisterSession.of(45L, "bia",
-                NOW.minusSeconds(2 * 24 * 3600), BigDecimal.ZERO, "LOJA-01", null, null, null, null, null,
-                CashRegisterSession.Status.OPEN)));
-
-        assertThatThrownBy(() -> service.pay(45L, "bia", CUSTOMER,
-                List.of(new PaymentCommand(PaymentMethod.PIX, BigDecimal.TEN, null)), null))
-                .isInstanceOf(CashRegisterSessionStaleException.class);
     }
 
     // ── manutenção ───────────────────────────────────────────────────────────────────────────

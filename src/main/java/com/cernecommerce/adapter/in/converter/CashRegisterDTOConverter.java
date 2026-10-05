@@ -6,6 +6,7 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pdv.CashMovement;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 
+import java.time.Instant;
 import java.util.List;
 
 public class CashRegisterDTOConverter {
@@ -25,6 +26,9 @@ public class CashRegisterDTOConverter {
         dto.setDiverges(session.diverges());
         dto.setStatus(session.status().name());
         dto.setClosingNotes(session.closingNotes());
+        Instant now = Instant.now();
+        dto.setHorasAberto(session.openHours(now));
+        dto.setFechamentoSugerido(session.closeSuggested(now));
         return dto;
     }
 

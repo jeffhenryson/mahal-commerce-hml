@@ -1017,6 +1017,23 @@ Convenções, variáveis e o environment compartilhado estão em
 
 ## Histórico de Implementações
 
+- **2026-10-05** — `caixa-sem-corte`, `resumo-do-caixa`, `mesa-com-nome-do-lead` e
+  `pagar-no-final-ao-recolher` (PDV-F037..F040, sem migration, branch `feat/pdv-caixa-sessao-ajustes`).
+  - **PDV-F037** — caiu o corte de meia-noite do PDV-F022: o caixa aberto num dia anterior continua
+    vendendo e recebendo quitação de marcado (`SESSION_STALE` e `CashRegisterSessionStaleException`
+    removidos). Quem fecha continua sendo o dono (ou `canCloseAny`). A sessão responde `horasAberto`
+    e `fechamentoSugerido` (≥ 12h aberta, `CashRegisterSession.SUGGEST_CLOSE_AFTER`), só aviso.
+  - **PDV-F038** — `GET /pdv/sessions/{id}/summary` (`PDV_READ`): `totals` (o mesmo de
+    `/payment-totals`), `totalReceived` (soma dos `netAmount`) e `totalOnAccount` (linhas
+    `ON_ACCOUNT` dos pedidos da sessão, fora do total).
+  - **PDV-F039** — `tableOrCustomerLabel` deixou de ser `@NotBlank`: com `customerId` ou `lead` e
+    rótulo em branco, a mesa nasce com o nome do cliente (cortado em 100). Rótulo digitado prevalece;
+    mesa avulsa sem rótulo segue 400.
+  - **PDV-F040** — sessão paga no final (`payLater`) não vai a `RECOLHIDO` (nem na desistência)
+    enquanto a linha não for cobrada: `409 SESSION_NOT_PAID_FOR_COLLECT`. Cobra-se com `itemIds`
+    (inclusive `MARCADO`, CRM-F010 — é o "marcar sessão"), recolhe-se e a mesa termina no `finish`.
+    Quem desistiu sem pagar sai pela remoção da linha.
+
 - **2026-10-02** — `sessao-paga-no-final`, `linha-do-tempo-da-sessao` e `comprou-na-loja`
   (PDV-F034..F036, **V139**, branch `fix/pdv-mesas-pedido`).
   - **PDV-F034** — `pagarNoFinal` em `/sessoes` e `/repetir`, com `PDV_SESSION_PAY_LATER`
@@ -1113,7 +1130,7 @@ Convenções, variáveis e o environment compartilhado estão em
   esteira de expedição e `PATCH /orders/{id}/delivery` completa códigos da 99 e rastreio depois
   (tipo e taxa congelados). A taxa entra em `totalPayable` e não no líquido — o balcão passou a
   validar o pagamento contra `totalPayable`, como a mesa já fazia. Observação por item em
-  `order_item.notes`. Venda em caixa de dia anterior → `409 SESSION_STALE` (só a venda; fechar o
+  `order_item.notes`. Venda em caixa de dia anterior → `409 SESSION_STALE` (removido no PDV-F037) (só a venda; fechar o
   caixa e as comandas seguem livres).
 
 - **2026-09-24** — `cardapio-de-sessao` (PDV-F021): a sessão de narguilé sai do catálogo e vira

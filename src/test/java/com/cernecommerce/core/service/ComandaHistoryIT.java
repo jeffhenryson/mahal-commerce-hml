@@ -187,10 +187,13 @@ class ComandaHistoryIT {
         assertThat(comandaUseCase.getComanda(mesa.id()).items().get(0).isPayLater()).isTrue();
 
         comandaUseCase.updateSessionStatus(mesa.id(), sessao.id(), SessionStatus.ENTREGUE, operator);
+        // PDV-F040 — a conta vem no recolhimento: paga a sessão, recolhe e encerra a mesa.
+        Order pedido = comandaUseCase.closeComanda(mesa.id(), dinheiro("30.00"), null, false,
+                List.of(sessao.id()), operator);
+        flushAndClear();
         comandaUseCase.updateSessionStatus(mesa.id(), sessao.id(), SessionStatus.RECOLHIDO, operator);
         flushAndClear();
-        // A conta depois do consumo: recolhida, o fechamento total encerra a mesa.
-        Order pedido = comandaUseCase.closeComanda(mesa.id(), dinheiro("30.00"), null, false, null, operator);
+        comandaUseCase.finishComanda(mesa.id(), operator);
         flushAndClear();
         comandaUseCase.recordStorePurchase(mesa.id(), true, operator);
         flushAndClear();

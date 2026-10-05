@@ -19,7 +19,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.cernecommerce.adapter.in.converter.CashRegisterDTOConverter;
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
@@ -363,22 +362,6 @@ public class PdvControllerTest {
                         .content("{\"items\":[{\"sku\":\"CARV-001\",\"quantity\":2,\"note\":\""
                                 + "x".repeat(201) + "\"}],\"payments\":[{\"method\":\"DINHEIRO\",\"amount\":44.00}]}"))
                 .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void registerSale_sessaoDeOntem_retorna409SessionStale() throws Exception {
-        when(pdvUseCase.registerSale(eq(1L), any(), any(), any(), anyString(), eq(false), isNull()))
-                .thenThrow(new CashRegisterSessionStaleException(1L, LocalDate.of(2026, 9, 25),
-                        LocalDate.of(2026, 9, 26)));
-
-        mockMvc.perform(post("/pdv/sessions/1/sales")
-                        .principal(AUTH)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"items":[{"sku":"CARV-001","quantity":2}],
-                                 "payments":[{"method":"DINHEIRO","amount":44.00}]}"""))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.errorCode").value("SESSION_STALE"));
     }
 
     @Test

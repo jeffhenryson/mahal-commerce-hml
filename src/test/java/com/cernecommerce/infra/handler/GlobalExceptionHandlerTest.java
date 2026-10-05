@@ -492,4 +492,48 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getBody().path()).isEqualTo("/api/v1/users/99");
         assertThat(resp.getBody().timestamp()).isNotNull();
     }
+
+    // ── PLAT-C055 — violação de unicidade de usuário vira o código específico ────────────────
+
+    private static org.springframework.dao.DataIntegrityViolationException uniqueViolation(String constraint) {
+        var cause = new org.hibernate.exception.ConstraintViolationException(
+                "duplicate key", new java.sql.SQLException("duplicate key value violates unique constraint"), constraint);
+        return new org.springframework.dao.DataIntegrityViolationException("could not execute statement", cause);
+    }
+
+    @Test
+    void dataIntegrity_onUsernameConstraint_returnsUsernameAlreadyExists() {
+        ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(uniqueViolation("uk_user_username"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("USERNAME_ALREADY_EXISTS");
+    }
+
+    @Test
+    void dataIntegrity_onEmailConstraint_returnsEmailAlreadyExists() {
+        ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(uniqueViolation("UK_USER_EMAIL"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("EMAIL_ALREADY_EXISTS");
+    }
+
+    @Test
+    void dataIntegrity_onOtherConstraint_keepsGenericCode() {
+        ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(uniqueViolation("uk_products_sku"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("DATA_INTEGRITY_VIOLATION");
+    }
+
+    @Test
+    void dataIntegrity_withoutConstraintName_keepsGenericCode() {
+        ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(
+                new org.springframework.dao.DataIntegrityViolationException("boom"), req);
+        assertThat(resp.getBody().errorCode()).isEqualTo("DATA_INTEGRITY_VIOLATION");
+    }
+
+    @Test
+    void customerAccountRolesImmutable_returns409_withCode() {
+        ResponseEntity<ApiError> resp = handler.handleCustomerAccountRolesImmutable(
+                new com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException("cli@x.com"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("CUSTOMER_ACCOUNT_ROLES_IMMUTABLE");
+    }
 }

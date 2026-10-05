@@ -57,6 +57,16 @@ public interface OrderPaymentJpaRepository extends JpaRepository<OrderPaymentEnt
     BigDecimal sumRefundedAmountBySessionIdAndMethod(@Param("sessionId") Long sessionId,
             @Param("method") String method);
 
+    /** PDV-F038 — o marcado (CRM-F010) vendido na sessão: linhas ON_ACCOUNT dos pedidos dela. */
+    @Query("""
+            SELECT COALESCE(SUM(p.amount), 0)
+            FROM OrderPaymentEntity p, OrderEntity o
+            WHERE p.orderId = o.id
+              AND o.sessionId = :sessionId
+              AND p.status = 'ON_ACCOUNT'
+            """)
+    BigDecimal sumOnAccountAmountBySessionId(@Param("sessionId") Long sessionId);
+
     /**
      * PDV-F026 — pares (pedido, método) dos pagamentos {@code CAPTURED} dos pedidos informados, sem
      * repetição: a listagem de pedidos mostra como cada um foi pago numa consulta só por página.

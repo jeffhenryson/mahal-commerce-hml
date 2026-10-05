@@ -198,7 +198,7 @@ public class PdvSessaoController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Atualizada, com a comanda"),
             @ApiResponse(responseCode = "404", description = "Comanda ou linha não encontrada", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026); ou sessão paga no final recolhida antes de paga (SESSION_NOT_PAID_FOR_COLLECT, PDV-F040)", content = @Content)
     })
     @PatchMapping("/pdv/comandas/{id}/sessoes/{itemId}/status")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")

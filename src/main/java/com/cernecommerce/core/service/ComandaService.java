@@ -50,6 +50,7 @@ import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
@@ -996,6 +997,12 @@ public class ComandaService implements ComandaUseCase {
         if (item.sessionStatus() == SessionStatus.NA_FILA && status == SessionStatus.PREPARANDO
                 && !comanda.isReleasedForPreparation(item)) {
             throw new SessionNotPaidException(itemId);
+        }
+        // PDV-F040 — a sessão paga no final vai ao salão a receber, mas só sai dele paga: recolher é
+        // o momento de cobrar. Vale também para a desistência (PREPARANDO → RECOLHIDO) — quem
+        // desistiu sem pagar sai pela remoção da linha. A cortesia não tem o que cobrar.
+        if (status == SessionStatus.RECOLHIDO && item.isPayLater() && item.isOpen() && !item.courtesy()) {
+            throw new SessionNotPaidForCollectException(itemId);
         }
         Instant now = Instant.now();
         Comanda updated = comanda.withSessionStatus(itemId, status, now);

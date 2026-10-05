@@ -49,6 +49,13 @@ public interface OrderPaymentRepository {
     BigDecimal sumRefundedAmountBySessionIdAndMethod(Long sessionId, PaymentMethod method);
 
     /**
+     * PDV-F038 — soma das linhas {@code MARCADO} ({@code ON_ACCOUNT}, CRM-F010) dos pedidos da
+     * sessão: o que foi vendido para o cliente pagar outro dia. Fica fora do total recebido. Zero
+     * quando não houve nenhuma, nunca {@code null}.
+     */
+    BigDecimal sumOnAccountAmountBySessionId(Long sessionId);
+
+    /**
      * Pagamento pelo identificador do gateway (ECM-F004) — usado pelo webhook para checar
      * idempotência antes de processar uma notificação.
      */

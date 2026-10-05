@@ -5,6 +5,7 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaHasOpenItemsException;
 import com.cernecommerce.core.domain.exception.pdv.InvalidSessionTransitionException;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotCollectedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemIsChargedException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
@@ -1003,8 +1004,9 @@ class ComandaSessaoServiceTest {
     @Test
     void updateSessionStatus_recolherSessaoPagaNoFinal_promoveORoshAReceber() {
         Instant t = Instant.now();
+        // PDV-F040 — a sessão já foi cobrada (pedido 99): só assim pode ser recolhida.
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
-                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null),
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), 99L),
                 roshPagoEm(2L, 1L, SessionProgress.queued(true), null))));
         when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -1012,6 +1014,30 @@ class ComandaSessaoServiceTest {
 
         assertThat(depois.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
         assertThat(depois.items().get(1).isOpen()).isTrue();
+    }
+
+    /** PDV-F040 — pagar no final é pagar ao recolher: a sessão a receber não sai do salão. */
+    @Test
+    void updateSessionStatus_recolherSessaoPagaNoFinalSemPagar_recusa() {
+        Instant t = Instant.now();
+        Comanda comanda = comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** PDV-F040 — nem a desistência tira do salão a sessão a receber: sai pela remoção da linha. */
+    @Test
+    void updateSessionStatus_desistenciaDeSessaoPagaNoFinalSemPagar_recusa() {
+        Comanda comanda = comanda(
+                sessaoEm(1L, PREMIUM, SessionProgress.preparingPayLater(Instant.now()), null));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
     }
 
     /** Cobrar depois do consumo não mexe no ciclo físico: a sessão já estava na mesa. */

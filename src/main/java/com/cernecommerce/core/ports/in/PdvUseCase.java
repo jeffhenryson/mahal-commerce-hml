@@ -121,6 +121,17 @@ public interface PdvUseCase {
      */
     List<PaymentTotal> getSessionPaymentTotals(Long sessionId);
 
+    /**
+     * PDV-F038 — o resumo do fechamento: os totais por forma de pagamento e o total vendido, que é
+     * a soma dos líquidos de todas as formas. O marcado (fiado, CRM-F010) vem à parte, fora do
+     * total, porque o dinheiro ainda não entrou. Serve de prévia antes de fechar e de relatório
+     * depois.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException
+     *         se a sessão não existir
+     */
+    SessionSummary getSessionSummary(Long sessionId);
+
     // ── Venda ────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -170,10 +181,8 @@ public interface PdvUseCase {
      * Registra a venda com entrega ou retirada (PDV-F022). Com {@code delivery}, a venda sempre
      * nasce {@link OrderStatus#RESERVADO}; a taxa de entrega entra no total a pagar (fora do
      * líquido) e o pagamento é validado contra ele. Único método abstrato — as sobrecargas acima
-     * delegam até aqui.
-     *
-     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException
-     *         se a sessão foi aberta num dia anterior (data de America/Sao_Paulo)
+     * delegam até aqui. Desde o PDV-F037 o caixa aberto ontem continua vendendo: não há mais corte
+     * de meia-noite, só a sugestão de fechar depois de 12h.
      */
     Order registerSale(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup,
@@ -301,6 +310,15 @@ public interface PdvUseCase {
      * @param receivableReceived quitação de marcado recebida nesta sessão (CRM-F010) — separada da
      *        venda para o relatório do caixa; já é o abatido, líquido do troco devolvido
      */
+    /**
+     * PDV-F038 — resumo do caixa.
+     *
+     * @param totals       o mesmo detalhamento de {@link #getSessionPaymentTotals}
+     * @param totalReceived soma dos {@code netAmount} de todas as formas: o total vendido e recebido
+     * @param totalOnAccount o marcado vendido na sessão; fora de {@code totalReceived}
+     */
+    record SessionSummary(List<PaymentTotal> totals, BigDecimal totalReceived, BigDecimal totalOnAccount) { }
+
     record PaymentTotal(PaymentMethod method, BigDecimal amount, BigDecimal refundedAmount,
             BigDecimal changeAmount, BigDecimal netAmount, BigDecimal receivableReceived) {
 

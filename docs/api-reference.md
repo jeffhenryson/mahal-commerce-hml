@@ -1846,6 +1846,23 @@ aparecem sempre, mesmo zeradas. Só pagamento `CAPTURED` conta — `CORRECTED` (
 
 `MARCADO` nunca aparece aqui: é dinheiro que não entrou. `404` se a sessão não existe.
 
+### GET /pdv/sessions/{id}/summary — Permissão: PDV_READ
+
+PDV-F038 — o total vendido do caixa, para a tela de fechamento (prévia) e para o relatório depois.
+
+```json
+{ "totals": [ /* o mesmo de /payment-totals */ ],
+  "totalReceived": 1250.00,
+  "totalOnAccount": 90.00 }
+```
+
+`totalReceived` é a soma dos `netAmount` de todas as formas. `totalOnAccount` é o `MARCADO` vendido na
+sessão (linhas `ON_ACCOUNT`), à parte e fora do total. `404` se a sessão não existe.
+
+PDV-F037: a sessão (`GET /pdv/sessions/current`, `GET /pdv/sessions/{id}`) traz `horasAberto` e
+`fechamentoSugerido` (aberta há 12h ou mais). É só aviso: desde então não há corte de meia-noite, e o
+caixa aberto ontem continua vendendo até o dono fechar.
+
 ### POST /pdv/sessions/{id}/close — Permissão: PDV_SESSION_CLOSE
 
 ```json

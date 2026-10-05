@@ -4,7 +4,6 @@ import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
-import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionStaleException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
@@ -243,7 +242,7 @@ public class ReceivableService implements ReceivableUseCase {
     public SettlementResult pay(Long sessionId, String username, Long customerId, List<PaymentCommand> payments,
             List<Long> receivableIds) {
         // A mesma regra da venda de balcão: o dinheiro entra na gaveta de quem recebe, hoje.
-        CashRegisterSession session = requireOwnOpenSessionFromToday(sessionId, username);
+        CashRegisterSession session = requireOwnOpenSession(sessionId, username);
         requireCustomer(customerId);
         for (PaymentCommand payment : payments) {
             if (payment.method() == PaymentMethod.MARCADO || payment.method() == PaymentMethod.GATEWAY_PIX) {
@@ -431,8 +430,8 @@ public class ReceivableService implements ReceivableUseCase {
         return limit.subtract(open).max(BigDecimal.ZERO);
     }
 
-    /** Mesma regra de {@code PdvService.registerSale}: caixa aberto, do operador e de hoje. */
-    private CashRegisterSession requireOwnOpenSessionFromToday(Long sessionId, String username) {
+    /** Mesma regra de {@code PdvService.registerSale}: caixa aberto e do operador (o corte de meia-noite caiu no PDV-F037). */
+    private CashRegisterSession requireOwnOpenSession(Long sessionId, String username) {
         CashRegisterSession session = cashRegisterRepository.findById(sessionId)
                 .orElseThrow(() -> new CashRegisterSessionNotFoundException(sessionId));
         if (!session.isOpen()) {
@@ -440,11 +439,6 @@ public class ReceivableService implements ReceivableUseCase {
         }
         if (!session.belongsTo(username)) {
             throw new CashRegisterSessionNotOwnedException(sessionId, username);
-        }
-        LocalDate openedOn = LocalDate.ofInstant(session.openedAt(), ZONA_LOJA);
-        LocalDate today = today();
-        if (openedOn.isBefore(today)) {
-            throw new CashRegisterSessionStaleException(session.id(), openedOn, today);
         }
         return session;
     }
