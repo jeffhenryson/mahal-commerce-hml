@@ -67,6 +67,16 @@ class SystemConfigServiceTest {
         assertThat(result).containsEntry("chave.interna", "valor");
     }
 
+    @Test
+    void getAll_esconde_tokens_de_integracao() {
+        when(configPort.findAll()).thenReturn(List.of(
+            config("auth.google.enabled", "true"),
+            config("integration.email.resend.api-key", "cifrado")
+        ));
+
+        assertThat(service.getAll()).containsOnlyKeys("auth.google.enabled");
+    }
+
     // ── set ──────────────────────────────────────────────────────────────────
 
     @Test

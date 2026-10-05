@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -47,9 +48,25 @@ public class SupportController {
                 : userAgentHeader;
         BugReport created = bugReportUseCase.createBugReport(authentication.getName(), request.getTitle(),
                 request.getDescription(), request.getPageUrl(), userAgent);
-        publisher.publishEvent(AuditEvent.of(EventType.BUG_REPORT_CREATED,
-                authentication.getName(), Map.of("bugReportId", String.valueOf(created.id()))));
+        // Título e descrição vão no evento para o alerta dos devs (DevAlertPort) sair sem reler o relato.
+        Map<String, Object> details = new HashMap<>();
+        details.put("bugReportId", String.valueOf(created.id()));
+        details.put("title", created.title());
+        putIfPresent(details, "description", abbreviate(created.description(), 1000));
+        putIfPresent(details, "pageUrl", created.pageUrl());
+        putIfPresent(details, "userAgent", created.userAgent());
+        publisher.publishEvent(AuditEvent.of(EventType.BUG_REPORT_CREATED, authentication.getName(), details));
         return ResponseEntity.created(URI.create("/support/bug-reports/" + created.id()))
                 .body(BugReportResponseDTO.from(created));
+    }
+
+    private static void putIfPresent(Map<String, Object> details, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            details.put(key, value);
+        }
+    }
+
+    private static String abbreviate(String value, int max) {
+        return value == null || value.length() <= max ? value : value.substring(0, max - 3) + "...";
     }
 }

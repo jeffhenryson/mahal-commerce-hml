@@ -29,6 +29,7 @@ import com.cernecommerce.core.domain.exception.auth.SessionNotFoundException;
 import com.cernecommerce.core.domain.exception.ratelimit.RateLimitExceededException;
 import com.cernecommerce.core.domain.exception.email.EmailAlreadyVerifiedException;
 import com.cernecommerce.core.domain.exception.email.EmailDeliveryException;
+import com.cernecommerce.core.domain.exception.email.InvalidEmailIntegrationException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeExpiredException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeNotFoundException;
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
@@ -143,6 +144,7 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaEmptyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException;
+import com.cernecommerce.core.domain.exception.pdv.ReceiptEmailUnavailableException;
 import com.cernecommerce.core.domain.exception.pdv.CourtesyNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemRequiredException;
@@ -184,6 +186,7 @@ import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutabl
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
+import com.cernecommerce.core.ports.out.notification.DevAlertPort;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -217,6 +220,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -230,6 +234,9 @@ public class GlobalExceptionHandler {
 
     @Autowired(required = false)
     private ApplicationEventPublisher publisher;
+
+    @Autowired(required = false)
+    private DevAlertPort devAlerts;
 
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ApiError> handleUserNotFound(UserNotFoundException ex, HttpServletRequest req) {
@@ -884,6 +891,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), "EMAIL_DELIVERY_FAILED", req);
     }
 
+    @ExceptionHandler(InvalidEmailIntegrationException.class)
+    public ResponseEntity<ApiError> handleInvalidEmailIntegration(InvalidEmailIntegrationException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "INVALID_EMAIL_INTEGRATION", req);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiError> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, "Requisição inválida", "BAD_REQUEST", req);
@@ -1129,6 +1142,12 @@ public class GlobalExceptionHandler {
     }
 
     /** PDV-F009: mesma família de CASH_REGISTER_SESSION_CLOSED — o request está bem formado, o estado da comanda que não permite. */
+    @ExceptionHandler(ReceiptEmailUnavailableException.class)
+    public ResponseEntity<ApiError> handleReceiptEmailUnavailable(ReceiptEmailUnavailableException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "RECEIPT_EMAIL_UNAVAILABLE", req);
+    }
+
     @ExceptionHandler(ComandaNotOpenException.class)
     public ResponseEntity<ApiError> handleComandaNotOpen(ComandaNotOpenException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "COMANDA_NOT_OPEN", req);
@@ -1594,7 +1613,33 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex, HttpServletRequest req) {
         log.error("Unhandled exception", ex);
+        alertDevs(ex, req);
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno inesperado", "INTERNAL_ERROR", req);
+    }
+
+    /**
+     * Erro 500 vai para os devs. A chave de agrupamento é exceção + rota + ponto de origem: o mesmo
+     * bug numa rota quente vira um e-mail a cada 15 minutos, não um por requisição.
+     */
+    private void alertDevs(Exception ex, HttpServletRequest req) {
+        if (devAlerts == null) {
+            return;
+        }
+        try {
+            StackTraceElement origin = ex.getStackTrace().length > 0 ? ex.getStackTrace()[0] : null;
+            String route = req.getMethod() + " " + req.getRequestURI();
+            Map<String, String> details = new LinkedHashMap<>();
+            details.put("Rota", route);
+            details.put("Exceção", ex.getClass().getName());
+            details.put("Mensagem", String.valueOf(ex.getMessage()));
+            details.put("Origem", origin == null ? "—" : origin.toString());
+            details.put("Usuário", req.getUserPrincipal() == null ? "anônimo" : req.getUserPrincipal().getName());
+            details.put("traceId", String.valueOf(MDC.get("traceId")));
+            devAlerts.alert("erro-500", ex.getClass().getName() + "|" + route + "|" + origin,
+                    "Erro 500 em " + route, details);
+        } catch (Exception ignored) {
+            // O alerta nunca pode mudar a resposta de erro.
+        }
     }
 
     private ResponseEntity<ApiError> error(HttpStatus status, String message, String code, HttpServletRequest req) {

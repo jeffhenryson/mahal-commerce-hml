@@ -31,6 +31,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.StockBalance;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
+import com.cernecommerce.core.domain.model.notification.OrderEmailView;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
@@ -48,6 +49,7 @@ import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
 import com.cernecommerce.core.ports.out.ecommerce.CartRepository;
 import com.cernecommerce.core.ports.out.ecommerce.PaymentGatewayPort;
+import com.cernecommerce.core.ports.out.AfterCommitExecutor;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pedido.OrderRepository;
@@ -96,8 +98,16 @@ class ShopServiceTest {
     void setUp() {
         shopService = new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository,
                 orderRepository, orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository,
-                emailPort, kitBuilderUseCase);
+                emailPort, kitBuilderUseCase, immediateExecutor);
     }
+
+    /** Sem transação real nestes testes, o executor despacha na hora (como a implementação sem sincronização). */
+    private final AfterCommitExecutor immediateExecutor = new AfterCommitExecutor() {
+        @Override
+        public <T> void accumulate(String key, T item, java.util.function.Consumer<java.util.List<T>> flush) {
+            flush.accept(java.util.List.of(item));
+        }
+    };
 
     private void stubAuthenticatedCustomer() {
         User user = User.customer(USERNAME, "hashed", USERNAME, CUSTOMER_ID, java.util.Set.of(new Role("ROLE_CUSTOMER")));
@@ -438,8 +448,13 @@ class ShopServiceTest {
         assertThat(paymentCaptor.getValue().method()).isEqualTo(PaymentMethod.GATEWAY_PIX);
         assertThat(paymentCaptor.getValue().gatewayRef()).isNull();
         verify(cartRepository).clear(CUSTOMER_ID);
-        verify(emailPort).sendOrderConfirmation(eq(USERNAME), eq("Maria"), eq("Pedido #99"),
-                eq(result.order().netAmount()), eq(2), eq("https://checkout.infinitepay.io/loja?lenc=abc"));
+        ArgumentCaptor<OrderEmailView> viewCaptor = ArgumentCaptor.forClass(OrderEmailView.class);
+        verify(emailPort).sendOrderConfirmation(eq(USERNAME), viewCaptor.capture(),
+                eq("https://checkout.infinitepay.io/loja?lenc=abc"));
+        assertThat(viewCaptor.getValue().customerName()).isEqualTo("Maria");
+        assertThat(viewCaptor.getValue().orderReference()).isEqualTo("#99");
+        assertThat(viewCaptor.getValue().itemCount()).isEqualTo(2);
+        assertThat(viewCaptor.getValue().total()).isEqualByComparingTo(result.order().totalPayable());
     }
 
     // ---------------------------------------------------------------------------------------

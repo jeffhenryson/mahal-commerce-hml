@@ -1,11 +1,14 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.ports.in.ReceiptEmailUseCase;
 import com.cernecommerce.core.ports.out.recebivel.CustomerCreditLimitRepository;
 import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
+import com.cernecommerce.core.service.ReceiptEmailService;
 import com.cernecommerce.core.service.ReceivableService;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -31,6 +34,7 @@ import com.cernecommerce.core.ports.out.AfterCommitExecutor;
 import com.cernecommerce.core.ports.out.SystemConfigPort;
 import com.cernecommerce.core.ports.out.token.AccessTokenPort;
 import com.cernecommerce.core.ports.out.credential.CredentialVerifierPort;
+import com.cernecommerce.core.ports.out.notification.ManagerNotificationPort;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import com.cernecommerce.core.ports.out.notification.EmailVerificationCodeRepository;
 import com.cernecommerce.core.ports.out.notification.PasswordResetTokenRepository;
@@ -73,6 +77,10 @@ import com.cernecommerce.core.service.RoleService;
 import com.cernecommerce.core.service.StatsService;
 import com.cernecommerce.core.service.SystemConfigService;
 import com.cernecommerce.core.service.StoreProfileService;
+import com.cernecommerce.core.service.EmailIntegrationService;
+import com.cernecommerce.core.ports.in.EmailIntegrationUseCase;
+import com.cernecommerce.core.ports.out.SecretCipherPort;
+import com.cernecommerce.core.ports.out.notification.EmailSampleSenderPort;
 import com.cernecommerce.core.ports.in.StoreProfileUseCase;
 import com.cernecommerce.core.service.TotpService;
 import com.cernecommerce.core.service.UserService;
@@ -293,6 +301,12 @@ class CoreBeanConfig {
                 maxDiscountPercent, Clock.systemUTC(), receivableUseCase);
     }
 
+    @Bean
+    ReceiptEmailUseCase receiptEmailUseCase(OrderRepository orderRepository, CustomerRepository customerRepository,
+            EmailPort emailPort) {
+        return new ReceiptEmailService(orderRepository, customerRepository, emailPort);
+    }
+
     /** CRM-F010 — "Marcar": venda a prazo para cliente VIP. Não depende do PdvService (sem ciclo). */
     @Bean
     ReceivableUseCase receivableUseCase(CustomerReceivableRepository customerReceivableRepository,
@@ -355,13 +369,13 @@ class CoreBeanConfig {
             SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
-            OpenPackageRepository openPackageRepository) {
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotificationPort) {
         return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
                 stockMovementRepository, reorderPointRepository, stockIntegrityRepository,
                 stockCountRepository, stockReservationRepository, notificationUseCase, userRepository,
                 afterCommitExecutor, defaultReservationTtl, kitComponentRepository, stockLotRepository,
                 systemConfigPort, categoryRepository, brandRepository, attributeTypeRepository,
-                replenishmentListRepository, openPackageRepository);
+                replenishmentListRepository, openPackageRepository, managerNotificationPort);
     }
 
     @Bean
@@ -417,10 +431,10 @@ class CoreBeanConfig {
             CartRepository cartRepository, OrderRepository orderRepository, OrderUseCase orderUseCase,
             CashbackUseCase cashbackUseCase, PaymentGatewayPort paymentGatewayPort,
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
-            KitBuilderUseCase kitBuilderUseCase) {
+            KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor) {
         return new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository, orderRepository,
                 orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository, emailPort,
-                kitBuilderUseCase);
+                kitBuilderUseCase, afterCommitExecutor);
     }
 
     @Bean
@@ -502,6 +516,13 @@ class CoreBeanConfig {
     @Bean
     StoreProfileUseCase storeProfileUseCase(SystemConfigPort configPort) {
         return new StoreProfileService(configPort);
+    }
+
+    @Bean
+    EmailIntegrationUseCase emailIntegrationUseCase(SystemConfigPort configPort, SecretCipherPort secretCipherPort,
+            EmailSampleSenderPort emailSampleSenderPort, ObjectProvider<EmailPort> emailPort) {
+        return new EmailIntegrationService(configPort, secretCipherPort, emailSampleSenderPort,
+                () -> emailPort.getObject().channelStatus());
     }
 
     @Bean

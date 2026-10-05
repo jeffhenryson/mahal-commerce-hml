@@ -69,6 +69,9 @@ public class OAuthController {
         OAuthLoginResult result = oAuthLoginUseCase.loginWithGoogle(request.idToken());
         TokenPair pair = result.tokenPair();
         publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_LOGIN, result.username()));
+        if (result.firstGoogleLogin()) {
+            publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_LINKED, result.username()));
+        }
         response.addHeader("Set-Cookie", buildCookie(pair.getRefreshToken(), refreshTtlSeconds).toString());
         return ResponseEntity.ok(new TokenPairResponseDTO(pair.getAccessToken(), pair.getRefreshToken(), accessTtlSeconds));
     }

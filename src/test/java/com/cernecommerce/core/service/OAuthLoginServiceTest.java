@@ -69,6 +69,7 @@ class OAuthLoginServiceTest {
         assertThat(result.tokenPair().getAccessToken()).isEqualTo("access-token");
         assertThat(result.tokenPair().getRefreshToken()).isEqualTo("refresh-token");
         assertThat(result.username()).isEqualTo("alice");
+        assertThat(result.firstGoogleLogin()).isFalse();
         verify(userRepository, never()).save(any());
     }
 
@@ -84,8 +85,9 @@ class OAuthLoginServiceTest {
         when(accessTokenPort.generateFor(anyString(), any())).thenReturn("access-token");
         when(refreshTokenPort.issue(anyString())).thenReturn("refresh-token");
 
-        service.loginWithGoogle("id-token");
+        OAuthLoginResult linked = service.loginWithGoogle("id-token");
 
+        assertThat(linked.firstGoogleLogin()).isTrue();
         ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(saved.capture());
         assertThat(saved.getValue().getGoogleId()).isEqualTo("google-123");

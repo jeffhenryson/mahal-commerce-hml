@@ -416,7 +416,7 @@ public class UserService implements UserUseCase {
             Instant expiresAt = Instant.now().plus(passwordResetTtlMinutes, ChronoUnit.MINUTES);
             passwordResetTokenRepository.save(user.getUsername(), token, expiresAt);
             String link = passwordResetFrontendUrl + "?token=" + token;
-            emailPort.sendPasswordResetLink(normalizedEmail, user.getUsername(), link);
+            emailPort.sendPasswordResetLink(normalizedEmail, user.getUsername(), link, passwordResetTtlMinutes);
         });
     }
 

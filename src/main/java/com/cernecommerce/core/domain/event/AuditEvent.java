@@ -36,6 +36,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         DEV_ELEVATION_COMPLETED,
         // OAuth
         OAUTH_GOOGLE_LOGIN, OAUTH_GOOGLE_DISABLED_ATTEMPT,
+        // Conta criada ou vinculada ao Google neste login — vira alerta de segurança para o dono.
+        OAUTH_GOOGLE_LINKED,
         // Estoque
         PRODUCT_CREATED, WAREHOUSE_CREATED, STOCK_MOVEMENT_REGISTERED, REORDER_POINT_SET,
         // EST-F025 — a conversão entre SKUs é UM ato do operador que produz DOIS movimentos. Um
@@ -108,10 +110,14 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         CUSTOMER_CREDIT_LIMIT_CHANGED,
         // PDV-F022 — códigos da 99, rastreio, entregador preenchidos depois da venda.
         ORDER_DELIVERY_UPDATED,
+        // Falha ao processar notificação do gateway de pagamento — vira alerta para os devs.
+        PAYMENT_WEBHOOK_FAILED,
         // Cashback (CRM-F003)
         CASHBACK_RATE_CHANGED, CASHBACK_EARNED,
         // Support
         BUG_REPORT_CREATED,
+        // Integrações da loja (e-mail/Resend)
+        INTEGRATION_UPDATED,
         // Financeiro (FIN-F004)
         CASH_FLOW_ENTRY_CREATED, CASH_FLOW_ENTRY_UPDATED, CASH_FLOW_ENTRY_DELETED
     }

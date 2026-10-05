@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.exception.pagamento.PaymentGatewayException;
 import com.cernecommerce.core.ports.in.PaymentWebhookUseCase;
 import com.cernecommerce.core.ports.in.PaymentWebhookUseCase.WebhookResult;
@@ -69,7 +70,10 @@ public class PaymentWebhookControllerTest {
                         .content("{\"order_nsu\":\"order_123\",\"transaction_nsu\":\"txn_456\",\"invoice_slug\":\"inv_789\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(publisher, never()).publishEvent(any(Object.class));
+        // Só o alerta de falha — nenhum ORDER_STATUS_CHANGED.
+        verify(publisher).publishEvent(argThat((Object e) -> e instanceof AuditEvent ev
+                && ev.type() == AuditEvent.EventType.PAYMENT_WEBHOOK_FAILED));
+        verifyNoMoreInteractions(publisher);
     }
     
     @Test
@@ -82,6 +86,9 @@ public class PaymentWebhookControllerTest {
                         .content("{\"order_nsu\":\"order_123\",\"transaction_nsu\":\"txn_456\",\"invoice_slug\":\"inv_789\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(publisher, never()).publishEvent(any(Object.class));
+        // Só o alerta de falha — nenhum ORDER_STATUS_CHANGED.
+        verify(publisher).publishEvent(argThat((Object e) -> e instanceof AuditEvent ev
+                && ev.type() == AuditEvent.EventType.PAYMENT_WEBHOOK_FAILED));
+        verifyNoMoreInteractions(publisher);
     }
 }

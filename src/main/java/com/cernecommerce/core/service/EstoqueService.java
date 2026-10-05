@@ -87,6 +87,7 @@ import com.cernecommerce.core.domain.model.estoque.StockReservation;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
 import com.cernecommerce.core.domain.model.config.SystemConfig;
+import com.cernecommerce.core.domain.model.notification.NotificationEmail;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.NotificationUseCase;
@@ -107,7 +108,10 @@ import com.cernecommerce.core.ports.out.estoque.OpenPackageRepository;
 import com.cernecommerce.core.ports.out.estoque.StockMovementRepository;
 import com.cernecommerce.core.ports.out.estoque.StockReservationRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
+import com.cernecommerce.core.ports.out.notification.ManagerNotificationPort;
 import com.cernecommerce.core.ports.out.user.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -116,6 +120,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -125,6 +130,8 @@ import java.util.Optional;
 import java.util.Set;
 
 public class EstoqueService implements EstoqueUseCase {
+
+    private static final Logger log = LoggerFactory.getLogger(EstoqueService.class);
 
     private static final String STOCK_MANAGE_PERMISSION = "ESTOQUE_STOCK_MANAGE";
     private static final String REORDER_ALERT_BATCH = "estoque.reorder-alerts";
@@ -151,6 +158,7 @@ public class EstoqueService implements EstoqueUseCase {
     private final AttributeTypeRepository attributeTypeRepository;
     private final ReplenishmentListRepository replenishmentListRepository;
     private final OpenPackageRepository openPackageRepository;
+    private final ManagerNotificationPort managerNotifications;
 
     public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
             StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
@@ -162,7 +170,7 @@ public class EstoqueService implements EstoqueUseCase {
             SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
-            OpenPackageRepository openPackageRepository) {
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications) {
         this.stockReservationRepository = stockReservationRepository;
         this.defaultReservationTtl = defaultReservationTtl;
         this.productRepository = productRepository;
@@ -183,6 +191,7 @@ public class EstoqueService implements EstoqueUseCase {
         this.attributeTypeRepository = attributeTypeRepository;
         this.replenishmentListRepository = replenishmentListRepository;
         this.openPackageRepository = openPackageRepository;
+        this.managerNotifications = managerNotifications;
     }
 
     @Override
@@ -2022,6 +2031,39 @@ public class EstoqueService implements EstoqueUseCase {
         userRepository.findUsernamesByPermission(STOCK_MANAGE_PERMISSION)
                 .forEach(username -> notificationUseCase.notify(username, NotificationType.SYSTEM,
                         title, body.toString()));
+        emailReorderAlerts(bySku.values());
+    }
+
+    /**
+     * O mesmo lote de alertas, por e-mail, para quem cuida do estoque — um e-mail por operação, não
+     * por SKU. Falha no e-mail não pode desfazer o aviso in-app, que já saiu.
+     */
+    private void emailReorderAlerts(Collection<ReorderAlert> alerts) {
+        try {
+            List<NotificationEmail.Row> rows = alerts.stream()
+                    .map(alert -> productRepository.findBySku(alert.sku())
+                            .map(product -> product.name() + " (" + alert.sku() + ")")
+                            .map(label -> NotificationEmail.Row.of(label, reorderValue(alert)))
+                            .orElseGet(() -> NotificationEmail.Row.of(alert.sku(), reorderValue(alert))))
+                    .toList();
+            String subject = rows.size() == 1
+                    ? rows.get(0).label() + " chegou ao ponto de reposição"
+                    : rows.size() + " produtos chegaram ao ponto de reposição";
+            managerNotifications.emailPermission(STOCK_MANAGE_PERMISSION, NotificationType.ESTOQUE,
+                    NotificationEmail.builder("estoque.reposicao", subject)
+                            .tone(NotificationEmail.Tone.WARNING)
+                            .intro("O disponível ficou abaixo do mínimo cadastrado. Hora de repor.")
+                            .section("Repor", rows)
+                            .action("Abrir estoque", "/app/estoque")
+                            .build());
+        } catch (Exception ex) {
+            log.warn("estoque.reorder-alert.email.failed error={}", ex.getMessage());
+        }
+    }
+
+    private static String reorderValue(ReorderAlert alert) {
+        return "disponível " + alert.quantity().stripTrailingZeros().toPlainString()
+                + " · mínimo " + alert.minQuantity().stripTrailingZeros().toPlainString();
     }
 
     /**

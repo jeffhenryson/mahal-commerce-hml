@@ -75,6 +75,13 @@ public class PaymentWebhookController {
             // gateway reconhece como "tente de novo".
             log.error("payment.webhook.processing_failed provider={} orderNsu={}", provider,
                     request.getOrderNsu(), ex);
+            // O gateway tenta de novo, mas pagamento parado sem ninguém saber é pedido que não anda:
+            // o evento fica na trilha e vira alerta para os devs (OperationalNotificationListener).
+            publisher.publishEvent(AuditEvent.of(EventType.PAYMENT_WEBHOOK_FAILED, WEBHOOK_ACTOR, Map.of(
+                    "provider", provider,
+                    "orderNsu", String.valueOf(request.getOrderNsu()),
+                    "exception", ex.getClass().getName(),
+                    "message", String.valueOf(ex.getMessage()))));
             return ResponseEntity.badRequest().build();
         }
     }

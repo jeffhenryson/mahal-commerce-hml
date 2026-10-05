@@ -37,7 +37,9 @@ public class SystemConfigService implements SystemConfigUseCase {
     @Override
     @Transactional(readOnly = true)
     public Map<String, String> getAll() {
+        // integration.* guarda tokens de integração (cifrados) — têm tela e permissão próprias.
         return configPort.findAll().stream()
+            .filter(c -> !c.key().startsWith(EmailIntegrationService.KEY_PREFIX))
             .collect(Collectors.toMap(SystemConfig::key, SystemConfig::value));
     }
 

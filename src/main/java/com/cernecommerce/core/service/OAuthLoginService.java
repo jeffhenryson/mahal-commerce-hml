@@ -61,7 +61,10 @@ public class OAuthLoginService implements OAuthLoginUseCase {
             throw new OAuthTokenInvalidException("Token Google inválido ou expirado");
         }
 
-        User user = resolveUser(googleInfo);
+        // Sem vínculo prévio, este login cria a conta ou vincula o Google a ela: é o que vira alerta.
+        Optional<User> linked = userRepository.findByGoogleId(googleInfo.googleId());
+        boolean firstGoogleLogin = linked.isEmpty();
+        User user = linked.orElseGet(() -> resolveUnlinkedUser(googleInfo));
 
         if (!user.isEnabled()) {
             throw new AccountDisabledException(user.getUsername());
@@ -71,17 +74,12 @@ public class OAuthLoginService implements OAuthLoginUseCase {
         String access = accessToken.generateFor(user.getUsername(), authorities);
         String refresh = refreshToken.issue(user.getUsername());
 
-        return new OAuthLoginResult(new TokenPair(access, refresh), user.getUsername());
+        return new OAuthLoginResult(new TokenPair(access, refresh), user.getUsername(), firstGoogleLogin);
     }
 
-    private User resolveUser(GoogleUserInfo info) {
+    /** Google ID ainda sem conta vinculada (o caso "já vinculada" é resolvido por quem chama). */
+    private User resolveUnlinkedUser(GoogleUserInfo info) {
         String normalizedEmail = normalizeEmail(info.email());
-
-        // 1. Já tem conta vinculada ao Google ID
-        Optional<User> byGoogleId = userRepository.findByGoogleId(info.googleId());
-        if (byGoogleId.isPresent()) {
-            return byGoogleId.get();
-        }
 
         // 2. Conta local com mesmo email — vincula automaticamente
         Optional<User> byEmail = userRepository.findByEmail(normalizedEmail);

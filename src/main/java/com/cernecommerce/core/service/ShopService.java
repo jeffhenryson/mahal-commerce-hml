@@ -22,6 +22,7 @@ import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.estoque.Product;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
+import com.cernecommerce.core.domain.model.notification.OrderEmailView;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pedido.Order;
@@ -35,6 +36,7 @@ import com.cernecommerce.core.ports.in.ShopUseCase;
 import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.core.ports.out.ecommerce.CartRepository;
 import com.cernecommerce.core.ports.out.ecommerce.PaymentGatewayPort;
+import com.cernecommerce.core.ports.out.AfterCommitExecutor;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pedido.OrderRepository;
@@ -65,13 +67,15 @@ public class ShopService implements ShopUseCase {
     private final OrderPaymentRepository orderPaymentRepository;
     private final EmailPort emailPort;
     private final KitBuilderUseCase kitBuilderUseCase;
+    private final AfterCommitExecutor afterCommitExecutor;
 
     public ShopService(CrmUseCase crmUseCase, UserUseCase userUseCase, EstoqueUseCase estoqueUseCase,
             CartRepository cartRepository, OrderRepository orderRepository, OrderUseCase orderUseCase,
             CashbackUseCase cashbackUseCase, PaymentGatewayPort paymentGatewayPort,
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
-            KitBuilderUseCase kitBuilderUseCase) {
+            KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor) {
         this.kitBuilderUseCase = kitBuilderUseCase;
+        this.afterCommitExecutor = afterCommitExecutor;
         this.crmUseCase = crmUseCase;
         this.userUseCase = userUseCase;
         this.estoqueUseCase = estoqueUseCase;
@@ -286,8 +290,10 @@ public class ShopService implements ShopUseCase {
 
         cartRepository.clear(customerId);
         if (customer.email() != null && !customer.email().isBlank()) {
-            emailPort.sendOrderConfirmation(customer.email(), customer.nome(), "Pedido #" + saved.id(),
-                    saved.netAmount(), orderItems.size(), link.checkoutUrl());
+            // Depois do commit: confirmação de um pedido que acabou revertido não pode sair.
+            OrderEmailView view = OrderEmailView.of(saved, customer.nome());
+            afterCommitExecutor.accumulate("shop.order-confirmation:" + saved.id(), saved, orders ->
+                    emailPort.sendOrderConfirmation(customer.email(), view, link.checkoutUrl()));
         }
         return new CheckoutResult(saved, link.checkoutUrl());
     }
