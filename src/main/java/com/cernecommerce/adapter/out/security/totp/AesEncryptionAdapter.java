@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.out.security.totp;
 
+import com.cernecommerce.core.ports.out.SecretCipherPort;
 import com.cernecommerce.core.ports.out.twofa.TotpEncryptionPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -12,14 +13,14 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * Criptografia AES-256-GCM para o secret TOTP em repouso.
+ * Criptografia AES-256-GCM para o secret TOTP e os tokens de integração em repouso.
  *
  * Formato armazenado: Base64(iv || ciphertext || tag) — IV de 12 bytes + tag de 128 bits (16 bytes).
  * A chave deve ser 32 bytes (256 bits) encodados em Base64 URL-safe.
  * Configure via: totp.encryption.key=<base64-url-safe-32-bytes>
  */
 @Component
-public class AesEncryptionAdapter implements TotpEncryptionPort {
+public class AesEncryptionAdapter implements TotpEncryptionPort, SecretCipherPort {
 
     private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_BITS = 128;
@@ -48,7 +49,7 @@ public class AesEncryptionAdapter implements TotpEncryptionPort {
             System.arraycopy(ciphertext, 0, result, GCM_IV_LENGTH, ciphertext.length);
             return Base64.getUrlEncoder().withoutPadding().encodeToString(result);
         } catch (Exception e) {
-            throw new IllegalStateException("TOTP secret encryption failed", e);
+            throw new IllegalStateException("Secret encryption failed", e);
         }
     }
 
@@ -64,7 +65,7 @@ public class AesEncryptionAdapter implements TotpEncryptionPort {
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_BITS, iv));
             return new String(cipher.doFinal(encrypted));
         } catch (Exception e) {
-            throw new IllegalStateException("TOTP secret decryption failed", e);
+            throw new IllegalStateException("Secret decryption failed", e);
         }
     }
 }

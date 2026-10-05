@@ -1,11 +1,13 @@
 package com.cernecommerce.adapter.out.email;
 
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
+import com.cernecommerce.core.domain.model.notification.NotificationEmail;
+import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.SecurityEventContext;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,8 +31,8 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendPasswordResetLink(String to, String username, String resetLink) {
-        log.info("DEV EMAIL >> to={} username={} passwordResetLink={}", to, username, resetLink);
+    public void sendPasswordResetLink(String to, String username, String resetLink, long ttlMinutes) {
+        log.info("DEV EMAIL >> to={} username={} passwordResetLink={} ttlMinutes={}", to, username, resetLink, ttlMinutes);
         lastCodeByUsername.put("reset:" + username, resetLink);
     }
 
@@ -41,43 +43,82 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendPasswordChangedAlert(String to, String username) {
-        log.info("DEV EMAIL >> to={} username={} [security-alert:password-changed]", to, username);
+    public void sendEmailChangeConfirmed(String newEmail, String username) {
+        log.info("DEV EMAIL >> to={} username={} [email-change-confirmed]", newEmail, username);
     }
 
     @Override
-    public void sendAccountLockedAlert(String to, String username) {
-        log.info("DEV EMAIL >> to={} username={} [security-alert:account-locked]", to, username);
+    public void sendAccountChange(String to, String username, String title, String message) {
+        log.info("DEV EMAIL >> to={} username={} title={} [account-change]", to, username, title);
     }
 
     @Override
-    public void sendTotpStatusAlert(String to, String username, boolean enabled) {
-        log.info("DEV EMAIL >> to={} username={} enabled={} [security-alert:totp-status]", to, username, enabled);
+    public void sendPasswordResetAlert(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:password-reset]", to, username, context);
     }
 
     @Override
-    public void sendTokenTheftAlert(String to, String username) {
-        log.info("DEV EMAIL >> to={} username={} [security-alert:token-theft]", to, username);
+    public void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:google-linked]", to, username, context);
     }
 
     @Override
-    public void sendOrderConfirmation(String to, String customerName, String orderReference, BigDecimal total,
-            int itemCount, String checkoutUrl) {
-        log.info("DEV EMAIL >> to={} customerName={} orderReference={} total={} itemCount={} checkoutUrl={} [order-confirmation]",
-                to, customerName, orderReference, total, itemCount, checkoutUrl);
+    public void sendCustomerNotice(String to, NotificationEmail email) {
+        log.info("DEV EMAIL >> to={} category={} subject={} [customer-notice]", to, email.category(), email.subject());
     }
 
     @Override
-    public void sendOrderStatusUpdate(String to, String customerName, String orderReference, String newStatusLabel) {
-        log.info("DEV EMAIL >> to={} customerName={} orderReference={} newStatusLabel={} [order-status-update]",
-                to, customerName, orderReference, newStatusLabel);
+    public void sendWelcome(String to, String username) {
+        log.info("DEV EMAIL >> to={} username={} [welcome]", to, username);
     }
 
     @Override
-    public void sendOrderCancellation(String to, String customerName, String orderReference, String reason,
-            boolean refunded) {
-        log.info("DEV EMAIL >> to={} customerName={} orderReference={} reason={} refunded={} [order-cancellation]",
-                to, customerName, orderReference, reason, refunded);
+    public void sendPasswordChangedAlert(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:password-changed]", to, username, context);
+    }
+
+    @Override
+    public void sendAccountLockedAlert(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:account-locked]", to, username, context);
+    }
+
+    @Override
+    public void sendTotpStatusAlert(String to, String username, boolean enabled, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} enabled={} context={} [security-alert:totp-status]",
+                to, username, enabled, context);
+    }
+
+    @Override
+    public void sendTokenTheftAlert(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:token-theft]", to, username, context);
+    }
+
+    @Override
+    public void sendOrderConfirmation(String to, OrderEmailView order, String checkoutUrl) {
+        log.info("DEV EMAIL >> to={} order={} total={} itemCount={} checkoutUrl={} [order-confirmation]",
+                to, order.orderReference(), order.total(), order.itemCount(), checkoutUrl);
+    }
+
+    @Override
+    public void sendOrderStatusUpdate(String to, OrderEmailView order, String newStatusLabel) {
+        log.info("DEV EMAIL >> to={} order={} newStatusLabel={} [order-status-update]",
+                to, order.orderReference(), newStatusLabel);
+    }
+
+    @Override
+    public void sendOrderCancellation(String to, OrderEmailView order, String reason, boolean refunded) {
+        log.info("DEV EMAIL >> to={} order={} reason={} refunded={} [order-cancellation]",
+                to, order.orderReference(), reason, refunded);
+    }
+
+    @Override
+    public void sendPurchaseReceipt(String to, OrderEmailView order) {
+        log.info("DEV EMAIL >> to={} order={} total={} [purchase-receipt]", to, order.orderReference(), order.total());
+    }
+
+    @Override
+    public void sendNotification(String to, NotificationEmail email) {
+        log.info("DEV EMAIL >> to={} category={} subject={} [notification]", to, email.category(), email.subject());
     }
 
     @Override

@@ -1,28 +1,46 @@
 package com.cernecommerce.adapter.out.email;
 
+import com.cernecommerce.core.ports.in.EmailIntegrationUseCase;
+import com.cernecommerce.core.ports.out.notification.DevAlertPort;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.web.client.RestClient;
 
+import java.util.concurrent.Executor;
+
 /**
- * Seleciona o adapter de e-mail conforme {@code email.provider}:
+ * O {@link EmailPort} injetado é o {@link RoutingEmailAdapter}: usa o Resend configurado em Dados
+ * da loja &gt; Integrações quando ativo e, fora isso, o adapter de ambiente ({@code fallbackEmailPort})
+ * escolhido por {@code email.provider}:
  * <ul>
  *   <li>{@code resend} — envia via API Resend (requer {@code resend.api-key} real).</li>
+ *   <li>{@code mailpit} — envia para o Mailpit (hml).</li>
  *   <li>Qualquer outro valor / ausente — loga no console (padrão dev/testes).</li>
  * </ul>
- *
- * Usar @Bean em @Configuration garante que @ConditionalOnMissingBean seja avaliado
- * na ordem correta — diferente de @Component que tem ordenação não determinística.
  */
 @Configuration
 class EmailAdapterConfig {
 
+    static final String FALLBACK = "fallbackEmailPort";
+
     @Bean
+    @Primary
+    RoutingEmailAdapter routingEmailAdapter(@Qualifier(FALLBACK) EmailPort fallback,
+            EmailIntegrationUseCase emailIntegrationUseCase, StoreResendAdapterFactory storeResendAdapterFactory,
+            @Qualifier("emailTaskExecutor") Executor emailTaskExecutor) {
+        return new RoutingEmailAdapter(fallback, emailIntegrationUseCase, storeResendAdapterFactory, emailTaskExecutor);
+    }
+
+    @Bean
+    @Qualifier(FALLBACK)
     @ConditionalOnProperty(name = "email.provider", havingValue = "resend")
     ResendEmailAdapter resendEmailAdapter(
             @Value("${resend.api-key}") String apiKey,
@@ -32,15 +50,20 @@ class EmailAdapterConfig {
             @Value("${email.verification.subject:Código de confirmação de cadastro}") String emailSubject,
             @Value("${email.verification.frontend-url:http://localhost:4200/auth/verify-email}") String verificationFrontendUrl,
             ThymeleafEmailRenderer renderer,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            ObjectProvider<DevAlertPort> devAlertPort) {
         RestClient restClient = RestClient.builder()
                 .baseUrl(apiUrl)
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .build();
-        return new ResendEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+        ResendEmailAdapter adapter = new ResendEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject,
+                verificationFrontendUrl, renderer, meterRegistry);
+        adapter.reportFailuresTo(devAlertPort::getIfAvailable);
+        return adapter;
     }
 
     @Bean
+    @Qualifier(FALLBACK)
     @ConditionalOnProperty(name = "email.provider", havingValue = "mailpit")
     MailpitEmailAdapter mailpitEmailAdapter(
             @Value("${mailpit.from:noreply@cernedsgn.xyz}") String fromAddress,
@@ -49,15 +72,22 @@ class EmailAdapterConfig {
             @Value("${email.verification.subject:Código de confirmação de cadastro}") String emailSubject,
             @Value("${email.verification.frontend-url:http://localhost:4201/auth/verify-email}") String verificationFrontendUrl,
             ThymeleafEmailRenderer renderer,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            ObjectProvider<DevAlertPort> devAlertPort) {
         RestClient restClient = RestClient.builder()
                 .baseUrl(apiUrl)
                 .build();
-        return new MailpitEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+        MailpitEmailAdapter adapter = new MailpitEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject,
+                verificationFrontendUrl, renderer, meterRegistry);
+        adapter.reportFailuresTo(devAlertPort::getIfAvailable);
+        return adapter;
     }
 
+    // Condição explícita (e não @ConditionalOnMissingBean(EmailPort.class)): o RoutingEmailAdapter
+    // também é um EmailPort e faria o logging sumir.
     @Bean
-    @ConditionalOnMissingBean(EmailPort.class)
+    @Qualifier(FALLBACK)
+    @ConditionalOnExpression("!'${email.provider:logging}'.equals('resend') && !'${email.provider:logging}'.equals('mailpit')")
     LoggingEmailAdapter loggingEmailAdapter() {
         return new LoggingEmailAdapter();
     }

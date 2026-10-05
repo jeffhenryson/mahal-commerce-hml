@@ -61,12 +61,20 @@ auth.max-sessions-per-user=${AUTH_MAX_SESSIONS_PER_USER:5}
 email.verification.ttl-minutes=${EMAIL_VERIFICATION_TTL_MINUTES:15}
 email.verification.resend-cooldown-seconds=${EMAIL_RESEND_COOLDOWN_SECONDS:60}
 
-# Email provider: 'logging' = loga no console (padrão dev), 'resend' = envia de verdade.
-# Para testar envio real: defina EMAIL_PROVIDER=resend e RESEND_API_KEY=<sua-chave>.
+# Email provider: 'logging' = loga no console (padrão dev), 'mailpit' = caixa de teste local,
+# 'resend' = envia de verdade.
+# Para testar envio real: defina EMAIL_PROVIDER=resend e RESEND_API_KEY=<sua-chave>, ou configure
+# o Resend em Configurações > Dados da loja > Integrações (ativo, tem prioridade sobre este valor).
 email.provider=${EMAIL_PROVIDER:logging}
 resend.api-key=${RESEND_API_KEY:dev-placeholder-key}
 resend.from=${RESEND_FROM:noreply@example.com}
 email.verification.subject=${EMAIL_VERIFICATION_SUBJECT:Código de confirmação de cadastro}
+
+# Mailpit (EMAIL_PROVIDER=mailpit): api-url é por onde o backend envia; ui-url é a caixa de entrada
+# que o navegador abre (aba "Caixa de teste" em Integrações). Rodando pela IDE, suba só o Mailpit:
+#   docker compose -f docker-compose.dev.yml up -d mailpit-mahal-dev
+mailpit.api-url=${MAILPIT_API_URL:http://localhost:8026/api/v1/send}
+mailpit.ui-url=${MAILPIT_UI_URL:http://localhost:8026}
 
 # Scheduler (dev) — roda às 03:00 todos os dias
 refresh-token.cleanup.cron=${REFRESH_TOKEN_CLEANUP_CRON:0 0 3 * * *}

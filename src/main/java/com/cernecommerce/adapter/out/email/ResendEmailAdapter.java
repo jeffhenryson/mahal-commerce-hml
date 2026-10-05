@@ -2,28 +2,23 @@ package com.cernecommerce.adapter.out.email;
 
 import com.cernecommerce.core.domain.exception.email.EmailDeliveryException;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
-import com.cernecommerce.core.ports.out.notification.EmailPort;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
-import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public class ResendEmailAdapter implements EmailPort {
+public class ResendEmailAdapter extends TemplatedEmailAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(ResendEmailAdapter.class);
     private final RestClient restClient;
     private final String fromAddress;
-    private final long ttlMinutes;
-    private final String emailSubject;
-    private final String verificationFrontendUrl;
-    private final ThymeleafEmailRenderer renderer;
-    private final MeterRegistry meterRegistry;
+    private final String replyTo;
 
     public ResendEmailAdapter(
             RestClient restClient,
@@ -33,127 +28,22 @@ public class ResendEmailAdapter implements EmailPort {
             String verificationFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry) {
+        this(restClient, fromAddress, null, ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+    }
+
+    public ResendEmailAdapter(
+            RestClient restClient,
+            String fromAddress,
+            String replyTo,
+            long ttlMinutes,
+            String emailSubject,
+            String verificationFrontendUrl,
+            ThymeleafEmailRenderer renderer,
+            MeterRegistry meterRegistry) {
+        super(ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
         this.restClient = restClient;
         this.fromAddress = fromAddress;
-        this.ttlMinutes = ttlMinutes;
-        this.emailSubject = emailSubject;
-        this.verificationFrontendUrl = verificationFrontendUrl;
-        this.renderer = renderer;
-        this.meterRegistry = meterRegistry;
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendVerificationCode(String to, String username, String code) {
-        String verifyUrl = verificationFrontendUrl + "?code=" + code;
-        String html = renderer.render("verification-code", Map.of(
-                "username", username,
-                "code", code,
-                "verifyUrl", verifyUrl,
-                "ttlMinutes", ttlMinutes));
-        send(to, emailSubject, html, "email.verification");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendPasswordResetLink(String to, String username, String resetLink) {
-        String html = renderer.render("password-reset", Map.of(
-                "username", username,
-                "resetLink", resetLink));
-        send(to, "Recuperação de senha", html, "email.password-reset");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendEmailChangeNotification(String oldEmail, String username, String newEmail) {
-        String html = renderer.render("email-change", Map.of(
-                "username", username,
-                "newEmail", newEmail));
-        send(oldEmail, "Seu email foi alterado", html, "email.email-change-notification");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendPasswordChangedAlert(String to, String username) {
-        String html = renderer.render("security-alert", Map.of(
-                "username", username,
-                "title", "Sua senha foi alterada",
-                "message", "A senha da sua conta foi alterada agora.",
-                "footerMessage", "Se não foi você, entre em contato com o suporte imediatamente e revogue suas sessões."));
-        send(to, "Alerta de segurança: senha alterada", html, "email.security-alert.password-changed");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendAccountLockedAlert(String to, String username) {
-        String html = renderer.render("security-alert", Map.of(
-                "username", username,
-                "title", "Conta temporariamente bloqueada",
-                "message", "Sua conta foi bloqueada temporariamente devido a múltiplas tentativas de login malsucedidas.",
-                "footerMessage", "Aguarde alguns minutos e tente novamente. Se não foi você, sua senha pode estar comprometida."));
-        send(to, "Alerta de segurança: conta bloqueada", html, "email.security-alert.account-locked");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendTotpStatusAlert(String to, String username, boolean enabled) {
-        String action = enabled ? "ativada" : "desativada";
-        String detail = enabled
-                ? "A autenticação em dois fatores foi ativada na sua conta."
-                : "A autenticação em dois fatores foi desativada na sua conta.";
-        String html = renderer.render("security-alert", Map.of(
-                "username", username,
-                "title", "Autenticação em dois fatores " + action,
-                "message", detail,
-                "footerMessage", "Se não foi você, acesse sua conta e revogue todas as sessões ativas imediatamente."));
-        send(to, "Alerta de segurança: 2FA " + action, html, "email.security-alert.totp-" + (enabled ? "enabled" : "disabled"));
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendTokenTheftAlert(String to, String username) {
-        String html = renderer.render("security-alert", Map.of(
-                "username", username,
-                "title", "Acesso suspeito detectado",
-                "message", "Detectamos o reuso de uma credencial de sessão já utilizada — todas as sessões da sua conta foram encerradas automaticamente.",
-                "footerMessage", "Se não foi você, sua conta pode estar comprometida. Troque sua senha imediatamente."));
-        send(to, "Alerta de segurança: acesso suspeito", html, "email.security-alert.token-theft");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendOrderConfirmation(String to, String customerName, String orderReference, BigDecimal total,
-            int itemCount, String checkoutUrl) {
-        String html = renderer.render("order-confirmation", Map.of(
-                "customerName", customerName,
-                "orderReference", orderReference,
-                "total", total,
-                "itemCount", itemCount,
-                "checkoutUrl", checkoutUrl));
-        send(to, "Recebemos seu pedido " + orderReference, html, "email.order-confirmation");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendOrderStatusUpdate(String to, String customerName, String orderReference, String newStatusLabel) {
-        String html = renderer.render("order-status-update", Map.of(
-                "customerName", customerName,
-                "orderReference", orderReference,
-                "newStatusLabel", newStatusLabel));
-        send(to, "Atualização do pedido " + orderReference, html, "email.order-status");
-    }
-
-    @Async("emailTaskExecutor")
-    @Override
-    public void sendOrderCancellation(String to, String customerName, String orderReference, String reason,
-            boolean refunded) {
-        String html = renderer.render("order-cancellation", Map.of(
-                "customerName", customerName,
-                "orderReference", orderReference,
-                "reason", reason,
-                "refunded", refunded));
-        String subject = refunded ? "Pedido " + orderReference + " reembolsado" : "Pedido " + orderReference + " cancelado";
-        send(to, subject, html, "email.order-cancellation");
+        this.replyTo = replyTo;
     }
 
     @Override
@@ -161,13 +51,16 @@ public class ResendEmailAdapter implements EmailPort {
         return EmailChannelStatus.of(true, "RESEND", "Conectado à API Resend");
     }
 
-    private void send(String to, String subject, String html, String logPrefix) {
-        Map<String, Object> body = Map.of(
-                "from", fromAddress,
-                "to", List.of(to),
-                "subject", subject,
-                "html", html
-        );
+    @Override
+    protected void deliver(String to, String subject, String html, String logPrefix) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("from", fromAddress);
+        body.put("to", List.of(to));
+        body.put("subject", subject);
+        body.put("html", html);
+        if (replyTo != null && !replyTo.isBlank()) {
+            body.put("reply_to", replyTo);
+        }
         try {
             restClient.post()
                     .contentType(MediaType.APPLICATION_JSON)
@@ -177,9 +70,15 @@ public class ResendEmailAdapter implements EmailPort {
             log.info("{}.sent to={}", logPrefix, to);
             meterRegistry.counter("email.sent.total", "type", logPrefix).increment();
         } catch (Exception ex) {
-            log.error("{}.failed to={} error={}", logPrefix, to, ex.getMessage());
+            // O corpo do erro do Resend diz o motivo (domínio não verificado, chave inválida...);
+            // só o status ("403 Forbidden") não ajuda quem está configurando.
+            String error = ex instanceof RestClientResponseException rex && !rex.getResponseBodyAsString().isBlank()
+                    ? rex.getStatusCode().value() + " " + rex.getResponseBodyAsString()
+                    : ex.getMessage();
+            log.error("{}.failed to={} error={}", logPrefix, to, error);
             meterRegistry.counter("email.failed.total", "type", logPrefix).increment();
-            throw new EmailDeliveryException(ex.getMessage());
+            reportFailure(logPrefix, to, error);
+            throw new EmailDeliveryException(error);
         }
     }
 }
