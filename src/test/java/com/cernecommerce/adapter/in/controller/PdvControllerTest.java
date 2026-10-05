@@ -31,6 +31,7 @@ import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.ports.in.PdvUseCase;
+import com.cernecommerce.core.ports.in.ReceiptEmailUseCase;
 import com.cernecommerce.infra.handler.GlobalExceptionHandler;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +53,7 @@ public class PdvControllerTest {
 
     private MockMvc mockMvc;
     private PdvUseCase pdvUseCase;
+    private ReceiptEmailUseCase receiptEmailUseCase;
     
     private static final UsernamePasswordAuthenticationToken AUTH =
             new UsernamePasswordAuthenticationToken("operador", null, List.of());
@@ -59,10 +61,11 @@ public class PdvControllerTest {
     @BeforeEach
     void setup() {
         pdvUseCase = mock(PdvUseCase.class);
+        receiptEmailUseCase = mock(ReceiptEmailUseCase.class);
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new PdvController(pdvUseCase, new OrderDTOConverter(),
-                        new CashRegisterDTOConverter(), publisher))
+                        new CashRegisterDTOConverter(), publisher, receiptEmailUseCase))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

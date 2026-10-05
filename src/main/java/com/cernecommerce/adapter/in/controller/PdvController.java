@@ -11,6 +11,7 @@ import com.cernecommerce.adapter.in.dtos.response.CashMovementResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashRegisterSessionResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PaymentTotalResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.ReceiptEmailResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SessionSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SaleReceiptResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
@@ -26,6 +27,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
+import com.cernecommerce.core.ports.in.ReceiptEmailUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -79,10 +81,13 @@ public class PdvController {
     private final OrderDTOConverter orderConverter;
     private final CashRegisterDTOConverter cashRegisterConverter;
     private final ApplicationEventPublisher publisher;
+    private final ReceiptEmailUseCase receiptEmailUseCase;
 
     public PdvController(PdvUseCase pdvUseCase, OrderDTOConverter orderConverter,
-            CashRegisterDTOConverter cashRegisterConverter, ApplicationEventPublisher publisher) {
+            CashRegisterDTOConverter cashRegisterConverter, ApplicationEventPublisher publisher,
+            ReceiptEmailUseCase receiptEmailUseCase) {
         this.pdvUseCase = pdvUseCase;
+        this.receiptEmailUseCase = receiptEmailUseCase;
         this.orderConverter = orderConverter;
         this.cashRegisterConverter = cashRegisterConverter;
         this.publisher = publisher;
@@ -283,6 +288,21 @@ public class PdvController {
     public ResponseEntity<OrderResponseDTO> getOrder(@PathVariable("id") Long orderId) {
         Order order = pdvUseCase.getOrder(orderId);
         return ResponseEntity.ok(orderConverter.toResponse(order, pdvUseCase.getOrderPayments(orderId)));
+    }
+
+    @Operation(summary = "Envia o comprovante da compra para o e-mail do cliente vinculado",
+            description = "Só quando o operador pede — balcão e mesa não mandam e-mail sozinhos. Vai "
+                    + "para o e-mail do cliente vinculado ao pedido (não aceita endereço avulso). "
+                    + "Envio assíncrono: 202 significa que saiu para o provedor, não que chegou.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Enviado; `sentTo` traz o destinatário mascarado", content = @Content(schema = @Schema(implementation = ReceiptEmailResponseDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content),
+            @ApiResponse(responseCode = "422", description = "RECEIPT_EMAIL_UNAVAILABLE — pedido cancelado, sem cliente ou cliente sem e-mail", content = @Content)
+    })
+    @PostMapping("/sales/{id}/receipt/email")
+    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    public ResponseEntity<ReceiptEmailResponseDTO> emailSaleReceipt(@PathVariable("id") Long orderId) {
+        return ResponseEntity.accepted().body(new ReceiptEmailResponseDTO(receiptEmailUseCase.sendPurchaseReceipt(orderId)));
     }
 
     @Operation(summary = "Comprovante interno da venda — não é documento fiscal",
