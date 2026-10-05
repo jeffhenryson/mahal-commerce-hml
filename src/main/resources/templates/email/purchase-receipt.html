@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page('Comprovante de compra', '#15803d', ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <h2 style="margin:0 0 16px;color:#15803d">Obrigado pela sua compra!</h2>
+  <p>Olá, <strong th:text="${order.customerName}">cliente</strong>!</p>
+  <p>Segue o comprovante da sua compra <strong th:text="${order.orderReference}">#123</strong> na
+    <span th:text="${store.name}">loja</span>. Este comprovante não tem valor fiscal.</p>
+  <table th:replace="~{email/order-items :: table(${order})}"></table>
+</div>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<body>
+<table th:fragment="table(order)" role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse;margin:20px 0;font-size:14px">
+  <tr style="background:#f4f4f5">
+    <th style="text-align:left;padding:10px 12px;color:#555;font-weight:600">Item</th>
+    <th style="text-align:center;padding:10px 8px;color:#555;font-weight:600">Qtd</th>
+    <th style="text-align:right;padding:10px 12px;color:#555;font-weight:600">Valor</th>
+  </tr>
+  <tr th:each="line : ${order.items}" style="border-bottom:1px solid #eee">
+    <td style="padding:10px 12px;color:#333">
+      <span th:text="${line.name}">Produto</span>
+      <br th:if="${line.unitPrice}"><span th:if="${line.unitPrice}" style="color:#888;font-size:12px"
+            th:text="${#numbers.formatCurrency(line.unitPrice)} + ' cada'">R$ 0,00 cada</span>
+    </td>
+    <td style="padding:10px 8px;color:#333;text-align:center" th:text="${line.quantityLabel()}">1</td>
+    <td style="padding:10px 12px;color:#333;text-align:right;white-space:nowrap"
+        th:text="${line.amount != null} ? ${#numbers.formatCurrency(line.amount)} : '—'">R$ 0,00</td>
+  </tr>
+  <tr th:if="${order.hasValue(order.discountAmount)}">
+    <td colspan="2" style="padding:8px 12px;color:#555;text-align:right">Descontos</td>
+    <td style="padding:8px 12px;color:#15803d;text-align:right;white-space:nowrap"
+        th:text="'- ' + ${#numbers.formatCurrency(order.discountAmount)}">- R$ 0,00</td>
+  </tr>
+  <tr th:if="${order.hasValue(order.cashbackRedeemed)}">
+    <td colspan="2" style="padding:8px 12px;color:#555;text-align:right">Cashback usado</td>
+    <td style="padding:8px 12px;color:#15803d;text-align:right;white-space:nowrap"
+        th:text="'- ' + ${#numbers.formatCurrency(order.cashbackRedeemed)}">- R$ 0,00</td>
+  </tr>
+  <tr th:if="${order.hasValue(order.serviceFee)}">
+    <td colspan="2" style="padding:8px 12px;color:#555;text-align:right">Taxa de serviço</td>
+    <td style="padding:8px 12px;color:#333;text-align:right;white-space:nowrap"
+        th:text="${#numbers.formatCurrency(order.serviceFee)}">R$ 0,00</td>
+  </tr>
+  <tr th:if="${order.hasValue(order.deliveryFee)}">
+    <td colspan="2" style="padding:8px 12px;color:#555;text-align:right">Entrega</td>
+    <td style="padding:8px 12px;color:#333;text-align:right;white-space:nowrap"
+        th:text="${#numbers.formatCurrency(order.deliveryFee)}">R$ 0,00</td>
+  </tr>
+  <tr style="border-top:2px solid #ddd">
+    <td colspan="2" style="padding:12px;color:#111;text-align:right;font-weight:bold">Total</td>
+    <td style="padding:12px;color:#111;text-align:right;font-weight:bold;white-space:nowrap"
+        th:text="${#numbers.formatCurrency(order.total)}">R$ 0,00</td>
+  </tr>
+</table>
+</body>
+</html>

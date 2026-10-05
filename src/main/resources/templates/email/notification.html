@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page(${email.title}, ${accent}, ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <h2 th:style="'margin:0 0 16px;color:' + ${accent}" th:text="${email.title}">Título</h2>
+  <p th:if="${email.intro}" th:text="${email.intro}">Introdução.</p>
+  <th:block th:each="section : ${email.sections}">
+    <h3 th:if="${section.title}" style="margin:24px 0 8px;color:#111;font-size:15px" th:text="${section.title}">Seção</h3>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px">
+      <tr th:each="row : ${section.rows}" style="border-bottom:1px solid #eee">
+        <td style="padding:8px 0;color:#555;vertical-align:top" th:text="${row.label}">Rótulo</td>
+        <td th:style="${row.highlight} ? 'padding:8px 0 8px 12px;text-align:right;font-weight:bold;color:' + ${accent} : 'padding:8px 0 8px 12px;text-align:right;color:#111'"
+            th:text="${row.value}">Valor</td>
+      </tr>
+    </table>
+  </th:block>
+  <p th:if="${actionUrl}" style="text-align:center;margin:28px 0 8px">
+    <a th:href="${actionUrl}" th:style="'display:inline-block;background:' + ${accent} + ';color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold'"
+       th:text="${email.actionLabel} ?: 'Abrir no painel'">Abrir no painel</a>
+  </p>
+</div>
+</body>
+</html>

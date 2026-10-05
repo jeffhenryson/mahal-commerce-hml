@@ -1,38 +1,24 @@
 <!DOCTYPE html>
-<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
-<head><meta charset="UTF-8"><title>Confirmação de cadastro</title></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:32px 16px">
-  <tr><td align="center">
-    <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <tr><td style="background:#1e40af;padding:24px 32px">
-        <span style="color:#fff;font-size:1.25rem;font-weight:bold">Cerne Commerce</span>
-      </td></tr>
-      <tr><td style="padding:32px">
-        <h2 style="margin:0 0 16px;color:#111">Confirmação de cadastro</h2>
-        <p style="color:#333">Olá, <strong th:text="${username}">username</strong>!</p>
-        <p style="color:#333">Clique no botão abaixo para confirmar seu email e ativar sua conta:</p>
-        <p style="text-align:center;margin:28px 0">
-          <a th:href="${verifyUrl}" style="display:inline-block;background:#1e40af;color:#fff;padding:13px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:1rem">
-            Confirmar email
-          </a>
-        </p>
-        <p style="color:#555;font-size:.875rem;text-align:center">Ou insira o código manualmente na página de verificação:</p>
-        <div th:text="${code}" style="font-size:1.75rem;font-weight:bold;letter-spacing:.4rem;background:#f4f4f4;padding:16px;text-align:center;border-radius:8px;margin:8px 0;color:#111">
-          000000
-        </div>
-        <p style="color:#777;font-size:.8rem;margin-top:20px">
-          Este código expira em <span th:text="${ttlMinutes}">15</span> minutos.<br>
-          Se você não solicitou este cadastro, ignore este email.
-        </p>
-      </td></tr>
-      <tr><td style="background:#f9f9f9;padding:16px 32px;border-top:1px solid #eee">
-        <p style="color:#aaa;font-size:.75rem;margin:0;text-align:center">
-          &copy; Cerne Commerce — Enviado automaticamente, não responda este email.
-        </p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page('Confirmação de cadastro', '#1e40af', ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <h2 style="margin:0 0 16px;color:#111">Confirmação de cadastro</h2>
+  <p>Olá, <strong th:text="${username}">username</strong>!</p>
+  <p>Clique no botão abaixo para confirmar seu email e ativar sua conta:</p>
+  <p style="text-align:center;margin:28px 0">
+    <a th:href="${verifyUrl}" style="display:inline-block;background:#1e40af;color:#fff;padding:13px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:1rem">
+      Confirmar email
+    </a>
+  </p>
+  <p style="color:#555;font-size:.875rem;text-align:center">Ou insira o código manualmente na página de verificação:</p>
+  <div th:text="${code}" style="font-size:1.75rem;font-weight:bold;letter-spacing:.4rem;background:#f4f4f4;padding:16px;text-align:center;border-radius:8px;margin:8px 0;color:#111">
+    000000
+  </div>
+  <p style="color:#777;font-size:.8rem;margin-top:20px">
+    Este código expira em <span th:text="${ttlMinutes}">15</span> minutos.<br>
+    Se você não solicitou este cadastro, ignore este email.
+  </p>
+</div>
 </body>
 </html>
