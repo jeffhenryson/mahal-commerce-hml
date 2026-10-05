@@ -543,4 +543,28 @@ class UserServiceTest {
         verify(userRepository).findByEmail("alice@new.com");
         verify(emailPort).sendVerificationCode(eq("alice@new.com"), eq("alice"), anyString());
     }
+
+    // ── PLAT-C054 — conta de cliente da loja não recebe nem perde roles pela gestão ─────────
+
+    private static User customerAccount() {
+        return User.customer("cli@x.com", "hashed", "cli@x.com", 7L, new java.util.HashSet<>());
+    }
+
+    @Test
+    void assignRole_rejectsCustomerAccount() {
+        when(userRepository.findByUsername("cli@x.com")).thenReturn(Optional.of(customerAccount()));
+
+        assertThatThrownBy(() -> userService.assignRole("cli@x.com", "ROLE_ADMIN"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException.class);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void removeRole_rejectsCustomerAccount() {
+        when(userRepository.findByUsername("cli@x.com")).thenReturn(Optional.of(customerAccount()));
+
+        assertThatThrownBy(() -> userService.removeRole("cli@x.com", "ROLE_CUSTOMER"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException.class);
+        verify(userRepository, never()).save(any());
+    }
 }

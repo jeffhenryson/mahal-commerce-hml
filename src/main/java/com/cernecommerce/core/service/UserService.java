@@ -8,6 +8,7 @@ import com.cernecommerce.core.domain.exception.email.EmailDeliveryException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeExpiredException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeNotFoundException;
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
+import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
@@ -161,7 +162,10 @@ public class UserService implements UserUseCase {
     }
 
     @Override
-    @Transactional(noRollbackFor = EmailDeliveryException.class)
+    // PLAT-C053: sem noRollbackFor. Se o código de verificação não sai, o cadastro inteiro é
+    // desfeito — antes a conta ficava gravada desabilitada, a API respondia 503 e a nova tentativa
+    // do usuário batia em 409 "username já existe" para uma conta que ele nunca conseguiria ativar.
+    @Transactional
     public User registerUser(String username, String rawPassword, String email, List<String> roles) {
         if (!isValidPassword(rawPassword)) throw new InvalidPasswordException();
         String normalizedEmail = normalizeEmail(email);
@@ -241,6 +245,7 @@ public class UserService implements UserUseCase {
     public void assignRole(String username, String roleName) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UserNotFoundException(username));
+        if (user.isCustomer()) throw new CustomerAccountRolesImmutableException(username);
         Role role = roleRepository.findByName(roleName)
                 .orElseThrow(() -> new RoleNotFoundException(roleName));
         user.addRole(role);
@@ -253,6 +258,7 @@ public class UserService implements UserUseCase {
     public void removeRole(String username, String roleName) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UserNotFoundException(username));
+        if (user.isCustomer()) throw new CustomerAccountRolesImmutableException(username);
         Role role = roleRepository.findByName(roleName)
                 .orElseThrow(() -> new RoleNotFoundException(roleName));
         user.removeRole(role);

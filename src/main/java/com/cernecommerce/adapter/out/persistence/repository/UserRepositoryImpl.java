@@ -31,6 +31,7 @@ import com.cernecommerce.adapter.out.persistence.entity.RoleEntity;
 import com.cernecommerce.adapter.out.persistence.entity.UserEntity;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.User;
+import com.cernecommerce.core.domain.model.auth.UserType;
 import com.cernecommerce.core.ports.out.user.UserRepository;
 
 @Repository
@@ -168,6 +169,10 @@ public class UserRepositoryImpl implements UserRepository {
     private static Specification<UserEntity> buildSpec(String search, Boolean enabled, Set<String> excludeRoles) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
+            // PLAT-C054: esta listagem alimenta a gestão de usuários do back-office. Contas de
+            // cliente da loja (/shop/register) não são operadores e não podem aparecer nem ser
+            // administradas por ela.
+            predicates.add(cb.equal(root.get("userType"), UserType.OPERATOR));
             if (search != null && !search.isBlank()) {
                 String pattern = "%" + search.toLowerCase() + "%";
                 predicates.add(cb.or(

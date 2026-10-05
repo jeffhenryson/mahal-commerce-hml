@@ -76,6 +76,7 @@ public class UserController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "204", description = "Atribuída"),
             @ApiResponse(responseCode = "404", description = "Usuário não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Conta de cliente da loja — roles não administráveis (CUSTOMER_ACCOUNT_ROLES_IMMUTABLE)", content = @Content),
             @ApiResponse(responseCode = "401", description = "Não autenticado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
@@ -110,6 +111,7 @@ public class UserController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "204", description = "Removida"),
             @ApiResponse(responseCode = "404", description = "Usuário ou role não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Conta de cliente da loja — roles não administráveis (CUSTOMER_ACCOUNT_ROLES_IMMUTABLE)", content = @Content),
             @ApiResponse(responseCode = "401", description = "Não autenticado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
@@ -180,7 +182,7 @@ public class UserController {
         return ResponseEntity.ok(converter.toResponse(useCase.getUserById(id)));
     }
 
-    @Operation(summary = "Lista usuários paginado com filtros opcionais")
+    @Operation(summary = "Lista operadores paginado com filtros opcionais (contas de cliente da loja não entram)")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "401", description = "Não autenticado", content = @Content)
