@@ -112,10 +112,13 @@ services:
       EMAIL_PROVIDER: mailpit
       MAILPIT_FROM: ${MAILPIT_FROM}
       MAILPIT_API_URL: http://mailpit-mahal:8025/api/v1/send
+      # URL que o navegador acessa — a aba "Caixa de teste" do admin embute essa UI.
+      MAILPIT_UI_URL: http://localhost:8025
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM: ${RESEND_FROM}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       EMAIL_VERIFICATION_FRONTEND_URL: ${EMAIL_VERIFICATION_FRONTEND_URL}
+      EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-http://localhost:4200}
       # HmlStartupValidator rejeita "localhost" em avatar.base-url/product.image.base-url;
       # 127.0.0.1 é o mesmo host, só não bate no filtro. Porta é a do HOST (8080), não a
       # interna do container (8082) — é o que o navegador precisa alcançar.

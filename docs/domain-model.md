@@ -297,7 +297,12 @@ enum NotificationType {
     ROLE_ASSIGNED,          // papel atribuído ao usuário
     ROLE_REMOVED,           // papel removido do usuário
     ACCOUNT_DISABLED,       // conta desativada por administrador
-    SYSTEM                  // uso programático genérico
+    SYSTEM,                 // uso programático genérico
+    ESTOQUE,                // ponto de reposição e kits (ESTOQUE_STOCK_MANAGE)
+    CAIXA,                  // abertura, sangria/suprimento, fechamento (FINANCEIRO_READ)
+    OPERACAO,               // cancelamento, reembolso, correção de pagamento, preço (FINANCEIRO_READ)
+    RESUMO,                 // resumo diário às 8h (FINANCEIRO_READ)
+    DEV                     // alertas técnicos para a ROLE_DEV
 }
 ```
 

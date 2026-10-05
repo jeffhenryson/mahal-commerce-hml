@@ -2031,6 +2031,20 @@ de venda, `paymentStatus` vem `PENDENTE` quando há linha `MARCADO`.
 
 Retorna `OrderResponseDTO`. `404 ORDER_NOT_FOUND`.
 
+### POST /pdv/sales/{id}/receipt/email — Permissão: PDV_SALE_MANAGE
+
+Envia o comprovante da compra (balcão ou mesa) para o e-mail do **cliente vinculado** ao pedido — só quando o operador pede; venda presencial não manda e-mail sozinha. Não aceita endereço avulso. Envio assíncrono: `202` quer dizer que saiu para o provedor.
+
+```json
+// Response 202
+{ "sentTo": "jo***@gmail.com" }
+```
+
+| Erro | Quando |
+|------|--------|
+| 404 | Pedido não encontrado |
+| 422 `RECEIPT_EMAIL_UNAVAILABLE` | Pedido cancelado, sem cliente vinculado ou cliente sem e-mail |
+
 ### GET /pdv/sessions/{id}/sales — Permissão: PDV_READ
 
 `PageResult<OrderResponseDTO>` dos pedidos da sessão, do mais recente para o mais antigo
@@ -3258,18 +3272,27 @@ Atualiza a preferência de notificação para um tipo específico. O path `{type
 
 ### Tipos de notificação (`NotificationType`)
 
-| Tipo | Evento que dispara | Email padrão enviado? |
-|------|-------------------|-----------------------|
-| `PASSWORD_CHANGED` | `USER_PASSWORD_CHANGED` | ✅ `sendPasswordChangedAlert` |
-| `ACCOUNT_LOCKED` | `ACCOUNT_LOCKED` | ✅ `sendAccountLockedAlert` |
-| `TOTP_ENABLED` | `TOTP_ENABLED` | ✅ `sendTotpStatusAlert(enabled=true)` |
-| `TOTP_DISABLED` | `TOTP_DISABLED` | ✅ `sendTotpStatusAlert(enabled=false)` |
-| `TOKEN_THEFT_DETECTED` | `TOKEN_THEFT_DETECTED` | ✅ `sendTokenTheftAlert` |
-| `EMAIL_CHANGED` | `USER_EMAIL_CHANGED` | ❌ |
-| `ROLE_ASSIGNED` | `USER_ROLE_ASSIGNED` | ❌ |
-| `ROLE_REMOVED` | `USER_ROLE_REMOVED` | ❌ |
-| `ACCOUNT_DISABLED` | `USER_DISABLED` | ❌ |
-| `SYSTEM` | — (uso programático futuro) | ❌ |
+| Tipo | Evento que dispara | Quem recebe | E-mail |
+|------|-------------------|-------------|--------|
+| `PASSWORD_CHANGED` | `USER_PASSWORD_CHANGED`, `PASSWORD_RESET_COMPLETED`, `OAUTH_GOOGLE_LINKED` (primeiro login com Google) | o próprio usuário | ✅ alerta com data, IP e dispositivo |
+| `ACCOUNT_LOCKED` | `ACCOUNT_LOCKED` | o próprio usuário | ✅ alerta com data, IP e dispositivo |
+| `TOTP_ENABLED` | `TOTP_ENABLED` | o próprio usuário | ✅ alerta com data, IP e dispositivo |
+| `TOTP_DISABLED` | `TOTP_DISABLED` | o próprio usuário | ✅ alerta com data, IP e dispositivo |
+| `TOKEN_THEFT_DETECTED` | `TOKEN_THEFT_DETECTED` | o próprio usuário | ✅ alerta com data, IP e dispositivo |
+| `EMAIL_CHANGED` | `USER_EMAIL_CHANGED` (só in-app), `EMAIL_CHANGE_CONFIRMED` | o próprio usuário | ✅ confirmação no endereço **novo** |
+| `ROLE_ASSIGNED` | `USER_ROLE_ASSIGNED` | o próprio usuário | ✅ |
+| `ROLE_REMOVED` | `USER_ROLE_REMOVED` | o próprio usuário | ✅ |
+| `ACCOUNT_DISABLED` | `USER_DISABLED` | o próprio usuário | ✅ |
+| `SYSTEM` | lote vencendo, kit bloqueado, ponto de reposição (in-app) | `ESTOQUE_STOCK_MANAGE` | ❌ |
+| `ESTOQUE` | produto abaixo do ponto de reposição | `ESTOQUE_STOCK_MANAGE` | ✅ um e-mail por operação, com todos os SKUs |
+| `CAIXA` | `CASH_SESSION_OPENED`, `CASH_MOVEMENT_REGISTERED`, `CASH_SESSION_CLOSED`, caixa aberto há 12h (job de hora em hora, também para o operador) | `FINANCEIRO_READ` (abertura e sangria/suprimento não vão para quem fez) | ✅ fechamento com conferência da gaveta, vendas por forma de pagamento, fiado e sangrias |
+| `OPERACAO` | `ORDER_CANCELLED`, `ORDER_REFUNDED`, `ORDER_PAYMENT_CORRECTED`, `PRODUCT_PRICE_CHANGED` | `FINANCEIRO_READ` (menos quem fez) | ✅ |
+| `RESUMO` | job diário às 8h (`email.digest.cron`) | `FINANCEIRO_READ` | ✅ vendas de ontem por canal, mais vendidos, caixas do dia e fiado vencido |
+| `DEV` | `BUG_REPORT_CREATED`, `INTEGRATION_UPDATED`, `PAYMENT_WEBHOOK_FAILED`, eventos de segurança e de RBAC, erro 500, falha de envio de e-mail | `ROLE_DEV` | ✅ (falha de envio de e-mail só in-app); repetições agrupadas por 15 min |
+
+Fora das preferências também: **fiado** para o cliente — comprovante ao marcar (`RECEIVABLE_CREATED`), lembrete 3 dias antes e no dia do vencimento (job às 9h, `pdv.on-account.reminder.cron`) e confirmação de pagamento (`RECEIVABLE_PAID`).
+
+Fora das preferências: **boas-vindas** (`USER_EMAIL_VERIFIED`, `USER_CREATED`) e e-mails do **comprador** — confirmação, status, cancelamento/reembolso (só pedidos `MARKETPLACE`, com itens e valores) e comprovante do PDV (`POST /pdv/sales/{id}/receipt/email`). Todos os e-mails usam nome, logo e rodapé de Dados da loja; links do painel usam `email.app-base-url` (`EMAIL_APP_BASE_URL`).
 
 > **Preferências:** o comportamento de cada coluna ("in-app" e "email") pode ser sobrescrito individualmente via `PUT /notifications/preferences/{type}`. O `NotificationEventListener` verifica as preferências antes de persistir ou enviar email.
 
@@ -3585,6 +3608,66 @@ O browser envia o cookie **automaticamente** apenas em requisições para `/auth
 No Angular: `withCredentials: true` apenas nas chamadas a `/auth/*` (login, refresh, logout, 2fa/verify).
 
 ---
+
+## Store Integrations — `/store/integrations`
+
+Tokens de integração da loja (Configurações > Dados da loja > Integrações). Hoje só e-mail via **Resend**. Configuração em `system_config` (`integration.email.*`), chave da API cifrada com AES-256-GCM (mesma chave do TOTP, `totp.encryption.key`) e **nunca devolvida** — só `apiKeyConfigured` e `apiKeyLast4`. As chaves `integration.*` não aparecem em `GET /system/config`.
+
+**Precedência:** com `enabled=true` (exige chave + `fromEmail`), todos os e-mails do sistema saem pelo Resend da loja em qualquer ambiente (`RoutingEmailAdapter`). Desativada, vale o provedor do ambiente (`email.provider` = logging | mailpit | resend).
+
+### GET /store/integrations/email — Permissão: INTEGRATION_MANAGE
+
+```json
+// Response 200
+{
+  "enabled": true,
+  "provider": "RESEND",
+  "fromEmail": "contato@mahaltabacaria.com.br",
+  "fromName": "Mahal Tabacaria",
+  "replyTo": null,
+  "apiKeyConfigured": true,
+  "apiKeyLast4": "x9Qa",
+  "activeProvider": "RESEND",
+  "activeProviderDetail": "Resend configurado em Dados da loja > Integrações (remetente contato@mahaltabacaria.com.br)",
+  "environmentProvider": "MAILPIT",
+  "mailpitUiUrl": "http://localhost:8025",
+  "updatedAt": "2026-10-05T17:00:00Z",
+  "updatedBy": "admin"
+}
+```
+
+`environmentProvider` é o provedor do ambiente (`email.provider`), o que vale com a integração desativada. `mailpitUiUrl` (prop `mailpit.ui-url` / `MAILPIT_UI_URL`) só vem quando esse provedor é `MAILPIT`. É a caixa de entrada que o admin embute na aba "Caixa de teste" e fica `null` em prod.
+
+### PUT /store/integrations/email — Permissão: INTEGRATION_MANAGE
+
+```json
+// Request body
+{ "enabled": true, "provider": "RESEND", "fromEmail": "contato@mahaltabacaria.com.br",
+  "fromName": "Mahal Tabacaria", "replyTo": null, "apiKey": "re_..." }
+```
+
+`apiKey` ausente/`null` mantém a chave salva; `""` remove. Responde como o GET. Publica `INTEGRATION_UPDATED` na auditoria (sem a chave).
+
+**Erros:** `422 INVALID_EMAIL_INTEGRATION` — ativar sem chave ou remetente, e-mail de remetente/resposta inválido; `403` sem `INTEGRATION_MANAGE`.
+
+### POST /store/integrations/email/test — Permissão: INTEGRATION_MANAGE
+
+Envia exemplos com dados fictícios, **de forma síncrona**. Sem `sample`, envia um de cada (19).
+
+- `target: "STORE"` (padrão): pela configuração salva da loja (mesmo desativada).
+- `target: "ENVIRONMENT"`: pelo provedor do ambiente (Mailpit em dev/hml, log sem provedor, Resend do env em prod). Não exige a integração da loja.
+
+```json
+// Request body
+{ "to": "voce@exemplo.com", "sample": "PASSWORD_RESET", "target": "STORE" }
+// Response 200
+[ { "sample": "PASSWORD_RESET", "success": false,
+    "error": "Failed to send email: 403 {\"name\":\"validation_error\",\"message\":\"The domain is not verified\"}" } ]
+```
+
+`sample` ∈ `VERIFICATION_CODE`, `PASSWORD_RESET`, `EMAIL_CHANGE`, `PASSWORD_CHANGED`, `ACCOUNT_LOCKED`, `TOTP_STATUS`, `TOKEN_THEFT`, `ORDER_CONFIRMATION`, `ORDER_STATUS_UPDATE`, `ORDER_CANCELLATION`, `WELCOME`, `PURCHASE_RECEIPT`, `CASH_SESSION_CLOSED`, `STOCK_REORDER_ALERT`, `DEV_ALERT`, `ACCOUNT_CHANGE`, `RECEIVABLE_REMINDER`, `CASH_SESSION_STALE`, `DAILY_DIGEST`.
+
+**Erros:** `400` destinatário inválido; `422 INVALID_EMAIL_INTEGRATION` sem chave/remetente salvos (só com `target=STORE`).
 
 ## Configuração CORS (dev)
 

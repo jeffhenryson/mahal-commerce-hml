@@ -6,9 +6,9 @@
 #   docker compose -f docker-compose.dev.yml down
 #
 # O perfil dev é autossuficiente: H2 em memória, cache Caffeine e autoconfiguração do
-# Redis excluída (application-dev.properties). Por isso este arquivo sobe UM único
-# container — não há Postgres, Redis nem Mailpit aqui. Os dados somem a cada restart,
-# que é o comportamento pretendido do perfil.
+# Redis excluída (application-dev.properties). Por isso não há Postgres nem Redis aqui —
+# só o backend e o Mailpit (caixa de entrada dos e-mails de teste). Os dados somem a cada
+# restart, que é o comportamento pretendido do perfil.
 #
 # Requisitos:
 #   - .env na raiz do backend (ver .env.example)
@@ -18,6 +18,7 @@
 #
 # Portas (host → container), escolhidas para conviver com o stack hml simultaneamente:
 #   8080 → 8082  API + actuator + H2 console + Swagger
+#   8026 → 8025  Mailpit UI (o hml usa 8025)
 # =============================================================================
 
 name: mahal-commerce-dev
@@ -40,8 +41,14 @@ services:
       # Precisa refletir a porta do HOST, não a do container, senão as URLs de avatar
       # geradas apontam para uma porta que o navegador não alcança.
       AVATAR_BASE_URL: http://localhost:8080
-      # O código de verificação de email é impresso no log em vez de enviado.
-      EMAIL_PROVIDER: logging
+      # Os e-mails vão para o Mailpit (http://localhost:8026), nunca para caixas reais.
+      # A aba "Caixa de teste" em Configurações > Dados da loja > Integrações embute essa UI.
+      EMAIL_PROVIDER: mailpit
+      MAILPIT_API_URL: http://mailpit-mahal-dev:8025/api/v1/send
+      MAILPIT_UI_URL: http://localhost:8026
+    depends_on:
+      mailpit-mahal-dev:
+        condition: service_started
     ports:
       - "8080:8082"
     volumes:
@@ -52,6 +59,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+
+  mailpit-mahal-dev:
+    image: axllent/mailpit:latest
+    container_name: mailpit-mahal-dev
+    restart: unless-stopped
+    ports:
+      - "8026:8025"  # Web UI — caixa de entrada de dev
 
 volumes:
   uploads_dev:
