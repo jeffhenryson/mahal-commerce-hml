@@ -1,5 +1,7 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.rbac.Permission;
 import com.cernecommerce.core.ports.in.PermissionUseCase;
 import com.cernecommerce.core.ports.in.RoleUseCase;
 import com.cernecommerce.core.ports.in.UserUseCase;
@@ -16,6 +18,11 @@ import java.util.List;
 /**
  * Garante que ROLE_DEV e suas permissões exclusivas existam em todos os ambientes.
  * Roda em dev, hml e prod — o usuário DEV é criado apenas quando DEV_EMAIL está definido.
+ *
+ * O DEV tem todas as permissões do sistema, exceto as de cliente do marketplace ({@code SHOP_*}).
+ * A lista fixa abaixo cobre o banco zerado; além dela, toda permissão já gravada (as migrations
+ * rodam antes deste runner) é atribuída ao ROLE_DEV — assim uma permissão nova concedida só ao
+ * ROLE_ADMIN por migration não deixa o DEV com 403, como aconteceu com RECEIVABLE_* (V137).
  *
  * Separado do SeedConfig (dev-only) que cria usuários de teste (admin/user).
  */
@@ -68,6 +75,11 @@ public class DevRoleBootstrapConfig {
         "DEV_PERMISSION_MANAGE"
     };
 
+    /** Permissões do comprador do marketplace: o DEV não tem carrinho nem pedidos próprios. */
+    private static final String[] EXCLUDED_PREFIXES = {"SHOP_"};
+
+    private static final int PERMISSION_PAGE_SIZE = 100;
+
     @Bean
     CommandLineRunner bootstrapDevRole(PermissionUseCase permissionUseCase,
                                        RoleUseCase roleUseCase,
@@ -77,6 +89,7 @@ public class DevRoleBootstrapConfig {
         return args -> {
             ensureDevPermissions(permissionUseCase);
             ensureDevRole(roleUseCase);
+            grantAllExistingPermissions(permissionUseCase, roleUseCase);
             ensureDevUser(userUseCase, devEmail, devPassword);
         };
     }
@@ -104,6 +117,29 @@ public class DevRoleBootstrapConfig {
             try { roleUseCase.assignPermission("ROLE_DEV", perm); }
             catch (Exception e) { log.debug("dev-bootstrap.role.assign.skip perm={}", perm); }
         }
+    }
+
+    private void grantAllExistingPermissions(PermissionUseCase permissionUseCase, RoleUseCase roleUseCase) {
+        int page = 0;
+        PageResult<Permission> result;
+        do {
+            result = permissionUseCase.listAll(page, PERMISSION_PAGE_SIZE);
+            if (result == null || result.content() == null) return;
+            for (Permission permission : result.content()) {
+                String name = permission.getName();
+                if (isExcluded(name)) continue;
+                try { roleUseCase.assignPermission("ROLE_DEV", name); }
+                catch (Exception e) { log.debug("dev-bootstrap.role.assign.skip perm={}", name); }
+            }
+            page++;
+        } while (page < result.totalPages());
+    }
+
+    private static boolean isExcluded(String name) {
+        for (String prefix : EXCLUDED_PREFIXES) {
+            if (name.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     private void ensureDevUser(UserUseCase userUseCase, String devEmail, String devPassword) {

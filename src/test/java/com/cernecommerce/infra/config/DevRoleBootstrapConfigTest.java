@@ -1,13 +1,21 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.rbac.Permission;
 import com.cernecommerce.core.ports.in.PermissionUseCase;
 import com.cernecommerce.core.ports.in.RoleUseCase;
 import com.cernecommerce.core.ports.in.UserUseCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.CommandLineRunner;
 
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Garante que ROLE_DEV receba as permissões dos domínios de negócio protegidos por
@@ -84,5 +92,39 @@ class DevRoleBootstrapConfigTest {
         verify(userUseCase, org.mockito.Mockito.never())
                 .createUser(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyList());
+    }
+
+    /**
+     * Marcados e limite de crédito: RECEIVABLE_* nasceram só no ROLE_ADMIN (V137). O DEV recebe
+     * toda permissão gravada no banco, menos as de cliente do marketplace.
+     */
+    @Test
+    void bootstrapDevRole_grantsEveryExistingPermissionExceptShopToRoleDev() throws Exception {
+        PermissionUseCase permissionUseCase = mock(PermissionUseCase.class);
+        RoleUseCase roleUseCase = mock(RoleUseCase.class);
+        when(permissionUseCase.listAll(eq(0), anyInt())).thenReturn(new PageResult<>(
+                List.of(new Permission("RECEIVABLE_READ"), new Permission("RECEIVABLE_MANAGE"),
+                        new Permission("SHOP_CART_OWN")), 0, 100, 3, 1));
+
+        runnerWith(permissionUseCase, roleUseCase).run();
+
+        verify(roleUseCase).assignPermission("ROLE_DEV", "RECEIVABLE_READ");
+        verify(roleUseCase).assignPermission("ROLE_DEV", "RECEIVABLE_MANAGE");
+        verify(roleUseCase, never()).assignPermission("ROLE_DEV", "SHOP_CART_OWN");
+    }
+
+    @Test
+    void bootstrapDevRole_walksEveryPermissionPage() throws Exception {
+        PermissionUseCase permissionUseCase = mock(PermissionUseCase.class);
+        RoleUseCase roleUseCase = mock(RoleUseCase.class);
+        when(permissionUseCase.listAll(eq(0), anyInt())).thenReturn(new PageResult<>(
+                List.of(new Permission("ORDER_PAYMENT_CORRECT")), 0, 1, 2, 2));
+        when(permissionUseCase.listAll(eq(1), anyInt())).thenReturn(new PageResult<>(
+                List.of(new Permission("ORDER_PAYMENT_CORRECT_CLOSED")), 1, 1, 2, 2));
+
+        runnerWith(permissionUseCase, roleUseCase).run();
+
+        verify(roleUseCase).assignPermission("ROLE_DEV", "ORDER_PAYMENT_CORRECT");
+        verify(roleUseCase).assignPermission("ROLE_DEV", "ORDER_PAYMENT_CORRECT_CLOSED");
     }
 }
