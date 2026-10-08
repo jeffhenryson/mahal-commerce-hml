@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.adapter.in.converter.UserDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.CreateUserRequest;
 import com.cernecommerce.core.domain.event.AuditEvent;
@@ -110,6 +111,51 @@ public class UserControllerTest {
                 .content(om.writeValueAsString(dto)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").exists());
+    }
+
+    @Test
+    void create_user_without_password_invites_and_flags_event() throws Exception {
+        when(useCase.inviteUser(eq("novo"), eq("novo@test.com"), any())).thenReturn(user(7L, "novo"));
+
+        mockMvc.perform(post("/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"novo\",\"email\":\"novo@test.com\"}"))
+                .andExpect(status().isCreated());
+
+        verify(useCase, never()).createUser(any(), any(), any(), any());
+        verify(publisher).publishEvent(argThat((Object e) -> e instanceof AuditEvent ev
+                && ev.type() == AuditEvent.EventType.USER_CREATED && Boolean.TRUE.equals(ev.details().get("invited"))));
+    }
+
+    @Test
+    void create_user_with_password_keeps_direct_creation() throws Exception {
+        when(useCase.createUser(eq("john"), eq("Secret@123"), eq("john@test.com"), any())).thenReturn(user(8L, "john"));
+
+        mockMvc.perform(post("/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"john\",\"password\":\"Secret@123\",\"email\":\"john@test.com\"}"))
+                .andExpect(status().isCreated());
+
+        verify(useCase, never()).inviteUser(any(), any(), any());
+    }
+
+    @Test
+    void create_user_invite_without_email_returns_400() throws Exception {
+        when(useCase.inviteUser(eq("semmail"), isNull(), any())).thenThrow(new InviteEmailRequiredException());
+
+        mockMvc.perform(post("/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"semmail\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVITE_EMAIL_REQUIRED"));
+    }
+
+    @Test
+    void resend_invite_returns_204() throws Exception {
+        mockMvc.perform(post("/users/7/invite/resend"))
+                .andExpect(status().isNoContent());
+
+        verify(useCase).resendInvite(7L);
     }
 
     @Test

@@ -112,11 +112,16 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         ORDER_DELIVERY_UPDATED,
         // Falha ao processar notificação do gateway de pagamento — vira alerta para os devs.
         PAYMENT_WEBHOOK_FAILED,
+        // Fatos de negócio que disparam automações do CRM (AutomationEventListener).
+        // ORDER_CREATED: checkout da loja online; PDV_SALE_COMPLETED: venda de balcão concluída;
+        // PAYMENT_APPROVED/DECLINED: resposta do gateway (≠ PAYMENT_WEBHOOK_FAILED, falha técnica);
+        // STOCK_BELOW_REORDER_POINT: mesma regra do e-mail de reposição.
+        ORDER_CREATED, PDV_SALE_COMPLETED, PAYMENT_APPROVED, PAYMENT_DECLINED, STOCK_BELOW_REORDER_POINT,
         // Cashback (CRM-F003)
         CASHBACK_RATE_CHANGED, CASHBACK_EARNED,
         // Support
         BUG_REPORT_CREATED,
-        // Integrações da loja (e-mail/Resend)
+        // Integrações da loja (e-mail/Resend, WhatsApp, n8n/Make)
         INTEGRATION_UPDATED,
         // Financeiro (FIN-F004)
         CASH_FLOW_ENTRY_CREATED, CASH_FLOW_ENTRY_UPDATED, CASH_FLOW_ENTRY_DELETED

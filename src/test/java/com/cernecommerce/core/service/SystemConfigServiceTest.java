@@ -35,14 +35,14 @@ class SystemConfigServiceTest {
     void getAllPublic_retorna_apenas_chaves_publicas() {
         when(configPort.findAll()).thenReturn(List.of(
             config("auth.google.enabled", "true"),
+            config("auth.forgot-password.enabled", "false"),
             config("auth.registration.enabled", "false"),
             config("chave.interna", "secreto")
         ));
 
         Map<String, String> result = service.getAllPublic();
 
-        assertThat(result).containsKeys("auth.google.enabled", "auth.registration.enabled");
-        assertThat(result).doesNotContainKey("chave.interna");
+        assertThat(result).containsOnlyKeys("auth.google.enabled", "auth.forgot-password.enabled");
     }
 
     @Test
@@ -106,11 +106,17 @@ class SystemConfigServiceTest {
     void set_aceita_todas_as_chaves_publicas_conhecidas() {
         for (String key : List.of(
             "auth.google.enabled",
-            "auth.google.register.enabled",
-            "auth.registration.enabled",
             "auth.forgot-password.enabled"
         )) {
             assertThatCode(() -> service.set(key, "true", "admin")).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void set_rejeita_chaves_de_auto_cadastro_removidas() {
+        for (String key : List.of("auth.registration.enabled", "auth.google.register.enabled")) {
+            assertThatThrownBy(() -> service.set(key, "true", "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
         }
     }
 
@@ -118,9 +124,9 @@ class SystemConfigServiceTest {
 
     @Test
     void getBoolean_delega_para_port() {
-        when(configPort.getBoolean("auth.registration.enabled", true)).thenReturn(false);
+        when(configPort.getBoolean("auth.forgot-password.enabled", true)).thenReturn(false);
 
-        assertThat(service.getBoolean("auth.registration.enabled", true)).isFalse();
+        assertThat(service.getBoolean("auth.forgot-password.enabled", true)).isFalse();
     }
 
     @Test

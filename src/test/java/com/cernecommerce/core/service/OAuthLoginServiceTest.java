@@ -1,13 +1,12 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.auth.GoogleAccountNotRegisteredException;
 import com.cernecommerce.core.domain.exception.auth.OAuthTokenInvalidException;
 import com.cernecommerce.core.domain.model.auth.AuthProvider;
 import com.cernecommerce.core.domain.model.auth.GoogleUserInfo;
 import com.cernecommerce.core.domain.model.auth.OAuthLoginResult;
 import com.cernecommerce.core.domain.model.auth.User;
-import com.cernecommerce.core.domain.model.rbac.Role;
 import com.cernecommerce.core.ports.out.oauth.GoogleTokenVerifierPort;
-import com.cernecommerce.core.ports.out.role.RoleRepository;
 import com.cernecommerce.core.ports.out.token.AccessTokenPort;
 import com.cernecommerce.core.ports.out.token.RefreshTokenPort;
 import com.cernecommerce.core.ports.out.user.UserAuthoritiesPort;
@@ -35,7 +34,6 @@ class OAuthLoginServiceTest {
 
     @Mock GoogleTokenVerifierPort tokenVerifier;
     @Mock UserRepository userRepository;
-    @Mock RoleRepository roleRepository;
     @Mock AccessTokenPort accessTokenPort;
     @Mock RefreshTokenPort refreshTokenPort;
     @Mock UserAuthoritiesPort userAuthoritiesPort;
@@ -48,7 +46,7 @@ class OAuthLoginServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthLoginService(tokenVerifier, userRepository, roleRepository,
+        service = new OAuthLoginService(tokenVerifier, userRepository,
                 accessTokenPort, refreshTokenPort, userAuthoritiesPort, userCachePort);
     }
 
@@ -94,26 +92,16 @@ class OAuthLoginServiceTest {
     }
 
     @Test
-    void loginWithGoogle_createsNewUser_whenNoMatchFound() {
+    void loginWithGoogle_rejectsUnknownEmail_withoutCreatingUser() {
         when(tokenVerifier.verify(anyString())).thenReturn(GOOGLE_INFO);
         when(userRepository.findByGoogleId("google-123")).thenReturn(Optional.empty());
         when(userRepository.findByEmail("alice@example.com")).thenReturn(Optional.empty());
-        when(userRepository.findByUsername(anyString())).thenReturn(Optional.empty());
-        when(roleRepository.findByName("ROLE_USER")).thenReturn(Optional.of(new Role("ROLE_USER")));
-        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(userAuthoritiesPort.loadAuthoritiesByUsername(anyString())).thenReturn(Set.of("ROLE_USER"));
-        when(accessTokenPort.generateFor(anyString(), any())).thenReturn("access-token");
-        when(refreshTokenPort.issue(anyString())).thenReturn("refresh-token");
 
-        service.loginWithGoogle("id-token");
+        assertThatThrownBy(() -> service.loginWithGoogle("id-token"))
+                .isInstanceOf(GoogleAccountNotRegisteredException.class);
 
-        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(saved.capture());
-        User newUser = saved.getValue();
-        assertThat(newUser.getGoogleId()).isEqualTo("google-123");
-        assertThat(newUser.getEmail()).isEqualTo("alice@example.com");
-        assertThat(newUser.isEmailVerified()).isTrue();
-        assertThat(newUser.isEnabled()).isTrue();
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(accessTokenPort, refreshTokenPort);
     }
 
     // ── email normalization ───────────────────────────────────────────────────
@@ -133,25 +121,6 @@ class OAuthLoginServiceTest {
         service.loginWithGoogle("id-token");
 
         verify(userRepository).findByEmail("alice@example.com");
-    }
-
-    @Test
-    void loginWithGoogle_newUser_storesNormalizedEmail() {
-        when(tokenVerifier.verify(anyString())).thenReturn(GOOGLE_INFO); // email = "Alice@Example.COM"
-        when(userRepository.findByGoogleId(anyString())).thenReturn(Optional.empty());
-        when(userRepository.findByEmail("alice@example.com")).thenReturn(Optional.empty());
-        when(userRepository.findByUsername(anyString())).thenReturn(Optional.empty());
-        when(roleRepository.findByName("ROLE_USER")).thenReturn(Optional.of(new Role("ROLE_USER")));
-        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(userAuthoritiesPort.loadAuthoritiesByUsername(anyString())).thenReturn(Set.of());
-        when(accessTokenPort.generateFor(anyString(), any())).thenReturn("t");
-        when(refreshTokenPort.issue(anyString())).thenReturn("r");
-
-        service.loginWithGoogle("id-token");
-
-        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(captor.capture());
-        assertThat(captor.getValue().getEmail()).isEqualTo("alice@example.com");
     }
 
     // ── error paths ───────────────────────────────────────────────────────────

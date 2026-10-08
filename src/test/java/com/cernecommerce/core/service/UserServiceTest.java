@@ -3,6 +3,7 @@ package com.cernecommerce.core.service;
 import com.cernecommerce.core.domain.exception.auth.InvalidPasswordException;
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
 import com.cernecommerce.core.domain.model.auth.EmailVerificationCode;
@@ -39,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -68,7 +70,7 @@ class UserServiceTest {
                 refreshTokenPort, tokenBlocklistPort, emailPort, verificationCodeRepository,
                 passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
-                twoFactorAuthPort, avatarStoragePort, 15L, 60L, 15L, "http://localhost:3000/reset-password");
+                twoFactorAuthPort, avatarStoragePort, 15L, 60L, 15L, "http://localhost:3000/reset-password", 48L);
     }
 
     @Test
@@ -107,6 +109,51 @@ class UserServiceTest {
 
         verify(userRepository).save(any(User.class));
         verifyNoInteractions(emailPort);
+    }
+
+    // ── convite (USER_INVITE) ─────────────────────────────────────────────────
+
+    @Test
+    void inviteUser_createsUserWithUnknownPassword_andSendsInviteLink() {
+        when(passwordHash.hash(anyString())).thenReturn("hashed-random");
+        when(userRepository.findByUsername("novo")).thenReturn(Optional.empty());
+        when(userRepository.findByEmail("novo@test.com")).thenReturn(Optional.empty());
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        User created = userService.inviteUser("novo", "Novo@Test.com", List.of());
+
+        assertThat(created.getPassword()).isEqualTo("hashed-random");
+        verify(passwordResetTokenRepository).deleteByUsername("novo");
+        verify(passwordResetTokenRepository).save(eq("novo"), anyString(),
+                argThat((Instant expiresAt) -> expiresAt.isAfter(Instant.now().plusSeconds(47 * 3600))));
+        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"),
+                argThat((String link) -> link.startsWith("http://localhost:3000/reset-password?token=")), eq(48L));
+    }
+
+    @Test
+    void inviteUser_withoutEmail_isRejected() {
+        assertThatThrownBy(() -> userService.inviteUser("novo", " ", List.of()))
+                .isInstanceOf(InviteEmailRequiredException.class);
+        verifyNoInteractions(userRepository, emailPort);
+    }
+
+    @Test
+    void resendInvite_replacesTokenAndSendsAgain() {
+        User user = User.of("novo", "hashed", null);
+        user.assignEmail("novo@test.com");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
+
+        userService.resendInvite(7L);
+
+        verify(passwordResetTokenRepository).deleteByUsername("novo");
+        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"), anyString(), eq(48L));
+    }
+
+    @Test
+    void resendInvite_unknownUser_throws() {
+        when(userRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.resendInvite(99L)).isInstanceOf(UserNotFoundException.class);
     }
 
     @Test

@@ -15,6 +15,12 @@ public interface UserUseCase {
     /** Criação administrativa com email opcional — salvo sem trigger de verificação. */
     User createUser(String username, String rawPassword, String email, List<String> roles);
 
+    /** Cria um operador sem senha e envia o convite (link para definir a senha). Exige e-mail. */
+    User inviteUser(String username, String email, List<String> roles);
+
+    /** Reenvia o convite: invalida o link anterior e manda um novo. */
+    void resendInvite(Long userId);
+
     /** Registro externo: cria conta desabilitada e envia código de verificação por email. */
     User registerUser(String username, String rawPassword, String email, List<String> roles);
 

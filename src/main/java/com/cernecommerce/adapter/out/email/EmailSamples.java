@@ -26,6 +26,7 @@ final class EmailSamples {
         switch (sample) {
             case VERIFICATION_CODE -> port.sendVerificationCode(to, user, "TESTE1234ABC");
             case PASSWORD_RESET -> port.sendPasswordResetLink(to, user, "https://exemplo.com/auth/reset-password?token=TESTE", 15);
+            case USER_INVITE -> port.sendUserInvite(to, user, "https://exemplo.com/auth/reset-password?token=TESTE", 48);
             case EMAIL_CHANGE -> port.sendEmailChangeNotification(to, user, "novo.email@exemplo.com");
             case WELCOME -> port.sendWelcome(to, user);
             case ACCOUNT_CHANGE -> port.sendAccountChange(to, user, "Papel atribuído",

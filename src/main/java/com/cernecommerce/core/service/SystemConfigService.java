@@ -15,8 +15,6 @@ public class SystemConfigService implements SystemConfigUseCase {
 
     private static final Set<String> PUBLIC_KEYS = Set.of(
         "auth.google.enabled",
-        "auth.google.register.enabled",
-        "auth.registration.enabled",
         "auth.forgot-password.enabled"
     );
 

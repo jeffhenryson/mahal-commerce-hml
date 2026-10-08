@@ -10,6 +10,7 @@ import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeNotFou
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
 import com.cernecommerce.core.domain.model.auth.EmailVerificationCode;
@@ -72,6 +73,7 @@ public class UserService implements UserUseCase {
     private final long resendCooldownSeconds;
     private final long passwordResetTtlMinutes;
     private final String passwordResetFrontendUrl;
+    private final long inviteTtlHours;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public UserService(UserRepository userRepository,
@@ -91,7 +93,8 @@ public class UserService implements UserUseCase {
             long verificationCodeTtlMinutes,
             long resendCooldownSeconds,
             long passwordResetTtlMinutes,
-            String passwordResetFrontendUrl) {
+            String passwordResetFrontendUrl,
+            long inviteTtlHours) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordHash = passwordHash;
@@ -110,6 +113,7 @@ public class UserService implements UserUseCase {
         this.resendCooldownSeconds = resendCooldownSeconds;
         this.passwordResetTtlMinutes = passwordResetTtlMinutes;
         this.passwordResetFrontendUrl = passwordResetFrontendUrl;
+        this.inviteTtlHours = inviteTtlHours;
     }
 
     @Override
@@ -122,6 +126,10 @@ public class UserService implements UserUseCase {
     @Transactional
     public User createUser(String username, String rawPassword, String email, List<String> roles) {
         if (!isValidPassword(rawPassword)) throw new InvalidPasswordException();
+        return createUserWithHash(username, passwordHash.hash(rawPassword), email, roles);
+    }
+
+    private User createUserWithHash(String username, String hashedPassword, String email, List<String> roles) {
         String normalizedEmail = normalizeEmail(email);
         userRepository.findByUsername(username).ifPresent(u -> {
             throw new UsernameAlreadyExistsException(username);
@@ -132,11 +140,43 @@ public class UserService implements UserUseCase {
             });
         }
         Set<Role> roleSet = resolveRoles(roles);
-        User user = User.of(username, passwordHash.hash(rawPassword), roleSet);
+        User user = User.of(username, hashedPassword, roleSet);
         if (normalizedEmail != null) user.assignEmail(normalizedEmail);
         User saved = userRepository.save(user);
         userCachePort.evict(username);
         return saved;
+    }
+
+    /**
+     * Cria um operador sem senha utilizável e manda o convite: um link de redefinição de senha
+     * (mesmo token do "esqueci a senha"), com validade de {@code user.invite.ttl-hours}. Sem o
+     * auto-cadastro, é assim que alguém de fora ganha acesso ao painel.
+     */
+    @Override
+    @Transactional(noRollbackFor = EmailDeliveryException.class)
+    public User inviteUser(String username, String email, List<String> roles) {
+        if (normalizeEmail(email) == null) throw new InviteEmailRequiredException();
+        // Senha aleatória que ninguém conhece — só o link do convite leva a uma senha de verdade.
+        User created = createUserWithHash(username, passwordHash.hash(generateResetToken()), email, roles);
+        sendInvite(created);
+        return created;
+    }
+
+    @Override
+    @Transactional(noRollbackFor = EmailDeliveryException.class)
+    public void resendInvite(Long userId) {
+        User user = userRepository.findById(userId).orElseThrow(() -> new UserNotFoundException(String.valueOf(userId)));
+        if (user.getEmail() == null) throw new InviteEmailRequiredException();
+        sendInvite(user);
+    }
+
+    private void sendInvite(User user) {
+        // Convite novo invalida o anterior (e qualquer "esqueci a senha" pendente).
+        passwordResetTokenRepository.deleteByUsername(user.getUsername());
+        String token = generateResetToken();
+        passwordResetTokenRepository.save(user.getUsername(), token, Instant.now().plus(inviteTtlHours, ChronoUnit.HOURS));
+        emailPort.sendUserInvite(user.getEmail(), user.getUsername(), passwordResetFrontendUrl + "?token=" + token,
+                inviteTtlHours);
     }
 
     @Override

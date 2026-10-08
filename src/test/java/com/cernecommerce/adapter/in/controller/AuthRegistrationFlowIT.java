@@ -2,6 +2,9 @@ package com.cernecommerce.adapter.in.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
+import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.core.ports.out.ratelimit.LoginRateLimiterPort;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginRateLimiterAdapter;
 import com.cernecommerce.infra.security.support.EmailVerificationTestHelper;
@@ -17,18 +20,23 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Testa o fluxo completo de auto-registro:
- * POST /auth/register → POST /auth/verify-email → POST /auth/login (deve funcionar)
+ * Testa o fluxo de verificação de e-mail:
+ * cadastro (via serviço — o auto-cadastro HTTP está desativado) → POST /auth/verify-email → POST /auth/login
  *
  * Também cobre os casos de erro:
- * - login antes de verificar email deve retornar 403 (conta desabilitada)
+ * - POST /auth/register sempre responde 403 REGISTRATION_DISABLED
+ * - login antes de verificar email deve retornar 401 (conta desabilitada)
  * - código inválido/expirado deve retornar 400
- * - registro duplicado deve retornar 409
+ * - cadastro duplicado é recusado
  */
 @SpringBootTest
 @ActiveProfiles("dev")
@@ -43,6 +51,9 @@ public class AuthRegistrationFlowIT {
 
     @Autowired
     private LoginRateLimiterPort rateLimiter;
+
+    @Autowired
+    private UserUseCase userUseCase;
 
     private final ObjectMapper om = new ObjectMapper();
 
@@ -63,11 +74,8 @@ public class AuthRegistrationFlowIT {
         String email = username + "@test.com";
         String password = "Secure@123";
 
-        // 1. Registro — retorna 201 e conta fica desabilitada
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isCreated());
+        // 1. Cadastro — a conta fica desabilitada até a verificação
+        userUseCase.registerUser(username, password, email, List.of());
 
         // 2. Login antes de verificar email — deve retornar 401 (sem enumeração: desabilitado = credenciais inválidas)
         mvc.perform(post("/auth/login")
@@ -107,49 +115,31 @@ public class AuthRegistrationFlowIT {
     }
 
     @Test
-    void register_duplicate_username_returns_409() throws Exception {
-        MockMvc mvc = mockMvc();
-        String username = "dupuser_" + System.currentTimeMillis();
-        String body = "{\"username\":\"" + username + "\",\"password\":\"Secure@123\",\"email\":\"" + username + "@test.com\"}";
-
-        mvc.perform(post("/auth/register")
+    void register_endpoint_returns_403_registrationDisabled() throws Exception {
+        mockMvc().perform(post("/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-                .andExpect(status().isCreated());
-
-        // Segunda tentativa com mesmo username — deve retornar 409
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"Secure@123\",\"email\":\"other_" + username + "@test.com\"}"))
-                .andExpect(status().isConflict());
+                .content("{\"username\":\"selfsignup\",\"password\":\"Secure@123\",\"email\":\"self@test.com\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("REGISTRATION_DISABLED"));
     }
 
     @Test
-    void register_duplicate_email_returns_409() throws Exception {
-        MockMvc mvc = mockMvc();
+    void register_duplicate_username_is_rejected() {
+        String username = "dupuser_" + System.currentTimeMillis();
+        userUseCase.registerUser(username, "Secure@123", username + "@test.com", List.of());
+
+        assertThatThrownBy(() -> userUseCase.registerUser(username, "Secure@123", "other_" + username + "@test.com", List.of()))
+                .isInstanceOf(UsernameAlreadyExistsException.class);
+    }
+
+    @Test
+    void register_duplicate_email_is_rejected() {
         String ts = String.valueOf(System.currentTimeMillis());
         String email = "dup_" + ts + "@test.com";
+        userUseCase.registerUser("u1_" + ts, "Secure@123", email, List.of());
 
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"u1_" + ts + "\",\"password\":\"Secure@123\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isCreated());
-
-        // Mesmo email, username diferente — deve retornar 409
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"u2_" + ts + "\",\"password\":\"Secure@123\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
-    void register_with_weak_password_returns_400() throws Exception {
-        MockMvc mvc = mockMvc();
-
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"weakpwd\",\"password\":\"simple\",\"email\":\"w@test.com\"}"))
-                .andExpect(status().isBadRequest());
+        assertThatThrownBy(() -> userUseCase.registerUser("u2_" + ts, "Secure@123", email, List.of()))
+                .isInstanceOf(EmailAlreadyExistsException.class);
     }
 
     @Test

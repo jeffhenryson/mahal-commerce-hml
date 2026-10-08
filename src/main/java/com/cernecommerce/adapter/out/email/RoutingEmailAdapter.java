@@ -54,6 +54,11 @@ public class RoutingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
+        route(p -> p.sendUserInvite(to, username, inviteLink, ttlHours));
+    }
+
+    @Override
     public void sendEmailChangeNotification(String oldEmail, String username, String newEmail) {
         route(p -> p.sendEmailChangeNotification(oldEmail, username, newEmail));
     }

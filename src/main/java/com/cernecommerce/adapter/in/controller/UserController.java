@@ -50,9 +50,11 @@ public class UserController {
         this.publisher = publisher;
     }
 
-    @Operation(summary = "Cria um novo usuário")
+    @Operation(summary = "Cria um novo usuário",
+            description = "Sem password, cria por convite: o usuário recebe no e-mail um link (48h) para definir a senha.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Criado", content = @Content(schema = @Schema(implementation = UserResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "INVITE_EMAIL_REQUIRED — convite sem e-mail", content = @Content),
             @ApiResponse(responseCode = "409", description = "Username já existe", content = @Content),
             @ApiResponse(responseCode = "401", description = "Não autenticado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
@@ -65,9 +67,12 @@ public class UserController {
         // ROLE_DEV, contornando a mesma barreira elevada que assignRole já impõe logo abaixo —
         // duas portas para o mesmo cofre não podem ter fechaduras diferentes.
         requireDevElevationIfAssigningDevRole(request.getRoles(), auth);
-        User created = useCase.createUser(
-                request.getUsername(), request.getPassword(), request.getEmail(), request.getRoles());
-        publisher.publishEvent(AuditEvent.of(EventType.USER_CREATED, created.getUsername()));
+        boolean invite = request.getPassword() == null || request.getPassword().isBlank();
+        User created = invite
+                ? useCase.inviteUser(request.getUsername(), request.getEmail(), request.getRoles())
+                : useCase.createUser(request.getUsername(), request.getPassword(), request.getEmail(), request.getRoles());
+        publisher.publishEvent(AuditEvent.of(EventType.USER_CREATED, created.getUsername(),
+                Map.of("invited", invite, "createdBy", auth == null ? "system" : auth.getName())));
         UserResponseDTO body = converter.toResponse(created);
         return ResponseEntity.created(URI.create("/users/" + body.getId())).body(body);
     }
@@ -205,6 +210,23 @@ public class UserController {
                 result.content().stream().map(converter::toResponse).toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Reenvia o convite do usuário",
+            description = "Invalida o link anterior e manda um novo (48h) para o e-mail do usuário.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "Reenviado"),
+            @ApiResponse(responseCode = "400", description = "INVITE_EMAIL_REQUIRED — usuário sem e-mail", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/{id}/invite/resend")
+    @PreAuthorize("hasAuthority('USER_CREATE')")
+    public ResponseEntity<Void> resendInvite(@PathVariable Long id, Authentication auth) {
+        useCase.resendInvite(id);
+        publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, auth == null ? "system" : auth.getName(),
+                Map.of("userId", id, "action", "invite-resent")));
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Remove usuário por id")

@@ -13,7 +13,9 @@ import com.cernecommerce.core.domain.exception.auth.AccountDisabledException;
 import com.cernecommerce.core.domain.exception.auth.AccountLockedException;
 import com.cernecommerce.core.domain.exception.auth.DevChallengeExpiredException;
 import com.cernecommerce.core.domain.exception.auth.InvalidPasswordException;
+import com.cernecommerce.core.domain.exception.auth.GoogleAccountNotRegisteredException;
 import com.cernecommerce.core.domain.exception.auth.OAuthTokenInvalidException;
+import com.cernecommerce.core.domain.exception.auth.RegistrationDisabledException;
 import com.cernecommerce.core.domain.exception.auth.InvalidRefreshTokenException;
 import com.cernecommerce.core.domain.exception.auth.InvalidTotpCodeException;
 import com.cernecommerce.core.domain.exception.auth.PasswordResetTokenExpiredException;
@@ -30,6 +32,7 @@ import com.cernecommerce.core.domain.exception.ratelimit.RateLimitExceededExcept
 import com.cernecommerce.core.domain.exception.email.EmailAlreadyVerifiedException;
 import com.cernecommerce.core.domain.exception.email.EmailDeliveryException;
 import com.cernecommerce.core.domain.exception.email.InvalidEmailIntegrationException;
+import com.cernecommerce.core.domain.exception.integration.InvalidIntegrationException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeExpiredException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeNotFoundException;
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
@@ -97,6 +100,7 @@ import com.cernecommerce.core.domain.exception.estoque.StockReservationNotFoundE
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedLotInfoException;
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedUnitCostException;
 import com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException;
+import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
 import com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfiguredException;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
@@ -184,6 +188,7 @@ import com.cernecommerce.core.domain.exception.pedido.ProductNotPricedException;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
 import com.cernecommerce.core.ports.out.notification.DevAlertPort;
@@ -237,6 +242,11 @@ public class GlobalExceptionHandler {
 
     @Autowired(required = false)
     private DevAlertPort devAlerts;
+
+    @ExceptionHandler(InviteEmailRequiredException.class)
+    public ResponseEntity<ApiError> handleInviteEmailRequired(InviteEmailRequiredException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVITE_EMAIL_REQUIRED", req);
+    }
 
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ApiError> handleUserNotFound(UserNotFoundException ex, HttpServletRequest req) {
@@ -694,6 +704,11 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CAMPAIGN_AUTOMATION_NOT_FOUND", req);
     }
 
+    @ExceptionHandler(InvalidAutomationException.class)
+    public ResponseEntity<ApiError> handleInvalidAutomation(InvalidAutomationException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_AUTOMATION", req);
+    }
+
     @ExceptionHandler(AutomationWebhookNotConfiguredException.class)
     public ResponseEntity<ApiError> handleAutomationWebhookNotConfigured(AutomationWebhookNotConfiguredException ex,
             HttpServletRequest req) {
@@ -860,6 +875,17 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, ex.getMessage(), "OAUTH_TOKEN_INVALID", req);
     }
 
+    @ExceptionHandler(GoogleAccountNotRegisteredException.class)
+    public ResponseEntity<ApiError> handleGoogleAccountNotRegistered(GoogleAccountNotRegisteredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "USER_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(RegistrationDisabledException.class)
+    public ResponseEntity<ApiError> handleRegistrationDisabled(RegistrationDisabledException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "REGISTRATION_DISABLED", req);
+    }
+
     @ExceptionHandler(AvatarTooLargeException.class)
     public ResponseEntity<ApiError> handleAvatarTooLarge(AvatarTooLargeException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "AVATAR_TOO_LARGE", req);
@@ -889,6 +915,11 @@ public class GlobalExceptionHandler {
         // simplesmente tentar de novo. Nos demais fluxos (reenvio, troca de email) o registro já
         // existia e o cliente deve oferecer reenviar o código.
         return error(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), "EMAIL_DELIVERY_FAILED", req);
+    }
+
+    @ExceptionHandler(InvalidIntegrationException.class)
+    public ResponseEntity<ApiError> handleInvalidIntegration(InvalidIntegrationException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_INTEGRATION", req);
     }
 
     @ExceptionHandler(InvalidEmailIntegrationException.class)
@@ -1024,6 +1055,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest req) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new CreditLimitError(ex.getMessage(),
                 "CREDIT_LIMIT_EXCEEDED", Instant.now(), req.getRequestURI(), MDC.get("traceId"),
+                ex.getChannel() == null ? null : ex.getChannel().name(),
                 ex.getLimit(), ex.getOpenBalance(), ex.getAvailable()));
     }
 

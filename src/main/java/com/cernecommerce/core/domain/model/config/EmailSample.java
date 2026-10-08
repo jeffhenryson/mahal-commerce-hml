@@ -4,6 +4,7 @@ package com.cernecommerce.core.domain.model.config;
 public enum EmailSample {
     VERIFICATION_CODE,
     PASSWORD_RESET,
+    USER_INVITE,
     EMAIL_CHANGE,
     WELCOME,
     ACCOUNT_CHANGE,

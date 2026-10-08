@@ -90,6 +90,16 @@ abstract class TemplatedEmailAdapter implements EmailPort {
 
     @Async("emailTaskExecutor")
     @Override
+    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
+        String html = renderer.render("user-invite", vars(
+                "username", username,
+                "inviteLink", inviteLink,
+                "ttlHours", ttlHours));
+        deliver(to, "Você foi convidado para o painel da loja", html, "email.user-invite");
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
     public void sendEmailChangeNotification(String oldEmail, String username, String newEmail) {
         String html = renderer.render("email-change", vars(
                 "username", username,

@@ -32,8 +32,9 @@ public class CustomerResponseDTO {
     // Na listagem paginada (GET /crm/customers) vem sempre [] para evitar N+1 (1 query de tags por linha).
     private List<String> tags;
 
-    @Schema(description = "CRM-F010 — limite de crédito efetivo do \"Marcar\" (individual ou o padrão da loja). "
-            + "Só no GET por id.")
+    @Schema(description = "CRM-F010 — limite de crédito do \"Marcar\": o teto total do cliente, se houver; senão, "
+            + "a soma dos limites efetivos de balcão e mesa (CRM-F011). O detalhe por canal está em "
+            + "on-account-eligibility.limitsByChannel. Só no GET por id.")
     private BigDecimal creditLimit;
 
     @Schema(description = "CRM-F010 — saldo marcado em aberto. Só no GET por id.")

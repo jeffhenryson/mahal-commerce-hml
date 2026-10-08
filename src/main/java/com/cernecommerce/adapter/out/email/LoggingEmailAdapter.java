@@ -37,6 +37,12 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
+        log.info("DEV EMAIL >> to={} username={} inviteLink={} ttlHours={}", to, username, inviteLink, ttlHours);
+        lastCodeByUsername.put("invite:" + username, inviteLink);
+    }
+
+    @Override
     public void sendEmailChangeNotification(String oldEmail, String username, String newEmail) {
         log.info("DEV EMAIL >> oldEmail={} username={} newEmail={} [email-change-notification]",
                 oldEmail, username, newEmail);

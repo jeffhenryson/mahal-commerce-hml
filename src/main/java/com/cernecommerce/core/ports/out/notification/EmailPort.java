@@ -10,6 +10,9 @@ public interface EmailPort {
 
     void sendPasswordResetLink(String to, String username, String resetLink, long ttlMinutes);
 
+    /** Convite de usuário criado por dev/admin: link para definir a senha (token de redefinição). */
+    void sendUserInvite(String to, String username, String inviteLink, long ttlHours);
+
     void sendEmailChangeNotification(String oldEmail, String username, String newEmail);
 
     /** Confirmação, no endereço NOVO, de que a troca de e-mail foi concluída. */
