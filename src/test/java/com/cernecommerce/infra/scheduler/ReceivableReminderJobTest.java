@@ -1,11 +1,14 @@
 package com.cernecommerce.infra.scheduler;
 
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.crm.AutomationEvent;
+import com.cernecommerce.core.domain.model.crm.AutomationOccurrence;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
+import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase.ReceivableView;
 import com.cernecommerce.core.ports.out.crm.CustomerRepository;
@@ -35,6 +38,7 @@ class ReceivableReminderJobTest {
     private ReceivableUseCase receivableUseCase;
     private CustomerRepository customerRepository;
     private EmailPort emailPort;
+    private AutomationDispatchUseCase automationDispatch;
     private ReceivableReminderJob job;
 
     @BeforeEach
@@ -43,7 +47,8 @@ class ReceivableReminderJobTest {
         customerRepository = mock(CustomerRepository.class);
         emailPort = mock(EmailPort.class);
         Clock clock = Clock.fixed(Instant.parse("2026-10-05T12:00:00Z"), ZoneId.of("America/Sao_Paulo"));
-        job = new ReceivableReminderJob(receivableUseCase, customerRepository, emailPort, clock);
+        automationDispatch = mock(AutomationDispatchUseCase.class);
+        job = new ReceivableReminderJob(receivableUseCase, customerRepository, emailPort, automationDispatch, clock);
         when(receivableUseCase.list(any(), eq(0), anyInt())).thenReturn(page());
     }
 
@@ -78,6 +83,23 @@ class ReceivableReminderJobTest {
         job.remind();
 
         verifyNoInteractions(emailPort);
+    }
+
+    @Test
+    void dispara_automacao_marcado_vencendo_mesmo_sem_email() {
+        when(receivableUseCase.list(argThat(dueOn(TODAY)), eq(0), anyInt())).thenReturn(page(
+                receivable(42L, "20.00", TODAY), receivable(42L, "5.00", TODAY)));
+        when(customerRepository.findById(42L)).thenReturn(Optional.of(customer(42L, null)));
+
+        job.remind();
+
+        ArgumentCaptor<AutomationOccurrence> captor = ArgumentCaptor.forClass(AutomationOccurrence.class);
+        verify(automationDispatch).dispatch(captor.capture());
+        AutomationOccurrence occurrence = captor.getValue();
+        assertThat(occurrence.evento()).isEqualTo(AutomationEvent.MARCADO_VENCENDO);
+        assertThat(occurrence.customerId()).isEqualTo(42L);
+        assertThat(occurrence.key()).isEqualTo("MARCADO:42:" + TODAY + ":D0");
+        assertThat(occurrence.contexto()).containsEntry("total", new BigDecimal("25.00")).containsEntry("venceHoje", true);
     }
 
     private static org.mockito.ArgumentMatcher<ReceivableFilter> dueOn(LocalDate date) {

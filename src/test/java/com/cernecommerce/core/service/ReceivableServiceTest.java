@@ -13,6 +13,7 @@ import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import com.cernecommerce.core.domain.model.crm.Tag;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
+import com.cernecommerce.core.domain.model.recebivel.CreditLimits;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
@@ -48,6 +49,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO;
+import static com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.MESA;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -84,13 +87,41 @@ class ReceivableServiceTest {
                 .thenReturn(vip ? List.of(new Tag(1L, " vip ")) : List.of(new Tag(2L, "Frequente")));
     }
 
+    /** Só o balcão: {@code limit} é a linha BALCAO do cliente, {@code open} o aberto no balcão. */
     private void givenBalances(String limit, String open, String overdue) {
-        lenient().when(creditLimitRepository.findByCustomerId(CUSTOMER))
-                .thenReturn(limit == null ? Optional.empty() : Optional.of(new BigDecimal(limit)));
-        lenient().when(systemConfigPort.getDecimal(eq(ReceivableService.DEFAULT_CREDIT_LIMIT_KEY), any()))
-                .thenReturn(BigDecimal.ZERO);
-        lenient().when(receivableRepository.sumOpenBalance(CUSTOMER)).thenReturn(new BigDecimal(open));
+        givenLimits(new CreditLimits(null, dec(limit), null));
+        givenDefaults("0", null, null);
+        givenOpen(open, "0");
         lenient().when(receivableRepository.sumOverdueBalance(CUSTOMER, TODAY)).thenReturn(new BigDecimal(overdue));
+    }
+
+    private void givenLimits(CreditLimits limits) {
+        lenient().when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(limits);
+    }
+
+    /** Chave nula = ausente no system_config: o adapter devolve o default recebido. */
+    private void givenDefaults(String general, String balcao, String mesa) {
+        stubConfig(ReceivableService.DEFAULT_CREDIT_LIMIT_KEY, general);
+        stubConfig(ReceivableService.DEFAULT_CREDIT_LIMIT_BALCAO_KEY, balcao);
+        stubConfig(ReceivableService.DEFAULT_CREDIT_LIMIT_MESA_KEY, mesa);
+    }
+
+    private void stubConfig(String key, String value) {
+        if (value == null) {
+            lenient().when(systemConfigPort.getDecimal(eq(key), any())).thenAnswer(inv -> inv.getArgument(1));
+        } else {
+            lenient().when(systemConfigPort.getDecimal(eq(key), any())).thenReturn(new BigDecimal(value));
+        }
+    }
+
+    private void givenOpen(String balcao, String mesa) {
+        lenient().when(receivableRepository.sumOpenBalance(CUSTOMER, BALCAO)).thenReturn(new BigDecimal(balcao));
+        lenient().when(receivableRepository.sumOpenBalance(CUSTOMER, MESA)).thenReturn(new BigDecimal(mesa));
+        lenient().when(receivableRepository.sumOverdueBalance(CUSTOMER, TODAY)).thenReturn(BigDecimal.ZERO);
+    }
+
+    private static BigDecimal dec(String value) {
+        return value == null ? null : new BigDecimal(value);
     }
 
     private static List<PaymentCommand> marked(String amount, LocalDate dueDate) {
@@ -102,7 +133,7 @@ class ReceivableServiceTest {
 
     @Test
     void validate_withoutOnAccountLine_doesNothing() {
-        service.validateOnAccount(null, List.of(new PaymentCommand(PaymentMethod.PIX, BigDecimal.TEN, null)));
+        service.validateOnAccount(null, BALCAO, List.of(new PaymentCommand(PaymentMethod.PIX, BigDecimal.TEN, null)));
 
         verifyNoInteractions(customerRepository, receivableRepository);
     }
@@ -112,27 +143,27 @@ class ReceivableServiceTest {
         givenCustomer(true);
         givenBalances("100.00", "50.00", "0");
 
-        service.validateOnAccount(CUSTOMER, marked("50.00", TODAY));
+        service.validateOnAccount(CUSTOMER, BALCAO, marked("50.00", TODAY));
     }
 
     @Test
     void validate_refusesTwoOnAccountLines() {
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, List.of(
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, List.of(
                 PaymentCommand.onAccount(BigDecimal.ONE, TODAY), PaymentCommand.onAccount(BigDecimal.ONE, TODAY))))
                 .isInstanceOf(DuplicateOnAccountPaymentException.class);
     }
 
     @Test
     void validate_refusesMissingOrPastDueDate() {
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("10.00", null)))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("10.00", null)))
                 .isInstanceOf(InvalidDueDateException.class);
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("10.00", TODAY.minusDays(1))))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("10.00", TODAY.minusDays(1))))
                 .isInstanceOf(InvalidDueDateException.class);
     }
 
     @Test
     void validate_refusesAnonymousSale() {
-        assertThatThrownBy(() -> service.validateOnAccount(null, marked("10.00", TODAY)))
+        assertThatThrownBy(() -> service.validateOnAccount(null, BALCAO, marked("10.00", TODAY)))
                 .isInstanceOf(CustomerRequiredForOnAccountException.class);
     }
 
@@ -140,7 +171,7 @@ class ReceivableServiceTest {
     void validate_refusesNonVip() {
         givenCustomer(false);
 
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("10.00", TODAY)))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("10.00", TODAY)))
                 .isInstanceOf(CustomerNotEligibleForOnAccountException.class);
     }
 
@@ -149,7 +180,7 @@ class ReceivableServiceTest {
         givenCustomer(true);
         givenBalances("500.00", "40.00", "40.00");
 
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("10.00", TODAY)))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("10.00", TODAY)))
                 .isInstanceOf(CustomerHasOverdueException.class)
                 .satisfies(e -> assertThat(((CustomerHasOverdueException) e).getOverdueBalance())
                         .isEqualByComparingTo("40.00"));
@@ -160,10 +191,12 @@ class ReceivableServiceTest {
         givenCustomer(true);
         givenBalances("100.00", "80.00", "0");
 
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("30.00", TODAY)))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("30.00", TODAY)))
                 .isInstanceOf(CreditLimitExceededException.class)
                 .satisfies(e -> {
                     CreditLimitExceededException ex = (CreditLimitExceededException) e;
+                    assertThat(ex.getChannel()).isEqualTo(BALCAO);
+                    assertThat(ex.getMessage()).startsWith("Limite de balcão: cabem R$ 20,00");
                     assertThat(ex.getLimit()).isEqualByComparingTo("100.00");
                     assertThat(ex.getOpenBalance()).isEqualByComparingTo("80.00");
                     assertThat(ex.getAvailable()).isEqualByComparingTo("20.00");
@@ -175,8 +208,113 @@ class ReceivableServiceTest {
         givenCustomer(true);
         givenBalances(null, "0", "0");
 
-        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, marked("1.00", TODAY)))
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("1.00", TODAY)))
                 .isInstanceOf(CreditLimitExceededException.class);
+    }
+
+    // ── limite por canal ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    void validate_balcaoBlockedByItsLimit_evenWithRoomOnMesa_andViceVersa() {
+        givenCustomer(true);
+        givenLimits(new CreditLimits(null, new BigDecimal("200.00"), new BigDecimal("100.00")));
+        givenDefaults("0", null, null);
+        givenOpen("190.00", "95.00");
+
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("20.00", TODAY)))
+                .isInstanceOfSatisfying(CreditLimitExceededException.class, ex -> {
+                    assertThat(ex.getChannel()).isEqualTo(BALCAO);
+                    assertThat(ex.getAvailable()).isEqualByComparingTo("10.00");
+                });
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, MESA, marked("10.00", TODAY)))
+                .isInstanceOfSatisfying(CreditLimitExceededException.class, ex -> {
+                    assertThat(ex.getChannel()).isEqualTo(MESA);
+                    assertThat(ex.getMessage()).startsWith("Limite de mesa: cabem R$ 5,00");
+                });
+        service.validateOnAccount(CUSTOMER, BALCAO, marked("10.00", TODAY));
+        service.validateOnAccount(CUSTOMER, MESA, marked("5.00", TODAY));
+    }
+
+    @Test
+    void channelWithoutOwnRow_usesTheChannelDefault_thenTheGeneralDefault() {
+        givenCustomer(true);
+        givenLimits(CreditLimits.none());
+        givenDefaults("50.00", "80.00", null);
+        givenOpen("0", "0");
+
+        OnAccountEligibility e = service.eligibility(CUSTOMER, null, true);
+
+        assertThat(e.limitsByChannel())
+                .extracting(OnAccountEligibility.ChannelLimit::channel, OnAccountEligibility.ChannelLimit::creditLimit,
+                        c -> c.available().setScale(2))
+                .containsExactly(tuple(BALCAO, null, new BigDecimal("80.00")),
+                        tuple(MESA, null, new BigDecimal("50.00")));
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, MESA, marked("50.01", TODAY)))
+                .isInstanceOf(CreditLimitExceededException.class);
+        service.validateOnAccount(CUSTOMER, BALCAO, marked("80.00", TODAY));
+    }
+
+    @Test
+    void totalCap_blocksTheSumOfBothChannels() {
+        givenCustomer(true);
+        givenLimits(new CreditLimits(new BigDecimal("100.00"), new BigDecimal("80.00"), new BigDecimal("80.00")));
+        givenDefaults("0", null, null);
+        givenOpen("60.00", "30.00");
+
+        // Cabe na mesa (30 + 20 ≤ 80), mas não no teto (90 + 20 > 100).
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, MESA, marked("20.00", TODAY)))
+                .isInstanceOfSatisfying(CreditLimitExceededException.class, ex -> {
+                    assertThat(ex.getChannel()).isNull();
+                    assertThat(ex.getLimit()).isEqualByComparingTo("100.00");
+                    assertThat(ex.getOpenBalance()).isEqualByComparingTo("90.00");
+                    assertThat(ex.getAvailable()).isEqualByComparingTo("10.00");
+                    assertThat(ex.getMessage()).startsWith("Limite total: cabem R$ 10,00");
+                });
+        assertThat(service.eligibility(CUSTOMER, MESA, true).available()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void legacyTotalOnly_givesNoChannelLimit_theChannelDefaultApplies() {
+        // Risco aceito da V142: a linha de antes vira teto, e o canal cai no padrão (aqui, 0).
+        givenCustomer(true);
+        givenLimits(new CreditLimits(new BigDecimal("300.00"), null, null));
+        givenDefaults("0", "0", "0");
+        givenOpen("0", "0");
+
+        assertThatThrownBy(() -> service.validateOnAccount(CUSTOMER, BALCAO, marked("1.00", TODAY)))
+                .isInstanceOfSatisfying(CreditLimitExceededException.class,
+                        ex -> assertThat(ex.getChannel()).isEqualTo(BALCAO));
+    }
+
+    @Test
+    void eligibility_alwaysListsBothChannels_evenForWhoNeverMarked() {
+        givenCustomer(true);
+        givenLimits(CreditLimits.none());
+        givenDefaults("0", null, null);
+        givenOpen("0", "0");
+
+        OnAccountEligibility e = service.eligibility(CUSTOMER, BALCAO, true);
+
+        assertThat(e.limitsByChannel()).extracting(OnAccountEligibility.ChannelLimit::channel)
+                .containsExactly(BALCAO, MESA);
+        assertThat(e.reasons()).containsExactly("CREDIT_LIMIT_EXCEEDED");
+    }
+
+    @Test
+    void eligibilityWithoutChannel_andBalance_addUpBothChannels() {
+        givenCustomer(true);
+        givenLimits(new CreditLimits(null, new BigDecimal("200.00"), new BigDecimal("100.00")));
+        givenDefaults("0", null, null);
+        givenOpen("50.00", "100.00");
+
+        OnAccountEligibility e = service.eligibility(CUSTOMER, null, true);
+
+        assertThat(e.creditLimit()).isEqualByComparingTo("300.00");
+        assertThat(e.openBalance()).isEqualByComparingTo("150.00");
+        assertThat(e.available()).isEqualByComparingTo("150.00");
+        assertThat(e.limitsByChannel()).extracting(c -> c.available().setScale(2))
+                .containsExactly(new BigDecimal("150.00"), new BigDecimal("0.00"));
+        assertThat(service.balance(CUSTOMER).creditLimit()).isEqualByComparingTo("300.00");
     }
 
     // ── eligibility ──────────────────────────────────────────────────────────────────────────
@@ -187,7 +325,7 @@ class ReceivableServiceTest {
         givenBalances("50.00", "50.00", "10.00");
         when(systemConfigPort.getInt(eq(ReceivableService.DEFAULT_DUE_DAYS_KEY), anyInt())).thenReturn(30);
 
-        OnAccountEligibility e = service.eligibility(CUSTOMER, false);
+        OnAccountEligibility e = service.eligibility(CUSTOMER, BALCAO, false);
 
         assertThat(e.eligible()).isFalse();
         assertThat(e.reasons()).containsExactly("CUSTOMER_NOT_ELIGIBLE", "ON_ACCOUNT_NOT_ALLOWED",
@@ -202,7 +340,7 @@ class ReceivableServiceTest {
         givenBalances("300.00", "120.00", "0");
         when(systemConfigPort.getInt(eq(ReceivableService.DEFAULT_DUE_DAYS_KEY), anyInt())).thenReturn(15);
 
-        OnAccountEligibility e = service.eligibility(CUSTOMER, true);
+        OnAccountEligibility e = service.eligibility(CUSTOMER, BALCAO, true);
 
         assertThat(e.eligible()).isTrue();
         assertThat(e.reasons()).isEmpty();
@@ -348,18 +486,50 @@ class ReceivableServiceTest {
     }
 
     @Test
-    void setCreditLimit_nullReturnsToTheDefault() {
+    void setCreditLimit_nullOnAChannel_returnsItToTheDefault() {
         givenCustomer(true);
         when(creditLimitRepository.findByCustomerId(CUSTOMER))
-                .thenReturn(Optional.of(new BigDecimal("300.00")), Optional.empty());
-        when(systemConfigPort.getDecimal(eq(ReceivableService.DEFAULT_CREDIT_LIMIT_KEY), any()))
-                .thenReturn(new BigDecimal("50.00"));
+                .thenReturn(new CreditLimits(null, null, new BigDecimal("300.00")), CreditLimits.none());
+        givenDefaults("50.00", null, null);
 
-        ReceivableUseCase.CreditLimitChange change = service.setCreditLimit(CUSTOMER, null, "gerente");
+        ReceivableUseCase.CreditLimitChange change = service.setCreditLimit(CUSTOMER, MESA, null, "gerente");
 
-        verify(creditLimitRepository).delete(CUSTOMER);
+        verify(creditLimitRepository).delete(CUSTOMER, MESA);
         assertThat(change.before()).isEqualByComparingTo("300.00");
         assertThat(change.after()).isEqualByComparingTo("50.00");
+    }
+
+    @Test
+    void setCreditLimit_onAChannel_touchesOnlyThatRow() {
+        givenCustomer(true);
+        when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(
+                new CreditLimits(new BigDecimal("300.00"), null, new BigDecimal("40.00")),
+                new CreditLimits(new BigDecimal("300.00"), new BigDecimal("200.00"), new BigDecimal("40.00")));
+        givenDefaults("0", "10.00", null);
+
+        ReceivableUseCase.CreditLimitChange change = service.setCreditLimit(CUSTOMER, BALCAO,
+                new BigDecimal("200.00"), "gerente");
+
+        verify(creditLimitRepository).save(eq(CUSTOMER), eq(BALCAO), eq(new BigDecimal("200.00")), eq("gerente"),
+                any());
+        verify(creditLimitRepository, never()).delete(any(), any());
+        verifyNoMoreInteractions(ignoreStubs(creditLimitRepository));
+        assertThat(change.before()).isEqualByComparingTo("10.00");
+        assertThat(change.after()).isEqualByComparingTo("200.00");
+    }
+
+    @Test
+    void setCreditLimit_nullWithoutChannel_removesOnlyTheTotalCap() {
+        givenCustomer(true);
+        when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(
+                new CreditLimits(new BigDecimal("300.00"), new BigDecimal("200.00"), null),
+                new CreditLimits(null, new BigDecimal("200.00"), null));
+
+        ReceivableUseCase.CreditLimitChange change = service.setCreditLimit(CUSTOMER, null, null, "gerente");
+
+        verify(creditLimitRepository).delete(CUSTOMER, null);
+        assertThat(change.before()).isEqualByComparingTo("300.00");
+        assertThat(change.after()).isNull();
     }
 
     @Test

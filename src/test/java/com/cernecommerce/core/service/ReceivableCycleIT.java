@@ -12,7 +12,11 @@ import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.domain.model.recebivel.CreditLimits;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
+import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
+import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -22,6 +26,7 @@ import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.out.crm.TagRepository;
+import com.cernecommerce.core.ports.out.recebivel.CustomerCreditLimitRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
@@ -54,6 +59,7 @@ class ReceivableCycleIT {
     @Autowired OrderUseCase orderUseCase;
     @Autowired ReceivableUseCase receivableUseCase;
     @Autowired TagRepository tagRepository;
+    @Autowired CustomerCreditLimitRepository creditLimitRepository;
 
     @PersistenceContext EntityManager em;
 
@@ -83,6 +89,7 @@ class ReceivableCycleIT {
         return new String[] {"LOJA-" + s, "CARV-" + s};
     }
 
+    /** {@code creditLimit}: o limite de BALCAO — as vendas daqui são todas de balcão. */
     private Customer givenCustomer(boolean vip, String creditLimit) {
         Customer customer = crmUseCase.createCustomer("Cliente " + suffix(), null, null, uniqueCpf(), "PDV");
         if (vip) {
@@ -90,7 +97,8 @@ class ReceivableCycleIT {
             crmUseCase.addTagToCustomer(customer.id(), tag.id());
         }
         if (creditLimit != null) {
-            receivableUseCase.setCreditLimit(customer.id(), new BigDecimal(creditLimit), "gerente");
+            receivableUseCase.setCreditLimit(customer.id(), OnAccountChannel.BALCAO, new BigDecimal(creditLimit),
+                    "gerente");
         }
         return customer;
     }
@@ -131,7 +139,7 @@ class ReceivableCycleIT {
         assertThat(receivable.amount()).isEqualByComparingTo("30.00");
         assertThat(receivable.items()).singleElement()
                 .satisfies(i -> assertThat(i.subtotal()).isEqualByComparingTo("44.00"));
-        assertThat(receivableUseCase.eligibility(vip.id(), true).available()).isEqualByComparingTo("70.00");
+        assertThat(receivableUseCase.eligibility(vip.id(), OnAccountChannel.BALCAO, true).available()).isEqualByComparingTo("70.00");
 
         // Bia recebe 50 em dinheiro na gaveta DELA: abate 30, devolve 20 de troco.
         ReceivableUseCase.SettlementResult result = receivableUseCase.pay(biaSession.id(), bia, vip.id(),
@@ -196,5 +204,60 @@ class ReceivableCycleIT {
         CustomerReceivable receivable = receivableUseCase.findByOrderId(sold.id()).orElseThrow();
         assertThat(receivable.status()).isEqualTo(ReceivableStatus.CANCELADO);
         assertThat(receivableUseCase.balance(vip.id()).openBalance()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void limitPerChannel_isStoredPerRow_andTheTotalCapStillBlocks() {
+        String ana = "ana-" + suffix();
+        String[] stock = givenStock(ana);
+        CashRegisterSession session = pdvUseCase.openSession(ana, BigDecimal.ZERO, stock[0]);
+        Customer vip = givenCustomer(true, "100.00");
+        receivableUseCase.setCreditLimit(vip.id(), OnAccountChannel.MESA, new BigDecimal("30.00"), "gerente");
+        receivableUseCase.setCreditLimit(vip.id(), null, new BigDecimal("40.00"), "gerente");
+        flushAndClear();
+
+        // Cada PUT grava uma linha só: as três convivem.
+        assertThat(creditLimitRepository.findByCustomerId(vip.id())).isEqualTo(new CreditLimits(
+                new BigDecimal("40.00"), new BigDecimal("100.00"), new BigDecimal("30.00")));
+
+        // 2 carvões = 44,00: cabe no balcão (100), mas não no teto total (40).
+        assertThatThrownBy(() -> pdvUseCase.registerSale(session.id(), vip.id(),
+                List.of(new SaleItemCommand(stock[1], new BigDecimal("2.000"), null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("44.00"), TODAY)), ana))
+                .isInstanceOfSatisfying(CreditLimitExceededException.class, ex -> assertThat(ex.getChannel()).isNull());
+
+        receivableUseCase.setCreditLimit(vip.id(), null, null, "gerente");
+        Order sold = pdvUseCase.registerSale(session.id(), vip.id(),
+                List.of(new SaleItemCommand(stock[1], new BigDecimal("2.000"), null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("44.00"), TODAY.plusDays(3))), ana);
+        flushAndClear();
+
+        assertThat(creditLimitRepository.findByCustomerId(vip.id())).isEqualTo(new CreditLimits(
+                null, new BigDecimal("100.00"), new BigDecimal("30.00")));
+        assertThat(receivableUseCase.eligibility(vip.id(), null, true).limitsByChannel())
+                .extracting(c -> c.channel(), c -> c.openBalance().setScale(2), c -> c.available().setScale(2))
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(OnAccountChannel.BALCAO, new BigDecimal("44.00"),
+                                new BigDecimal("56.00")),
+                        org.assertj.core.groups.Tuple.tuple(OnAccountChannel.MESA, new BigDecimal("0.00"),
+                                new BigDecimal("30.00")));
+
+        // Filtros e resumo por canal.
+        String orderNumber = receivableUseCase.list(new ReceivableFilter(vip.id(), null, null, null, null, null,
+                null, OnAccountChannel.BALCAO, null), 0, 10).content().get(0).orderNumber();
+        assertThat(orderNumber).isNotBlank();
+        assertThat(receivableUseCase.list(new ReceivableFilter(vip.id(), null, null, null, null, null, null,
+                OnAccountChannel.MESA, null), 0, 10).content()).isEmpty();
+        assertThat(receivableUseCase.list(new ReceivableFilter(null, null, null, null, null, null, null, null,
+                vip.nome().toUpperCase()), 0, 10).content())
+                .extracting(v -> v.receivable().orderId()).containsExactly(sold.id());
+        assertThat(receivableUseCase.list(new ReceivableFilter(vip.id(), null, null, null, null, null, null, null,
+                orderNumber.toLowerCase()), 0, 10).content())
+                .extracting(v -> v.receivable().orderId()).containsExactly(sold.id());
+        ReceivableCustomerSummary row = receivableUseCase.summary(null, null).stream()
+                .filter(r -> r.customerId().equals(vip.id())).findFirst().orElseThrow();
+        assertThat(row.openBalanceBalcao()).isEqualByComparingTo("44.00");
+        assertThat(row.openBalanceMesa()).isEqualByComparingTo("0");
+        assertThat(row.creditLimit()).isEqualByComparingTo("130.00");
     }
 }

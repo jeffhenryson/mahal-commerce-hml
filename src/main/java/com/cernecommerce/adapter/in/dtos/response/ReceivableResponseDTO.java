@@ -17,6 +17,9 @@ public class ReceivableResponseDTO {
     private Long orderId;
     private String orderNumber;
     private Long comandaId;
+
+    @Schema(description = "BALCAO (sem comanda) ou MESA (com comanda): o limite em que o marcado conta.")
+    private String channel;
     private String tableLabel;
 
     @Schema(description = "Todos os itens do pedido no momento do marcar — mesmo quando só parte foi marcada.")

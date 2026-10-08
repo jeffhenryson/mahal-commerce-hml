@@ -4,6 +4,7 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
@@ -28,7 +29,8 @@ public interface ReceivableUseCase {
 
     /**
      * Valida a linha MARCADO de uma venda, ANTES de qualquer escrita. Sem linha MARCADO, não faz
-     * nada. A permissão do operador ({@code PDV_SALE_ON_ACCOUNT}) é checada na borda.
+     * nada. A permissão do operador ({@code PDV_SALE_ON_ACCOUNT}) é checada na borda. O valor tem de
+     * caber no limite do {@code channel} e, se o cliente tiver teto total, também no teto.
      *
      * @throws com.cernecommerce.core.domain.exception.recebivel.DuplicateOnAccountPaymentException
      * @throws com.cernecommerce.core.domain.exception.recebivel.InvalidDueDateException
@@ -37,14 +39,15 @@ public interface ReceivableUseCase {
      * @throws com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException
      * @throws com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException
      */
-    void validateOnAccount(Long customerId, List<PaymentCommand> payments);
+    void validateOnAccount(Long customerId, OnAccountChannel channel, List<PaymentCommand> payments);
 
     /** Cria o recebível do pedido recém-concluído, na mesma transação da venda. */
     CustomerReceivable createFromOrder(Order order, Long comandaId, PaymentCommand onAccountLine, String username);
 
     // ── Consulta ─────────────────────────────────────────────────────────────────────────────
 
-    OnAccountEligibility eligibility(Long customerId, boolean operatorMayMark);
+    /** {@code channel} nulo: a visão do cliente inteiro (os dois canais somados). */
+    OnAccountEligibility eligibility(Long customerId, OnAccountChannel channel, boolean operatorMayMark);
 
     PageResult<ReceivableView> list(ReceivableFilter filter, int page, int size);
 
@@ -80,8 +83,13 @@ public interface ReceivableUseCase {
     /** Job diário: ABERTO/PARCIAL vencidos passam a VENCIDO. */
     int markOverdue();
 
-    /** {@code null} volta ao limite padrão. Devolve o limite efetivo antes e depois. */
-    CreditLimitChange setCreditLimit(Long customerId, BigDecimal creditLimit, String username);
+    /**
+     * Grava só a linha de {@code channel} — nulo é o teto total. {@code creditLimit} nulo apaga a
+     * linha: o canal volta ao padrão; o total deixa de ter teto. Devolve o limite antes e depois
+     * (no canal, o efetivo; no total, o teto, que pode ser nulo).
+     */
+    CreditLimitChange setCreditLimit(Long customerId, OnAccountChannel channel, BigDecimal creditLimit,
+            String username);
 
     // ── Caixa ────────────────────────────────────────────────────────────────────────────────
 
@@ -94,6 +102,7 @@ public interface ReceivableUseCase {
             String tableLabel, long daysOverdue, List<ReceivablePayment> payments) {
     }
 
+    /** {@code creditLimit}: o teto total, se houver; senão, a soma dos limites efetivos dos canais. */
     record CustomerBalance(BigDecimal creditLimit, BigDecimal openBalance, BigDecimal overdueBalance) {
     }
 

@@ -42,6 +42,20 @@ public interface CustomerReceivableJpaRepository extends JpaRepository<CustomerR
     @Query("""
             SELECT COALESCE(SUM(r.amount - r.amountPaid), 0) FROM CustomerReceivableEntity r
             WHERE r.customerId = :customerId AND r.status IN ('ABERTO', 'PARCIAL', 'VENCIDO')
+              AND r.comandaId IS NULL
+            """)
+    BigDecimal sumOpenBalanceBalcao(@Param("customerId") Long customerId);
+
+    @Query("""
+            SELECT COALESCE(SUM(r.amount - r.amountPaid), 0) FROM CustomerReceivableEntity r
+            WHERE r.customerId = :customerId AND r.status IN ('ABERTO', 'PARCIAL', 'VENCIDO')
+              AND r.comandaId IS NOT NULL
+            """)
+    BigDecimal sumOpenBalanceMesa(@Param("customerId") Long customerId);
+
+    @Query("""
+            SELECT COALESCE(SUM(r.amount - r.amountPaid), 0) FROM CustomerReceivableEntity r
+            WHERE r.customerId = :customerId AND r.status IN ('ABERTO', 'PARCIAL', 'VENCIDO')
               AND r.dueDate < :today
             """)
     BigDecimal sumOverdueBalance(@Param("customerId") Long customerId, @Param("today") LocalDate today);
@@ -52,7 +66,9 @@ public interface CustomerReceivableJpaRepository extends JpaRepository<CustomerR
                    SUM(CASE WHEN r.dueDate < :today AND r.status IN ('ABERTO', 'PARCIAL', 'VENCIDO')
                             THEN r.amount - r.amountPaid ELSE 0 END),
                    MIN(r.dueDate),
-                   COUNT(r)
+                   COUNT(r),
+                   SUM(CASE WHEN r.comandaId IS NULL THEN r.amount - r.amountPaid ELSE 0 END),
+                   SUM(CASE WHEN r.comandaId IS NOT NULL THEN r.amount - r.amountPaid ELSE 0 END)
             FROM CustomerReceivableEntity r
             WHERE r.status IN :statuses
             GROUP BY r.customerId

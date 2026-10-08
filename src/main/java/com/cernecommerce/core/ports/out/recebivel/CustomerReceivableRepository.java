@@ -3,6 +3,7 @@ package com.cernecommerce.core.ports.out.recebivel;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
@@ -39,6 +40,9 @@ public interface CustomerReceivableRepository {
 
     BigDecimal sumOpenBalance(Long customerId);
 
+    /** O em aberto do cliente só no canal: BALCAO sem comanda, MESA com comanda. */
+    BigDecimal sumOpenBalance(Long customerId, OnAccountChannel channel);
+
     BigDecimal sumOverdueBalance(Long customerId, LocalDate today);
 
     /** Agrupado por cliente, sobre os recebíveis nos {@code statuses}. */
@@ -57,6 +61,6 @@ public interface CustomerReceivableRepository {
     BigDecimal sumReceivedBySessionAndMethod(Long sessionId, PaymentMethod method);
 
     record CustomerBalanceRow(Long customerId, BigDecimal openBalance, BigDecimal overdueBalance,
-            LocalDate nextDueDate, long count) {
+            LocalDate nextDueDate, long count, BigDecimal openBalanceBalcao, BigDecimal openBalanceMesa) {
     }
 }

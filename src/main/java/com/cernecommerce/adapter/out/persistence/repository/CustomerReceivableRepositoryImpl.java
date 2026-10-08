@@ -1,6 +1,8 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
+import com.cernecommerce.adapter.out.persistence.entity.CustomerEntity;
 import com.cernecommerce.adapter.out.persistence.entity.CustomerReceivableEntity;
+import com.cernecommerce.adapter.out.persistence.entity.OrderEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivableItemEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivablePaymentBatchEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivablePaymentEntity;
@@ -9,6 +11,7 @@ import com.cernecommerce.core.domain.model.pagamento.PaymentChannel;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pagamento.PaymentProvider;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableItem;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
@@ -16,6 +19,8 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -28,6 +33,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -136,6 +142,19 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
             if (f.dueTo() != null) p.add(cb.lessThanOrEqualTo(root.get("dueDate"), f.dueTo()));
             if (f.createdFrom() != null) p.add(cb.greaterThanOrEqualTo(root.get("createdAt"), f.createdFrom()));
             if (f.createdTo() != null) p.add(cb.lessThanOrEqualTo(root.get("createdAt"), f.createdTo()));
+            if (f.channel() == OnAccountChannel.BALCAO) p.add(cb.isNull(root.get("comandaId")));
+            if (f.channel() == OnAccountChannel.MESA) p.add(cb.isNotNull(root.get("comandaId")));
+            if (f.search() != null && !f.search().isBlank()) {
+                // Sem associação JPA para cliente e pedido (as colunas são ids soltos): subconsultas.
+                String like = "%" + f.search().trim().toLowerCase(Locale.ROOT) + "%";
+                Subquery<Long> customers = query.subquery(Long.class);
+                Root<CustomerEntity> c = customers.from(CustomerEntity.class);
+                customers.select(c.<Long>get("id")).where(cb.like(cb.lower(c.<String>get("nome")), like));
+                Subquery<Long> orders = query.subquery(Long.class);
+                Root<OrderEntity> o = orders.from(OrderEntity.class);
+                orders.select(o.<Long>get("id")).where(cb.like(cb.lower(o.<String>get("orderNumber")), like));
+                p.add(cb.or(root.get("customerId").in(customers), root.get("orderId").in(orders)));
+            }
             return cb.and(p.toArray(new Predicate[0]));
         };
         Page<CustomerReceivableEntity> result = receivableJpa.findAll(spec, PageRequest.of(page, size,
@@ -152,6 +171,13 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
 
     @Override
     @Transactional(readOnly = true)
+    public BigDecimal sumOpenBalance(Long customerId, OnAccountChannel channel) {
+        return orZero(channel == OnAccountChannel.MESA ? receivableJpa.sumOpenBalanceMesa(customerId)
+                : receivableJpa.sumOpenBalanceBalcao(customerId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public BigDecimal sumOverdueBalance(Long customerId, LocalDate today) {
         return orZero(receivableJpa.sumOverdueBalance(customerId, today));
     }
@@ -162,7 +188,8 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
         List<String> names = statuses.stream().map(Enum::name).toList();
         return receivableJpa.summarizeByCustomer(names, today).stream()
                 .map(row -> new CustomerBalanceRow((Long) row[0], orZero((BigDecimal) row[1]),
-                        orZero((BigDecimal) row[2]), (LocalDate) row[3], ((Number) row[4]).longValue()))
+                        orZero((BigDecimal) row[2]), (LocalDate) row[3], ((Number) row[4]).longValue(),
+                        orZero((BigDecimal) row[5]), orZero((BigDecimal) row[6])))
                 .toList();
     }
 

@@ -1,5 +1,7 @@
 package com.cernecommerce.infra.scheduler;
 
+import com.cernecommerce.core.domain.model.crm.AutomationEvent;
+import com.cernecommerce.core.domain.model.crm.AutomationOccurrence;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.notification.EmailFormat;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
@@ -7,6 +9,7 @@ import com.cernecommerce.core.domain.model.notification.NotificationEmail.Row;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail.Tone;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
+import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase.ReceivableView;
 import com.cernecommerce.core.ports.out.crm.CustomerRepository;
@@ -42,19 +45,21 @@ public class ReceivableReminderJob {
     private final ReceivableUseCase receivableUseCase;
     private final CustomerRepository customerRepository;
     private final EmailPort emailPort;
+    private final AutomationDispatchUseCase automationDispatch;
     private final Clock clock;
 
     @Autowired
     public ReceivableReminderJob(ReceivableUseCase receivableUseCase, CustomerRepository customerRepository,
-            EmailPort emailPort) {
-        this(receivableUseCase, customerRepository, emailPort, Clock.system(EmailFormat.ZONE));
+            EmailPort emailPort, AutomationDispatchUseCase automationDispatch) {
+        this(receivableUseCase, customerRepository, emailPort, automationDispatch, Clock.system(EmailFormat.ZONE));
     }
 
     ReceivableReminderJob(ReceivableUseCase receivableUseCase, CustomerRepository customerRepository,
-            EmailPort emailPort, Clock clock) {
+            EmailPort emailPort, AutomationDispatchUseCase automationDispatch, Clock clock) {
         this.receivableUseCase = receivableUseCase;
         this.customerRepository = customerRepository;
         this.emailPort = emailPort;
+        this.automationDispatch = automationDispatch;
         this.clock = clock;
     }
 
@@ -69,7 +74,7 @@ public class ReceivableReminderJob {
     private int remindDueOn(LocalDate dueDate, boolean dueToday) {
         Map<Long, List<CustomerReceivable>> byCustomer = new LinkedHashMap<>();
         try {
-            ReceivableFilter filter = new ReceivableFilter(null, null, null, dueDate, dueDate, null, null);
+            ReceivableFilter filter = new ReceivableFilter(null, null, null, dueDate, dueDate, null, null, null, null);
             for (ReceivableView view : receivableUseCase.list(filter, 0, PAGE_SIZE).content()) {
                 CustomerReceivable r = view.receivable();
                 // VENCIDO também é aberto, mas não vence "hoje" nem "em 3 dias" — o filtro de data já o exclui.
@@ -83,6 +88,7 @@ public class ReceivableReminderJob {
         }
         int sent = 0;
         for (Map.Entry<Long, List<CustomerReceivable>> entry : byCustomer.entrySet()) {
+            dispatchAutomations(entry.getKey(), entry.getValue(), dueDate, dueToday);
             try {
                 Customer customer = customerRepository.findById(entry.getKey()).orElse(null);
                 if (customer == null || customer.email() == null || customer.email().isBlank()) {
@@ -95,6 +101,28 @@ public class ReceivableReminderJob {
             }
         }
         return sent;
+    }
+
+    /**
+     * Automações de MARCADO_VENCENDO — independem do e-mail (o destino pode ser WhatsApp). Uma
+     * ocorrência por cliente, vencimento e janela (D-3 ou D0).
+     */
+    private void dispatchAutomations(Long customerId, List<CustomerReceivable> receivables, LocalDate dueDate,
+            boolean dueToday) {
+        try {
+            BigDecimal total = receivables.stream()
+                    .map(CustomerReceivable::amountOpen)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            automationDispatch.dispatch(AutomationOccurrence.event(AutomationEvent.MARCADO_VENCENDO, customerId, null,
+                    "MARCADO:" + customerId + ":" + dueDate + ":" + (dueToday ? "D0" : "D" + DAYS_BEFORE),
+                    Map.of("vencimento", dueDate.toString(),
+                            "venceHoje", dueToday,
+                            "total", total,
+                            "quantidade", receivables.size())));
+        } catch (Exception ex) {
+            log.error("scheduler.receivable.reminder.automation.failed customerId={} error={}", customerId,
+                    ex.getMessage());
+        }
     }
 
     static NotificationEmail email(Customer customer, List<CustomerReceivable> receivables, LocalDate dueDate,

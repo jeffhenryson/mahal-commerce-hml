@@ -7,11 +7,12 @@ import java.time.LocalDate;
  * Filtros de {@code GET /receivables}. Campo {@code null} é ignorado.
  *
  * @param overdue {@code true}: só em aberto com vencimento antes de hoje
+ * @param search trecho do nome do cliente ou do número do pedido
  */
 public record ReceivableFilter(Long customerId, ReceivableStatus status, Boolean overdue, LocalDate dueFrom,
-        LocalDate dueTo, Instant createdFrom, Instant createdTo) {
+        LocalDate dueTo, Instant createdFrom, Instant createdTo, OnAccountChannel channel, String search) {
 
     public static ReceivableFilter none() {
-        return new ReceivableFilter(null, null, null, null, null, null, null);
+        return new ReceivableFilter(null, null, null, null, null, null, null, null, null);
     }
 }

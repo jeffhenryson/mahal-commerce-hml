@@ -145,8 +145,22 @@ class PagamentoPostgresIT {
         var tag = tagRepository.findByNome("VIP")
                 .orElseGet(() -> tagRepository.save(new com.cernecommerce.core.domain.model.crm.Tag(null, "VIP")));
         crmUseCase.addTagToCustomer(id, tag.id());
-        receivableUseCase.setCreditLimit(id, new BigDecimal(creditLimit), "gerente");
+        receivableUseCase.setCreditLimit(id, com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO,
+                new BigDecimal(creditLimit), "gerente");
         return id;
+    }
+
+    @Test
+    void v142_seedsTheChannelDefaults_andRefusesAnUnknownChannel() {
+        assertThat(jdbc.queryForList("SELECT config_key FROM system_config WHERE config_key LIKE "
+                + "'pdv.on-account.default-credit-limit.%' ORDER BY config_key", String.class))
+                .containsExactly("pdv.on-account.default-credit-limit.balcao",
+                        "pdv.on-account.default-credit-limit.mesa");
+        Long vip = givenVip("10.00");
+        assertThatThrownBy(() -> jdbc.update(
+                        "INSERT INTO customer_credit_limit (customer_id, channel, credit_limit, updated_by, updated_at) "
+                                + "VALUES (?, 'DELIVERY', 1, 'x', now())", vip))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     @Test
@@ -171,14 +185,21 @@ class PagamentoPostgresIT {
         assertThat(receivableUseCase.summary(null, null))
                 .anySatisfy(row -> assertThat(row.customerId()).isEqualTo(vip));
         assertThat(receivableUseCase.list(new com.cernecommerce.core.domain.model.recebivel.ReceivableFilter(
-                vip, null, null, today, today, null, null), 0, 20).content()).hasSize(1);
+                vip, null, null, today, today, null, null, null, null), 0, 20).content()).hasSize(1);
+        // V142: o limite é por (cliente, canal), e o filtro de canal/busca roda contra o schema real.
+        assertThat(jdbc.queryForObject("SELECT channel FROM customer_credit_limit WHERE customer_id = ?",
+                String.class, vip)).isEqualTo("BALCAO");
+        assertThat(receivableUseCase.list(new com.cernecommerce.core.domain.model.recebivel.ReceivableFilter(
+                null, null, null, null, null, null, null,
+                com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO, "VIP"), 0, 200).content())
+                .anySatisfy(v -> assertThat(v.receivable().orderId()).isEqualTo(sold.id()));
 
         // Simula o vencimento e roda o job: o marcado passa a VENCIDO e bloqueia novo marcar.
         jdbc.update("UPDATE customer_receivable SET due_date = due_date - 1 WHERE order_id = ?", sold.id());
         assertThat(receivableUseCase.markOverdue()).isGreaterThanOrEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT status FROM customer_receivable WHERE order_id = ?", String.class,
                 sold.id())).isEqualTo("VENCIDO");
-        assertThat(receivableUseCase.eligibility(vip, true).reasons()).contains("CUSTOMER_HAS_OVERDUE");
+        assertThat(receivableUseCase.eligibility(vip, null, true).reasons()).contains("CUSTOMER_HAS_OVERDUE");
 
         // Quitação em PIX no mesmo caixa: zera e volta a QUITADO.
         var result = receivableUseCase.pay(Long.valueOf(ctx[0]), ctx[2], vip,

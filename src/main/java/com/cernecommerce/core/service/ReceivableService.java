@@ -20,8 +20,11 @@ import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
+import com.cernecommerce.core.domain.model.recebivel.CreditLimits;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility.ChannelLimit;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableItem;
@@ -47,12 +50,14 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -63,12 +68,18 @@ import java.util.stream.Collectors;
  * <p><b>Vencido é calculado na leitura</b> ({@code dueDate < hoje} sobre os em aberto), além de
  * gravado pelo job diário: a regra "quem tem vencido não marca" vale desde a meia-noite, sem depender
  * de o job já ter rodado.</p>
+ *
+ * <p><b>Limite por canal.</b> Balcão e mesa têm limites separados. O de um canal é a linha do cliente
+ * no canal → {@code pdv.on-account.default-credit-limit.<canal>} → {@code pdv.on-account.default-credit-limit}.
+ * Se o cliente tiver linha TOTAL, ela é teto da soma dos dois canais; sem ela, não há teto.</p>
  */
 public class ReceivableService implements ReceivableUseCase {
 
     static final String VIP_TAG = "VIP";
     static final String DEFAULT_DUE_DAYS_KEY = "pdv.on-account.default-due-days";
     static final String DEFAULT_CREDIT_LIMIT_KEY = "pdv.on-account.default-credit-limit";
+    static final String DEFAULT_CREDIT_LIMIT_BALCAO_KEY = DEFAULT_CREDIT_LIMIT_KEY + ".balcao";
+    static final String DEFAULT_CREDIT_LIMIT_MESA_KEY = DEFAULT_CREDIT_LIMIT_KEY + ".mesa";
     private static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
 
     private final CustomerReceivableRepository receivableRepository;
@@ -101,7 +112,8 @@ public class ReceivableService implements ReceivableUseCase {
 
     @Override
     @Transactional(readOnly = true)
-    public void validateOnAccount(Long customerId, List<PaymentCommand> payments) {
+    public void validateOnAccount(Long customerId, OnAccountChannel channel, List<PaymentCommand> payments) {
+        Objects.requireNonNull(channel, "channel");
         List<PaymentCommand> marked = payments.stream().filter(PaymentCommand::isOnAccount).toList();
         if (marked.isEmpty()) {
             return;
@@ -125,10 +137,16 @@ public class ReceivableService implements ReceivableUseCase {
         if (overdue.signum() > 0) {
             throw new CustomerHasOverdueException(customerId, overdue);
         }
-        BigDecimal limit = effectiveCreditLimit(customerId);
-        BigDecimal open = receivableRepository.sumOpenBalance(customerId);
+        Position position = position(customerId);
+        BigDecimal limit = position.limit(channel);
+        BigDecimal open = position.open(channel);
         if (open.add(line.amount()).compareTo(limit) > 0) {
-            throw new CreditLimitExceededException(limit, open, available(limit, open));
+            throw new CreditLimitExceededException(channel, limit, open, available(limit, open));
+        }
+        BigDecimal cap = position.own().total();
+        BigDecimal openTotal = position.openTotal();
+        if (cap != null && openTotal.add(line.amount()).compareTo(cap) > 0) {
+            throw new CreditLimitExceededException(null, cap, openTotal, available(cap, openTotal));
         }
     }
 
@@ -152,13 +170,14 @@ public class ReceivableService implements ReceivableUseCase {
 
     @Override
     @Transactional(readOnly = true)
-    public OnAccountEligibility eligibility(Long customerId, boolean operatorMayMark) {
+    public OnAccountEligibility eligibility(Long customerId, OnAccountChannel channel, boolean operatorMayMark) {
         requireCustomer(customerId);
         LocalDate today = today();
-        BigDecimal limit = effectiveCreditLimit(customerId);
-        BigDecimal open = receivableRepository.sumOpenBalance(customerId);
+        Position position = position(customerId);
+        BigDecimal limit = position.limit(channel);
+        BigDecimal open = position.open(channel);
         BigDecimal overdue = receivableRepository.sumOverdueBalance(customerId, today);
-        BigDecimal available = available(limit, open);
+        BigDecimal available = position.available(channel);
 
         List<String> reasons = new ArrayList<>();
         if (!isVip(customerId)) {
@@ -174,8 +193,11 @@ public class ReceivableService implements ReceivableUseCase {
             reasons.add("CREDIT_LIMIT_EXCEEDED");
         }
         LocalDate defaultDueDate = today.plusDays(systemConfigPort.getInt(DEFAULT_DUE_DAYS_KEY, 30));
+        List<ChannelLimit> limitsByChannel = Arrays.stream(OnAccountChannel.values())
+                .map(c -> new ChannelLimit(c, position.own().of(c), position.open(c), position.available(c)))
+                .toList();
         return new OnAccountEligibility(reasons.isEmpty(), List.copyOf(reasons), limit, open, overdue, available,
-                defaultDueDate);
+                defaultDueDate, limitsByChannel);
     }
 
     @Override
@@ -198,12 +220,12 @@ public class ReceivableService implements ReceivableUseCase {
                         .toList();
         List<Long> customerIds = rows.stream().map(CustomerReceivableRepository.CustomerBalanceRow::customerId).toList();
         Map<Long, String> names = customerNames(customerIds);
-        Map<Long, BigDecimal> limits = creditLimitRepository.findByCustomerIds(customerIds);
-        BigDecimal defaultLimit = defaultCreditLimit();
+        Map<Long, CreditLimits> limits = creditLimitRepository.findByCustomerIds(customerIds);
+        Map<OnAccountChannel, BigDecimal> defaults = channelDefaults();
         return rows.stream()
                 .map(r -> new ReceivableCustomerSummary(r.customerId(), names.get(r.customerId()), r.openBalance(),
-                        r.overdueBalance(), limits.getOrDefault(r.customerId(), defaultLimit), r.nextDueDate(),
-                        r.count()))
+                        r.overdueBalance(), totalLimit(limits.getOrDefault(r.customerId(), CreditLimits.none()),
+                                defaults), r.nextDueDate(), r.count(), r.openBalanceBalcao(), r.openBalanceMesa()))
                 .sorted(Comparator.comparing(ReceivableCustomerSummary::overdueBalance).reversed()
                         .thenComparing(ReceivableCustomerSummary::openBalance, Comparator.reverseOrder()))
                 .toList();
@@ -231,7 +253,8 @@ public class ReceivableService implements ReceivableUseCase {
     @Override
     @Transactional(readOnly = true)
     public CustomerBalance balance(Long customerId) {
-        return new CustomerBalance(effectiveCreditLimit(customerId), receivableRepository.sumOpenBalance(customerId),
+        Position position = position(customerId);
+        return new CustomerBalance(position.limit(null), position.openTotal(),
                 receivableRepository.sumOverdueBalance(customerId, today()));
     }
 
@@ -376,18 +399,25 @@ public class ReceivableService implements ReceivableUseCase {
 
     @Override
     @Transactional
-    public CreditLimitChange setCreditLimit(Long customerId, BigDecimal creditLimit, String username) {
+    public CreditLimitChange setCreditLimit(Long customerId, OnAccountChannel channel, BigDecimal creditLimit,
+            String username) {
         requireCustomer(customerId);
         if (creditLimit != null && creditLimit.signum() < 0) {
             throw new IllegalArgumentException("creditLimit não pode ser negativo");
         }
-        BigDecimal before = effectiveCreditLimit(customerId);
+        BigDecimal before = limitOf(customerId, channel);
         if (creditLimit == null) {
-            creditLimitRepository.delete(customerId);
+            creditLimitRepository.delete(customerId, channel);
         } else {
-            creditLimitRepository.save(customerId, creditLimit, username, Instant.now());
+            creditLimitRepository.save(customerId, channel, creditLimit, username, Instant.now());
         }
-        return new CreditLimitChange(before, effectiveCreditLimit(customerId));
+        return new CreditLimitChange(before, limitOf(customerId, channel));
+    }
+
+    /** No canal, o limite efetivo; no total ({@code channel} nulo), o teto — nulo se não houver. */
+    private BigDecimal limitOf(Long customerId, OnAccountChannel channel) {
+        CreditLimits own = creditLimitRepository.findByCustomerId(customerId);
+        return channel == null ? own.total() : channelLimit(own, channel, channelDefaults());
     }
 
     // ── Caixa ────────────────────────────────────────────────────────────────────────────────
@@ -418,12 +448,73 @@ public class ReceivableService implements ReceivableUseCase {
                 .anyMatch(tag -> tag.nome() != null && VIP_TAG.equalsIgnoreCase(tag.nome().trim()));
     }
 
-    private BigDecimal defaultCreditLimit() {
-        return systemConfigPort.getDecimal(DEFAULT_CREDIT_LIMIT_KEY, BigDecimal.ZERO);
+    /** O padrão de cada canal: a chave do canal ou, sem ela, o padrão geral. */
+    private Map<OnAccountChannel, BigDecimal> channelDefaults() {
+        BigDecimal general = systemConfigPort.getDecimal(DEFAULT_CREDIT_LIMIT_KEY, BigDecimal.ZERO);
+        return Map.of(
+                OnAccountChannel.BALCAO, systemConfigPort.getDecimal(DEFAULT_CREDIT_LIMIT_BALCAO_KEY, general),
+                OnAccountChannel.MESA, systemConfigPort.getDecimal(DEFAULT_CREDIT_LIMIT_MESA_KEY, general));
     }
 
-    private BigDecimal effectiveCreditLimit(Long customerId) {
-        return creditLimitRepository.findByCustomerId(customerId).orElseGet(this::defaultCreditLimit);
+    private static BigDecimal channelLimit(CreditLimits own, OnAccountChannel channel,
+            Map<OnAccountChannel, BigDecimal> defaults) {
+        BigDecimal individual = own.of(channel);
+        return individual != null ? individual : defaults.get(channel);
+    }
+
+    /** O teto, se houver; senão, a soma dos limites efetivos dos dois canais. */
+    private static BigDecimal totalLimit(CreditLimits own, Map<OnAccountChannel, BigDecimal> defaults) {
+        if (own.total() != null) {
+            return own.total();
+        }
+        return channelLimit(own, OnAccountChannel.BALCAO, defaults)
+                .add(channelLimit(own, OnAccountChannel.MESA, defaults));
+    }
+
+    private Position position(Long customerId) {
+        CreditLimits own = creditLimitRepository.findByCustomerId(customerId);
+        Map<OnAccountChannel, BigDecimal> defaults = channelDefaults();
+        return new Position(own,
+                channelLimit(own, OnAccountChannel.BALCAO, defaults),
+                channelLimit(own, OnAccountChannel.MESA, defaults),
+                receivableRepository.sumOpenBalance(customerId, OnAccountChannel.BALCAO),
+                receivableRepository.sumOpenBalance(customerId, OnAccountChannel.MESA));
+    }
+
+    /**
+     * Limites (já com os padrões) e saldos de um cliente nos dois canais. Canal {@code null} nos
+     * métodos = o cliente inteiro.
+     */
+    private record Position(CreditLimits own, BigDecimal limitBalcao, BigDecimal limitMesa, BigDecimal openBalcao,
+            BigDecimal openMesa) {
+
+        BigDecimal openTotal() {
+            return openBalcao.add(openMesa);
+        }
+
+        BigDecimal open(OnAccountChannel channel) {
+            if (channel == null) {
+                return openTotal();
+            }
+            return channel == OnAccountChannel.BALCAO ? openBalcao : openMesa;
+        }
+
+        /** No total: o teto, se houver; senão, a soma dos dois canais. */
+        BigDecimal limit(OnAccountChannel channel) {
+            if (channel == null) {
+                return own.total() != null ? own.total() : limitBalcao.add(limitMesa);
+            }
+            return channel == OnAccountChannel.BALCAO ? limitBalcao : limitMesa;
+        }
+
+        /** O que cabe: o do canal, sem passar do que sobra no teto total. */
+        BigDecimal available(OnAccountChannel channel) {
+            BigDecimal fit = channel == null
+                    ? ReceivableService.available(limitBalcao, openBalcao)
+                            .add(ReceivableService.available(limitMesa, openMesa))
+                    : ReceivableService.available(limit(channel), open(channel));
+            return own.total() == null ? fit : fit.min(ReceivableService.available(own.total(), openTotal()));
+        }
     }
 
     private static BigDecimal available(BigDecimal limit, BigDecimal open) {

@@ -10,6 +10,7 @@ import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
@@ -28,6 +29,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -74,8 +76,9 @@ public class ReceivableController {
 
     @Operation(summary = "Tabela única de marcados",
             description = "Um item por pedido marcado, com os itens do pedido (o front achata em uma linha por "
-                    + "produto ou sessão). overdue=true: só em aberto com vencimento antes de hoje. Ordem: "
-                    + "vencimento mais próximo primeiro.")
+                    + "produto ou sessão). overdue=true: só em aberto com vencimento antes de hoje. "
+                    + "channel=BALCAO|MESA: só os marcados daquele canal. search: trecho do nome do cliente ou "
+                    + "do número do pedido. Ordem: vencimento mais próximo primeiro.")
     @GetMapping("/receivables")
     @PreAuthorize("hasAuthority('RECEIVABLE_READ')")
     public ResponseEntity<PageResult<ReceivableResponseDTO>> list(
@@ -86,17 +89,22 @@ public class ReceivableController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dueTo,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdTo,
+            @RequestParam(required = false) OnAccountChannel channel,
+            @RequestParam(required = false) @Size(max = 100) String search,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
         PageResult<ReceivableView> result = receivableUseCase.list(
-                new ReceivableFilter(customerId, status, overdue, dueFrom, dueTo, createdFrom, createdTo), page, size);
+                new ReceivableFilter(customerId, status, overdue, dueFrom, dueTo, createdFrom, createdTo, channel,
+                        search), page, size);
         return ResponseEntity.ok(new PageResult<>(result.content().stream().map(ReceivableController::toResponse)
                 .toList(), result.page(), result.size(), result.totalElements(), result.totalPages()));
     }
 
     @Operation(summary = "Marcados agrupados por cliente",
             description = "Sem status: só os em aberto (ABERTO, PARCIAL, VENCIDO). overdue=true: só clientes com "
-                    + "saldo vencido. Ordem: mais vencido primeiro.")
+                    + "saldo vencido. openBalanceBalcao/openBalanceMesa: a parte do saldo de cada canal. "
+                    + "creditLimit: o teto total, se houver; senão, a soma dos limites efetivos dos canais. "
+                    + "Ordem: mais vencido primeiro.")
     @GetMapping("/receivables/summary")
     @PreAuthorize("hasAuthority('RECEIVABLE_READ')")
     public ResponseEntity<List<ReceivableCustomerSummary>> summary(
@@ -127,13 +135,17 @@ public class ReceivableController {
     @Operation(summary = "Pré-checagem do \"Marcar\" para o PDV",
             description = "reasons: CUSTOMER_NOT_ELIGIBLE (sem tag VIP), ON_ACCOUNT_NOT_ALLOWED (operador sem "
                     + "PDV_SALE_ON_ACCOUNT), CUSTOMER_HAS_OVERDUE, CREDIT_LIMIT_EXCEEDED (nada disponível). "
-                    + "creditLimit é o limite efetivo (individual ou o padrão da loja); defaultDueDate vem de "
+                    + "channel=BALCAO|MESA: creditLimit, openBalance, available e CREDIT_LIMIT_EXCEEDED são do "
+                    + "canal (o PDV manda BALCAO; o fechamento de mesa, MESA); sem channel, do cliente inteiro. "
+                    + "limitsByChannel vem sempre com os dois canais: creditLimit null = sem limite próprio "
+                    + "(vale o padrão); available já considera o padrão e o teto total. defaultDueDate vem de "
                     + "pdv.on-account.default-due-days.")
     @GetMapping("/crm/customers/{id}/on-account-eligibility")
     @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE', 'PDV_COMANDA_MANAGE', 'RECEIVABLE_READ')")
     public ResponseEntity<OnAccountEligibility> eligibility(@PathVariable("id") Long customerId,
-            Authentication authentication) {
-        return ResponseEntity.ok(receivableUseCase.eligibility(customerId, OnAccountGuard.mayMark(authentication)));
+            @RequestParam(required = false) OnAccountChannel channel, Authentication authentication) {
+        return ResponseEntity.ok(receivableUseCase.eligibility(customerId, channel,
+                OnAccountGuard.mayMark(authentication)));
     }
 
     // ── Quitação ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +214,9 @@ public class ReceivableController {
 
     @Operation(summary = "Define o limite de crédito do \"Marcar\" do cliente",
             description = "Endpoint próprio, e não campo do PUT /crm/customers/{id}: o limite é decisão do gerente "
-                    + "e o PUT do cadastro regrava a ficha inteira. creditLimit null volta ao limite padrão.")
+                    + "e o PUT do cadastro regrava a ficha inteira. channel=BALCAO|MESA grava o limite daquele "
+                    + "canal; sem channel, o teto total (a soma dos dois). Cada chamada mexe numa linha só. "
+                    + "creditLimit null apaga a linha: o canal volta ao padrão; o total fica sem teto.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Atualizado"),
             @ApiResponse(responseCode = "400", description = "Valor negativo", content = @Content),
@@ -213,9 +227,10 @@ public class ReceivableController {
     public ResponseEntity<Void> setCreditLimit(@PathVariable("id") Long customerId,
             @Valid @RequestBody CreditLimitRequest request, Authentication authentication) {
         ReceivableUseCase.CreditLimitChange change = receivableUseCase.setCreditLimit(customerId,
-                request.getCreditLimit(), authentication.getName());
+                request.getChannel(), request.getCreditLimit(), authentication.getName());
         Map<String, Object> details = new HashMap<>();
         details.put("customerId", customerId);
+        details.put("channel", request.getChannel() == null ? "TOTAL" : request.getChannel().name());
         details.put("before", change.before());
         details.put("after", change.after());
         details.put("individual", request.getCreditLimit() != null);
@@ -235,6 +250,7 @@ public class ReceivableController {
         dto.setOrderId(r.orderId());
         dto.setOrderNumber(view.orderNumber());
         dto.setComandaId(r.comandaId());
+        dto.setChannel(OnAccountChannel.of(r.comandaId()).name());
         dto.setTableLabel(view.tableLabel());
         dto.setItems(r.items().stream().map(i -> {
             ReceivableResponseDTO.Item item = new ReceivableResponseDTO.Item();
