@@ -15,9 +15,23 @@ public interface PaymentWebhookUseCase {
      * publicar evento diretamente (ver {@code HexagonalArchitectureTest
      * #core_service_may_only_use_spring_transaction} — só {@code @Transactional} é permitido lá).
      */
-    record WebhookResult(boolean orderPaid, Long orderId, String orderNumber) {
+    /**
+     * {@code paymentDeclined}: o gateway, reconsultado, diz que o pagamento de um pedido conhecido e
+     * ainda pendente não foi aprovado — vira o evento {@code PAYMENT_DECLINED} (automações de
+     * PAGAMENTO_RECUSADO). Não é falha técnica: essa é {@code PAYMENT_WEBHOOK_FAILED}.
+     */
+    record WebhookResult(boolean orderPaid, Long orderId, String orderNumber, boolean paymentDeclined) {
+
+        public WebhookResult(boolean orderPaid, Long orderId, String orderNumber) {
+            this(orderPaid, orderId, orderNumber, false);
+        }
+
         public static WebhookResult noop() {
-            return new WebhookResult(false, null, null);
+            return new WebhookResult(false, null, null, false);
+        }
+
+        public static WebhookResult declined(Long orderId, String orderNumber) {
+            return new WebhookResult(false, orderId, orderNumber, true);
         }
     }
 

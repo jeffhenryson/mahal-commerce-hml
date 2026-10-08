@@ -88,7 +88,7 @@ class SystemConfigFlowIT {
 
     @Test
     void set_sem_auth_retorna_401() throws Exception {
-        mvc.perform(put("/system/config/auth.registration.enabled")
+        mvc.perform(put("/system/config/auth.forgot-password.enabled")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"true\"}"))
                 .andExpect(status().isUnauthorized());
@@ -96,7 +96,7 @@ class SystemConfigFlowIT {
 
     @Test
     void set_sem_dev_elevated_retorna_403() throws Exception {
-        mvc.perform(put("/system/config/auth.registration.enabled")
+        mvc.perform(put("/system/config/auth.forgot-password.enabled")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"true\"}")
                         .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
@@ -114,7 +114,7 @@ class SystemConfigFlowIT {
 
     @Test
     void set_chave_publica_persiste_e_reflete_em_getPublicConfig() throws Exception {
-        mvc.perform(put("/system/config/auth.registration.enabled")
+        mvc.perform(put("/system/config/auth.forgot-password.enabled")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"false\"}")
                         .with(user("devuser").authorities(new SimpleGrantedAuthority("DEV_ELEVATED"))))
@@ -122,7 +122,7 @@ class SystemConfigFlowIT {
 
         mvc.perform(get("/system/config/public"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$['auth.registration.enabled']").value("false"));
+                .andExpect(jsonPath("$['auth.forgot-password.enabled']").value("false"));
     }
 
     // ── Maintenance mode: cache eviction → MaintenanceModeFilter ───────────

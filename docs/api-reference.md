@@ -2019,13 +2019,18 @@ mesa (`POST /pdv/comandas/{id}/close`).
 | Venda sem `customerId` | 400 | `CUSTOMER_REQUIRED_FOR_ON_ACCOUNT` |
 | Cliente sem a tag VIP | 403 | `CUSTOMER_NOT_ELIGIBLE` |
 | Cliente com marcado vencido | 409 | `CUSTOMER_HAS_OVERDUE` (corpo traz `overdueBalance`) |
-| Passa do limite de crédito | 409 | `CREDIT_LIMIT_EXCEEDED` (corpo traz `limit`, `openBalance`, `available`) |
+| Passa do limite de crédito | 409 | `CREDIT_LIMIT_EXCEEDED` (corpo traz `channel`, `limit`, `openBalance`, `available`) |
 | `dueDate` ausente ou no passado | 400 | `INVALID_DUE_DATE` |
 | Mais de uma linha `MARCADO` | 400 | `DUPLICATE_ON_ACCOUNT_PAYMENT` |
 | `MARCADO` onde não vale (liquidação do app, correção de pagamento, quitação) | 400 | `INVALID_PAYMENT_METHOD` |
 
-Para a tela checar antes de vender: `GET /crm/customers/{id}/on-account-eligibility`. Nas respostas
-de venda, `paymentStatus` vem `PENDENTE` quando há linha `MARCADO`.
+O limite checado é o do canal (CRM-F011): a venda de balcão conta contra `BALCAO`; o fechamento de
+mesa e o pagamento de sessão, contra `MESA`. Se o cliente tiver teto total, o valor também tem de
+caber nele. No `409`, `channel` diz qual estourou (`BALCAO`, `MESA` ou `null` = teto total) e a
+mensagem também: "Limite de mesa: cabem R$ 20,00 (…)".
+
+Para a tela checar antes de vender: `GET /crm/customers/{id}/on-account-eligibility?channel=`. Nas
+respostas de venda, `paymentStatus` vem `PENDENTE` quando há linha `MARCADO`.
 
 ### GET /pdv/sales/{id} — Permissão: PDV_READ
 
@@ -2471,8 +2476,9 @@ uma devolução, e devolução é entrada de estoque.
 // Response 200 → CustomerResponse (tags reais do cliente) / 404 CUSTOMER_NOT_FOUND
 ```
 
-CRM-F010: só aqui (não na listagem) vêm `creditLimit` (limite **efetivo**: o individual ou o padrão
-`pdv.on-account.default-credit-limit`; nunca nulo), `openBalance` e `overdueBalance` do "Marcar".
+CRM-F010: só aqui (não na listagem) vêm `creditLimit`, `openBalance` e `overdueBalance` do "Marcar".
+`creditLimit` (nunca nulo) é o teto total do cliente, se houver; senão, a soma dos limites efetivos
+de balcão e mesa (CRM-F011).
 
 ---
 
@@ -2815,16 +2821,22 @@ Venda a prazo para cliente VIP. O marcado nasce da linha `MARCADO` na venda de b
 fechamento de mesa (ver `POST /pdv/sessions/{id}/sales`). Estados: `ABERTO → PARCIAL → QUITADO`,
 `VENCIDO` (marcado pelo `ReceivableOverdueJob` às 00:05 de São Paulo) e `CANCELADO`.
 
+**Limite por canal (CRM-F011).** Cada marcado tem um canal: `BALCAO` (sem comanda) ou `MESA` (com
+comanda). O limite efetivo de um canal é a linha do cliente naquele canal →
+`pdv.on-account.default-credit-limit.<balcao|mesa>` → `pdv.on-account.default-credit-limit`. A linha
+sem canal (`TOTAL`) é opcional e serve de teto para a soma dos dois canais.
+
 ### GET /receivables — Permissão: RECEIVABLE_READ
 
 `PageResult<ReceivableResponseDTO>`, um item por pedido marcado, com os itens do pedido. Ordem:
 vencimento mais próximo primeiro. Filtros opcionais: `customerId`, `status`, `overdue` (true = só
-em aberto vencidos), `dueFrom`/`dueTo` (data), `createdFrom`/`createdTo` (ISO-8601), `page` (≥ 0),
-`size` (1–200, default 50).
+em aberto vencidos), `dueFrom`/`dueTo` (data), `createdFrom`/`createdTo` (ISO-8601), `channel`
+(`BALCAO`/`MESA`), `search` (trecho do nome do cliente ou do número do pedido, sem diferenciar
+maiúsculas, ≤ 100), `page` (≥ 0), `size` (1–200, default 50).
 
 ```json
 { "id": 9, "customerId": 42, "customerName": "Ana", "orderId": 500, "orderNumber": "000001000",
-  "comandaId": null, "tableLabel": null,
+  "comandaId": null, "channel": "BALCAO", "tableLabel": null,
   "items": [ { "orderItemId": 1, "sku": "ESS-MENTA", "productName": "...", "quantity": 1,
                "subtotal": 80.00, "mode": "NORMAL" } ],
   "amount": 30.00, "amountPaid": 10.00, "amountOpen": 20.00, "dueDate": "2026-10-31",
@@ -2840,8 +2852,10 @@ em aberto vencidos), `dueFrom`/`dueTo` (data), `createdFrom`/`createdTo` (ISO-86
 ### GET /receivables/summary — Permissão: RECEIVABLE_READ
 
 Marcados agrupados por cliente: `[{ customerId, customerName, openBalance, overdueBalance,
-creditLimit, nextDueDate, count }]`. Sem `status`, só os em aberto (`ABERTO`, `PARCIAL`,
-`VENCIDO`); `overdue=true`, só clientes com saldo vencido. Ordem: mais vencido primeiro.
+creditLimit, nextDueDate, count, openBalanceBalcao, openBalanceMesa }]`. Sem `status`, só os em
+aberto (`ABERTO`, `PARCIAL`, `VENCIDO`); `overdue=true`, só clientes com saldo vencido. Ordem: mais
+vencido primeiro. `openBalanceBalcao` + `openBalanceMesa` = `openBalance`. `creditLimit`: o teto
+total, se houver; senão, a soma dos limites efetivos dos canais.
 
 ### GET /receivables/{id} — Permissão: RECEIVABLE_READ
 
@@ -2856,13 +2870,26 @@ Marcados do cliente, mais recentes primeiro (aba "Marcados" da ficha).
 Pré-checagem do "Marcar" para o PDV:
 
 ```json
-{ "eligible": false, "reasons": ["CUSTOMER_HAS_OVERDUE"], "creditLimit": 300.00,
-  "openBalance": 120.00, "overdueBalance": 40.00, "available": 180.00, "defaultDueDate": "2026-10-31" }
+// GET /crm/customers/42/on-account-eligibility?channel=BALCAO
+{ "eligible": false, "reasons": ["CUSTOMER_HAS_OVERDUE"], "creditLimit": 200.00,
+  "openBalance": 50.00, "overdueBalance": 40.00, "available": 150.00, "defaultDueDate": "2026-10-31",
+  "limitsByChannel": [
+    { "channel": "BALCAO", "creditLimit": 200.00, "openBalance": 50.00, "available": 150.00 },
+    { "channel": "MESA",   "creditLimit": null,   "openBalance": 0.00,  "available": 100.00 } ] }
 ```
 
 `reasons`: `CUSTOMER_NOT_ELIGIBLE` (sem tag VIP), `ON_ACCOUNT_NOT_ALLOWED` (operador sem
 `PDV_SALE_ON_ACCOUNT`), `CUSTOMER_HAS_OVERDUE`, `CREDIT_LIMIT_EXCEEDED` (nada disponível).
-`creditLimit` é o limite efetivo; `defaultDueDate` vem de `pdv.on-account.default-due-days`.
+`defaultDueDate` vem de `pdv.on-account.default-due-days`.
+
+- `channel` (opcional, CRM-F011): com ele, `creditLimit`, `openBalance`, `available` e o
+  `CREDIT_LIMIT_EXCEEDED` são **do canal** — o PDV manda `BALCAO`, o fechamento de mesa `MESA`. Sem
+  ele, do cliente inteiro: `creditLimit` = teto total ou soma dos canais; `available` = soma do que
+  cabe nos canais, limitada pelo teto.
+- `limitsByChannel` vem sempre, com os dois canais, inclusive para quem nunca marcou.
+  `creditLimit: null` = sem limite próprio no canal (vale o padrão); `available` já considera o
+  padrão e o teto total.
+- `overdueBalance` é sempre do cliente inteiro: vencido em qualquer canal bloqueia os dois.
 
 ### POST /receivables/payments?sessionId= — Permissão: PDV_SALE_MANAGE
 
@@ -2900,14 +2927,23 @@ para devolver a mercadoria, o caminho é o reembolso do pedido, que já cancela 
 
 ### PUT /crm/customers/{id}/credit-limit — Permissão: RECEIVABLE_MANAGE
 
-`{ "creditLimit": 300.00 }` (≥ 0, 2 casas). `null` volta ao limite padrão da loja. `204`. Endpoint
+```json
+{ "creditLimit": 200.00, "channel": "BALCAO" }   // limite do balcão
+{ "creditLimit": null,   "channel": "MESA" }     // mesa volta ao padrão
+{ "creditLimit": 300.00 }                        // sem channel = teto total da soma dos canais
+```
+
+`creditLimit` ≥ 0, 2 casas. Cada chamada grava ou apaga **uma linha só** — não toca o outro canal
+nem o teto. `null` apaga a linha: o canal volta ao padrão; o total fica sem teto. `204`. Endpoint
 próprio, e não campo do `PUT /crm/customers/{id}`: o limite é decisão do gerente e o `PUT` do
 cadastro regrava a ficha inteira. `400` valor negativo; `404` cliente inexistente. Publica
-`CUSTOMER_CREDIT_LIMIT_CHANGED`.
+`CUSTOMER_CREDIT_LIMIT_CHANGED` com `channel` (`BALCAO`, `MESA` ou `TOTAL`), `before` e `after`.
 
 **Configuração** (`system_config`, sem tela — `/system/config` só aceita chaves `auth.*`):
-`pdv.on-account.default-due-days` (default `30`) e `pdv.on-account.default-credit-limit` (default
-`0`, ou seja, sem limite individual o cliente não marca).
+`pdv.on-account.default-due-days` (default `30`), `pdv.on-account.default-credit-limit` (default
+`0`, ou seja, sem limite individual o cliente não marca) e, desde a V142,
+`pdv.on-account.default-credit-limit.balcao` / `.mesa` (semeadas com o valor do padrão geral; sem a
+chave, vale o padrão geral).
 
 ---
 

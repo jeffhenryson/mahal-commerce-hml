@@ -146,6 +146,7 @@ class EstoqueServiceTest {
     @Mock com.cernecommerce.core.ports.out.estoque.ReplenishmentListRepository replenishmentListRepository;
     @Mock com.cernecommerce.core.ports.out.estoque.OpenPackageRepository openPackageRepository;
     @Mock com.cernecommerce.core.ports.out.notification.ManagerNotificationPort managerNotificationPort;
+    @Mock com.cernecommerce.core.ports.out.event.AuditEventPublisherPort auditEventPublisherPort;
 
     /** Mesmo default de {@code estoque.reservation.default-ttl} em {@code CoreBeanConfig}. */
     private static final Duration RESERVATION_TTL = Duration.ofMinutes(30);
@@ -171,7 +172,7 @@ class EstoqueServiceTest {
                 stockReservationRepository, notificationUseCase, userRepository, immediateExecutor,
                 RESERVATION_TTL, kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository,
                 brandRepository, attributeTypeRepository, replenishmentListRepository, openPackageRepository,
-                managerNotificationPort);
+                managerNotificationPort, auditEventPublisherPort);
         lenient().when(reorderPointRepository.findBySkuAndWarehouseId(any(), any())).thenReturn(Optional.empty());
         // Padrão dos testes: o SKU existe no catálogo, que é a pré-condição das movimentações.
         // Os testes de createProduct e os de SKU desconhecido sobrescrevem este stub.

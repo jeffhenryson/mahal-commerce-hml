@@ -40,13 +40,13 @@ public class SystemConfigControllerTest {
     void getPublicConfig_retorna_200_com_flags() throws Exception {
         when(useCase.getAllPublic()).thenReturn(Map.of(
             "auth.google.enabled", "true",
-            "auth.registration.enabled", "false"
+            "auth.forgot-password.enabled", "false"
         ));
 
         mockMvc.perform(get("/system/config/public"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$['auth.google.enabled']").value("true"))
-                .andExpect(jsonPath("$['auth.registration.enabled']").value("false"));
+                .andExpect(jsonPath("$['auth.forgot-password.enabled']").value("false"));
     }
 
     @Test

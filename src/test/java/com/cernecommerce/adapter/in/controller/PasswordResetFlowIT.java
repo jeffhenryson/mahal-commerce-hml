@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.adapter.out.email.LoggingEmailAdapter;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginRateLimiterAdapter;
 import com.cernecommerce.core.ports.out.ratelimit.LoginRateLimiterPort;
@@ -20,6 +21,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.List;
+
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -33,6 +36,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("dev")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public class PasswordResetFlowIT {
+
+    @Autowired
+    private UserUseCase userUseCase;
 
     @Autowired
     private WebApplicationContext context;
@@ -59,10 +65,7 @@ public class PasswordResetFlowIT {
 
     /** Registra e verifica email de um usuário, retorna a senha original. */
     private String registerAndVerify(MockMvc mvc, String username, String email, String password) throws Exception {
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isCreated());
+        userUseCase.registerUser(username, password, email, List.of());
 
         String code = verificationHelper.getCodeForUsername(username);
         mvc.perform(post("/auth/verify-email")

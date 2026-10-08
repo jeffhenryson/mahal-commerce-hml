@@ -121,6 +121,14 @@ public class ShopAccountController {
     @PreAuthorize("hasAuthority('SHOP_ORDER_OWN')")
     public ResponseEntity<OrderResponseDTO> checkout(Authentication authentication) {
         ShopUseCase.CheckoutResult result = shopUseCase.checkout(authentication.getName());
+        // Depois do commit (o use case já retornou): dispara as automações de PEDIDO_CRIADO.
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", result.order().id());
+        details.put("orderNumber", String.valueOf(result.order().orderNumber()));
+        if (result.order().customerId() != null) {
+            details.put("customerId", result.order().customerId());
+        }
+        publisher.publishEvent(AuditEvent.of(EventType.ORDER_CREATED, authentication.getName(), details));
         return ResponseEntity.status(201).body(orderConverter.toCheckoutResponse(result.order(), result.checkoutUrl()));
     }
 

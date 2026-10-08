@@ -73,6 +73,7 @@ import com.cernecommerce.core.domain.model.pedido.DiscountProration;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -872,8 +873,9 @@ public class ComandaService implements ComandaUseCase {
         // taxa, e o troco sai dessa conta. É o único lugar do módulo em que os dois números diferem.
         BigDecimal changeAmount = pdvService.validatePaymentsAndComputeChange(payments, order.totalPayable());
         // CRM-F010 — marcar na mesa segue a regra do balcão: VIP, prazo, limite, sem vencido. A taxa
-        // de serviço e o desconto já incidiram — o MARCADO cobre o que sobrou a pagar.
-        pdvService.validateOnAccount(comanda.customerId(), payments);
+        // de serviço e o desconto já incidiram — o MARCADO cobre o que sobrou a pagar. O limite é o de
+        // MESA (o recebível nasce com comanda_id).
+        pdvService.validateOnAccount(comanda.customerId(), OnAccountChannel.MESA, payments);
 
         // Sem novo adjustStock aqui: o estoque já saiu item a item em addItem.
         Order saved = orderRepository.save(

@@ -435,7 +435,8 @@ class ComandaServiceTest {
 
         Order order = comandaService.closeComanda(10L, payments, null, false, "caixa1");
 
-        verify(pdvService).validateOnAccount(comanda.customerId(), payments);
+        verify(pdvService).validateOnAccount(comanda.customerId(),
+                com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.MESA, payments);
         verify(orderPaymentRepository).save(argThat(p -> p.method() == PaymentMethod.MARCADO
                 && p.status() == com.cernecommerce.core.domain.model.pagamento.PaymentStatus.ON_ACCOUNT
                 && due.equals(p.dueDate())));

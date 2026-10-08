@@ -274,6 +274,15 @@ public class PdvController {
                         "itemCount", items.size())));
         publishCashbackEarnedIfAny(order, authentication.getName());
         OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
+        // Venda paga (concluída ou reservada para retirada): dispara as automações de VENDA_PDV_CONCLUIDA.
+        Map<String, Object> saleDetails = new HashMap<>();
+        saleDetails.put("orderId", order.id());
+        saleDetails.put("orderNumber", String.valueOf(order.orderNumber()));
+        saleDetails.put("status", order.status().name());
+        if (order.customerId() != null) {
+            saleDetails.put("customerId", order.customerId());
+        }
+        publisher.publishEvent(AuditEvent.of(EventType.PDV_SALE_COMPLETED, authentication.getName(), saleDetails));
         return ResponseEntity.status(201)
                 .body(orderConverter.toResponse(order, pdvUseCase.getOrderPayments(order.id())));
     }

@@ -476,7 +476,8 @@ class PdvServiceTest {
                         org.assertj.core.groups.Tuple.tuple(PaymentMethod.PIX, PaymentStatus.CAPTURED),
                         org.assertj.core.groups.Tuple.tuple(PaymentMethod.MARCADO, PaymentStatus.ON_ACCOUNT));
         assertThat(lines.getAllValues().get(1).dueDate()).isEqualTo(due);
-        verify(receivableUseCase).validateOnAccount(123L, payments);
+        verify(receivableUseCase).validateOnAccount(123L,
+                com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO, payments);
         verify(receivableUseCase).createFromOrder(order, null, payments.get(1), "caixa1");
     }
 
@@ -487,7 +488,8 @@ class PdvServiceTest {
         List<PaymentCommand> payments = List.of(PaymentCommand.onAccount(new BigDecimal("44.00"),
                 java.time.LocalDate.now().plusDays(1)));
         doThrow(new com.cernecommerce.core.domain.exception.recebivel.CustomerRequiredForOnAccountException())
-                .when(receivableUseCase).validateOnAccount(null, payments);
+                .when(receivableUseCase).validateOnAccount(null,
+                        com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO, payments);
 
         assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)), payments, "caixa1"))
                 .isInstanceOf(com.cernecommerce.core.domain.exception.recebivel.CustomerRequiredForOnAccountException.class);

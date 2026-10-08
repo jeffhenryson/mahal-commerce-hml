@@ -508,15 +508,19 @@ gravado no fechamento não é reescrito.
 
 Índice `idx_cash_session_adjustment_session (session_id)`. Ainda não há endpoint de leitura.
 
-### CustomerCreditLimitEntity — tabela `customer_credit_limit` (V137, CRM-F010)
+### CustomerCreditLimitEntity — tabela `customer_credit_limit` (V137, CRM-F010; canal na V142, CRM-F011)
 
-Limite de crédito do "Marcar" por cliente. **Tabela própria, e não coluna em `customers`**: o `PUT`
-do cadastro regrava a ficha inteira e zeraria o limite. Sem linha = limite padrão
-(`system_config` `pdv.on-account.default-credit-limit`, semeado `0`).
+Limite de crédito do "Marcar" por cliente **e canal**. **Tabela própria, e não coluna em
+`customers`**: o `PUT` do cadastro regrava a ficha inteira e zeraria o limite. Chave composta
+(`@IdClass CustomerCreditLimitEntity.Key`). `channel`: `BALCAO`/`MESA` = limite daquele canal (sem
+linha = `pdv.on-account.default-credit-limit.<canal>` → `pdv.on-account.default-credit-limit`);
+`TOTAL` = teto opcional da soma dos dois canais (as linhas de antes da V142 viraram `TOTAL`). Na
+porta (`CustomerCreditLimitRepository`), `TOTAL` é canal `null`.
 
 | Coluna | Tipo | Constraint |
 |--------|------|-----------|
-| customer_id | BIGINT | PK, FK → `customers (id)` ON DELETE CASCADE |
+| customer_id | BIGINT | PK (com `channel`), FK → `customers (id)` ON DELETE CASCADE |
+| channel | VARCHAR(10) | PK, NOT NULL DEFAULT `'TOTAL'`, `CHECK IN ('TOTAL','BALCAO','MESA')` |
 | credit_limit | NUMERIC(14,2) | NOT NULL, `CHECK (credit_limit >= 0)` |
 | updated_by | VARCHAR(80) | NOT NULL |
 | updated_at | TIMESTAMPTZ | NOT NULL |

@@ -63,7 +63,7 @@ class DailySalesDigestJobTest {
         when(orderReport.getSummary(any(), any(), any(), any(), any())).thenReturn(summary(42, "3210.00"));
         when(receivableUseCase.summary(isNull(), eq(true))).thenReturn(List.of(
                 new ReceivableCustomerSummary(1L, "Joana", new BigDecimal("80"), new BigDecimal("80"), null,
-                        LocalDate.of(2026, 9, 30), 1)));
+                        LocalDate.of(2026, 9, 30), 1, new BigDecimal("80"), BigDecimal.ZERO)));
 
         NotificationEmail email = job.build();
 

@@ -28,6 +28,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
+import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
@@ -308,7 +309,7 @@ public class PdvService implements PdvUseCase {
         // igual ao líquido, como sempre foi.
         BigDecimal changeAmount = validatePaymentsAndComputeChange(payments, order.totalPayable());
         // CRM-F010 — o marcar é validado junto com o pagamento, antes do estoque.
-        validateOnAccount(customerId, payments);
+        validateOnAccount(customerId, OnAccountChannel.BALCAO, payments);
 
         for (OrderItem item : order.items()) {
             estoqueUseCase.adjustStock(item.sku(), warehouseCode, MovementType.SAIDA, item.quantity(),
@@ -348,9 +349,9 @@ public class PdvService implements PdvUseCase {
                         payment.channel(), payment.provider());
     }
 
-    /** Package-private — a mesa valida o marcar pela mesma regra do balcão. */
-    void validateOnAccount(Long customerId, List<PaymentCommand> payments) {
-        receivableUseCase.validateOnAccount(customerId, payments);
+    /** Package-private — a mesa valida o marcar pela mesma regra do balcão, contra o limite de MESA. */
+    void validateOnAccount(Long customerId, OnAccountChannel channel, List<PaymentCommand> payments) {
+        receivableUseCase.validateOnAccount(customerId, channel, payments);
     }
 
     /** Package-private — cria o recebível do pedido, se a venda teve linha MARCADO. */

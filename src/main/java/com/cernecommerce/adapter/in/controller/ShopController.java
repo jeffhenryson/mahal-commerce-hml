@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.in.controller;
 import com.cernecommerce.adapter.in.converter.ShopCatalogDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.ShopRegisterRequest;
 import java.util.List;
+import java.util.Map;
 
 import com.cernecommerce.adapter.in.converter.CategoryDTOConverter;
 import com.cernecommerce.adapter.in.dtos.response.CategoryResponseDTO;
@@ -77,7 +78,8 @@ public class ShopController {
         response.setNome(registration.customer().nome());
         response.setEmail(registration.customer().email());
 
-        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_MARKETPLACE_REGISTERED, registration.user().getUsername()));
+        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_MARKETPLACE_REGISTERED, registration.user().getUsername(),
+                Map.of("customerId", registration.customer().id())));
         return ResponseEntity.status(201).body(response);
     }
 

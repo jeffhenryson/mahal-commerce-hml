@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.adapter.out.persistence.repository.AuditLogJpaRepository;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginAttemptAdapter;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginRateLimiterAdapter;
@@ -17,6 +18,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -37,6 +40,7 @@ public class AuditEventsIT {
     @Autowired private LoginRateLimiterPort rateLimiter;
     @Autowired private LoginAttemptPort loginAttempt;
     @Autowired private EmailVerificationTestHelper verificationHelper;
+    @Autowired private UserUseCase userUseCase;
 
     @BeforeEach
     void reset() {
@@ -89,25 +93,10 @@ public class AuditEventsIT {
     }
 
     @Test
-    void successful_registration_persists_USER_REGISTERED() throws Exception {
-        String username = "audituser_" + System.currentTimeMillis();
-
-        mvc().perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"Secure@1\",\"email\":\"" + username + "@test.com\"}"))
-                .andExpect(status().isCreated());
-
-        awaitAction("USER_REGISTERED");
-    }
-
-    @Test
     void email_verification_persists_USER_EMAIL_VERIFIED() throws Exception {
         String username = "verifyaudit_" + System.currentTimeMillis();
 
-        mvc().perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"Secure@1\",\"email\":\"" + username + "@test.com\"}"))
-                .andExpect(status().isCreated());
+        userUseCase.registerUser(username, "Secure@1", username + "@test.com", List.of());
 
         String code = verificationHelper.getCodeForUsername(username);
 

@@ -106,6 +106,8 @@ class PaymentWebhookServiceTest {
         WebhookResult result = service.handleNotification(ORDER_ID.toString(), "txn-1", "slug-1");
 
         assertThat(result.orderPaid()).isFalse();
+        assertThat(result.paymentDeclined()).isTrue();
+        assertThat(result.orderId()).isEqualTo(ORDER_ID);
         verify(orderPaymentRepository, never()).save(any());
         verifyNoInteractions(estoqueUseCase, cashbackUseCase);
     }

@@ -84,7 +84,9 @@ public class PaymentWebhookService implements PaymentWebhookUseCase {
         Order order = orderOpt.get();
         if (!result.paid()) {
             log.info("payment.webhook.not_paid orderId={}", orderId);
-            return WebhookResult.noop();
+            // O pagamento continua PENDING (o cliente pode tentar de novo pelo mesmo link); o
+            // resultado só avisa quem quiser reagir à recusa (automações de PAGAMENTO_RECUSADO).
+            return WebhookResult.declined(orderId, order.orderNumber());
         }
         if (result.paidAmount() == null || result.paidAmount().compareTo(order.netAmount()) < 0) {
             log.warn("payment.webhook.amount_insufficient orderId={} expected={} paidAmount={}",

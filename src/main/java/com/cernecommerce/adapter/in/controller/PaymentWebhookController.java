@@ -67,6 +67,16 @@ public class PaymentWebhookController {
                         "orderNumber", String.valueOf(result.orderNumber()),
                         "provider", provider,
                         "to", "PAGO")));
+                publisher.publishEvent(AuditEvent.of(EventType.PAYMENT_APPROVED, WEBHOOK_ACTOR, Map.of(
+                        "orderId", result.orderId(),
+                        "orderNumber", String.valueOf(result.orderNumber()),
+                        "provider", provider)));
+            } else if (result.paymentDeclined()) {
+                publisher.publishEvent(AuditEvent.of(EventType.PAYMENT_DECLINED, WEBHOOK_ACTOR, Map.of(
+                        "orderId", result.orderId(),
+                        "orderNumber", String.valueOf(result.orderNumber()),
+                        "provider", provider,
+                        "transactionNsu", String.valueOf(request.getTransactionNsu()))));
             }
             return ResponseEntity.ok().build();
         } catch (RuntimeException ex) {

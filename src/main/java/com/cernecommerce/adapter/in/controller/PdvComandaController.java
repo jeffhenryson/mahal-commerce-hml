@@ -558,6 +558,7 @@ public class PdvComandaController {
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_CLOSED, authentication.getName(),
                 auditPayload(comandaId,
                         "orderId", order.id(),
+                        "customerId", order.customerId(),
                         "orderNumber", order.orderNumber(),
                         "warehouseCode", order.warehouseCode(),
                         "netAmount", order.netAmount(),
@@ -587,7 +588,7 @@ public class PdvComandaController {
             Authentication authentication) {
         Comanda comanda = comandaUseCase.finishComanda(comandaId, authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_FINISHED, authentication.getName(),
-                auditPayload(comandaId, "orderId", comanda.orderId())));
+                auditPayload(comandaId, "orderId", comanda.orderId(), "customerId", comanda.customerId())));
         ComandaResponseDTO dto = comandaConverter.toResponse(comanda);
         enrichCustomerNames(List.of(dto));
         return ResponseEntity.ok(dto);

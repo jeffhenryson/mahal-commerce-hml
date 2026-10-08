@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.event.AuditEvent;
+import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
 import com.cernecommerce.core.domain.exception.estoque.BrandNotFoundException;
@@ -160,6 +162,8 @@ public class EstoqueService implements EstoqueUseCase {
     private final OpenPackageRepository openPackageRepository;
     private final ManagerNotificationPort managerNotifications;
 
+    private final AuditEventPublisherPort auditEvents;
+
     public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
             StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
             ReorderPointRepository reorderPointRepository, StockIntegrityRepository stockIntegrityRepository,
@@ -170,7 +174,8 @@ public class EstoqueService implements EstoqueUseCase {
             SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
-            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications) {
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
+            AuditEventPublisherPort auditEvents) {
         this.stockReservationRepository = stockReservationRepository;
         this.defaultReservationTtl = defaultReservationTtl;
         this.productRepository = productRepository;
@@ -191,6 +196,7 @@ public class EstoqueService implements EstoqueUseCase {
         this.attributeTypeRepository = attributeTypeRepository;
         this.replenishmentListRepository = replenishmentListRepository;
         this.openPackageRepository = openPackageRepository;
+        this.auditEvents = auditEvents;
         this.managerNotifications = managerNotifications;
     }
 
@@ -2032,6 +2038,24 @@ public class EstoqueService implements EstoqueUseCase {
                 .forEach(username -> notificationUseCase.notify(username, NotificationType.SYSTEM,
                         title, body.toString()));
         emailReorderAlerts(bySku.values());
+        publishReorderEvents(bySku.values());
+    }
+
+    /**
+     * Um {@code STOCK_BELOW_REORDER_POINT} por SKU — dispara as automações de ESTOQUE_BAIXO. Já
+     * estamos depois do commit (callback do {@code afterCommitExecutor}).
+     */
+    private void publishReorderEvents(Collection<ReorderAlert> alerts) {
+        alerts.forEach(alert -> {
+            try {
+                auditEvents.publish(AuditEvent.of(AuditEvent.EventType.STOCK_BELOW_REORDER_POINT, "system", Map.of(
+                        "sku", alert.sku(),
+                        "disponivel", alert.quantity(),
+                        "minimo", alert.minQuantity())));
+            } catch (Exception ex) {
+                log.warn("estoque.reorder-alert.event.failed sku={} error={}", alert.sku(), ex.getMessage());
+            }
+        });
     }
 
     /**

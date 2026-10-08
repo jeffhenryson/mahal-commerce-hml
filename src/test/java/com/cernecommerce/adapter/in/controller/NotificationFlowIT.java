@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.ports.in.UserUseCase;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginAttemptAdapter;
@@ -19,6 +20,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -35,6 +38,7 @@ class NotificationFlowIT {
 
     @Autowired private WebApplicationContext context;
     @Autowired private EmailVerificationTestHelper verificationHelper;
+    @Autowired private UserUseCase userUseCase;
     @Autowired private LoginRateLimiterPort rateLimiter;
     @Autowired private LoginAttemptPort loginAttempt;
 
@@ -156,11 +160,8 @@ class NotificationFlowIT {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private void register(MockMvc mvc, String username, String password, String email) throws Exception {
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isCreated());
+    private void register(MockMvc mvc, String username, String password, String email) {
+        userUseCase.registerUser(username, password, email, List.of());
     }
 
     private void verifyEmail(MockMvc mvc, String username, String code) throws Exception {

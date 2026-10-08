@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.adapter.out.email.LoggingEmailAdapter;
 import com.cernecommerce.adapter.out.security.ratelimit.InMemoryLoginRateLimiterAdapter;
 import com.cernecommerce.core.ports.out.ratelimit.LoginRateLimiterPort;
@@ -42,6 +43,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PasswordResetConcurrencyIT {
 
     @Autowired
+    private UserUseCase userUseCase;
+
+    @Autowired
     private WebApplicationContext context;
 
     @Autowired
@@ -75,10 +79,7 @@ class PasswordResetConcurrencyIT {
         String email = username + "@test.com";
         String oldPassword = "OldPass@1";
 
-        mvc.perform(post("/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"username\":\"" + username + "\",\"password\":\"" + oldPassword + "\",\"email\":\"" + email + "\"}"))
-                .andExpect(status().isCreated());
+        userUseCase.registerUser(username, oldPassword, email, List.of());
         String code = verificationHelper.getCodeForUsername(username);
         mvc.perform(post("/auth/verify-email")
                 .contentType(MediaType.APPLICATION_JSON)

@@ -44,7 +44,24 @@ public class PaymentWebhookControllerTest {
                         .content("{\"order_nsu\":\"order_123\",\"transaction_nsu\":\"txn_456\",\"invoice_slug\":\"inv_789\"}"))
                 .andExpect(status().isOk());
 
-        verify(publisher, times(1)).publishEvent(any(Object.class));
+        // ORDER_STATUS_CHANGED (e-mail ao cliente) + PAYMENT_APPROVED (automações).
+        verify(publisher, times(2)).publishEvent(any(Object.class));
+        verify(publisher).publishEvent(argThat((Object e) -> e instanceof AuditEvent ev
+                && ev.type() == AuditEvent.EventType.PAYMENT_APPROVED && Long.valueOf(100L).equals(ev.details().get("orderId"))));
+    }
+
+    @Test
+    void receive_declined_publishesPaymentDeclined() throws Exception {
+        when(paymentWebhookUseCase.handleNotification("order_123", "txn_456", "inv_789"))
+                .thenReturn(WebhookResult.declined(100L, "2024-001"));
+
+        mockMvc.perform(post("/webhooks/payments/infinitepay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"order_nsu\":\"order_123\",\"transaction_nsu\":\"txn_456\",\"invoice_slug\":\"inv_789\"}"))
+                .andExpect(status().isOk());
+
+        verify(publisher, times(1)).publishEvent(argThat((Object e) -> e instanceof AuditEvent ev
+                && ev.type() == AuditEvent.EventType.PAYMENT_DECLINED && "txn_456".equals(ev.details().get("transactionNsu"))));
     }
 
     @Test
