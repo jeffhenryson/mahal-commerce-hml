@@ -130,7 +130,10 @@ public class SecurityConfig {
                 // ECM-F004 (Fatia 10): notificação do gateway de pagamento — é o próprio gateway
                 // chamando, sem sessão de usuário nenhuma. A defesa mora dentro de
                 // PaymentWebhookService (payment_check sempre reconsulta a verdade), não aqui.
-                .requestMatchers(org.springframework.http.HttpMethod.POST, "/webhooks/payments/*").permitAll();
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/webhooks/payments/*").permitAll()
+                // WhatsApp Cloud API: a Meta verifica (GET, hub.verify_token) e notifica (POST,
+                // assinado com X-Hub-Signature-256) — a defesa mora em WhatsappWebhookController.
+                .requestMatchers("/webhooks/whatsapp").permitAll();
                 // Em hml/prod management.server.port != server.port: actuator só existe na porta
                 // de management (8081) e é protegido por rede — sem auth JWT necessária.
                 // Em dev (mesma porta): exige DEV_ELEVATED para não expor métricas publicamente.

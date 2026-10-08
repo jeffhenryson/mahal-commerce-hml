@@ -157,8 +157,13 @@ public class NotificationEventListener {
             case RECEIVABLE_CREATED -> sendReceivableCreated(event);
             case RECEIVABLE_PAID -> sendReceivablePaid(event);
             // Boas-vindas não tem preferência: sai uma vez só, quando a conta passa a existir de fato.
-            case USER_EMAIL_VERIFIED, USER_CREATED -> sendEmail(event.username(),
-                    to -> emailPort.sendWelcome(to, event.username()));
+            // Usuário convidado já recebeu o convite (USER_INVITE) — o boas-vindas seria repetido.
+            case USER_EMAIL_VERIFIED -> sendEmail(event.username(), to -> emailPort.sendWelcome(to, event.username()));
+            case USER_CREATED -> {
+                if (!Boolean.TRUE.equals(event.details().get("invited"))) {
+                    sendEmail(event.username(), to -> emailPort.sendWelcome(to, event.username()));
+                }
+            }
             case ORDER_STATUS_CHANGED -> {
                 String to = String.valueOf(event.details().get("to"));
                 String label = ORDER_STATUS_LABELS.getOrDefault(to, "Status atualizado");

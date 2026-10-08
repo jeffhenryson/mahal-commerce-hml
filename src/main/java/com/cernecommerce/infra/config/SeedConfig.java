@@ -60,8 +60,10 @@ public class SeedConfig {
         "ORDER_READ", "ORDER_FULFILL", "ORDER_CANCEL", "ORDER_REFUND",
         // Perfil da loja impresso no cupom (V131).
         "STORE_PROFILE_MANAGE",
-        // Tokens de integração da loja — e-mail/Resend (V140).
-        "INTEGRATION_MANAGE"
+        // Tokens de integração da loja — e-mail/Resend (V140), WhatsApp e n8n/Make (V143).
+        "INTEGRATION_MANAGE",
+        // Automações (Configurações › Automações): destino, segredo e disparo (V143).
+        "AUTOMATION_MANAGE"
     };
 
     // Permissões do cliente do marketplace (Fatia 8/9) — NÃO entram em ADMIN_PERMISSIONS,

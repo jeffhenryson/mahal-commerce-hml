@@ -66,8 +66,10 @@ public class DevRoleBootstrapConfig {
         "ORDER_READ", "ORDER_FULFILL", "ORDER_CANCEL", "ORDER_REFUND",
         // Perfil da loja impresso no cupom (V131).
         "STORE_PROFILE_MANAGE",
-        // Tokens de integração da loja — e-mail/Resend (V140).
-        "INTEGRATION_MANAGE"
+        // Tokens de integração da loja — e-mail/Resend (V140), WhatsApp e n8n/Make (V143).
+        "INTEGRATION_MANAGE",
+        // Automações (Configurações › Automações): destino, segredo e disparo (V143).
+        "AUTOMATION_MANAGE"
     };
 
     private static final String[] DEV_ONLY_PERMISSIONS = {

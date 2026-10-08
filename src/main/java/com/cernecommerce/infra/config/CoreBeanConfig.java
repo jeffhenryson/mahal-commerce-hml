@@ -6,6 +6,16 @@ import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
 import com.cernecommerce.core.service.ReceiptEmailService;
 import com.cernecommerce.core.service.ReceivableService;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
+import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
+import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
+import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
+import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
+import com.cernecommerce.core.ports.out.notification.WhatsappPort;
+import com.cernecommerce.core.service.AutomationDispatchService;
+import com.cernecommerce.core.service.AutomationPlatformIntegrationService;
+import com.cernecommerce.core.service.WhatsappIntegrationService;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.beans.factory.ObjectProvider;
@@ -196,13 +206,14 @@ class CoreBeanConfig {
             @Value("${email.verification.ttl-minutes:15}") long verificationCodeTtlMinutes,
             @Value("${email.verification.resend-cooldown-seconds:60}") long resendCooldownSeconds,
             @Value("${password-reset.ttl-minutes:15}") long passwordResetTtlMinutes,
-            @Value("${password-reset.frontend-url:http://localhost:3000/reset-password}") String passwordResetFrontendUrl) {
+            @Value("${password-reset.frontend-url:http://localhost:3000/reset-password}") String passwordResetFrontendUrl,
+            @Value("${user.invite.ttl-hours:48}") long inviteTtlHours) {
         return new UserService(userRepository, roleRepository, passwordHashPort,
                 refreshTokenPort, tokenBlocklistPort, emailPort,
                 verificationCodeRepository, passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
                 twoFactorAuthPort, avatarStoragePort, verificationCodeTtlMinutes, resendCooldownSeconds,
-                passwordResetTtlMinutes, passwordResetFrontendUrl);
+                passwordResetTtlMinutes, passwordResetFrontendUrl, inviteTtlHours);
     }
 
     @Bean
@@ -369,13 +380,14 @@ class CoreBeanConfig {
             SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
-            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotificationPort) {
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotificationPort,
+            AuditEventPublisherPort auditEventPublisherPort) {
         return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
                 stockMovementRepository, reorderPointRepository, stockIntegrityRepository,
                 stockCountRepository, stockReservationRepository, notificationUseCase, userRepository,
                 afterCommitExecutor, defaultReservationTtl, kitComponentRepository, stockLotRepository,
                 systemConfigPort, categoryRepository, brandRepository, attributeTypeRepository,
-                replenishmentListRepository, openPackageRepository, managerNotificationPort);
+                replenishmentListRepository, openPackageRepository, managerNotificationPort, auditEventPublisherPort);
     }
 
     @Bean
@@ -463,22 +475,33 @@ class CoreBeanConfig {
     CrmUseCase crmUseCase(CustomerRepository customerRepository, CustomerNoteRepository customerNoteRepository,
             StageTransitionRepository stageTransitionRepository, TagRepository tagRepository,
             CustomerTagRepository customerTagRepository, CampaignAutomationRepository campaignAutomationRepository,
-            CampaignLogRepository campaignLogRepository, EmailPort emailPort, CashbackUseCase cashbackUseCase,
-            CampaignWebhookPort campaignWebhookPort) {
+            CampaignLogRepository campaignLogRepository, EmailPort emailPort,
+            AutomationDispatchUseCase automationDispatchUseCase, WhatsappIntegrationUseCase whatsappIntegrationUseCase) {
         return new CrmService(customerRepository, customerNoteRepository, stageTransitionRepository, tagRepository,
                 customerTagRepository, campaignAutomationRepository, campaignLogRepository, emailPort,
-                cashbackUseCase, campaignWebhookPort, new CampaignTemplateRenderer());
+                automationDispatchUseCase, whatsappIntegrationUseCase);
+    }
+
+    @Bean
+    AutomationDispatchUseCase automationDispatchUseCase(CampaignAutomationRepository campaignAutomationRepository,
+            CampaignLogRepository campaignLogRepository, CustomerRepository customerRepository,
+            CustomerTagRepository customerTagRepository, CashbackUseCase cashbackUseCase,
+            OrderRepository orderRepository, CampaignWebhookPort campaignWebhookPort, WhatsappPort whatsappPort,
+            WhatsappIntegrationUseCase whatsappIntegrationUseCase,
+            AutomationPlatformIntegrationUseCase automationPlatformIntegrationUseCase) {
+        return new AutomationDispatchService(campaignAutomationRepository, campaignLogRepository, customerRepository,
+                customerTagRepository, cashbackUseCase, orderRepository, campaignWebhookPort, whatsappPort,
+                whatsappIntegrationUseCase, automationPlatformIntegrationUseCase, new CampaignTemplateRenderer());
     }
 
     @Bean
     OAuthLoginUseCase oAuthLoginUseCase(GoogleTokenVerifierPort tokenVerifier,
             UserRepository userRepository,
-            RoleRepository roleRepository,
             AccessTokenPort accessToken,
             RefreshTokenPort refreshToken,
             UserAuthoritiesPort userAuthorities,
             UserCachePort userCachePort) {
-        return new OAuthLoginService(tokenVerifier, userRepository, roleRepository,
+        return new OAuthLoginService(tokenVerifier, userRepository,
                 accessToken, refreshToken, userAuthorities, userCachePort);
     }
 
@@ -523,6 +546,23 @@ class CoreBeanConfig {
             EmailSampleSenderPort emailSampleSenderPort, ObjectProvider<EmailPort> emailPort) {
         return new EmailIntegrationService(configPort, secretCipherPort, emailSampleSenderPort,
                 () -> emailPort.getObject().channelStatus());
+    }
+
+    @Bean
+    WhatsappIntegrationUseCase whatsappIntegrationUseCase(SystemConfigPort configPort,
+            SecretCipherPort secretCipherPort, WhatsappPort whatsappPort,
+            @Value("${whatsapp.status-cache-ttl:5m}") Duration statusCacheTtl) {
+        return new WhatsappIntegrationService(configPort, secretCipherPort, whatsappPort, Clock.systemUTC(),
+                statusCacheTtl);
+    }
+
+    @Bean
+    AutomationPlatformIntegrationUseCase automationPlatformIntegrationUseCase(SystemConfigPort configPort,
+            SecretCipherPort secretCipherPort, CampaignWebhookPort campaignWebhookPort, Environment environment) {
+        // http:// só fora de prod — em prod o token da plataforma iria em texto puro pela rede.
+        boolean allowInsecureHttp = !environment.acceptsProfiles(Profiles.of("prod"));
+        return new AutomationPlatformIntegrationService(configPort, secretCipherPort, campaignWebhookPort,
+                allowInsecureHttp);
     }
 
     @Bean
