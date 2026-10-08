@@ -6,6 +6,12 @@ import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsExceptio
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
+import com.cernecommerce.core.domain.model.config.WhatsappConnectionStatus;
+import com.cernecommerce.core.domain.model.crm.AutomationAuthType;
+import com.cernecommerce.core.domain.model.crm.AutomationDestination;
+import com.cernecommerce.core.domain.model.crm.AutomationEvent;
+import com.cernecommerce.core.domain.model.crm.AutomationMetadata;
 import com.cernecommerce.core.domain.model.crm.CampaignAutomation;
 import com.cernecommerce.core.domain.model.crm.CampaignChannel;
 import com.cernecommerce.core.domain.model.crm.CampaignDispatchStatus;
@@ -27,7 +33,10 @@ import com.cernecommerce.core.domain.model.crm.WebhookDispatchResult;
 import com.cernecommerce.core.domain.model.crm.WebhookTestResult;
 import com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfiguredException;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
+import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
+import com.cernecommerce.core.ports.in.CrmUseCase;
+import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import com.cernecommerce.core.ports.out.crm.CampaignAutomationRepository;
 import com.cernecommerce.core.ports.out.crm.CampaignLogRepository;
 import com.cernecommerce.core.ports.out.crm.CampaignWebhookPort;
@@ -37,6 +46,8 @@ import com.cernecommerce.core.ports.out.crm.CustomerTagRepository;
 import com.cernecommerce.core.ports.out.crm.StageTransitionRepository;
 import com.cernecommerce.core.ports.out.crm.TagRepository;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
+import com.cernecommerce.core.ports.out.notification.WhatsappPort;
+import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,14 +78,24 @@ class CrmServiceTest {
     @Mock EmailPort emailPort;
     @Mock CashbackUseCase cashbackUseCase;
     @Mock CampaignWebhookPort campaignWebhookPort;
+    @Mock OrderRepository orderRepository;
+    @Mock WhatsappPort whatsappPort;
+    @Mock WhatsappIntegrationUseCase whatsappIntegration;
+    @Mock AutomationPlatformIntegrationUseCase platformIntegration;
 
     CrmService crmService;
 
     @BeforeEach
     void setUp() {
+        // Disparo real (AutomationDispatchService) sobre os mesmos mocks: os testes de disparo e
+        // de teste de webhook continuam exercitando a entrega de ponta a ponta.
+        AutomationDispatchService dispatch = new AutomationDispatchService(campaignAutomationRepository,
+                campaignLogRepository, customerRepository, customerTagRepository, cashbackUseCase, orderRepository,
+                campaignWebhookPort, whatsappPort, whatsappIntegration, platformIntegration,
+                new CampaignTemplateRenderer());
         crmService = new CrmService(customerRepository, customerNoteRepository, stageTransitionRepository,
                 tagRepository, customerTagRepository, campaignAutomationRepository, campaignLogRepository,
-                emailPort, cashbackUseCase, campaignWebhookPort, new CampaignTemplateRenderer());
+                emailPort, dispatch, whatsappIntegration);
     }
 
     private Customer customer(Long id, String email) {
@@ -648,16 +669,57 @@ class CrmServiceTest {
                 CampaignChannel.EMAIL, "Ola {{cliente.nome}}", true, Instant.now(), webhookUrl, Map.of());
     }
 
+    /** Comando de webhook próprio; {@code headers} null = mantém o segredo salvo. */
+    private static CrmUseCase.AutomationCommand webhookCommand(String nome, CustomerStage segmento, String url,
+            AutomationAuthType authTipo, Map<String, String> headers) {
+        return new CrmUseCase.AutomationCommand(nome, CampaignTrigger.MANUAL, null, segmento, CampaignChannel.WHATSAPP,
+                "Novo template", AutomationDestination.WEBHOOK, url, null, null, null, authTipo, null, headers, null);
+    }
+
     @Test
     void createAutomation_savesAndReturns() {
-        CampaignAutomation saved = automation(1L, true);
-        when(campaignAutomationRepository.save(any())).thenReturn(saved);
+        when(campaignAutomationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        CampaignAutomation result = crmService.createAutomation("Boas-vindas", CampaignTrigger.MANUAL,
-                CustomerStage.NOVO_LEAD, CampaignChannel.EMAIL, "Ola {nome}", null, null);
+        CampaignAutomation result = crmService.createAutomation(webhookCommand("Boas-vindas", CustomerStage.NOVO_LEAD,
+                "https://n8n.example.com/webhook/abc", AutomationAuthType.BEARER, Map.of("Authorization", "Bearer tk-1234")));
 
-        assertThat(result.id()).isEqualTo(1L);
+        assertThat(result.ativa()).isTrue();
+        assertThat(result.entrega().authLast4()).isEqualTo("1234");
         verify(campaignAutomationRepository).save(any());
+    }
+
+    @Test
+    void createAutomation_evento_comPlataforma_semSegmento() {
+        when(campaignAutomationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CampaignAutomation result = crmService.createAutomation(new CrmUseCase.AutomationCommand("Pós-venda",
+                CampaignTrigger.EVENTO, AutomationEvent.PEDIDO_CONCLUIDO, null, CampaignChannel.WHATSAPP, "Oi",
+                AutomationDestination.PLATAFORMA, null, "pos-venda", null, null, AutomationAuthType.BEARER, null,
+                Map.of("Authorization", "Bearer x"), List.of(AutomationMetadata.PEDIDO)));
+
+        assertThat(result.evento()).isEqualTo(AutomationEvent.PEDIDO_CONCLUIDO);
+        assertThat(result.segmentoAlvo()).isNull();
+        // Fora do destino WEBHOOK não há autenticação própria: o segredo é descartado.
+        assertThat(result.entrega().authTipo()).isEqualTo(AutomationAuthType.NONE);
+        assertThat(result.webhookHeaders()).isEmpty();
+    }
+
+    @Test
+    void createAutomation_rejeitaDestinoIncompleto_eEventoAusente() {
+        assertThatThrownBy(() -> crmService.createAutomation(webhookCommand("A", CustomerStage.NOVO_LEAD, null,
+                AutomationAuthType.NONE, Map.of())))
+                .isInstanceOf(InvalidAutomationException.class).hasMessageContaining("webhookUrl");
+        assertThatThrownBy(() -> crmService.createAutomation(new CrmUseCase.AutomationCommand("A",
+                CampaignTrigger.EVENTO, null, null, CampaignChannel.EMAIL, "Oi", AutomationDestination.WHATSAPP_META,
+                null, null, "promo", null, null, null, null, null)))
+                .isInstanceOf(InvalidAutomationException.class).hasMessageContaining("evento");
+        assertThatThrownBy(() -> crmService.createAutomation(webhookCommand("A", CustomerStage.NOVO_LEAD,
+                "ftp://x.com/h", AutomationAuthType.NONE, Map.of())))
+                .isInstanceOf(InvalidAutomationException.class);
+        assertThatThrownBy(() -> crmService.createAutomation(webhookCommand("A", CustomerStage.NOVO_LEAD,
+                "https://x.com/h", AutomationAuthType.BEARER, null)))
+                .isInstanceOf(InvalidAutomationException.class).hasMessageContaining("segredo");
+        verify(campaignAutomationRepository, never()).save(any());
     }
 
     @Test
@@ -665,9 +727,9 @@ class CrmServiceTest {
         when(campaignAutomationRepository.findById(1L)).thenReturn(Optional.of(automation(1L, true)));
         when(campaignAutomationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        CampaignAutomation result = crmService.updateAutomation(1L, "Novo nome", CampaignTrigger.MANUAL,
-                CustomerStage.QUALIFICADO, CampaignChannel.WHATSAPP, "Novo template",
-                "https://n8n.example.com/webhook/abc", Map.of("Authorization", "Bearer token"));
+        CampaignAutomation result = crmService.updateAutomation(1L, webhookCommand("Novo nome",
+                CustomerStage.QUALIFICADO, "https://n8n.example.com/webhook/abc", AutomationAuthType.BEARER,
+                Map.of("Authorization", "Bearer token")));
 
         assertThat(result.nome()).isEqualTo("Novo nome");
         assertThat(result.segmentoAlvo()).isEqualTo(CustomerStage.QUALIFICADO);
@@ -675,11 +737,30 @@ class CrmServiceTest {
     }
 
     @Test
+    void updateAutomation_semWebhookHeaders_mantemOSegredo_eVazioRemove() {
+        CampaignAutomation salva = CampaignAutomation.of(1L, "A", CampaignTrigger.MANUAL, CustomerStage.NOVO_LEAD,
+                CampaignChannel.EMAIL, "Oi", true, Instant.now(), "https://x.com/h",
+                Map.of("Authorization", "Bearer segredo-9999"));
+        when(campaignAutomationRepository.findById(1L)).thenReturn(Optional.of(salva));
+        when(campaignAutomationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CampaignAutomation mantida = crmService.updateAutomation(1L, webhookCommand("A", CustomerStage.NOVO_LEAD,
+                "https://x.com/h", AutomationAuthType.BEARER, null));
+        assertThat(mantida.webhookHeaders()).containsEntry("Authorization", "Bearer segredo-9999");
+        assertThat(mantida.entrega().authLast4()).isEqualTo("9999");
+
+        CampaignAutomation semAuth = crmService.updateAutomation(1L, webhookCommand("A", CustomerStage.NOVO_LEAD,
+                "https://x.com/h", AutomationAuthType.NONE, Map.of()));
+        assertThat(semAuth.webhookHeaders()).isEmpty();
+        assertThat(semAuth.entrega().authLast4()).isNull();
+    }
+
+    @Test
     void updateAutomation_throwsWhenNotFound() {
         when(campaignAutomationRepository.findById(99L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> crmService.updateAutomation(99L, "Nome", CampaignTrigger.MANUAL,
-                CustomerStage.NOVO_LEAD, CampaignChannel.EMAIL, "Template", null, null))
+        assertThatThrownBy(() -> crmService.updateAutomation(99L, webhookCommand("Nome", CustomerStage.NOVO_LEAD,
+                "https://x.com/h", AutomationAuthType.NONE, null)))
                 .isInstanceOf(CampaignAutomationNotFoundException.class);
     }
 
@@ -823,8 +904,10 @@ class CrmServiceTest {
     }
 
     @Test
-    void getChannelStatus_reflectsEmailPortAndAlwaysReportsWhatsappDisconnected() {
+    void getChannelStatus_reflectsEmailPortAndWhatsappIntegration() {
         when(emailPort.channelStatus()).thenReturn(EmailChannelStatus.of(true, "MAILPIT", "Conectado ao Mailpit"));
+        when(whatsappIntegration.connectionStatus())
+                .thenReturn(WhatsappConnectionStatus.disconnected("Integração desativada"));
 
         List<ChannelStatus> result = crmService.getChannelStatus();
 
@@ -837,5 +920,18 @@ class CrmServiceTest {
                 .orElseThrow();
         assertThat(whatsapp.conectado()).isFalse();
         assertThat(whatsapp.provedor()).isNull();
+        assertThat(whatsapp.detalhe()).isEqualTo("Integração desativada");
+    }
+
+    @Test
+    void getChannelStatus_whatsappConectado() {
+        when(emailPort.channelStatus()).thenReturn(EmailChannelStatus.of(true, "MAILPIT", "Conectado ao Mailpit"));
+        when(whatsappIntegration.connectionStatus()).thenReturn(WhatsappConnectionStatus.up());
+
+        ChannelStatus whatsapp = crmService.getChannelStatus().stream()
+                .filter(s -> s.canal() == ChannelType.WHATSAPP).findFirst().orElseThrow();
+
+        assertThat(whatsapp.conectado()).isTrue();
+        assertThat(whatsapp.provedor()).isEqualTo("META_CLOUD_API");
     }
 }

@@ -1,6 +1,10 @@
 package com.cernecommerce.core.ports.in;
 
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.crm.AutomationAuthType;
+import com.cernecommerce.core.domain.model.crm.AutomationDestination;
+import com.cernecommerce.core.domain.model.crm.AutomationEvent;
+import com.cernecommerce.core.domain.model.crm.AutomationMetadata;
 import com.cernecommerce.core.domain.model.crm.CampaignAutomation;
 import com.cernecommerce.core.domain.model.crm.CampaignChannel;
 import com.cernecommerce.core.domain.model.crm.CampaignLogEntry;
@@ -182,9 +186,12 @@ public interface CrmUseCase {
      */
     List<Tag> listCustomerTags(Long customerId);
 
-    /** Cria uma automação de campanha (ativa por padrão). */
-    CampaignAutomation createAutomation(String nome, CampaignTrigger gatilho, CustomerStage segmentoAlvo,
-            CampaignChannel canal, String template, String webhookUrl, Map<String, String> webhookHeaders);
+    /**
+     * Cria uma automação de campanha (ativa por padrão). Lança
+     * {@link com.cernecommerce.core.domain.exception.crm.InvalidAutomationException} quando o
+     * destino não tem o campo que exige, falta o evento de um gatilho EVENTO, etc.
+     */
+    CampaignAutomation createAutomation(AutomationCommand command);
 
     /** Lista todas as automações de campanha. */
     List<CampaignAutomation> listAutomations();
@@ -198,12 +205,11 @@ public interface CrmUseCase {
 
     /**
      * Atualiza todos os campos editáveis de uma automação existente, sem precisar recriá-la.
-     * Lança {@link com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException}
+     * {@code webhookHeaders} {@code null} mantém o segredo salvo; {@code {}} o remove. Lança
+     * {@link com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException}
      * se não existir.
      */
-    CampaignAutomation updateAutomation(Long automationId, String nome, CampaignTrigger gatilho,
-            CustomerStage segmentoAlvo, CampaignChannel canal, String template, String webhookUrl,
-            Map<String, String> webhookHeaders);
+    CampaignAutomation updateAutomation(Long automationId, AutomationCommand command);
 
     /**
      * Remove uma automação e seu log de disparos. Lança
@@ -214,23 +220,22 @@ public interface CrmUseCase {
 
     /**
      * Dispara uma automação manualmente: resolve os clientes do {@code segmentoAlvo} e cria uma
-     * {@link CampaignLogEntry} por cliente. Quando a automação tem {@code webhookUrl} configurado,
-     * envia de verdade um POST para essa URL (status {@code ENVIADO}/{@code FALHA} conforme o
-     * resultado); sem {@code webhookUrl}, mantém o comportamento legado — status
-     * {@code PENDENTE_INTEGRACAO}, sem envio real. Um cliente-alvo com webhook indisponível não
-     * interrompe o disparo para os demais. Lança
+     * {@link CampaignLogEntry} por cliente, entregando pelo destino da automação (status
+     * {@code ENVIADO}/{@code FALHA} conforme o resultado). Webhook próprio sem {@code webhookUrl}
+     * mantém o comportamento legado — status {@code PENDENTE_INTEGRACAO}, sem envio real. Um
+     * cliente-alvo com falha não interrompe o disparo para os demais. Lança
      * {@link com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException}
      * se a automação não existir.
      */
     List<CampaignLogEntry> dispatchAutomation(Long automationId);
 
     /**
-     * Dispara um payload de teste para o webhook configurado, com um cliente fictício — não
-     * persiste {@link CampaignLogEntry}. Lança
+     * Dispara um payload de teste pelo destino da automação, com um cliente fictício — não
+     * persiste {@link CampaignLogEntry}. Destino WhatsApp não envia (cliente fictício). Lança
      * {@link com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException}
      * se a automação não existir, ou
      * {@link com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfiguredException}
-     * se não tiver {@code webhookUrl} configurado.
+     * se o destino não tiver o campo que exige (ex.: {@code webhookUrl}).
      */
     WebhookTestResult testAutomation(Long automationId);
 
@@ -242,9 +247,37 @@ public interface CrmUseCase {
     List<CampaignLogEntry> listAutomationLog(Long automationId);
 
     /**
-     * Status de conexão dos canais de envio (WhatsApp/E-mail) — substitui o badge fixo
-     * "API WhatsApp: Conectada" hoje hardcoded no frontend. WhatsApp não possui integração
-     * real ainda, por isso sempre reporta desconectado.
+     * Status de conexão dos canais de envio (WhatsApp/E-mail) — o badge da tela de Automações.
+     * WhatsApp vem da integração com a Cloud API (mesmo {@code connected} da tela de Integrações).
      */
     List<ChannelStatus> getChannelStatus();
+
+    /**
+     * Campos editáveis de uma automação (POST/PUT). {@code webhookHeaders} é o segredo de
+     * autenticação do webhook próprio: {@code null} mantém o salvo, {@code {}} remove.
+     */
+    record AutomationCommand(
+            String nome,
+            CampaignTrigger gatilho,
+            AutomationEvent evento,
+            CustomerStage segmentoAlvo,
+            CampaignChannel canal,
+            String template,
+            AutomationDestination destino,
+            String webhookUrl,
+            String workflowPath,
+            String whatsappTemplate,
+            String whatsappIdioma,
+            AutomationAuthType authTipo,
+            String authHeaderNome,
+            Map<String, String> webhookHeaders,
+            List<AutomationMetadata> metadados) {
+
+        @Override
+        public String toString() {
+            return "AutomationCommand[nome=" + nome + ", gatilho=" + gatilho + ", evento=" + evento
+                    + ", destino=" + destino + ", authTipo=" + authTipo
+                    + ", webhookHeaders=" + (webhookHeaders == null ? "null" : "***") + "]";
+        }
+    }
 }

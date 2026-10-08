@@ -4,6 +4,11 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import com.cernecommerce.core.domain.model.crm.AutomationMetadata;
+import com.cernecommerce.core.domain.model.crm.AutomationEvent;
+import com.cernecommerce.core.domain.model.crm.AutomationDelivery;
+import com.cernecommerce.core.domain.model.crm.AutomationAuthType;
+import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
 import com.cernecommerce.adapter.in.converter.CampaignDTOConverter;
 import com.cernecommerce.adapter.in.converter.CashbackDTOConverter;
 import com.cernecommerce.adapter.in.converter.ChannelStatusDTOConverter;
@@ -638,17 +643,78 @@ public class CrmControllerTest {
 
     @Test
     void createAutomation_returns_201() throws Exception {
-        when(crmUseCase.createAutomation("Boas-vindas", CampaignTrigger.MANUAL, CustomerStage.NOVO_LEAD,
-                CampaignChannel.EMAIL, "Ola {nome}", null, null)).thenReturn(automation(1L, true));
+        when(crmUseCase.createAutomation(any())).thenReturn(automation(1L, true));
 
         mockMvc.perform(post("/crm/automacoes")
                         .principal(AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"nome\":\"Boas-vindas\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
-                                + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}"))
+                                + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"https://x.com/h\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(1))
-                .andExpect(jsonPath("$.ativa").value(true));
+                .andExpect(jsonPath("$.ativa").value(true))
+                .andExpect(jsonPath("$.destino").value("WEBHOOK"))
+                .andExpect(jsonPath("$.metadados.length()").value(4));
+
+        verify(crmUseCase).createAutomation(argThat(c -> "Boas-vindas".equals(c.nome())
+                && c.gatilho() == CampaignTrigger.MANUAL && c.webhookHeaders() == null));
+    }
+
+    @Test
+    void createAutomation_repassaCamposNovos_eNuncaDevolveOSegredo() throws Exception {
+        CampaignAutomation saved = new CampaignAutomation(2L, "Pós-venda", CampaignTrigger.EVENTO,
+                AutomationEvent.PEDIDO_CONCLUIDO, null, CampaignChannel.WHATSAPP, "Oi", true, Instant.now(),
+                AutomationDelivery.webhook("https://x.com/h", Map.of("Authorization", "Bearer segredo-1234")),
+                List.of(AutomationMetadata.CLIENTE, AutomationMetadata.PEDIDO));
+        when(crmUseCase.createAutomation(any())).thenReturn(saved);
+
+        mockMvc.perform(post("/crm/automacoes")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"Pós-venda\",\"gatilho\":\"EVENTO\",\"evento\":\"PEDIDO_CONCLUIDO\","
+                                + "\"canal\":\"WHATSAPP\",\"template\":\"Oi\",\"destino\":\"WEBHOOK\","
+                                + "\"webhookUrl\":\"https://x.com/h\",\"authTipo\":\"BEARER\","
+                                + "\"webhookHeaders\":{\"Authorization\":\"Bearer segredo-1234\"},"
+                                + "\"metadados\":[\"CLIENTE\",\"PEDIDO\"]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.evento").value("PEDIDO_CONCLUIDO"))
+                .andExpect(jsonPath("$.authTipo").value("BEARER"))
+                .andExpect(jsonPath("$.authLast4").value("1234"))
+                .andExpect(jsonPath("$.webhookHeaders").doesNotExist())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("segredo"))));
+
+        verify(crmUseCase).createAutomation(argThat(c -> c.evento() == AutomationEvent.PEDIDO_CONCLUIDO
+                && c.segmentoAlvo() == null && c.authTipo() == AutomationAuthType.BEARER
+                && c.metadados().equals(List.of(AutomationMetadata.CLIENTE, AutomationMetadata.PEDIDO))));
+    }
+
+    @Test
+    void createAutomation_invalida_returns_400_invalid_automation() throws Exception {
+        when(crmUseCase.createAutomation(any())).thenThrow(new InvalidAutomationException("webhookUrl é obrigatório"));
+
+        mockMvc.perform(post("/crm/automacoes")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"A\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
+                                + "\"canal\":\"EMAIL\",\"template\":\"Oi\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_AUTOMATION"));
+    }
+
+    @Test
+    void updateAutomation_semWebhookHeaders_repassaNull() throws Exception {
+        when(crmUseCase.updateAutomation(eq(1L), any())).thenReturn(automation(1L, true));
+
+        mockMvc.perform(put("/crm/automacoes/1")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"A\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
+                                + "\"canal\":\"EMAIL\",\"template\":\"Oi\",\"webhookUrl\":\"https://x.com/h\","
+                                + "\"authTipo\":\"BEARER\"}"))
+                .andExpect(status().isOk());
+
+        verify(crmUseCase).updateAutomation(eq(1L), argThat(c -> c.webhookHeaders() == null
+                && c.authTipo() == AutomationAuthType.BEARER));
     }
 
     @Test

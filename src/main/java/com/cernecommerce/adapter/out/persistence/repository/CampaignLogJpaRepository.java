@@ -8,4 +8,6 @@ import java.util.List;
 public interface CampaignLogJpaRepository extends JpaRepository<CampaignLogEntryEntity, Long> {
 
     List<CampaignLogEntryEntity> findByAutomationIdOrderByDisparadoEmDesc(Long automationId);
+
+    boolean existsByAutomationIdAndEventKey(Long automationId, String eventKey);
 }

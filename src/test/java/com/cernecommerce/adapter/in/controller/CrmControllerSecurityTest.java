@@ -91,15 +91,18 @@ public class CrmControllerSecurityTest {
      * Cadastra uma automação de gatilho MANUAL e devolve o id — fixture reaproveitada pelos
      * testes de sucesso de ativação, remoção, disparo e log.
      */
+    /** Porta fechada: o disparo falha na hora (FALHA no log), sem esperar timeout. */
+    private static final String WEBHOOK_URL = "http://localhost:9/automacao";
+
     private Long givenAutomation() throws Exception {
         String nome = "AUTOMACAO_SEC_TEST_" + System.nanoTime();
         String location = mockMvc.perform(post("/crm/automacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"" + nome + "\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
-                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}")
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"" + WEBHOOK_URL + "\"}")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getHeader("Location");
         return Long.valueOf(location.substring(location.lastIndexOf('/') + 1));
@@ -769,16 +772,16 @@ public class CrmControllerSecurityTest {
         mockMvc.perform(post("/crm/automacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"Boas-vindas\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
-                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}"))
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"" + WEBHOOK_URL + "\"}"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void create_automation_without_crm_customer_manage_returns_403() throws Exception {
+    void create_automation_without_automation_manage_returns_403() throws Exception {
         mockMvc.perform(post("/crm/automacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"Boas-vindas\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
-                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}")
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"" + WEBHOOK_URL + "\"}")
                 .with(user("bob").authorities(
                         new SimpleGrantedAuthority("ROLE_USER"),
                         new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
@@ -786,15 +789,15 @@ public class CrmControllerSecurityTest {
     }
 
     @Test
-    void create_automation_with_crm_customer_manage_returns_201() throws Exception {
+    void create_automation_with_automation_manage_returns_201() throws Exception {
         String nome = "AUTOMACAO_SEC_TEST_" + System.currentTimeMillis();
         mockMvc.perform(post("/crm/automacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"nome\":\"" + nome + "\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
-                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}")
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"" + WEBHOOK_URL + "\"}")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isCreated());
     }
 
@@ -814,7 +817,7 @@ public class CrmControllerSecurityTest {
     }
 
     @Test
-    void set_automation_active_without_crm_customer_manage_returns_403() throws Exception {
+    void set_automation_active_without_automation_manage_returns_403() throws Exception {
         mockMvc.perform(patch("/crm/automacoes/999999/ativa")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"ativa\":false}")
@@ -823,14 +826,14 @@ public class CrmControllerSecurityTest {
     }
 
     @Test
-    void set_automation_active_with_crm_customer_manage_returns_200() throws Exception {
+    void set_automation_active_with_automation_manage_returns_200() throws Exception {
         Long automationId = givenAutomation();
         mockMvc.perform(patch("/crm/automacoes/" + automationId + "/ativa")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"ativa\":false}")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isOk());
     }
 
@@ -842,76 +845,115 @@ public class CrmControllerSecurityTest {
                 .content("{\"ativa\":false}")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isOk());
 
         awaitAction("CAMPAIGN_AUTOMATION_TOGGLED");
     }
 
     @Test
-    void delete_automation_without_crm_customer_manage_returns_403() throws Exception {
+    void delete_automation_without_automation_manage_returns_403() throws Exception {
         mockMvc.perform(delete("/crm/automacoes/999999")
                 .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void delete_automation_with_crm_customer_manage_returns_204() throws Exception {
+    void delete_automation_with_automation_manage_returns_204() throws Exception {
         Long automationId = givenAutomation();
         mockMvc.perform(delete("/crm/automacoes/" + automationId)
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isNoContent());
     }
 
     @Test
-    void dispatch_automation_without_crm_customer_manage_returns_403() throws Exception {
+    void dispatch_automation_without_automation_manage_returns_403() throws Exception {
         mockMvc.perform(post("/crm/automacoes/999999/disparar")
                 .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void dispatch_automation_with_crm_customer_manage_returns_404_for_inexistent_automation() throws Exception {
+    void dispatch_automation_with_automation_manage_returns_404_for_inexistent_automation() throws Exception {
         mockMvc.perform(post("/crm/automacoes/999999/disparar")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isNotFound());
     }
 
     @Test
-    void dispatch_automation_with_crm_customer_manage_returns_200_or_204() throws Exception {
+    void dispatch_automation_with_automation_manage_returns_200_or_204() throws Exception {
         // CrmController#dispatchAutomation sempre devolve ResponseEntity.ok(...) — 200.
         Long automationId = givenAutomation();
         mockMvc.perform(post("/crm/automacoes/" + automationId + "/disparar")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void list_automation_log_without_crm_customer_read_returns_403() throws Exception {
+    void list_automation_log_without_automation_manage_returns_403() throws Exception {
         mockMvc.perform(get("/crm/automacoes/999999/log")
                 .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void list_automation_log_with_crm_customer_read_returns_200() throws Exception {
+    void list_automation_log_with_automation_manage_returns_200() throws Exception {
         Long automationId = givenAutomation();
         mockMvc.perform(post("/crm/automacoes/" + automationId + "/disparar")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/crm/automacoes/" + automationId + "/log")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                        new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void create_automation_with_only_crm_customer_manage_returns_403() throws Exception {
+        mockMvc.perform(post("/crm/automacoes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"Boas-vindas\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\",\"webhookUrl\":\"" + WEBHOOK_URL + "\"}")
+                .with(user("gerente").authorities(
+                        new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void list_automation_log_with_only_crm_customer_read_returns_403() throws Exception {
+        mockMvc.perform(get("/crm/automacoes/999999/log")
+                .with(user("gerente").authorities(
+                        new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void list_automations_with_automation_manage_returns_200() throws Exception {
+        mockMvc.perform(get("/crm/automacoes")
+                .with(user("dev").authorities(new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void create_automation_without_webhook_url_returns_400_invalid_automation() throws Exception {
+        mockMvc.perform(post("/crm/automacoes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"Sem destino\",\"gatilho\":\"MANUAL\",\"segmentoAlvo\":\"NOVO_LEAD\","
+                        + "\"canal\":\"EMAIL\",\"template\":\"Ola {nome}\"}")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("AUTOMATION_MANAGE"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_AUTOMATION"));
     }
 }

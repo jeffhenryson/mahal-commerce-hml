@@ -1,16 +1,18 @@
 package com.cernecommerce.core.service;
 
-import com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfiguredException;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
+import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.config.WhatsappConnectionStatus;
+import com.cernecommerce.core.domain.model.crm.AutomationAuthType;
+import com.cernecommerce.core.domain.model.crm.AutomationDelivery;
+import com.cernecommerce.core.domain.model.crm.AutomationDestination;
 import com.cernecommerce.core.domain.model.crm.CampaignAutomation;
-import com.cernecommerce.core.domain.model.crm.CampaignChannel;
 import com.cernecommerce.core.domain.model.crm.CampaignLogEntry;
-import com.cernecommerce.core.domain.model.crm.CampaignTrigger;
 import com.cernecommerce.core.domain.model.crm.ChannelStatus;
 import com.cernecommerce.core.domain.model.crm.ChannelType;
 import com.cernecommerce.core.domain.model.crm.CrmDashboardOverview;
@@ -24,15 +26,13 @@ import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import com.cernecommerce.core.domain.model.crm.StageTransition;
 import com.cernecommerce.core.domain.model.crm.Tag;
 import com.cernecommerce.core.domain.model.crm.TagSummary;
-import com.cernecommerce.core.domain.model.crm.WebhookDispatchResult;
 import com.cernecommerce.core.domain.model.crm.WebhookTestResult;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
-import com.cernecommerce.core.ports.in.CampaignTemplateRendererUseCase;
-import com.cernecommerce.core.ports.in.CashbackUseCase;
+import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
+import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import com.cernecommerce.core.ports.out.crm.CampaignAutomationRepository;
 import com.cernecommerce.core.ports.out.crm.CampaignLogRepository;
-import com.cernecommerce.core.ports.out.crm.CampaignWebhookPort;
 import com.cernecommerce.core.ports.out.crm.CustomerNoteRepository;
 import com.cernecommerce.core.ports.out.crm.CustomerRepository;
 import com.cernecommerce.core.ports.out.crm.CustomerTagRepository;
@@ -42,10 +42,8 @@ import com.cernecommerce.core.ports.out.notification.EmailPort;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -65,20 +63,8 @@ public class CrmService implements CrmUseCase {
     private static final long DISPAROS_WHATSAPP_PLACEHOLDER = 0L;
     private static final String SEGMENTO_PLACEHOLDER = "NOVO";
 
-    // Payload do webhook de automações — identifica a origem para os workflows externos
-    // (n8n/Make) já configurados pelo cliente, mesmo literal usado quando o navegador do
-    // operador disparava o POST diretamente (ver crm/webhook-disparo-real, F008).
-    private static final String WEBHOOK_ORIGEM = "mahal-admin";
-    private static final String LOJA_NOME = "Mahal Tabacaria";
-    private static final ZoneId ZONA_BRASIL = ZoneId.of("America/Sao_Paulo");
-    private static final DateTimeFormatter DATA_PT_BR = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-    private static final DateTimeFormatter HORA_PT_BR = DateTimeFormatter.ofPattern("HH:mm");
-    private static final Map<CustomerStage, String> ESTAGIO_LABEL = Map.of(
-            CustomerStage.NOVO_LEAD, "Novo Lead",
-            CustomerStage.EM_ATENDIMENTO, "Em Atendimento",
-            CustomerStage.QUALIFICADO, "Qualificado",
-            CustomerStage.CLIENTE_ATIVO, "Cliente Ativo",
-            CustomerStage.INATIVO, "Inativo");
+    // Provedor exibido no badge de canais quando o WhatsApp está conectado.
+    private static final String WHATSAPP_PROVIDER = "META_CLOUD_API";
 
     private final CustomerRepository customerRepository;
     private final CustomerNoteRepository customerNoteRepository;
@@ -88,15 +74,14 @@ public class CrmService implements CrmUseCase {
     private final CampaignAutomationRepository campaignAutomationRepository;
     private final CampaignLogRepository campaignLogRepository;
     private final EmailPort emailPort;
-    private final CashbackUseCase cashbackUseCase;
-    private final CampaignWebhookPort campaignWebhookPort;
-    private final CampaignTemplateRendererUseCase templateRenderer;
+    private final AutomationDispatchUseCase automationDispatch;
+    private final WhatsappIntegrationUseCase whatsappIntegration;
 
     public CrmService(CustomerRepository customerRepository, CustomerNoteRepository customerNoteRepository,
             StageTransitionRepository stageTransitionRepository, TagRepository tagRepository,
             CustomerTagRepository customerTagRepository, CampaignAutomationRepository campaignAutomationRepository,
-            CampaignLogRepository campaignLogRepository, EmailPort emailPort, CashbackUseCase cashbackUseCase,
-            CampaignWebhookPort campaignWebhookPort, CampaignTemplateRendererUseCase templateRenderer) {
+            CampaignLogRepository campaignLogRepository, EmailPort emailPort,
+            AutomationDispatchUseCase automationDispatch, WhatsappIntegrationUseCase whatsappIntegration) {
         this.customerRepository = customerRepository;
         this.customerNoteRepository = customerNoteRepository;
         this.stageTransitionRepository = stageTransitionRepository;
@@ -105,9 +90,8 @@ public class CrmService implements CrmUseCase {
         this.campaignAutomationRepository = campaignAutomationRepository;
         this.campaignLogRepository = campaignLogRepository;
         this.emailPort = emailPort;
-        this.cashbackUseCase = cashbackUseCase;
-        this.campaignWebhookPort = campaignWebhookPort;
-        this.templateRenderer = templateRenderer;
+        this.automationDispatch = automationDispatch;
+        this.whatsappIntegration = whatsappIntegration;
     }
 
     @Override
@@ -377,10 +361,8 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional
-    public CampaignAutomation createAutomation(String nome, CampaignTrigger gatilho, CustomerStage segmentoAlvo,
-            CampaignChannel canal, String template, String webhookUrl, Map<String, String> webhookHeaders) {
-        CampaignAutomation created = CampaignAutomation.of(null, nome, gatilho, segmentoAlvo, canal, template, true,
-                Instant.now(), webhookUrl, webhookHeaders);
+    public CampaignAutomation createAutomation(AutomationCommand command) {
+        CampaignAutomation created = buildAutomation(null, true, Instant.now(), null, command);
         return campaignAutomationRepository.save(created);
     }
 
@@ -399,12 +381,10 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional
-    public CampaignAutomation updateAutomation(Long automationId, String nome, CampaignTrigger gatilho,
-            CustomerStage segmentoAlvo, CampaignChannel canal, String template, String webhookUrl,
-            Map<String, String> webhookHeaders) {
-        CampaignAutomation automation = requireAutomation(automationId);
+    public CampaignAutomation updateAutomation(Long automationId, AutomationCommand command) {
+        CampaignAutomation current = requireAutomation(automationId);
         return campaignAutomationRepository.save(
-                automation.withDetails(nome, gatilho, segmentoAlvo, canal, template, webhookUrl, webhookHeaders));
+                buildAutomation(current.id(), current.ativa(), current.criadoEm(), current.entrega(), command));
     }
 
     @Override
@@ -417,11 +397,7 @@ public class CrmService implements CrmUseCase {
     @Override
     @Transactional
     public List<CampaignLogEntry> dispatchAutomation(Long automationId) {
-        CampaignAutomation automation = requireAutomation(automationId);
-        List<Customer> targets = customerRepository.findByEstagio(automation.segmentoAlvo());
-        return targets.stream()
-                .map(customer -> campaignLogRepository.save(dispatchToCustomer(automation, customer)))
-                .toList();
+        return automationDispatch.dispatchManual(requireAutomation(automationId));
     }
 
     @Override
@@ -434,189 +410,71 @@ public class CrmService implements CrmUseCase {
     @Override
     @Transactional(readOnly = true)
     public WebhookTestResult testAutomation(Long automationId) {
-        CampaignAutomation automation = requireAutomation(automationId);
-        if (!automation.hasWebhook()) {
-            throw new AutomationWebhookNotConfiguredException(automationId);
+        return automationDispatch.test(requireAutomation(automationId));
+    }
+
+    /**
+     * Monta e valida a automação do comando. O segredo ({@code webhookHeaders}) segue a regra das
+     * integrações: ausente mantém o de {@code current}, {@code {}} remove. Fora do destino WEBHOOK
+     * não há autenticação própria — o segredo é descartado.
+     */
+    private static CampaignAutomation buildAutomation(Long id, boolean ativa, Instant criadoEm,
+            AutomationDelivery current, AutomationCommand command) {
+        AutomationDestination destino = command.destino() == null ? AutomationDestination.WEBHOOK : command.destino();
+        AutomationAuthType authTipo = destino == AutomationDestination.WEBHOOK && command.authTipo() != null
+                ? command.authTipo() : AutomationAuthType.NONE;
+        CampaignAutomation automation;
+        try {
+            AutomationDelivery entrega = new AutomationDelivery(destino, command.webhookUrl(), command.workflowPath(),
+                    command.whatsappTemplate(), command.whatsappIdioma(), authTipo, command.authHeaderNome(),
+                    current == null ? null : current.authLast4(),
+                    current == null ? Map.of() : current.webhookHeaders())
+                    .withSecret(command.webhookHeaders());
+            automation = new CampaignAutomation(id, command.nome(), command.gatilho(), command.evento(),
+                    command.segmentoAlvo(), command.canal(), command.template(), ativa, criadoEm, entrega,
+                    command.metadados());
+        } catch (IllegalArgumentException ex) {
+            throw new InvalidAutomationException(ex.getMessage());
         }
-        String mensagem = templateRenderer.render(automation.template(), buildTestVariables(automation));
-        Map<String, Object> payload = buildTestPayload(automation, mensagem);
-        WebhookDispatchResult result = campaignWebhookPort.send(automation.webhookUrl(), automation.webhookHeaders(),
-                payload);
-        return new WebhookTestResult(result.success(), result.statusCode(), result.errorMessage(), payload);
-    }
-
-    /** Sem webhook configurado, mantém o comportamento legado — só registra o log, sem envio real. */
-    private CampaignLogEntry dispatchToCustomer(CampaignAutomation automation, Customer customer) {
-        if (!automation.hasWebhook()) {
-            return CampaignLogEntry.create(automation.id(), customer.id());
+        AutomationDelivery entrega = automation.entrega();
+        String missing = entrega.missingRequirement();
+        if (missing != null) {
+            throw new InvalidAutomationException(missing);
         }
-        String mensagem = templateRenderer.render(automation.template(), buildTemplateVariables(automation, customer));
-        Map<String, Object> payload = buildWebhookPayload(automation, customer, mensagem, false);
-        WebhookDispatchResult result = campaignWebhookPort.send(automation.webhookUrl(), automation.webhookHeaders(),
-                payload);
-        return result.success()
-                ? CampaignLogEntry.enviado(automation.id(), customer.id())
-                : CampaignLogEntry.falha(automation.id(), customer.id(), result.errorMessage());
-    }
-
-    private Map<String, Object> buildTemplateVariables(CampaignAutomation automation, Customer customer) {
-        BigDecimal cashback = cashbackUseCase.getCustomerBalance(customer.id()).available();
-        List<String> tagNomes = customerTagRepository.findTagsByCustomerId(customer.id()).stream()
-                .map(Tag::nome).toList();
-
-        Map<String, Object> cliente = new LinkedHashMap<>();
-        cliente.put("nome", customer.nome());
-        cliente.put("primeiroNome", primeiroNome(customer.nome()));
-        cliente.put("contato", customer.contato());
-        cliente.put("whatsapp", toWhatsAppNumber(customer.contato()));
-        cliente.put("email", customer.email());
-        cliente.put("cpf", customer.cpf());
-        cliente.put("origem", customer.origem());
-        cliente.put("segmento", SEGMENTO_PLACEHOLDER);
-        cliente.put("estagio", ESTAGIO_LABEL.getOrDefault(customer.estagio(), customer.estagio().name()));
-        cliente.put("cadastradoEm", formatDataPtBr(customer.cadastradoEm()));
-        cliente.put("ltv", formatMoedaPtBr(LTV_MEDIO_PLACEHOLDER));
-        cliente.put("cashback", formatMoedaPtBr(cashback));
-        cliente.put("tags", String.join(", ", tagNomes));
-
-        Map<String, Object> variables = new LinkedHashMap<>();
-        variables.put("cliente", cliente);
-        variables.put("loja", Map.of("nome", LOJA_NOME));
-        variables.put("data", dataVariables());
-        variables.put("automacao", Map.of("nome", automation.nome(), "id", automation.id()));
-        return variables;
-    }
-
-    private Map<String, Object> buildWebhookPayload(CampaignAutomation automation, Customer customer,
-            String mensagem, boolean teste) {
-        BigDecimal cashback = cashbackUseCase.getCustomerBalance(customer.id()).available();
-        List<String> tagNomes = customerTagRepository.findTagsByCustomerId(customer.id()).stream()
-                .map(Tag::nome).toList();
-
-        Map<String, Object> clientePayload = new LinkedHashMap<>();
-        clientePayload.put("id", customer.id());
-        clientePayload.put("nome", customer.nome());
-        clientePayload.put("contato", customer.contato());
-        clientePayload.put("whatsapp", toWhatsAppNumber(customer.contato()));
-        clientePayload.put("email", customer.email());
-        clientePayload.put("cpf", customer.cpf());
-        clientePayload.put("segmento", SEGMENTO_PLACEHOLDER);
-        clientePayload.put("estagio", customer.estagio().name());
-        clientePayload.put("ltv", LTV_MEDIO_PLACEHOLDER);
-        clientePayload.put("cashback", cashback);
-        clientePayload.put("tags", tagNomes);
-
-        return buildPayload(automation, clientePayload, mensagem, teste);
-    }
-
-    private Map<String, Object> buildTestVariables(CampaignAutomation automation) {
-        Map<String, Object> cliente = new LinkedHashMap<>();
-        cliente.put("nome", "Cliente de Teste");
-        cliente.put("primeiroNome", "Cliente");
-        cliente.put("contato", "5511999999999");
-        cliente.put("whatsapp", "5511999999999");
-        cliente.put("email", "teste@mahal.dev");
-        cliente.put("cpf", "000.000.000-00");
-        cliente.put("origem", "teste");
-        cliente.put("segmento", SEGMENTO_PLACEHOLDER);
-        cliente.put("estagio", ESTAGIO_LABEL.get(CustomerStage.NOVO_LEAD));
-        cliente.put("cadastradoEm", formatDataPtBr(Instant.now()));
-        cliente.put("ltv", formatMoedaPtBr(BigDecimal.ZERO));
-        cliente.put("cashback", formatMoedaPtBr(BigDecimal.ZERO));
-        cliente.put("tags", "");
-
-        Map<String, Object> variables = new LinkedHashMap<>();
-        variables.put("cliente", cliente);
-        variables.put("loja", Map.of("nome", LOJA_NOME));
-        variables.put("data", dataVariables());
-        variables.put("automacao", Map.of("nome", automation.nome(), "id", automation.id()));
-        return variables;
-    }
-
-    private Map<String, Object> buildTestPayload(CampaignAutomation automation, String mensagem) {
-        Map<String, Object> clientePayload = new LinkedHashMap<>();
-        clientePayload.put("id", 0L);
-        clientePayload.put("nome", "Cliente de Teste");
-        clientePayload.put("contato", "5511999999999");
-        clientePayload.put("whatsapp", "5511999999999");
-        clientePayload.put("email", "teste@mahal.dev");
-        clientePayload.put("cpf", "000.000.000-00");
-        clientePayload.put("segmento", SEGMENTO_PLACEHOLDER);
-        clientePayload.put("estagio", CustomerStage.NOVO_LEAD.name());
-        clientePayload.put("ltv", BigDecimal.ZERO);
-        clientePayload.put("cashback", BigDecimal.ZERO);
-        clientePayload.put("tags", List.of());
-
-        return buildPayload(automation, clientePayload, mensagem, true);
-    }
-
-    private Map<String, Object> buildPayload(CampaignAutomation automation, Map<String, Object> clientePayload,
-            String mensagem, boolean teste) {
-        Map<String, Object> automacaoPayload = new LinkedHashMap<>();
-        automacaoPayload.put("id", automation.id());
-        automacaoPayload.put("nome", automation.nome());
-        automacaoPayload.put("gatilho", automation.gatilho().name());
-        automacaoPayload.put("canal", automation.canal().name());
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("automacao", automacaoPayload);
-        payload.put("cliente", clientePayload);
-        payload.put("mensagem", mensagem);
-        payload.put("disparadoEm", Instant.now().toString());
-        payload.put("origem", WEBHOOK_ORIGEM);
-        if (teste) {
-            payload.put("teste", true);
+        if (entrega.webhookUrl() != null && !isHttpUrl(entrega.webhookUrl())) {
+            throw new InvalidAutomationException("webhookUrl precisa começar com http:// ou https://");
         }
-        return payload;
-    }
-
-    private Map<String, Object> dataVariables() {
-        ZonedDateTime agora = ZonedDateTime.now(ZONA_BRASIL);
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("hoje", DATA_PT_BR.format(agora));
-        data.put("hora", HORA_PT_BR.format(agora));
-        return data;
-    }
-
-    private String formatDataPtBr(Instant instant) {
-        return DATA_PT_BR.format(instant.atZone(ZONA_BRASIL));
-    }
-
-    private String formatMoedaPtBr(BigDecimal valor) {
-        java.text.NumberFormat formatter = java.text.NumberFormat.getNumberInstance(new Locale("pt", "BR"));
-        formatter.setMinimumFractionDigits(2);
-        formatter.setMaximumFractionDigits(2);
-        return formatter.format(valor);
-    }
-
-    /** Dígitos apenas, com DDI 55 — aproxima o {@code toWhatsAppNumber} do mahal-admin. */
-    private String toWhatsAppNumber(String contato) {
-        if (contato == null) {
-            return null;
+        if (entrega.workflowPath() != null && entrega.workflowPath().contains("://")) {
+            throw new InvalidAutomationException("workflowPath é o caminho depois da URL base da plataforma, não uma URL");
         }
-        String digits = contato.replaceAll("\\D", "");
-        if (digits.length() < 10 || digits.length() > 13) {
-            return null;
+        if (authTipo == AutomationAuthType.HEADER && entrega.authHeaderNome() == null) {
+            throw new InvalidAutomationException("authHeaderNome é obrigatório quando authTipo é HEADER");
         }
-        return digits.startsWith("55") ? digits : "55" + digits;
+        if (authTipo != AutomationAuthType.NONE && entrega.webhookHeaders().isEmpty()) {
+            throw new InvalidAutomationException("Informe o segredo de autenticação do webhook");
+        }
+        return automation;
     }
 
-    private String primeiroNome(String nome) {
-        if (nome == null || nome.isBlank()) {
-            return nome;
+    private static boolean isHttpUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            return (scheme.equals("http") || scheme.equals("https")) && uri.getHost() != null;
+        } catch (IllegalArgumentException ex) {
+            return false;
         }
-        int espaco = nome.indexOf(' ');
-        return espaco < 0 ? nome : nome.substring(0, espaco);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ChannelStatus> getChannelStatus() {
         EmailChannelStatus email = emailPort.channelStatus();
+        WhatsappConnectionStatus whatsapp = whatsappIntegration.connectionStatus();
         return List.of(
                 ChannelStatus.of(ChannelType.EMAIL, email.conectado(), email.provedor(), email.detalhe()),
-                ChannelStatus.of(ChannelType.WHATSAPP, false, null,
-                        "Integração de WhatsApp ainda não implementada"));
+                ChannelStatus.of(ChannelType.WHATSAPP, whatsapp.connected(),
+                        whatsapp.connected() ? WHATSAPP_PROVIDER : null, whatsapp.detail()));
     }
 
     private Customer requireCustomer(Long customerId) {

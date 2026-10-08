@@ -503,37 +503,46 @@ public class CrmController {
         return ResponseEntity.ok(response);
     }
 
-    @Operation(summary = "Cria uma automação de campanha (ativa por padrão)")
+    @Operation(summary = "Cria uma automação de campanha (ativa por padrão)",
+            description = "O segredo de webhookHeaders é cifrado em repouso e nunca volta — só authLast4.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Criada", content = @Content(schema = @Schema(implementation = CampaignAutomationResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "INVALID_AUTOMATION — destino sem o campo que exige, evento ausente...", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/automacoes")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<CampaignAutomationResponseDTO> createAutomation(
             @Valid @RequestBody CampaignAutomationRequest request, Authentication authentication) {
-        CampaignAutomation created = crmUseCase.createAutomation(request.getNome(), request.getGatilho(),
-                request.getSegmentoAlvo(), request.getCanal(), request.getTemplate(), request.getWebhookUrl(),
-                request.getWebhookHeaders());
+        CampaignAutomation created = crmUseCase.createAutomation(new CrmUseCase.AutomationCommand(
+                request.getNome(), request.getGatilho(), request.getEvento(), request.getSegmentoAlvo(),
+                request.getCanal(), request.getTemplate(), request.getDestino(), request.getWebhookUrl(),
+                request.getWorkflowPath(), request.getWhatsappTemplate(), request.getWhatsappIdioma(),
+                request.getAuthTipo(), request.getAuthHeaderNome(), request.getWebhookHeaders(),
+                request.getMetadados()));
         publisher.publishEvent(AuditEvent.of(EventType.CAMPAIGN_AUTOMATION_CREATED,
                 authentication.getName(), Map.of("automationId", String.valueOf(created.id()))));
         return ResponseEntity.created(URI.create("/crm/automacoes/" + created.id()))
                 .body(campaignConverter.toResponse(created));
     }
 
-    @Operation(summary = "Atualiza todos os campos editáveis de uma automação existente")
+    @Operation(summary = "Atualiza todos os campos editáveis de uma automação existente",
+            description = "webhookHeaders ausente mantém o segredo salvo; {} remove.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = CampaignAutomationResponseDTO.class))),
             @ApiResponse(responseCode = "404", description = "Automação não encontrada", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PutMapping("/automacoes/{id}")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<CampaignAutomationResponseDTO> updateAutomation(@PathVariable Long id,
             @Valid @RequestBody UpdateCampaignAutomationRequest request, Authentication authentication) {
-        CampaignAutomation updated = crmUseCase.updateAutomation(id, request.getNome(), request.getGatilho(),
-                request.getSegmentoAlvo(), request.getCanal(), request.getTemplate(), request.getWebhookUrl(),
-                request.getWebhookHeaders());
+        CampaignAutomation updated = crmUseCase.updateAutomation(id, new CrmUseCase.AutomationCommand(
+                request.getNome(), request.getGatilho(), request.getEvento(), request.getSegmentoAlvo(),
+                request.getCanal(), request.getTemplate(), request.getDestino(), request.getWebhookUrl(),
+                request.getWorkflowPath(), request.getWhatsappTemplate(), request.getWhatsappIdioma(),
+                request.getAuthTipo(), request.getAuthHeaderNome(), request.getWebhookHeaders(),
+                request.getMetadados()));
         publisher.publishEvent(AuditEvent.of(EventType.CAMPAIGN_AUTOMATION_UPDATED,
                 authentication.getName(), Map.of("automationId", String.valueOf(id))));
         return ResponseEntity.ok(campaignConverter.toResponse(updated));
@@ -545,7 +554,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @GetMapping("/automacoes")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
+    @PreAuthorize("hasAnyAuthority('AUTOMATION_MANAGE', 'CRM_CUSTOMER_READ')")
     public ResponseEntity<List<CampaignAutomationResponseDTO>> listAutomations() {
         List<CampaignAutomationResponseDTO> response = crmUseCase.listAutomations().stream()
                 .map(campaignConverter::toResponse).toList();
@@ -559,7 +568,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PatchMapping("/automacoes/{id}/ativa")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<CampaignAutomationResponseDTO> setAutomationActive(@PathVariable Long id,
             @Valid @RequestBody CampaignActiveRequest request, Authentication authentication) {
         CampaignAutomation updated = crmUseCase.setAutomationActive(id, request.getAtiva());
@@ -576,7 +585,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @DeleteMapping("/automacoes/{id}")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<Void> deleteAutomation(@PathVariable Long id, Authentication authentication) {
         crmUseCase.deleteAutomation(id);
         publisher.publishEvent(AuditEvent.of(EventType.CAMPAIGN_AUTOMATION_DELETED,
@@ -592,7 +601,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/automacoes/{id}/disparar")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<List<CampaignLogResponseDTO>> dispatchAutomation(@PathVariable Long id,
             Authentication authentication) {
         List<CampaignLogEntry> entries = crmUseCase.dispatchAutomation(id);
@@ -612,7 +621,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/automacoes/{id}/testar")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<WebhookTestResultResponseDTO> testAutomation(@PathVariable Long id,
             Authentication authentication) {
         WebhookTestResult result = crmUseCase.testAutomation(id);
@@ -628,7 +637,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @GetMapping("/automacoes/{id}/log")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
+    @PreAuthorize("hasAuthority('AUTOMATION_MANAGE')")
     public ResponseEntity<List<CampaignLogResponseDTO>> listAutomationLog(@PathVariable Long id) {
         List<CampaignLogResponseDTO> response = crmUseCase.listAutomationLog(id).stream()
                 .map(campaignConverter::toResponse).toList();
@@ -641,7 +650,7 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @GetMapping("/canais/status")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
+    @PreAuthorize("hasAnyAuthority('CRM_CUSTOMER_READ', 'AUTOMATION_MANAGE')")
     public ResponseEntity<List<ChannelStatusResponseDTO>> getChannelStatus() {
         List<ChannelStatusResponseDTO> response = crmUseCase.getChannelStatus().stream()
                 .map(channelStatusConverter::toResponse).toList();

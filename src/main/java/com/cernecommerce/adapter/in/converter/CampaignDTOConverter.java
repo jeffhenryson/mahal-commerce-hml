@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.in.converter;
 import com.cernecommerce.adapter.in.dtos.response.CampaignAutomationResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CampaignLogResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.WebhookTestResultResponseDTO;
+import com.cernecommerce.core.domain.model.crm.AutomationDelivery;
 import com.cernecommerce.core.domain.model.crm.CampaignAutomation;
 import com.cernecommerce.core.domain.model.crm.CampaignLogEntry;
 import com.cernecommerce.core.domain.model.crm.WebhookTestResult;
@@ -19,7 +20,17 @@ public class CampaignDTOConverter {
         dto.setTemplate(automation.template());
         dto.setAtiva(automation.ativa());
         dto.setCriadoEm(automation.criadoEm());
-        dto.setWebhookUrl(automation.webhookUrl());
+        dto.setEvento(automation.evento());
+        dto.setMetadados(automation.metadados());
+        AutomationDelivery entrega = automation.entrega();
+        dto.setDestino(entrega.destino());
+        dto.setWebhookUrl(entrega.webhookUrl());
+        dto.setWorkflowPath(entrega.workflowPath());
+        dto.setWhatsappTemplate(entrega.whatsappTemplate());
+        dto.setWhatsappIdioma(entrega.whatsappIdioma());
+        dto.setAuthTipo(entrega.authTipo());
+        dto.setAuthHeaderNome(entrega.authHeaderNome());
+        dto.setAuthLast4(entrega.authLast4());
         return dto;
     }
 
