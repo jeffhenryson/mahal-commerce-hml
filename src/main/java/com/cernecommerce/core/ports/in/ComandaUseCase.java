@@ -50,6 +50,14 @@ public interface ComandaUseCase {
     Comanda openComanda(Long sessionId, String tableOrCustomerLabel, Long customerId, String username);
 
     /**
+     * PDV-C038 — confere, sem gravar nada, que {@code username} pode abrir mesa na sessão: aberta e
+     * dele, a mesma regra de {@link #openComanda}. Existe para o controller conferir o caixa ANTES de
+     * criar o lead no CRM — senão uma abertura recusada deixava um cliente criado por uma mesa que não
+     * existe.
+     */
+    void requireCanOpenComanda(Long sessionId, String username);
+
+    /**
      * Lança um item na comanda aberta, debitando o estoque na hora.
      *
      * @throws com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException se a comanda já
@@ -154,6 +162,17 @@ public interface ComandaUseCase {
      *         {@code SABOR_EXTRA} pendurado na linha
      */
     Comanda removeItem(Long comandaId, Long itemId, String username);
+
+    /**
+     * PDV-C036 — remoção com motivo. Sessão do cardápio já servida (em preparo ou na mesa) e não paga
+     * não é apagada: vira desistência — recolhida, cortesia a R$ 0, com o motivo e quem registrou —, e
+     * o narguilé volta à casa. Sem motivo nesse caso,
+     * {@link com.cernecommerce.core.domain.exception.pdv.SessionWithdrawalReasonRequiredException}; com
+     * rosh ligado ainda no salão,
+     * {@link com.cernecommerce.core.domain.exception.pdv.LinkedSessionStillActiveException}. Nas demais
+     * linhas o motivo é ignorado e a remoção é a de sempre.
+     */
+    Comanda removeItem(Long comandaId, Long itemId, String username, String reason);
 
     /**
      * PDV-F019 — lança um kit montável na comanda: uma linha por item escolhido, todas com o mesmo
@@ -426,9 +445,17 @@ public interface ComandaUseCase {
      * @param tierIdRosh faixa do 2º rosh; nula usa a da sessão
      * @param pagarNoFinal PDV-F034 — ver {@link AddSessionCommand}. Não herda da origem: é decisão
      *        de quem lança agora, e a permissão é conferida no controller sobre o corpo.
+     * @param essenciaSku PDV-F042 — sabor do catálogo da nova sessão. Nulo <b>com</b> {@code essencia}
+     *        nula repete o da origem; nulo com {@code essencia} em texto é sessão só em texto.
+     * @param essenciaRoshSku PDV-F042 — sabor do catálogo do 2º rosh, no duplo
      */
     record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
-            boolean pagarNoFinal) {
+            boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku) {
+
+        public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
+                boolean pagarNoFinal) {
+            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, null, null);
+        }
 
         public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh) {
             this(essencia, duplo, essenciaRosh, tierIdRosh, false);
@@ -443,12 +470,23 @@ public interface ComandaUseCase {
      * @param tierIdRosh faixa do 2º rosh; nula usa a da sessão
      * @param pagarNoFinal PDV-F034 — a sessão vai direto ao preparo e fica a receber até a conta.
      *        Quem chama confere {@code PDV_SESSION_PAY_LATER}.
+     * @param essenciaSku PDV-F042 — sabor do catálogo (SKU da variação). Opcional: com ele a sessão
+     *        consome uso da lata aberta (ou 1 unidade como uso da loja, sem lata configurada); sem
+     *        ele, a essência fica só em texto, como antes.
+     * @param essenciaRoshSku PDV-F042 — o mesmo para o 2º rosh do duplo
      */
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
-            List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal) {
+            List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+            String essenciaSku, String essenciaRoshSku) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+        }
+
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    null, null);
         }
 
         public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
@@ -470,6 +508,14 @@ public interface ComandaUseCase {
      *         {@code sessionItemId} não for uma sessão em aberto desta comanda
      */
     Comanda addRoshExtra(Long comandaId, Long sessionItemId, Long tierId, String essencia, String username);
+
+    /**
+     * {@link #addRoshExtra(Long, Long, Long, String, String)} com o sabor do catálogo (PDV-F042):
+     * {@code essenciaSku} consome uso da lata do sabor (ou 1 unidade como uso da loja). Abstrato, e
+     * não {@code default}: default da interface perde a transação (PLAT-C047).
+     */
+    Comanda addRoshExtra(Long comandaId, Long sessionItemId, Long tierId, String essencia, String essenciaSku,
+            String username);
 
     /**
      * Encerra a mesa cujas linhas já foram todas cobradas em fechamentos parciais (PDV-F023). Não

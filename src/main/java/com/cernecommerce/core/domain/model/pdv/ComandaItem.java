@@ -40,7 +40,8 @@ public record ComandaItem(
         Long kitTemplateId,
         BigDecimal kitDiscountAmount,
         SessionProgress session,
-        SessionSetup setup) {
+        SessionSetup setup,
+        String essenceSku) {
 
     /** Sufixo que a sessão de vaso grande leva na {@link #notes}, depois da essência (PDV-F021). */
     public static final String VASO_GRANDE_NOTE_SUFFIX = " · Vaso grande";
@@ -124,6 +125,12 @@ public record ComandaItem(
         if (setup != null && !mode.isMenuSession()) {
             throw new IllegalArgumentException("carvão/adicionais só existem em SESSAO/ROSH_EXTRA: mode=" + mode);
         }
+        // PDV-F042 — espelha ck_comanda_item_essence_sku_menu_session (V147): a linha de catálogo já
+        // é o próprio produto, e só a sessão do cardápio (SKU sintético da faixa) precisa dizer qual
+        // essência queimou.
+        if (essenceSku != null && (essenceSku.isBlank() || !mode.isMenuSession())) {
+            throw new IllegalArgumentException("essenceSku só existe em SESSAO/ROSH_EXTRA: mode=" + mode);
+        }
     }
 
     /**
@@ -138,7 +145,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
-                null, null, null);
+                null, null, null, null);
     }
 
     /**
@@ -170,7 +177,7 @@ public record ComandaItem(
             throw new ProductNotPricedException(sku);
         }
         return new ComandaItem(null, sku, quantity, unitPrice, pricing.costPrice(), productName,
-                Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null);
+                Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -192,7 +199,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, BigDecimal.ONE, unitPrice, null, productName, Instant.now(), mode,
                 courtesy, linkedItemId, notes, null, null, null, null, null, null, null, session,
-                setup == null || setup.isEmpty() ? null : setup);
+                setup == null || setup.isEmpty() ? null : setup, null);
     }
 
     /** Reconstitui um item a partir de persistência. */
@@ -275,9 +282,23 @@ public record ComandaItem(
             Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
             Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
             BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup) {
+        return of(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy, linkedItemId,
+                notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit, kitBundleId,
+                kitTemplateId, kitDiscountAmount, session, setup, null);
+    }
+
+    /**
+     * Reconstitui um item a partir de persistência, com a essência do catálogo consumida pela linha
+     * de sessão do cardápio (PDV-F042). Linha anterior à V147 lê {@code null}: essência só em texto.
+     */
+    public static ComandaItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, String productName, Instant addedAt, ConsumptionMode mode, boolean courtesy,
+            Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
+            Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
+            BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
     }
 
     /**
@@ -301,7 +322,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, orderId, packageUses, packageSessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
     }
 
     /**
@@ -316,7 +337,42 @@ public record ComandaItem(
     public ComandaItem withPackageCounter(int uses, int sessionsPerUnit) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, uses, sessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+    }
+
+    /**
+     * PDV-F042 — carimba na linha de sessão do cardápio qual essência do catálogo ela queimou. É o
+     * que o desfazimento lê meses depois: o SKU da linha é o da faixa ({@code SESS-{id}}), que não
+     * tem estoque.
+     */
+    public ComandaItem withEssence(String essenceSku) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+    }
+
+    /**
+     * A linha tirou algo do estoque (ou de uma lata) ao ser lançada: toda linha de catálogo, e a
+     * sessão do cardápio só quando tem essência do catálogo (PDV-F042). É a guarda do desfazimento —
+     * sessão só com texto nunca baixou nada e não tem o que devolver.
+     */
+    public boolean consumedStock() {
+        return mode.isCatalogLine() || essenceSku != null;
+    }
+
+    /**
+     * PDV-F042 — a essência desta sessão já foi queimada: a linha saiu da espera (preparando,
+     * entregue ou recolhida — o que inclui a desistida). Daqui em diante desfazer a linha não
+     * devolve nada ao estoque nem à lata: a essência não volta para a prateleira, e devolvê-la
+     * inventaria saldo. Linha de catálogo e sessão sem status nunca são "queimadas" por aqui.
+     */
+    public boolean essenceBurned() {
+        return mode.isMenuSession() && session != null && (session.isServed() || session.isCollected());
+    }
+
+    /** O SKU que o estoque conhece para esta linha: a essência, na sessão do cardápio; o próprio, no resto. */
+    public String stockSku() {
+        return essenceSku != null ? essenceSku : sku;
     }
 
     /**
@@ -328,7 +384,7 @@ public record ComandaItem(
     public ComandaItem withKit(String bundleId, Long templateId, BigDecimal discountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                bundleId, templateId, discountAmount, session, setup);
+                bundleId, templateId, discountAmount, session, setup, essenceSku);
     }
 
     /**
@@ -342,7 +398,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku);
     }
 
     /**
@@ -374,13 +430,39 @@ public record ComandaItem(
      * PDV-F027 — a sessão foi paga: sai de {@code AGUARDANDO_PAGAMENTO} para o preparo, e o tempo de
      * mesa começa. Linha em outro status volta como está — pagar não mexe no ciclo físico dela.
      */
+    /**
+     * PDV-C036 — a linha exige desistência (motivo) em vez de ser apagada: sessão do cardápio, ainda
+     * não cobrada, não cortesia, e já servida. Apagá-la era dar o narguilé de graça sem a alçada de
+     * cortesia e sem deixar rastro no histórico.
+     */
+    public boolean requiresWithdrawal() {
+        return mode.isMenuSession() && isOpen() && !courtesy && session != null && session.isServed();
+    }
+
+    public boolean isWithdrawn() {
+        return session != null && session.isWithdrawn();
+    }
+
+    /**
+     * PDV-C036 — registra a desistência: a linha fica, recolhida, como cortesia a R$ 0 (não é mais
+     * dívida — ver {@code Comanda.owedItems}), com o motivo e quem registrou.
+     */
+    public ComandaItem withdrawn(String reason, String by, Instant at) {
+        if (!requiresWithdrawal()) {
+            throw new IllegalStateException("item " + id + " não é uma sessão servida a cobrar");
+        }
+        return new ComandaItem(id, sku, quantity, BigDecimal.ZERO, costPrice, productName, addedAt, mode, true,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku);
+    }
+
     public ComandaItem withSessionPaid(Instant at) {
         if (session == null || !session.isAwaitingPayment()) {
             return this;
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku);
     }
 
     /**

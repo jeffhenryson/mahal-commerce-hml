@@ -102,6 +102,13 @@ public class ComandaItemEntity {
     @Column(name = "package_sessions_per_unit")
     private Integer packageSessionsPerUnit;
 
+    /**
+     * PDV-F042 — sabor do catálogo que a sessão do cardápio queimou (V147). Nulo na sessão só em
+     * texto e em toda linha de catálogo, cujo próprio {@code sku} já é o produto.
+     */
+    @Column(name = "essence_sku", length = 50)
+    private String essenceSku;
+
     // PDV-F019 — kit montável: o pacote, o modelo e a parte do desconto do kit desta linha.
     @Column(name = "kit_bundle_id", length = 36)
     private String kitBundleId;
@@ -128,6 +135,13 @@ public class ComandaItemEntity {
     // PDV-F034 — sessão que foi ao salão antes de paga.
     @Column(name = "pay_later", nullable = false)
     private boolean payLater;
+
+    // PDV-C036 — desistência da sessão servida: motivo e quem registrou (V146).
+    @Column(name = "withdrawn_reason", length = 200)
+    private String withdrawnReason;
+
+    @Column(name = "withdrawn_by", length = 80)
+    private String withdrawnBy;
 
     // PDV-F024 — carvão (só registro) e adicionais cobrados na sessão.
     @Column(length = 10)

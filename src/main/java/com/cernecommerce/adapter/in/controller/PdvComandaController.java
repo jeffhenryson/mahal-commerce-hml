@@ -272,6 +272,9 @@ public class PdvComandaController {
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> openComanda(@RequestParam Long sessionId,
             @Valid @RequestBody OpenComandaRequest request, Authentication authentication) {
+        // PDV-C038 — o caixa primeiro: o lead é criado no CRM (e auditado como criado), e numa abertura
+        // recusada ele ficava órfão. A abertura ainda reconfere, travada — sobra só a janela entre as duas.
+        comandaUseCase.requireCanOpenComanda(sessionId, authentication.getName());
         Customer customer = resolveComandaCustomerRecord(request.getCustomerId(), request.getLead(), authentication);
         Comanda comanda = comandaUseCase.openComanda(sessionId,
                 comandaLabel(request.getTableOrCustomerLabel(), customer),
@@ -342,23 +345,36 @@ public class PdvComandaController {
                     + "estar sendo cobrada, e apagá-la em cascata tiraria valor da conta sem o "
                     + "operador pedir. Cada linha removida gera uma ENTRADA de estoque, o mesmo "
                     + "padrão do cancelamento. Reusa PDV_COMANDA_MANAGE: quem já pode cancelar a "
-                    + "mesa inteira não precisa de permissão maior para remover uma linha dela.")
+                    + "mesa inteira não precisa de permissão maior para remover uma linha dela. "
+                    + "PDV-C036: sessão do cardápio já servida (em preparo ou na mesa) e não paga NÃO é "
+                    + "apagada — exige `reason` (até 200) e vira desistência: recolhida, a R$ 0, com o "
+                    + "motivo, fora da conta, e o narguilé volta à casa.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Removida, com a comanda atualizada", content = @Content(schema = @Schema(implementation = ComandaResponseDTO.class))),
-            @ApiResponse(responseCode = "400", description = "A linha já foi cobrada num fechamento parcial (ITEM_NOT_OPEN_IN_COMANDA, PDV-C023): está num pedido pago, e desfazer venda paga é reembolso do pedido", content = @Content),
+            @ApiResponse(responseCode = "400", description = "A linha já foi cobrada num fechamento parcial (ITEM_NOT_OPEN_IN_COMANDA, PDV-C023): está num pedido pago, e desfazer venda paga é reembolso do pedido; ou sessão servida e não paga sem `reason` (SESSION_WITHDRAWAL_REASON_REQUIRED, PDV-C036)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda ou item não encontrado (COMANDA_ITEM_NOT_FOUND)", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sessão de caixa encerrada, ou a linha tem SABOR_EXTRA pendurado (LINKED_ITEM_IS_CHARGED)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sessão de caixa encerrada, a linha tem SABOR_EXTRA pendurado (LINKED_ITEM_IS_CHARGED), ou a sessão a desistir tem rosh ainda no salão (LINKED_SESSION_STILL_ACTIVE, PDV-C036)", content = @Content)
     })
     @DeleteMapping("/{id}/items/{itemId}")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> removeItem(@PathVariable("id") Long comandaId,
-            @PathVariable("itemId") Long itemId, Authentication authentication) {
-        Comanda comanda = comandaUseCase.removeItem(comandaId, itemId, authentication.getName());
-        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ITEM_REMOVED, authentication.getName(),
-                auditPayload(comandaId,
-                        "itemId", itemId,
-                        "warehouseCode", comanda.warehouseCode(),
-                        "type", MovementType.ENTRADA.name())));
+            @PathVariable("itemId") Long itemId,
+            @RequestParam(required = false) @jakarta.validation.constraints.Size(max = 200) String reason,
+            Authentication authentication) {
+        Comanda comanda = comandaUseCase.removeItem(comandaId, itemId, authentication.getName(), reason);
+        // PDV-C036 — a sessão servida não sai da comanda: fica como desistência, com evento próprio.
+        boolean withdrawn = comanda.items().stream()
+                .anyMatch(i -> itemId.equals(i.id()) && i.isWithdrawn());
+        if (withdrawn) {
+            publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_WITHDRAWN, authentication.getName(),
+                    auditPayload(comandaId, "itemId", itemId, "reason", reason.trim())));
+        } else {
+            publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ITEM_REMOVED, authentication.getName(),
+                    auditPayload(comandaId,
+                            "itemId", itemId,
+                            "warehouseCode", comanda.warehouseCode(),
+                            "type", MovementType.ENTRADA.name())));
+        }
         ComandaResponseDTO dto = comandaConverter.toResponse(comanda);
         enrichCustomerNames(List.of(dto));
         return ResponseEntity.ok(dto);
@@ -541,12 +557,8 @@ public class PdvComandaController {
     public ResponseEntity<OrderResponseDTO> closeComanda(@PathVariable("id") Long comandaId,
             @Valid @RequestBody CloseComandaRequest request, Authentication authentication) {
         requireComandaDiscountAuthority(request.getDiscountAmount(), authentication);
-        List<PaymentCommand> payments = request.getPayments().stream()
-                .map(p -> new PaymentCommand(
-                        com.cernecommerce.core.domain.model.pagamento.PaymentMethod.valueOf(p.getMethod()),
-                        p.getAmount(), p.getInstallments(), p.getChannel(), p.getProvider(),
-                        "MARCADO".equals(p.getMethod()) ? p.getDueDate() : null))
-                .toList();
+        // PDV-C034 — a mesma conversão do balcão: a cópia inline daqui aceitava GATEWAY_PIX.
+        List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
         // A sobrecarga completa, sempre: as de conveniência de ComandaUseCase são `default` da
         // interface e perdem a transação quando chamadas pelo proxy (PLAT-C047).

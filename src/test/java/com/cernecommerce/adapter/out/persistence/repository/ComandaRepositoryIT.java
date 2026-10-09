@@ -497,6 +497,31 @@ class ComandaRepositoryIT {
         assertThat(ids).doesNotContain(aCobrar.id(), pagaNoSalao.id());
     }
 
+    /**
+     * PDV-C036 — a desistência volta do banco como gravada (motivo, autor, recolhida, cortesia a R$ 0),
+     * e PDV-C042 — mesa paga cuja única linha aberta é a desistência não deve nada: a varredura a vê.
+     */
+    @Test
+    void withdrawnSession_roundTrips_andDoesNotCountAsOwedForTheSweep() {
+        Instant velha = Instant.now().minus(20, ChronoUnit.HOURS);
+        ComandaItem servida = linhaSessao(null, SessionProgress.preparingPayLater(velha)
+                .advanceTo(SessionStatus.ENTREGUE, velha));
+        ComandaItem desistida = servida.withdrawn("Cliente foi embora", "caixa1", velha.plusSeconds(600));
+        Comanda mesa = comandaRepository.save(comandaAbertaEm(velha,
+                linhaSessao(903L, new SessionProgress(SessionStatus.RECOLHIDO, velha, velha, velha)), desistida));
+        flushAndClear();
+
+        ComandaItem lida = comandaRepository.findById(mesa.id()).orElseThrow().items().stream()
+                .filter(ComandaItem::isWithdrawn).findFirst().orElseThrow();
+        assertThat(lida.courtesy()).isTrue();
+        assertThat(lida.unitPrice()).isEqualByComparingTo("0");
+        assertThat(lida.session().withdrawnReason()).isEqualTo("Cliente foi embora");
+        assertThat(lida.session().withdrawnBy()).isEqualTo("caixa1");
+        assertThat(lida.session().payLater()).isTrue();
+        assertThat(comandaRepository.findStaleIdsWithNothingOwed(Instant.now().minus(12, ChronoUnit.HOURS), 100))
+                .contains(mesa.id());
+    }
+
     private static ComandaItem linhaSessao(Long closedInOrderId, SessionProgress progress) {
         return ComandaItem.of(null, "SESS-1", BigDecimal.ONE, new BigDecimal("30.00"), null, "Sessão",
                 Instant.now(), ConsumptionMode.SESSAO, false, null, "Zomo", null, closedInOrderId,

@@ -170,6 +170,17 @@ class ComandaServiceTest {
         verify(comandaRepository, never()).save(any());
     }
 
+    /** PDV-C038 — a pré-conferência usa a mesma regra da abertura: caixa aberto e do próprio operador. */
+    @Test
+    void requireCanOpenComanda_appliesTheOpeningOwnershipRule_withoutSaving() {
+        when(pdvService.requireOwnOpenSession(1L, "outro-operador"))
+                .thenThrow(new com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException(1L, "outro-operador"));
+
+        assertThatThrownBy(() -> comandaService.requireCanOpenComanda(1L, "outro-operador"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
     // ── Lançamento de item ───────────────────────────────────────────────────────────────────
 
     @Test
@@ -1254,6 +1265,41 @@ class ComandaServiceTest {
         verify(comandaRepository).recordClosing(10L, "system", "Mesa paga encerrada (varredura automática)");
         verifyNoInteractions(estoqueUseCase);
         verifyNoInteractions(notificationUseCase);
+    }
+
+    /**
+     * PDV-C042 — sobrou só uma cortesia em aberto (o rosh grátis lançado depois do pagamento): a
+     * mesa não deve nada, e a varredura a encerra no último pedido em vez de alertar "total 0,00".
+     */
+    @Test
+    void sweepStaleComandas_finishesAPaidComandaWithOnlyACourtesyLeftOpen() {
+        ComandaItem paga = linha(1L, "ESS-A", "30.00", ConsumptionMode.NORMAL, false, null);
+        ComandaItem cortesia = linha(2L, "ESS-A", "0.00", ConsumptionMode.NORMAL, true, null);
+        Comanda mesa = staleComanda(paga, cortesia).withItemsClosedIn(400L, List.of(1L));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mesa));
+
+        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+
+        assertThat(result.finished()).isEqualTo(1);
+        ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository).save(saved.capture());
+        assertThat(saved.getValue().status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(saved.getValue().orderId()).isEqualTo(400L);
+    }
+
+    /** Mesa velha só com cortesia e nada cobrado: não há pedido, então só alerta — não quebra a passada. */
+    @Test
+    void sweepStaleComandas_neverFinishesAComandaWithoutAChargedLine() {
+        Comanda soCortesia = staleComanda(linha(1L, "ESS-A", "0.00", ConsumptionMode.NORMAL, true, null));
+        when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(soCortesia));
+
+        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+
+        assertThat(result.finished()).isZero();
+        assertThat(result.cancelled()).isZero();
+        verify(comandaRepository, never()).save(any());
     }
 
     /**

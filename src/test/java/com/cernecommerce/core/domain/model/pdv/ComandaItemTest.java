@@ -218,4 +218,78 @@ class ComandaItemTest {
         assertThat(legado.notes()).isNull();
         assertThat(legado.surchargeAmount()).isNull();
     }
+
+    // ── Essência do catálogo na sessão (PDV-F042) ────────────────────────────────────────────
+
+    private static ComandaItem sessaoDoCardapio() {
+        return ComandaItem.forMenuSession("SESS-2", new BigDecimal("30.00"), "Sessão Premium",
+                ConsumptionMode.SESSAO, false, null, "Zomo Blueberry", SessionProgress.awaitingPayment(), null);
+    }
+
+    /**
+     * A linha do cardápio tem SKU sintético: sem a essência carimbada, não há o que desfazer no
+     * estoque, e é por isso que ela não "consumiu estoque".
+     */
+    @Test
+    void sessaoDoCardapio_semEssencia_naoConsumiuEstoque() {
+        ComandaItem linha = sessaoDoCardapio();
+
+        assertThat(linha.essenceSku()).isNull();
+        assertThat(linha.consumedStock()).isFalse();
+        assertThat(linha.stockSku()).isEqualTo("SESS-2");
+    }
+
+    /** Com a essência, o SKU de estoque da linha passa a ser o do sabor, não o da faixa. */
+    @Test
+    void sessaoDoCardapio_comEssencia_consumiuEstoqueDoSabor() {
+        ComandaItem linha = sessaoDoCardapio().withEssence("ZGY-BLUEBERRY");
+
+        assertThat(linha.essenceSku()).isEqualTo("ZGY-BLUEBERRY");
+        assertThat(linha.consumedStock()).isTrue();
+        assertThat(linha.stockSku()).isEqualTo("ZGY-BLUEBERRY");
+        assertThat(linha.sku()).isEqualTo("SESS-2");
+    }
+
+    /** A essência sobrevive às transições da linha — pagar e cobrar não podem apagá-la. */
+    @Test
+    void essencia_sobreviveAsCopiasDaLinha() {
+        ComandaItem linha = sessaoDoCardapio().withEssence("ZGY-BLUEBERRY").withPackageCounter(3, 5)
+                .withSessionPaid(Instant.now()).closedIn(77L);
+
+        assertThat(linha.essenceSku()).isEqualTo("ZGY-BLUEBERRY");
+        assertThat(linha.consumedPackage()).isTrue();
+    }
+
+    /** Linha de catálogo já é o próprio produto: consumiu estoque do próprio SKU, sem essência. */
+    @Test
+    void linhaDeCatalogo_consumiuEstoqueDoProprioSku() {
+        ComandaItem linha = ComandaItem.fromCatalog("CARVAO-1KG", BigDecimal.ONE, PRICED, "Carvão");
+
+        assertThat(linha.consumedStock()).isTrue();
+        assertThat(linha.stockSku()).isEqualTo("CARVAO-1KG");
+    }
+
+    /** Essência só existe em linha do cardápio de sessão — espelha o CHECK da V147. */
+    @Test
+    void essencia_emLinhaDeCatalogo_eRecusada() {
+        ComandaItem linha = ComandaItem.fromCatalog("CARVAO-1KG", BigDecimal.ONE, PRICED, "Carvão");
+
+        assertThatThrownBy(() -> linha.withEssence("ZGY-BLUEBERRY"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("essenceSku");
+    }
+
+    /** Saiu da espera, a essência queimou: preparando, entregue, recolhida. Na espera e na fila, não. */
+    @Test
+    void essenceBurned_soDepoisDeSairDaEspera() {
+        Instant t = Instant.now();
+        ComandaItem aguardando = sessaoDoCardapio().withEssence("ZGY-BLUEBERRY");
+        ComandaItem preparando = aguardando.withSessionPaid(t);
+
+        assertThat(aguardando.essenceBurned()).isFalse();
+        assertThat(preparando.sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(preparando.essenceBurned()).isTrue();
+        assertThat(preparando.withSessionStatus(SessionStatus.ENTREGUE, t).essenceBurned()).isTrue();
+        assertThat(ComandaItem.fromCatalog("CARVAO-1KG", BigDecimal.ONE, PRICED, "Carvão").essenceBurned()).isFalse();
+    }
 }

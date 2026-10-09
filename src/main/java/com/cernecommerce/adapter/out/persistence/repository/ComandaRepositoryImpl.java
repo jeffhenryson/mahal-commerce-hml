@@ -176,8 +176,10 @@ public class ComandaRepositoryImpl implements ComandaRepository {
         if (entities.isEmpty()) {
             return List.of();
         }
-        Map<Long, ComandaEntity> loaded = comandaJpaRepository.findAllByIdsWithItems(
-                        entities.stream().map(ComandaEntity::getId).toList()).stream()
+        // PDV-C029 — em lotes: o analytics passa aqui todas as mesas fechadas do período (até 366 dias).
+        Map<Long, ComandaEntity> loaded = InClauseBatches.fetch(
+                        entities.stream().map(ComandaEntity::getId).toList(),
+                        comandaJpaRepository::findAllByIdsWithItems).stream()
                 .collect(Collectors.toMap(ComandaEntity::getId, Function.identity(), (a, b) -> a));
         return entities.stream()
                 .map(e -> loaded.getOrDefault(e.getId(), e))
@@ -271,6 +273,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setClosedInOrderId(item.closedInOrderId());
             itemEntity.setPackageUses(item.packageUses());
             itemEntity.setPackageSessionsPerUnit(item.packageSessionsPerUnit());
+            itemEntity.setEssenceSku(item.essenceSku());
             itemEntity.setKitBundleId(item.kitBundleId());
             itemEntity.setKitTemplateId(item.kitTemplateId());
             itemEntity.setKitDiscountAmount(item.kitDiscountAmount());
@@ -280,6 +283,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setDeliveredAt(session == null ? null : session.deliveredAt());
             itemEntity.setCollectedAt(session == null ? null : session.collectedAt());
             itemEntity.setPayLater(session != null && session.payLater());
+            itemEntity.setWithdrawnReason(session == null ? null : session.withdrawnReason());
+            itemEntity.setWithdrawnBy(session == null ? null : session.withdrawnBy());
             // PDV-F024 — carvão e adicionais nascem com a linha e não mudam: os adicionais só são
             // gravados na primeira vez, e o snapshot fica como foi cobrado.
             SessionSetup setup = item.setup();
@@ -316,8 +321,9 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.getClosedInOrderId(), e.getPackageUses(), e.getPackageSessionsPerUnit(), e.getKitBundleId(),
                 e.getKitTemplateId(), e.getKitDiscountAmount(),
                 e.getSessionStatus() == null ? null : new SessionProgress(SessionStatus.valueOf(e.getSessionStatus()),
-                        e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater()),
-                toSetup(e));
+                        e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater(),
+                        e.getWithdrawnReason(), e.getWithdrawnBy()),
+                toSetup(e), e.getEssenceSku());
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {

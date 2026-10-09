@@ -64,6 +64,11 @@ public class ComandaItemResponseDTO {
             + "histórico.", example = "5")
     private Integer packageSessionsPerUnit;
 
+    @Schema(description = "PDV-F042 — SKU do sabor do catálogo que a sessão do cardápio queimou. Nulo na "
+            + "sessão só em texto e em linha de catálogo (o próprio sku já é o produto).",
+            example = "ZOMO-BLUEBERRY")
+    private String essenciaSku;
+
     // PDV-F019 — kit montável. Nulos para linha avulsa; subtotal continua bruto.
     private String kitBundleId;
     private Long kitTemplateId;
@@ -81,6 +86,17 @@ public class ComandaItemResponseDTO {
     @Schema(description = "PDV-F034 — a sessão foi ao salão antes de paga. Com closedInOrderId nulo, "
             + "ainda está a receber: o front destaca a linha.")
     private boolean pagarNoFinal;
+
+    @Schema(description = "PDV-C036 — a sessão foi servida e o cliente desistiu sem pagar. A linha fica no "
+            + "histórico, recolhida e a R$ 0 (courtesy=true), fora da conta e do cupom.")
+    private boolean withdrawn;
+
+    @Schema(description = "PDV-C036 — motivo da desistência. Nulo fora de desistência.",
+            example = "Cliente foi embora sem pagar")
+    private String withdrawnReason;
+
+    @Schema(description = "PDV-C036 — quem registrou a desistência.")
+    private String withdrawnBy;
 
     @Schema(description = "Faixa da sessão (SESSAO/ROSH_EXTRA), lida do SKU SESS-{id} (PDV-F027). "
             + "Nulo em linha de catálogo.", example = "1")

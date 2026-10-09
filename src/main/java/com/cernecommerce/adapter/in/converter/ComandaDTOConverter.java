@@ -49,6 +49,7 @@ public class ComandaDTOConverter {
         dto.setClosedInOrderId(item.closedInOrderId());
         dto.setPackageUses(item.packageUses());
         dto.setPackageSessionsPerUnit(item.packageSessionsPerUnit());
+        dto.setEssenciaSku(item.essenceSku());
         dto.setKitBundleId(item.kitBundleId());
         dto.setKitTemplateId(item.kitTemplateId());
         dto.setKitDiscountAmount(item.kitDiscountAmount());
@@ -58,6 +59,9 @@ public class ComandaDTOConverter {
             dto.setDeliveredAt(item.session().deliveredAt());
             dto.setCollectedAt(item.session().collectedAt());
             dto.setPagarNoFinal(item.session().payLater());
+            dto.setWithdrawn(item.session().isWithdrawn());
+            dto.setWithdrawnReason(item.session().withdrawnReason());
+            dto.setWithdrawnBy(item.session().withdrawnBy());
         }
         dto.setTierId(item.sessionTierId());
         dto.setEssencia(item.sessionEssencia());

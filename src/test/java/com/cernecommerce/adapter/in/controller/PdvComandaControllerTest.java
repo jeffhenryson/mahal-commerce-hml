@@ -264,19 +264,41 @@ class PdvComandaControllerTest {
 
     @Test
     void removeItem_returns_200_withTheUpdatedComanda() throws Exception {
-        when(comandaUseCase.removeItem(eq(10L), eq(7L), anyString())).thenReturn(abertaComanda());
+        when(comandaUseCase.removeItem(eq(10L), eq(7L), anyString(), isNull())).thenReturn(abertaComanda());
 
         mockMvc.perform(delete("/pdv/comandas/10/items/7").principal(AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(10))
                 .andExpect(jsonPath("$.status").value("ABERTA"));
 
-        verify(comandaUseCase).removeItem(10L, 7L, "caixa1");
+        verify(comandaUseCase).removeItem(10L, 7L, "caixa1", null);
+    }
+
+    /** PDV-C036 — o motivo da desistência vai por query param (DELETE sem corpo). */
+    @Test
+    void removeItem_withReason_passesItToTheUseCase() throws Exception {
+        when(comandaUseCase.removeItem(eq(10L), eq(7L), anyString(), eq("Cliente foi embora")))
+                .thenReturn(abertaComanda());
+
+        mockMvc.perform(delete("/pdv/comandas/10/items/7").param("reason", "Cliente foi embora").principal(AUTH))
+                .andExpect(status().isOk());
+
+        verify(comandaUseCase).removeItem(10L, 7L, "caixa1", "Cliente foi embora");
+    }
+
+    @Test
+    void removeItem_servedSessionWithoutReason_returns_400() throws Exception {
+        when(comandaUseCase.removeItem(eq(10L), eq(7L), anyString(), isNull()))
+                .thenThrow(new com.cernecommerce.core.domain.exception.pdv.SessionWithdrawalReasonRequiredException(7L));
+
+        mockMvc.perform(delete("/pdv/comandas/10/items/7").principal(AUTH))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_WITHDRAWAL_REASON_REQUIRED"));
     }
 
     @Test
     void removeItem_itemNotInThisComanda_returns_404() throws Exception {
-        when(comandaUseCase.removeItem(eq(10L), eq(999L), anyString()))
+        when(comandaUseCase.removeItem(eq(10L), eq(999L), anyString(), isNull()))
                 .thenThrow(new ComandaItemNotFoundException(999L, 10L));
 
         mockMvc.perform(delete("/pdv/comandas/10/items/999").principal(AUTH))
@@ -286,7 +308,7 @@ class PdvComandaControllerTest {
 
     @Test
     void removeItem_withAChargedSaborExtraHangingOnIt_returns_409() throws Exception {
-        when(comandaUseCase.removeItem(eq(10L), eq(1L), anyString()))
+        when(comandaUseCase.removeItem(eq(10L), eq(1L), anyString(), isNull()))
                 .thenThrow(new LinkedItemIsChargedException(1L, List.of(3L)));
 
         mockMvc.perform(delete("/pdv/comandas/10/items/1").principal(AUTH))
@@ -313,6 +335,19 @@ class PdvComandaControllerTest {
                                 + "\"discountAmount\":150.00}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("DISCOUNT_EXCEEDS_BILL"));
+    }
+
+    /** PDV-C034 — a mesa usa a mesma conversão do balcão: GATEWAY_PIX não passa do controller. */
+    @Test
+    void closeComanda_gatewayPix_returns_400_INVALID_PAYMENT_METHOD() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/10/close")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"payments\":[{\"method\":\"GATEWAY_PIX\",\"amount\":90.00}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_PAYMENT_METHOD"));
+
+        verify(comandaUseCase, never()).closeComanda(any(), any(), any(), anyBoolean(), any(), anyString());
     }
 
     @Test
@@ -656,6 +691,47 @@ class PdvComandaControllerTest {
                                 + "\"contato\":\"(83) 99999-0000\",\"cpf\":\"123.456.789-00\"}}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.customerId").value(42));
+    }
+
+    /**
+     * PDV-C038 — o caixa é conferido ANTES do lead: com o caixa de outro operador (ou fechado), a
+     * abertura falha e nenhum cliente é criado no CRM por uma mesa que não existe.
+     */
+    @Test
+    void openComanda_withLeadOnAnotherOperatorsSession_neverCreatesTheLead() throws Exception {
+        org.mockito.Mockito.doThrow(new com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException(1L, "atendente"))
+                .when(comandaUseCase).requireCanOpenComanda(1L, "atendente");
+
+        mockMvc.perform(post("/pdv/comandas?sessionId=1")
+                        .principal(AUTH_LEAD)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableOrCustomerLabel\":\"Mesa 4\",\"lead\":{\"nome\":\"Ana\","
+                                + "\"contato\":\"83999990000\"}}"))
+                .andExpect(status().isForbidden());
+
+        verify(crmUseCase, never()).resolveLead(any(), any(), any(), any(), any());
+        verify(comandaUseCase, never()).openComanda(any(), any(), any(), any());
+    }
+
+    /** PDV-C038 — a conferência do caixa vem antes da resolução do lead. */
+    @Test
+    void openComanda_withLead_checksTheSessionBeforeResolvingTheLead() throws Exception {
+        when(crmUseCase.resolveLead(eq("Ana"), any(), any(), any(), eq("Mesa")))
+                .thenReturn(new LeadResolution(cliente(42L), true));
+        when(comandaUseCase.openComanda(eq(1L), eq("Mesa 4"), eq(42L), anyString()))
+                .thenReturn(Comanda.of(10L, 1L, "LOJA-01", "Mesa 4", 42L, ComandaStatus.ABERTA,
+                        List.of(), null, "atendente", Instant.now(), null));
+
+        mockMvc.perform(post("/pdv/comandas?sessionId=1")
+                        .principal(AUTH_LEAD)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableOrCustomerLabel\":\"Mesa 4\",\"lead\":{\"nome\":\"Ana\","
+                                + "\"contato\":\"83999990000\"}}"))
+                .andExpect(status().isCreated());
+
+        org.mockito.InOrder ordem = org.mockito.Mockito.inOrder(comandaUseCase, crmUseCase);
+        ordem.verify(comandaUseCase).requireCanOpenComanda(1L, "atendente");
+        ordem.verify(crmUseCase).resolveLead(eq("Ana"), any(), any(), any(), eq("Mesa"));
     }
 
     @Test

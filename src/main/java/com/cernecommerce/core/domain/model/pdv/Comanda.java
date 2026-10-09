@@ -250,6 +250,24 @@ public record Comanda(
     }
 
     /** Nenhuma linha em aberto: a mesa foi paga por inteiro, ainda que em várias contas. */
+    /**
+     * PDV-C042 — as linhas em aberto que de fato ainda devem dinheiro: a cortesia em aberto não
+     * deve nada. O caso é o rosh grátis do dia de duplo lançado pelo {@code /rosh} avulso depois de
+     * a sessão ser paga — ele fica sem pedido, e contá-lo como "a cobrar" deixava a mesa sem saída
+     * (o finish recusava e o close respondia COMANDA_ONLY_COURTESY).
+     */
+    public List<ComandaItem> owedItems() {
+        return openItems().stream().filter(i -> !i.courtesy()).toList();
+    }
+
+    /**
+     * PDV-C042 — a mesa pode ser encerrada sem novo pedido: tem linha cobrada (o pedido que vai ao
+     * cabeçalho) e nada em aberto que deva dinheiro.
+     */
+    public boolean hasNothingOwed() {
+        return owedItems().isEmpty() && lastChargedOrderId().isPresent();
+    }
+
     public boolean isFullyCharged() {
         return !items.isEmpty() && openItems().isEmpty();
     }
@@ -347,6 +365,20 @@ public record Comanda(
      * PDV-F027 — as linhas pagas agora que aguardavam pagamento entram no preparo. Cópia — a comanda
      * permanece imutável.
      */
+    /** PDV-C036 — a desistência de uma sessão servida. Cópia — a comanda permanece imutável. */
+    public Comanda withWithdrawnItem(Long itemId, String reason, String by, Instant at) {
+        requireOpen();
+        boolean exists = items.stream().anyMatch(i -> itemId != null && itemId.equals(i.id()));
+        if (!exists) {
+            throw new IllegalArgumentException("item " + itemId + " não pertence à comanda " + id);
+        }
+        List<ComandaItem> newItems = items.stream()
+                .map(i -> itemId.equals(i.id()) ? i.withdrawn(reason, by, at) : i)
+                .toList();
+        return new Comanda(id, sessionId, warehouseCode, tableOrCustomerLabel, customerId, status, newItems, orderId,
+                openedBy, openedAt, closedAt);
+    }
+
     public Comanda withSessionsPaid(Collection<Long> paidItemIds, Instant at) {
         requireOpen();
         Set<Long> alvo = new HashSet<>(paidItemIds);
