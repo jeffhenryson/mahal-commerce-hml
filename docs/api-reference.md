@@ -891,6 +891,22 @@ FK, então renomeá-lo tornaria órfão todo o histórico do produto. Limitaçã
 
 ---
 
+### PATCH /estoque/products/{sku}/parent-sellable — Permissão: ESTOQUE_PRODUCT_MANAGE
+
+Libera ou bloqueia a venda do SKU **base** de um produto com variações (EST-F036).
+
+```json
+{ "parentSellable": true }   // obrigatório
+// Response 200 → ProductResponse (com "parentSellable")
+// 400 — campo ausente
+// 404 PRODUCT_NOT_FOUND — só aceita o SKU pai
+```
+
+Padrão `false` para todos (V149). Desligado, com variações, o SKU base responde
+`400 PARENT_NOT_SELLABLE` na venda (PDV, mesa, essência da sessão, checkout) e na `ENTRADA` de
+estoque; `SAIDA` e `AJUSTE` passam. Sem variações, não tem efeito. Toda resposta de produto traz
+`parentSellable` — é o que o PDV usa para esconder a base na busca.
+
 ### PATCH /estoque/products/{sku}/active — Permissão: ESTOQUE_PRODUCT_MANAGE
 
 ```json
@@ -1203,6 +1219,122 @@ lata nenhuma no sistema, com uma na mão.
 `PDV_COMANDA_MANAGE` é aceita porque **quem repõe a essência é o atendente**, que tem essa permissão
 (V111) e não `ESTOQUE_STOCK_MANAGE` — exigir só a segunda deixaria o botão inalcançável justamente
 para quem o aperta.
+
+### PUT /estoque/products/{sku}/packaging — Permissão: ESTOQUE_PRODUCT_MANAGE
+
+Liga o SKU à embalagem que o contém (EST-F032) — o maço contém 20 cigarros, a carteira contém 10 maços.
+
+```json
+{ "parentSku": "LM-AZUL-MACO",   // obrigatório, 3..50
+  "unitsPerParent": 20 }         // obrigatório, >= 2
+// Response 200 → { "childSku": "LM-AZUL-UN", "parentSku": "LM-AZUL-MACO", "unitsPerParent": 20 }
+// 400 INVALID_PACKAGING — kit, produto base com variações, produto com lote, ciclo, cadeia acima de 4 níveis
+// 404 PRODUCT_NOT_FOUND
+```
+
+A partir daí, toda `SAIDA` do SKU que não couber no **disponível** abre o pai sozinha, em cascata
+(unidade abre maço, maço abre carteira), na mesma transação da venda: `SAIDA` do pai + `ENTRADA` do
+filho, motivo "Quebra automática de embalagem", com o custo médio do pai ÷ fator. Se a cadeia inteira
+não cobre, `400 INSUFFICIENT_STOCK` e nada fica aberto. Ligue as **variações** (cor × embalagem), não o
+produto base. Publica `PACKAGING_DEFINED`; cada quebra publica `STOCK_PACKAGE_BROKEN`.
+
+### DELETE /estoque/products/{sku}/packaging — Permissão: ESTOQUE_PRODUCT_MANAGE
+
+Desliga o SKU da embalagem. `204`; `404 PACKAGING_NOT_FOUND`. Saldos não mudam.
+
+### GET /estoque/products/{sku}/packaging — Permissão: ESTOQUE_PRODUCT_READ ou PDV_READ
+
+```
+GET /estoque/products/LM-AZUL-MACO/packaging?warehouseCode=LOJA-01
+// Response 200 → da mais externa para a mais interna
+[ { "sku": "LM-AZUL-CART", "containsSku": "LM-AZUL-MACO", "containsUnits": 10, "available": 1 },
+  { "sku": "LM-AZUL-MACO", "containsSku": "LM-AZUL-UN",   "containsUnits": 20, "available": 8 },
+  { "sku": "LM-AZUL-UN",   "containsSku": null,           "containsUnits": null, "available": 15 } ]
+```
+
+`available` é nulo sem `warehouseCode`. SKU sem ligação devolve só ele.
+
+### POST /pdv/sessions/{id}/sales/sync — Permissão: PDV_SALE_MANAGE
+
+Fila de vendas feitas offline no caixa (PDV-F043). Cada venda na sua transação.
+
+```json
+{ "sales": [ {                                   // 1..50
+    "clientSaleId": "3f1c9a2e-7b4d-4c1e-9a8f-2d6b5e0c1a7b",   // UUID gerado no caixa
+    "soldAt": "2026-10-09T15:00:00Z",            // entre a abertura do caixa e agora + 5 min
+    "customerId": null,
+    "items":    [ { "sku": "LM-AZUL-MACO", "quantity": 1 } ],
+    "payments": [ { "method": "DINHEIRO", "amount": 12.00 } ]   // só DINHEIRO, DEBITO, CREDITO
+} ] }
+// Response 200 — um resultado por venda, na ordem do lote
+[ { "clientSaleId": "…", "status": "SYNCED",    "orderId": 55 },
+  { "clientSaleId": "…", "status": "DUPLICATE", "orderId": 54 },
+  { "clientSaleId": "…", "status": "REJECTED",  "rejectionId": 7, "errorCode": "INSUFFICIENT_STOCK", "message": "…" } ]
+// 400 OFFLINE_PAYMENT_NOT_ALLOWED / OFFLINE_SOLD_AT_OUT_OF_WINDOW — lote inteiro recusado
+// 403 SESSION_NOT_OWNED, ou desconto sem PDV_SALE_DISCOUNT
+// 409 CASH_REGISTER_SESSION_CLOSED
+```
+
+`REJECTED` fica guardada para revisão e **o caixa não fecha** (`409 SESSION_HAS_PENDING_OFFLINE_SALES`)
+até ela ser reenviada ou descartada. Reenviar o lote é seguro: a já registrada volta `DUPLICATE`, a já
+recusada volta a mesma recusa. A venda online (`POST /pdv/sessions/{id}/sales`) aceita o mesmo
+`clientSaleId`: reenvio → `200` com a venda já registrada; envio simultâneo → `409 DUPLICATE_CLIENT_SALE`.
+
+### GET /pdv/sessions/{id}/offline-rejections — Permissão: PDV_READ
+
+As recusadas do caixa, pendentes (`resolution: null`) e resolvidas (`RETRIED` com `orderId`, ou
+`DISCARDED` com `resolutionNote`), com `items`/`payments` como chegaram.
+
+### POST /pdv/offline-rejections/{id}/retry — Permissão: PDV_OFFLINE_REVIEW
+
+Reenvia depois do acerto (ex.: entrada de estoque), em nome do operador do caixa. `200` com a recusa:
+resolvida (`RETRIED`) ou ainda pendente com o `errorCode` novo. `404 OFFLINE_REJECTION_NOT_FOUND`,
+`409 OFFLINE_REJECTION_ALREADY_RESOLVED`.
+
+### POST /pdv/offline-rejections/{id}/discard — Permissão: PDV_OFFLINE_REVIEW
+
+`{ "reason": "Cliente devolveu o produto" }` (obrigatório, até 255). A venda não entra; o dinheiro é
+acertado fora do sistema. Mesmos 404/409.
+
+### GET /pdv/cigarros — Permissão: PDV_READ
+
+Central de cigarros do PDV (PDV-F041): todo produto ativo com embalagem ligada (EST-F032).
+
+```
+GET /pdv/cigarros?warehouseCode=LOJA-01
+// Response 200
+[ { "productSku": "LM", "productName": "LM",
+    "lines": [ { "levels": [
+      { "sku": "LM-AZUL-CART", "label": "azul · carteira", "price": 110.00, "available": 1,  "containsSku": "LM-AZUL-MACO", "containsUnits": 10 },
+      { "sku": "LM-AZUL-MACO", "label": "azul · maço",     "price": 12.00,  "available": 8,  "containsSku": "LM-AZUL-UN",   "containsUnits": 20 },
+      { "sku": "LM-AZUL-UN",   "label": "azul · unidade",  "price": 1.00,   "available": 15, "containsSku": null,           "containsUnits": null } ] } ] } ]
+// 400 MISSING_PARAMETER — sem warehouseCode
+// 404 WAREHOUSE_NOT_FOUND
+```
+
+Só leitura: vende-se por `POST /pdv/sessions/{id}/sales` com o `sku` do nível. Vender além do
+`available` abre a embalagem de fora sozinho (EST-F032).
+
+### POST /estoque/open-packages/{sku} — Permissão: ESTOQUE_STOCK_MANAGE ou PDV_COMANDA_MANAGE
+
+Cadastra uma lata que **já estava aberta** antes de o sistema saber dela (EST-F033) — o inventário
+inicial das essências da mesa.
+
+```json
+{ "warehouseCode": "LOJA-01",   // obrigatório, 2..50
+  "usesRemaining": 2 }          // obrigatório, >= 1 e <= sessionsPerUnit do produto
+// Response 201 → OpenPackageResponse (uses = sessionsPerUnit − usesRemaining)
+//   Location: /estoque/open-packages/{sku}?warehouseCode=LOJA-01
+// 400 OPEN_PACKAGE_INVALID_USES — usesRemaining acima do que a lata rende (o piso é Bean Validation)
+// 400 NOT_A_PACKAGED_SESSION_PRODUCT — SKU não é vendido por sessão, ou sem sessionsPerUnit
+// 404 PRODUCT_NOT_FOUND / 404 WAREHOUSE_NOT_FOUND
+// 409 OPEN_PACKAGE_ALREADY_OPEN — já há lata em uso do SKU no depósito (também na corrida entre dois cadastros)
+```
+
+**Não baixa estoque**, ao contrário de abrir e repor: a lata já saiu da prateleira, e baixar agora
+tiraria do saldo uma segunda lata que continua lacrada. Daí em diante segue o ciclo normal — quando
+esgota, a próxima sessão abre outra com `SAIDA` de 1. Para trocar uma lata já cadastrada, o caminho é
+o `/replace`. Publica `OPEN_PACKAGE_REGISTERED`.
 
 ### DELETE /estoque/products/{sku} — Permissão: ESTOQUE_PRODUCT_MANAGE
 
@@ -1876,8 +2008,11 @@ caixa aberto ontem continua vendendo até o dono fechar.
 **Divergência NÃO impede o fechamento** — é registrada, exatamente como no fechamento de um balanço
 de inventário. `differenceAmount` negativo significa falta na gaveta, e é um número legítimo.
 
-Fechar **não** exige ser o dono da sessão: a conferência costuma ser do gerente, e é por isso que
-`PDV_SESSION_CLOSE` existe separada de `PDV_SESSION_MANAGE`.
+`PDV_SESSION_CLOSE` fecha o **próprio** caixa. Fechar o de **outro** operador exige também
+`PDV_SESSION_CLOSE_ANY` (PDV-C037, V145 — `ROLE_ADMIN`/`ROLE_DEV`); sem ela, `403 SESSION_NOT_OWNED`.
+O fechamento trava a sessão (PDV-C035): dois fechamentos simultâneos, um grava e o outro recebe
+`409 CASH_REGISTER_SESSION_CLOSED`. O detalhe atual do esperado está no
+[README do módulo](dominios/vendas-balcao/README.md).
 
 > ⚠️ **`expectedAmount` é aproximado nesta fase.** A conferência da gaveta deveria considerar só o
 > que entrou em **dinheiro**, mas `order_payment` só existe na Fatia 3 — por ora o esperado soma
@@ -3586,6 +3721,7 @@ interface TotpConfirmResponse {
 | `ESTOQUE_PRODUCT_MANAGE` | Criar/gerenciar produtos do estoque |
 | `ESTOQUE_WAREHOUSE_READ` | Listar depósitos e consultar saldo |
 | `ESTOQUE_WAREHOUSE_MANAGE` | Criar/gerenciar depósitos |
+| `ESTOQUE_STOCK_MANAGE` **ou** `PDV_COMANDA_MANAGE` | `POST /estoque/open-packages/{sku}` — cadastrar lata já aberta (EST-F033) |
 | `ESTOQUE_STOCK_MANAGE` **ou** `PDV_COMANDA_MANAGE` | `POST /estoque/open-packages/{sku}/replace` — "Repor essência" (EST-F027). Quem repõe é o **atendente**, que tem a segunda e não a primeira |
 | `ESTOQUE_PRODUCT_READ` **ou** `PDV_COMANDA_MANAGE` | `GET /estoque/open-packages` e `GET /estoque/open-packages/{sku}` — o contador da lata alimenta a tela de sessão do atendente |
 | `ESTOQUE_STOCK_MANAGE` | `POST /estoque/movements`, `POST /estoque/conversions`, `PUT /estoque/products/{sku}/reorder-point`, `GET /estoque/integrity/orphan-skus`, `GET /estoque/integrity/reservation-mismatch` e todo o `/estoque/stock-counts` (balanço de inventário) |

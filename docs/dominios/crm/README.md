@@ -6,7 +6,7 @@ consultas (CRM-F003), todos em 2026-07-29
 **Pacote Java:** `com.cernecommerce.core.domain.model.crm` (cashback em
 `com.cernecommerce.core.domain.model.cashback`, controller próprio `CashbackController` em `/cashback`)
 **Rota HTTP base:** `/crm` (mais `/cashback`, ver CRM-F003)
-**Última atualização deste doc:** 2026-10-01 ("Marcar", CRM-F010)
+**Última atualização deste doc:** 2026-10-08 (duas falhas de teste pré-existentes corrigidas — ver Histórico). Antes: 2026-10-01 ("Marcar", CRM-F010)
 
 > ⚠️ **Este README ainda não passou por auditoria de código.** Ele foi criado em 2026-07-26 na
 > descentralização do `docs/backlog.md` para receber os itens `F001–F009`, que estavam órfãos.
@@ -259,6 +259,16 @@ Novas features e correções do CRM seguem as séries `CRM-F001+` e `CRM-C002+`.
 `F001–F009` está congelada (todos concluídos, ver histórico).
 
 ## Histórico de Implementações
+
+- **2026-10-08** — reparos de build, achados ao fechar a suíte das correções do PDV (sem migration, sem
+  mudança de comportamento):
+  - `ReceivableService` tinha um `private record Position` aninhado, e o `HexagonalArchitectureTest`
+    (`services_must_only_implement_use_case_ports`) barra classe em `core.service` que não implementa
+    port. O record virou `core/domain/model/recebivel/CreditPosition`, ao lado de `CreditLimits`, com os
+    mesmos componentes e métodos.
+  - `AutomationDispatchServiceTest.ocorrenciaJaReservada_naoDisparaDeNovo` reestubava `claim(any())` com
+    `when(...)`, o que chamava `claim(null)` e rodava a resposta do `setUp` (`Optional.of(null)` → NPE).
+    Trocado por `doReturn(...).when(...)`; o serviço não mudou.
 
 - **2026-09-30** — `marcar-venda-a-prazo-vip` (CRM-F010 / PDV-F028, **V137**): venda a prazo para
   cliente VIP no balcão e na mesa, recebível com snapshot dos itens, limite de crédito em tabela

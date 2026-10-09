@@ -3,7 +3,29 @@
 **Status:** 🟢 Operacional — ciclo de caixa completo (abertura, sangria/suprimento, fechamento com conferência por forma de pagamento), venda com preço vindo do catálogo, pagamento com múltiplas formas, troco e comprovante interno (PDV-F006, Fatia 3), comanda de mesa para consumo incremental de horas (PDV-F009) e sessão de narguilé na mesa com canal próprio `MESA`, modo de consumo, cortesia e open rosh (PDV-F010), com registro do setup da mesa e acréscimo manual no open rosh (PDV-F011), desconto no fechamento e taxa de serviço (PDV-F014/F015).
 **Pacote Java:** `com.cernecommerce...pdv` (packages não aceitam hífen; `pdv` ↔ `vendas-balcao`)
 **Rota HTTP base:** `/pdv`
-**Última atualização deste doc:** 2026-08-31 — **o backlog do módulo zerou**: fecharam
+**Última atualização deste doc:** 2026-10-09 — **PDV-F043 fase 1 entregue** (venda offline: chave por
+venda, sync em lote, revisão das recusadas; V150). Antes, em 2026-10-08 — **PDV-F041 entregue** (central de cigarros, `GET /pdv/cigarros`).
+Antes, no mesmo dia — **PDV-F042 entregue** (essência do catálogo na sessão,
+consumindo a lata aberta; V147). Antes, no mesmo dia — `/1-analise` de features com o dono: **PDV-F041** (central
+de cigarros), **PDV-F042** (essência do catálogo na sessão, consumindo lata aberta) e **PDV-F043** (venda
+offline no balcão), mais EST-F032..F035 em `estoque`. §Integração com estoque passou a dizer que a
+sessão do cardápio não toca estoque. Antes, no mesmo dia — `/1-analise` de correções no PDV e na mesa, depois das
+entregas PDV-F034..F040. Oito itens novos, **PDV-C034..C041**, nenhum 🔴. Os quatro 🟡: forma de
+pagamento `GATEWAY_PIX` aceita do operador e invisível no caixa (C034), fechamento de caixa sem trava
+contra a venda concorrente (C035), sessão servida removível sem alçada (C036, depende do dono) e
+"fechar caixa alheio" decidido por role em vez de permissão (C037). Um achado foi para a plataforma:
+**PLAT-C059**, o seed de `dev` sem as permissões de V136/V137. Documentação posta em dia: rotas que
+faltavam na tabela (resumo do caixa, e-mail do comprovante, renomear e juntar mesas, kits),
+`PDV_SESSAO_MANAGE` no RBAC, as chaves de configuração dos jobs e o `409 SESSION_STALE` que o
+PDV-F037 removeu. **2ª rodada, no mesmo dia, só na mesa (domínio da comanda, cardápio e persistência):**
+**PDV-C042..C045**. O mais grave é o C042: o rosh cortesia de dia de duplo lançado depois de a sessão
+estar paga deixa a mesa sem caminho para encerrar e trava o fechamento do caixa. **Implementados no mesmo
+dia:** PDV-C034, C035, C037, C042, C043 e PLAT-C059 (migration **V145**) e, depois, PDV-C036 (desistência
+da sessão servida, migration **V146**) PDV-C029 (consultas do analytics em lotes) e PDV-C038 (caixa conferido antes do lead) — ver Histórico.
+
+<details><summary>2026-08-31</summary>
+
+**2026-08-31** — **o backlog do módulo zerou**: fecharam
 **PDV-F017** (conta dividida por seleção de itens, V121), **PDV-F016** (renomear e juntar mesas, sem
 migration e sem mover estoque) e **PDV-C019** (a §Integração com estoque, que ainda descrevia a era
 `Sale`). Antes, no mesmo dia — análise da interseção **estoque × mesa**: **PDV-F013**
@@ -33,6 +55,8 @@ gorjeta não virar receita da casa). Migrations V118/V119. Na mesma data, mais c
 C009 + C010 + C011 + C012**, a superfície de listagem de mesas — `GET /pdv/comandas` deixou de
 exigir `sessionId` e passou a listar a loja inteira, com o teto de paginação e o `JOIN FETCH` na
 mesma mudança; duas rotas mudaram de contrato (`List` → `PageResult`).
+
+</details>
 
 <details><summary>Atualizações anteriores</summary>
 
@@ -77,13 +101,14 @@ registro de vendas no balcão.
 |---|---|---|---|
 | `PATCH` | `/pdv/comandas/{id}/customer` | `PDV_COMANDA_MANAGE` (+ `CRM_LEAD_CREATE` com `lead`) | PDV-F020 — vincula/troca/remove o cliente da mesa aberta (`customerId` ou `lead` find-or-create) |
 | `GET` | `/pdv/sessao/cardapio` | `PDV_COMANDA_MANAGE` | PDV-F021 — faixas ativas, utensílios livres, configuração e `duploRoshHoje` |
-| `POST` | `/pdv/comandas/{id}/sessoes` | `PDV_COMANDA_MANAGE` | PDV-F021 — lança sessão `{tierId, essencia, vasoGrande}`; aloca utensílios; 409 `SESSION_ASSET_UNAVAILABLE`. PDV-F027: nasce `AGUARDANDO_PAGAMENTO` (utensílio já reservado) e vai a `PREPARANDO` quando paga (`close` com `itemIds`); a mesa aceita sessões **em paralelo**, limitadas ao utensílio livre (o antigo 409 `SESSION_STILL_ACTIVE` deixou de existir). PDV-F024: `carvao` (`CUBO`/`JUMBO`, só registro), `adicionalIds` (somados ao preço; 404 `SESSION_ADDON_NOT_FOUND`) e `modo=DUPLO` + `essenciaRosh` (+ `tierIdRosh`) — cria o 2º rosh a R$ 0 ligado, em `NA_FILA`, na mesma transação. PDV-F034: `pagarNoFinal=true` leva a sessão direto a `PREPARANDO`, a receber na conta (o 2º rosh herda a marca); exige `PDV_SESSION_PAY_LATER` (403 `SESSION_PAY_LATER_NOT_ALLOWED`) |
-| `POST` | `/pdv/comandas/{id}/sessoes/{itemId}/repetir` | `PDV_COMANDA_MANAGE` | PDV-F027 — nova sessão com a faixa, o vaso, o carvão e os adicionais da sessão `{itemId}` (em qualquer status, inclusive recolhida), pelo preço atual. `{essencia?, duplo?, essenciaRosh?, tierIdRosh?, pagarNoFinal?}` — `essencia` nula repete o sabor; `pagarNoFinal` não herda da origem (PDV-F034). Mesmos 404/409 do lançamento, + 409 `NOT_A_SESSION_LINE` |
-| `POST` | `/pdv/comandas/{id}/sessoes/{itemId}/rosh` | `PDV_COMANDA_MANAGE` | PDV-F021 — 2º rosh `{tierId?, essencia}`; R$ 0 no dia de duplo rosh |
+| `POST` | `/pdv/comandas/{id}/sessoes` | `PDV_COMANDA_MANAGE` | PDV-F021 — lança sessão `{tierId, essencia, vasoGrande}`; aloca utensílios; 409 `SESSION_ASSET_UNAVAILABLE`. PDV-F027: nasce `AGUARDANDO_PAGAMENTO` (utensílio já reservado) e vai a `PREPARANDO` quando paga (`close` com `itemIds`); a mesa aceita sessões **em paralelo**, limitadas ao utensílio livre (o antigo 409 `SESSION_STILL_ACTIVE` deixou de existir). PDV-F024: `carvao` (`CUBO`/`JUMBO`, só registro), `adicionalIds` (somados ao preço; 404 `SESSION_ADDON_NOT_FOUND`) e `modo=DUPLO` + `essenciaRosh` (+ `tierIdRosh`) — cria o 2º rosh a R$ 0 ligado, em `NA_FILA`, na mesma transação. PDV-F034: `pagarNoFinal=true` leva a sessão direto a `PREPARANDO`, a receber na conta (o 2º rosh herda a marca); exige `PDV_SESSION_PAY_LATER` (403 `SESSION_PAY_LATER_NOT_ALLOWED`). PDV-F042: `essenciaSku` (e `essenciaRoshSku` no duplo), **opcional** — o sabor do catálogo (a variação); com ele a sessão consome um uso da lata aberta do sabor, ou 1 unidade como uso da loja sem `sessionsPerUnit`; `essencia` vazia com SKU usa o nome do produto; sem os dois, 400 `SESSION_ESSENCE_REQUIRED`; 400 `NOT_A_SESSION_PRODUCT` / `ESSENCE_MUST_BE_FLAVOR` (produto base com variações) |
+| `POST` | `/pdv/comandas/{id}/sessoes/{itemId}/repetir` | `PDV_COMANDA_MANAGE` | PDV-F027 — nova sessão com a faixa, o vaso, o carvão e os adicionais da sessão `{itemId}` (em qualquer status, inclusive recolhida), pelo preço atual. `{essencia?, duplo?, essenciaRosh?, tierIdRosh?, pagarNoFinal?}` — `essencia` nula repete o sabor; `pagarNoFinal` não herda da origem (PDV-F034). PDV-F042: `essenciaSku`/`essenciaRoshSku?` — sem sabor novo repete texto **e** SKU da origem; sabor novo só em texto não arrasta o SKU antigo. Mesmos 404/409 do lançamento, + 409 `NOT_A_SESSION_LINE` |
+| `POST` | `/pdv/comandas/{id}/sessoes/{itemId}/rosh` | `PDV_COMANDA_MANAGE` | PDV-F021 — 2º rosh `{tierId?, essencia?, essenciaSku?}` (texto ou SKU, PDV-F042); R$ 0 no dia de duplo rosh |
+| `GET` | `/pdv/cigarros?warehouseCode=` | `PDV_READ` | PDV-F041 — central de cigarros (`PdvCigarrosController`): todo produto ativo com embalagem ligada (EST-F032), uma cadeia por cor (carteira → maço → solto) e, em cada nível, `sku` vendável, `label` dos atributos, `price` e `available` no depósito. Só leitura: vende-se pela venda de balcão com o `sku` do nível, e a falta de solto/maço abre a embalagem de fora sozinha. 404 depósito desconhecido |
 | `GET`/`POST`/`PUT` | `/pdv/sessao/faixas[/{id}]` | `PDV_SESSAO_MANAGE` | PDV-F021 — cadastro das faixas |
 | `GET`/`POST`/`PUT` | `/pdv/sessao/utensilios[/{id}]` | `PDV_SESSAO_MANAGE` | PDV-F021 — tipos de utensílio e quantidade total |
 | `PATCH` | `/pdv/comandas/{id}/sessoes/{itemId}/status` | `PDV_COMANDA_MANAGE` | PDV-F023 — `{status}`: `NA_FILA → PREPARANDO → ENTREGUE → RECOLHIDO` (+ `PREPARANDO → RECOLHIDO`); 409 `INVALID_SESSION_TRANSITION` (inclusive a partir de `AGUARDANDO_PAGAMENTO`, que só o pagamento promove — PDV-F027). Recolher libera os utensílios quando o grupo (sessão + roshs ligados) está todo recolhido e promove a próxima `NA_FILA` **do mesmo grupo** |
-| `POST` | `/pdv/comandas/{id}/finish` | `PDV_COMANDA_MANAGE` | PDV-F023 — encerra a mesa já toda paga, sem novo pedido (o cabeçalho aponta o último). 409 `COMANDA_EMPTY`, `COMANDA_HAS_OPEN_ITEMS` ou `SESSION_NOT_COLLECTED` |
+| `POST` | `/pdv/comandas/{id}/finish` | `PDV_COMANDA_MANAGE` | PDV-F023 — encerra a mesa já toda paga, sem novo pedido (o cabeçalho aponta o último). 409 `COMANDA_EMPTY`, `COMANDA_HAS_OPEN_ITEMS` ou `SESSION_NOT_COLLECTED`. Desde PDV-C042 a **cortesia em aberto não conta** como linha a cobrar (o rosh grátis lançado depois do pagamento); mesa só com cortesia e nada cobrado: `409 COMANDA_ONLY_COURTESY` |
 | `GET`/`POST`/`PUT` | `/pdv/sessao/adicionais[/{id}]` | `PDV_SESSAO_MANAGE` | PDV-F024 — adicionais pagos da sessão (filtro de gelo R$ 5); ativos aparecem em `cardapio.adicionais` |
 | `GET`/`PUT` | `/pdv/sessao/config` | `PDV_SESSAO_MANAGE` | PDV-F021 — vaso padrão/grande, preço do upgrade, dias de duplo rosh |
 | `GET` | `/pdv/sessions` | `PDV_READ` | PDV-F026: filtros opcionais `status` (`OPEN`/`CLOSED`), `operator` e `from`/`to` sobre `openedAt`, ordenado por `openedAt desc, id desc`. Lista sessões de caixa paginadas (`page` ≥ 0, `size` 1–100), **das mais recentes para as mais antigas** — a ordenação entrou em PDV-C013; antes a paginação não era determinística |
@@ -92,17 +117,23 @@ registro de vendas no balcão.
 | `GET` | `/pdv/sessions/{id}` | `PDV_READ` | Detalhe da sessão |
 | `POST` | `/pdv/sessions/{id}/movements` | `PDV_SESSION_MANAGE` | Sangria ou suprimento. Exige sessão aberta **e do próprio operador** |
 | `GET` | `/pdv/sessions/{id}/movements` | `PDV_READ` | Movimentos da sessão, paginados (`page` ≥ 0, `size` 1–100), na ordem de lançamento (PDV-C012) |
-| `POST` | `/pdv/sessions/{id}/close` | `PDV_SESSION_CLOSE` | Fecha confrontando contado × esperado. **Divergência não bloqueia** — mas **mesa aberta sim** (PDV-C005): `409 SESSION_HAS_OPEN_COMANDAS`, checado antes de calcular o esperado |
+| `POST` | `/pdv/sessions/{id}/close` | `PDV_SESSION_CLOSE` (+ `PDV_SESSION_CLOSE_ANY` para o caixa de outro operador, PDV-C037) | Fecha confrontando contado × esperado. **Divergência não bloqueia** — mas **mesa aberta sim** (PDV-C005): `409 SESSION_HAS_OPEN_COMANDAS`, checado antes de calcular o esperado |
 | `GET` | `/pdv/sessions/{id}/payment-totals` | `PDV_READ` | Total recebido na sessão por forma de pagamento — `amount` é o bruto `CAPTURED`. As quatro formas sempre aparecem, mesmo zeradas. PDV-F026: `refundedAmount`, `changeAmount` (só DINHEIRO) e `netAmount = amount - refundedAmount - changeAmount`. CRM-F010: `receivableReceived` (quitação de marcado recebida na sessão, já líquida do troco), somado em `netAmount`. `CORRECTED` (PDV-F030) e `ON_ACCOUNT` não contam |
+| `GET` | `/pdv/sessions/{id}/summary` | `PDV_READ` | PDV-F038: resumo do caixa. `totals` (o mesmo de `payment-totals`), `totalReceived` (soma dos `netAmount`) e `totalOnAccount` (linhas `ON_ACCOUNT` dos pedidos da sessão, fora do total). Serve de prévia antes de fechar e de relatório depois |
 | `GET` | `/pdv/pending-online-orders` | `PDV_READ` | Pedidos do app aguardando pagamento, para o caixa localizar quem chegou na loja |
 | `POST` | `/pdv/sessions/{id}/orders/{orderId}/settle` | `PDV_SALE_MANAGE` | Liquida no balcão um pedido do app: consome a reserva, **registra o pagamento recebido** e conclui. **Corpo obrigatório desde PDV-C015** (`payments`, mesmo shape da venda de balcão), somando **exatamente** o líquido — aqui não há onde guardar troco. Encerra a cobrança de gateway aberta no checkout. Erros: `400 INSUFFICIENT_PAYMENT`, `400 CHANGE_NOT_SUPPORTED` |
-| `POST` | `/pdv/sessions/{id}/sales` | `PDV_SALE_MANAGE` (+ `PDV_SALE_DISCOUNT` se houver desconto) | Registra venda na sessão, **captura o pagamento** e **dá baixa no estoque** item a item. Preço e custo vêm do catálogo, não do request. Exige sessão `OPEN` e ao menos uma linha em `payments`. Desconto de linha acima do bruto dela: `409 ITEM_DISCOUNT_EXCEEDS_GROSS` (PDV-C016 — era um 400 genérico). PDV-F022: `delivery` (`ENTREGA` → `RESERVADO`; `RETIRADA` → `CONCLUIDO`, ou `RESERVADO` com `reserveForPickup=true` desde 2026-09-30; `fee` em `totalPayable`, fora do líquido). PDV-F028/CRM-F010: linha `MARCADO` com `dueDate` (exige `PDV_SALE_ON_ACCOUNT`), `items[].note` (≤200) e `409 SESSION_STALE` para sessão aberta em dia anterior (data de São Paulo) |
+| `POST` | `/pdv/sessions/{id}/sales` | `PDV_SALE_MANAGE` (+ `PDV_SALE_DISCOUNT` se houver desconto) | Registra venda na sessão, **captura o pagamento** e **dá baixa no estoque** item a item. Preço e custo vêm do catálogo, não do request. Exige sessão `OPEN` e ao menos uma linha em `payments`. Desconto de linha acima do bruto dela: `409 ITEM_DISCOUNT_EXCEEDS_GROSS` (PDV-C016 — era um 400 genérico). PDV-F022: `delivery` (`ENTREGA` → `RESERVADO`; `RETIRADA` → `CONCLUIDO`, ou `RESERVADO` com `reserveForPickup=true` desde 2026-09-30; `fee` em `totalPayable`, fora do líquido). PDV-F028/CRM-F010: linha `MARCADO` com `dueDate` (exige `PDV_SALE_ON_ACCOUNT`), `items[].note` (≤200). O antigo `409 SESSION_STALE` (caixa de dia anterior) **saiu no PDV-F037**: o caixa aberto ontem continua vendendo. Forma de pagamento fora de `DINHEIRO`/`DEBITO`/`CREDITO`/`PIX`/`MARCADO` (inclusive `GATEWAY_PIX`, que só o webhook captura): `400 INVALID_PAYMENT_METHOD` (PDV-C034) — vale também para o `close` da mesa e o `settle` PDV-F043: `clientSaleId` (UUID, opcional) — reenvio com a mesma chave devolve **200** com a venda já registrada, sem publicar nada; envio simultâneo, `409 DUPLICATE_CLIENT_SALE`. |
+| `POST` | `/pdv/sessions/{id}/sales/sync` | `PDV_SALE_MANAGE` (+ `PDV_SALE_DISCOUNT` se houver desconto) | PDV-F043 — fila offline do caixa: até 50 vendas `{clientSaleId, soldAt, customerId?, items, payments}`, cada uma na sua transação. Resultado por venda: `SYNCED`, `DUPLICATE` ou `REJECTED` (guardada para revisão, com o código que a venda online daria). Lote inteiro recusado: PIX/marcado (`400 OFFLINE_PAYMENT_NOT_ALLOWED`), `soldAt` antes da abertura ou além de agora+5min (`400 OFFLINE_SOLD_AT_OUT_OF_WINDOW`), caixa fechado (`409`), de outro operador (`403`). |
+| `GET` | `/pdv/sessions/{id}/offline-rejections` | `PDV_READ` | PDV-F043 — vendas offline recusadas do caixa, pendentes e resolvidas, com itens e pagamentos como chegaram. |
+| `POST` | `/pdv/offline-rejections/{id}/retry` | `PDV_OFFLINE_REVIEW` | PDV-F043 — reenvia depois do acerto, em nome do operador do caixa; `RETRIED` com `orderId`, ou continua pendente com o motivo novo. `404 OFFLINE_REJECTION_NOT_FOUND`, `409 OFFLINE_REJECTION_ALREADY_RESOLVED`. |
+| `POST` | `/pdv/offline-rejections/{id}/discard` | `PDV_OFFLINE_REVIEW` | PDV-F043 — `{reason}` obrigatório: a venda não entra e o dinheiro é acertado fora do sistema. Mesmos 404/409. |
 | `GET` | `/pdv/sales/{id}` | `PDV_READ` | Consulta um pedido, com os pagamentos. Antes de PDV-F005 a venda era write-only |
+| `POST` | `/pdv/sales/{id}/receipt/email` | `PDV_SALE_MANAGE` | Manda o comprovante para o e-mail do cliente vinculado ao pedido, só quando o operador pede (sem endereço avulso). `202` com `sentTo` mascarado; `422 RECEIPT_EMAIL_UNAVAILABLE` para pedido cancelado, sem cliente ou com cliente sem e-mail |
 | `GET` | `/pdv/sales/{id}/receipt` | `PDV_READ` | Comprovante interno da venda — **não é documento fiscal** (isso é a NFC-e, Fatia 11) |
 | `GET` | `/pdv/sessions/{id}/sales` | `PDV_READ` | Pedidos da sessão, paginados, do mais recente para o mais antigo |
-| `POST` | `/pdv/comandas?sessionId=` | `PDV_COMANDA_MANAGE` | Abre comanda de mesa (PDV-F009). Controller próprio (`PdvComandaController`). Exige a **própria** sessão: a mesa nasce na gaveta de quem a abriu, e é esse depósito que vai baixar estoque. Aceita `customerId` opcional (PDV-F010) — é ele que faz o pedido da mesa sair com nome e gerar cashback |
+| `POST` | `/pdv/comandas?sessionId=` | `PDV_COMANDA_MANAGE` | Abre comanda de mesa (PDV-F009). Controller próprio (`PdvComandaController`). Exige a **própria** sessão: a mesa nasce na gaveta de quem a abriu, e é esse depósito que vai baixar estoque. Aceita `customerId` opcional (PDV-F010) — é ele que faz o pedido da mesa sair com nome e gerar cashback. Desde PDV-C038 o caixa é conferido **antes** de resolver o `lead`: abertura recusada (403/409) não cria cliente no CRM |
 | `POST` | `/pdv/comandas/{id}/items` | `PDV_COMANDA_MANAGE` (+ `PDV_COMANDA_COURTESY` se a linha for cortesia, + `PDV_COMANDA_SURCHARGE` se houver acréscimo positivo) | Lança item na comanda aberta — **debita estoque na hora**, não no fechamento. Aceita `mode` (`NORMAL`/`OPEN_ROSH`/`SABOR_EXTRA`/`TROCA`), `courtesy` e `linkedItemId` (PDV-F010), mais `notes` (máx. 200, sem efeito em preço) e `surchargeAmount` (só em `OPEN_ROSH`, soma sobre o `openRoshPrice` do produto **pai**) (PDV-F011). Erros: `400 NOT_AVAILABLE_FOR_TABLE`, `400 NOT_A_SESSION_PRODUCT`, `400 OPEN_ROSH_NOT_PRICED`, `400 LINKED_ITEM_REQUIRED`, `403 COURTESY_NOT_ALLOWED`, `409 NOT_AN_OPEN_ROSH`, `400 NOTES_TOO_LONG`, `403 SURCHARGE_NOT_ALLOWED`, `400 SURCHARGE_ON_COURTESY`, `400 SURCHARGE_NOT_APPLICABLE`, `400 SURCHARGE_INVALID`. **EST-F027:** quando o SKU é produto de sessão com `sessionsPerUnit` declarado, a linha consome **uso de lata aberta** em vez de baixar unidade, e a resposta ecoa `packageUses`/`packageSessionsPerUnit` — o "3 de 5" da tela. `400 NOT_A_PACKAGED_SESSION_PRODUCT` só alcança os endpoints de `/estoque/open-packages`; aqui, produto sem `sessionsPerUnit` simplesmente segue o caminho antigo. |
-| `DELETE` | `/pdv/comandas/{id}/items/{itemId}` | `PDV_COMANDA_MANAGE` | Remove uma linha da comanda aberta, devolvendo o estoque dela (`ENTRADA`) — PDV-F012. **As `TROCA` penduradas nela saem junto**; um `SABOR_EXTRA` pendurado **barra** a remoção (`409 LINKED_ITEM_IS_CHARGED`), porque é linha própria e pode estar cobrada. Erros: `404 COMANDA_ITEM_NOT_FOUND`, `409 COMANDA_NOT_OPEN` |
+| `DELETE` | `/pdv/comandas/{id}/items/{itemId}` | `PDV_COMANDA_MANAGE` | Remove uma linha da comanda aberta, devolvendo o estoque dela (`ENTRADA`) — PDV-F012. **As `TROCA` penduradas nela saem junto**; um `SABOR_EXTRA` pendurado **barra** a remoção (`409 LINKED_ITEM_IS_CHARGED`), porque é linha própria e pode estar cobrada. Erros: `404 COMANDA_ITEM_NOT_FOUND`, `409 COMANDA_NOT_OPEN`. **PDV-C036:** sessão do cardápio já servida (em preparo ou na mesa) e não paga **não é apagada** — exige `?reason=` (até 200) e vira desistência: recolhida, cortesia a R$ 0, com motivo e autor (`withdrawn`, `withdrawnReason`, `withdrawnBy` na linha), fora da conta e do cupom; o narguilé volta à casa. Sem motivo, `400 SESSION_WITHDRAWAL_REASON_REQUIRED`; com rosh ligado ainda no salão, `409 LINKED_SESSION_STILL_ACTIVE` |
 | `GET` | `/pdv/comandas/{id}` | `PDV_READ` ou `ORDER_READ` | Detalhe da comanda, com o total corrente (`runningTotal`), o cliente (`customerId`/`customerName`, resolvido no CRM) e o `mode`/`courtesy`/`linkedItemId` de cada linha. PDV-F029: em **qualquer status**, com os campos do histórico e `orders[]` (pedidos da mesa, inclusive parciais, com `payments`). PDV-F035: `sessions[]` com a linha do tempo de cada sessão e os intervalos da mesa |
 | `GET` | `/pdv/comandas/history` | `PDV_READ` ou `ORDER_READ` | PDV-F029 — mesas `FECHADA`/`CANCELADA` por `closedAt desc`. Filtros `from`/`to` (encerramento), `status` (`ABERTA` → 400), `customerId`, `openedBy`, `closedBy`, `tableLabel` (sem caixa e espaços), `warehouseCode`, `page`/`size` (1–100). Item com `closedBy`, `durationMinutes`, `cancelReason`, `orderIds`, `totalPaid`, `serviceFeeTotal`, `discountTotal`, `courtesyTotal` (custo), `sessionsCount`. PDV-F036: filtro e campos `boughtInStore` |
 | `GET` | `/pdv/comandas/analytics` | `PDV_READ` ou `ORDER_READ` | PDV-F029 — indicadores das `FECHADA` com encerramento em `from`..`to` (obrigatórios, máx. 366 dias → 400) e `warehouseCode` opcional: `mesas`, `ticketMedio`, `permanenciaMediaMin`, `receitaTotal`, `taxaServicoTotal`, `descontoTotal`, `sessoesNarguile`, `porAtendente` (quem abriu), `porMesa` (rótulo normalizado), `porHora` (hora de abertura em São Paulo). PDV-F035: médias de fase em `sessoesNarguile`; PDV-F036: `compraNaLoja` |
@@ -110,6 +141,13 @@ registro de vendas no balcão.
 | `GET` | `/pdv/comandas` | `PDV_READ` | As "mesas ocupadas". **`sessionId` é opcional desde PDV-C007**: sem ele a listagem é da **loja inteira**, que é o que a decisão de mesas compartilhadas pede — era a obrigatoriedade do parâmetro que forçava o cliente ao merge N+1 de uma chamada por sessão. Aceita também `warehouseCode`, e pagina (`page` ≥ 0, `size` 1–100, default 50). **Não checa posse.** Devolve `PageResult` — ver a nota de contrato abaixo |
 | `POST` | `/pdv/comandas/{id}/close` | `PDV_COMANDA_MANAGE` (+ `PDV_COMANDA_DISCOUNT` se `discountAmount > 0`) | Fecha a comanda: converte os itens acumulados num pedido concluído que **nasce `channel = MESA`**, com `comandaId` e `tableLabel`. Mesmo contrato de pagamento de `POST /pdv/sessions/{id}/sales`; **sem novo débito de estoque** — já saiu item a item. O pedido entra na sessão de **quem fecha**, não na que abriu. Aceita `discountAmount` (abatimento na **conta inteira**, rateado entre as linhas pelo servidor — PDV-F014) e `applyServiceFee` (taxa de serviço, **`true` por omissão** — PDV-F015). O pagamento é validado contra `netAmount + serviceFeeAmount`. Erros: `409 COMANDA_EMPTY`, `409 COMANDA_ONLY_COURTESY`, `409 NO_OPEN_CASH_REGISTER_SESSION`, `409 DISCOUNT_LIMIT_EXCEEDED`, `409 DISCOUNT_EXCEEDS_BILL` (PDV-C016 — era um 400 genérico), `403 COMANDA_DISCOUNT_NOT_ALLOWED` |
 | `GET` | `/pdv/comandas/service-fee` | `PDV_READ` | Percentual da taxa de serviço vigente (PDV-F015), para a tela mostrar o valor **antes** de fechar. Zero significa que a casa não cobra |
+| `PATCH` | `/pdv/comandas/{id}` | `PDV_COMANDA_MANAGE` | PDV-F016: troca o rótulo da mesa aberta (o cliente mudou de lugar). Não mexe em linha nem em estoque |
+| `POST` | `/pdv/comandas/{id}/merge-into/{targetId}` | `PDV_COMANDA_MANAGE` | PDV-F016/F031: junta esta mesa em `{targetId}`. Vão as linhas abertas e o grupo inteiro de cada sessão ainda no salão, com os utensílios; nenhum estoque se move. A origem termina `FECHADA` se teve linha cobrada, senão `CANCELADA`. `409 COMANDA_MERGE_NOT_ALLOWED` (mesma mesa ou depósitos diferentes) |
+| `GET` | `/pdv/kits` | `PDV_READ` | PDV-F019: kits montáveis à venda no PDV |
+| `GET` | `/pdv/kits/{id}/steps/{stepId}/options` | `PDV_READ` | PDV-F019: opções de um passo do kit |
+| `POST` | `/pdv/kits/quote` | `PDV_READ` | PDV-F019: cota um kit montado, sem lançar |
+| `POST` | `/pdv/comandas/{id}/kits` | `PDV_COMANDA_MANAGE` | PDV-F019: lança o kit montado na comanda, uma linha por componente, todas com o mesmo `kitBundleId` e baixa de estoque item a item. Com `pdv.mesa.catalog-items-enabled=false` (o padrão): `409 CATALOG_ITEM_NOT_ALLOWED_ON_TABLE` |
+| `DELETE` | `/pdv/comandas/{id}/kits/{bundleId}` | `PDV_COMANDA_MANAGE` | PDV-F019: tira o kit inteiro e devolve o estoque de cada linha (uma linha de kit sozinha não sai pelo `DELETE .../items`) |
 | `POST` | `/pdv/comandas/{id}/cancel` | `PDV_COMANDA_MANAGE` | Abandona a comanda sem cobrança, devolvendo ao estoque cada item já lançado (`ENTRADA`). PDV-F029: corpo opcional `{reason}` (≤ 500), gravado aparado em `cancel_reason` |
 
 > **Contrato alterado em PDV-F004/F006** (sem consumidor real — o PDV do `frontend-admin` é
@@ -303,6 +341,13 @@ registro de vendas no balcão.
 | Cobrar a sessão já servida não mexe no ciclo físico; o fechamento total continua recusando sessão no salão (`SESSION_NOT_COLLECTED`): cobre com `itemIds` e finalize, ou recolha antes | `ComandaItem.withSessionPaid`, `ComandaService.closeComanda` | `ComandaSessaoServiceTest.closeComanda_parcialDeSessaoPagaNoFinalJaEntregue_naoMudaOStatus` |
 | Linha do tempo calculada dos horários já gravados (sem coluna): espera, preparo, na mesa, total; desistida sem tempo na mesa; só no detalhe | `SessionTimeline.of`, `ComandaService.withTimeline` | `SessionTimelineTest`, `ComandaServiceTest.getHistoryEntry_montaALinhaDoTempoDasSessoes`, `listHistory_naoMontaALinhaDoTempo_masTrazACompraNaLoja` |
 | Conversão na loja só sobre mesas com sessão e respostas dadas; não respondido ≠ não comprou | `ComandaService.compraNaLoja` | `ComandaServiceTest.analytics_conversaoNaLoja_eMediasDeFase`, `analytics_semNenhumaResposta_taxaNula` |
+| **Venda offline (PDV-F043)** | | |
+| Reenvio com o mesmo `clientSaleId` devolve o pedido já gravado, sem tocar estoque, pagamento nem eventos — antes até da checagem de caixa | `PdvService.registerSaleIdempotent` | `PdvServiceOfflineTest.registerSaleIdempotent_comChaveJaGravada_devolveOPedidoSemTocarEmNada`, `PdvControllerTest.registerSale_reenvioComAMesmaChave_devolve200SemPublicarNada` |
+| Envio simultâneo da mesma chave gera um pedido só: o índice único `uk_sales_order_client_sale_id` reverte o outro inteiro | `OrderRepository.stampClientSale` (flush) | `OfflineSaleConcurrencyIT.mesmaChaveEmParalelo_geraUmPedidoSo` |
+| Cada venda do lote na sua transação: a recusada não derruba as outras e fica guardada para revisão | `OfflineSaleService.sync` (sem `@Transactional`) | `OfflineSaleServiceTest.sync_loteMisto_cadaVendaTemOSeuDestino`, `OfflineSaleFlowIT` |
+| Lote recusado inteiro com PIX/marcado ou horário fora do caixa; só caixa aberto e do próprio operador | `OfflineSaleService.sync` | `OfflineSaleServiceTest.sync_comPix_recusaOLoteInteiro`, `sync_horarioAntesDaAberturaDoCaixa_eRecusado`, `sync_caixaFechado_eRecusado` |
+| Caixa não fecha com venda offline recusada pendente (`409 SESSION_HAS_PENDING_OFFLINE_SALES`) | `PdvService.closeSession` | `PdvServiceOfflineTest.closeSession_comVendaOfflinePendente_eRecusado`, `OfflineSaleFlowIT` |
+| Reenvio da recusada roda em nome do operador do caixa; falhando de novo, continua pendente; descarte exige motivo; resolvida não se resolve de novo | `OfflineSaleService.retry`/`discard`, `OfflineSaleRejection` | `OfflineSaleServiceTest.retry_*`, `OfflineSaleRejectionTest` |
 
 ## Segurança e Infraestrutura
 
@@ -322,9 +367,12 @@ registro de vendas no balcão.
 | `PDV_SESSION_CLOSE` | fechamento com conferência | V66 | ✅ `SeedConfig` + `DevRoleBootstrapConfig` |
 | `PDV_COMANDA_MANAGE` | `POST`/`.../items`/`.../close`/`.../cancel` de `/pdv/comandas` | V105 (`ROLE_ADMIN`) + **V111** (`ROLE_ATENDENTE`) | ✅ `SeedConfig` (`ROLE_ADMIN` e `ROLE_ATENDENTE`) + `DevRoleBootstrapConfig` |
 | `PDV_COMANDA_COURTESY` | linha `courtesy: true` (ou `mode = TROCA`) em `POST /pdv/comandas/{id}/items` | **V115** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
+| `PDV_SESSION_CLOSE_ANY` | fechar o caixa de **outro** operador em `POST /pdv/sessions/{id}/close` (sem ela, só o próprio; `403 SESSION_NOT_OWNED`) — checada no controller | **V145** (`ROLE_ADMIN` e `ROLE_DEV`) | ✅ `SeedConfig` (`ROLE_ADMIN`); o `ROLE_DEV` recebe pelo `DevRoleBootstrapConfig`, que lhe concede toda permissão existente — **não** em `ATENDENTE_PERMISSIONS` |
+| `PDV_OFFLINE_REVIEW` | reenviar ou descartar venda offline recusada (`/pdv/offline-rejections/{id}/retry`/`discard`, PDV-F043) | **V150** (`ROLE_ADMIN` e `ROLE_DEV`) | ✅ `SeedConfig` (`ROLE_ADMIN`) — **não** em `ATENDENTE_PERMISSIONS`: o atendente sincroniza a própria fila, mas o destino da venda recusada é do gerente |
+| `PDV_SESSAO_MANAGE` | cadastro do cardápio de sessão: `/pdv/sessao/faixas`, `/utensilios`, `/adicionais`, `/config` (e leitura do `/cardapio`, junto com `PDV_COMANDA_MANAGE`) | **V128** (`ROLE_ADMIN`) | ✅ `SeedConfig` (`ROLE_ADMIN`) |
 | `PDV_SESSION_PAY_LATER` | `pagarNoFinal: true` em `POST /pdv/comandas/{id}/sessoes` e `.../repetir` (PDV-F034) | **V139** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
 | `PDV_COMANDA_SURCHARGE` | `surchargeAmount > 0` em `POST /pdv/comandas/{id}/items` | **V117** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
-| `PDV_SALE_ON_ACCOUNT` | linha `MARCADO` em `POST /pdv/sessions/{id}/sales` e em `POST /pdv/comandas/{id}/close` (CRM-F010) — checada no controller por `OnAccountGuard` | **V137** (`ROLE_ADMIN` apenas) | ❌ falta em `SeedConfig` — em `dev` (Flyway desligado) o admin local toma 403. O mesmo vale para `ORDER_PAYMENT_CORRECT[_CLOSED]` (V136) e `RECEIVABLE_READ`/`MANAGE` (V137) |
+| `PDV_SALE_ON_ACCOUNT` | linha `MARCADO` em `POST /pdv/sessions/{id}/sales` e em `POST /pdv/comandas/{id}/close` (CRM-F010) — checada no controller por `OnAccountGuard` | **V137** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` desde **PLAT-C059** (2026-10-08) — antes faltava, e o admin local tomava 403 em `dev`; o mesmo valia para `ORDER_PAYMENT_CORRECT[_CLOSED]` (V136) e `RECEIVABLE_READ`/`MANAGE` (V137), que entraram junto |
 | `PDV_COMANDA_DISCOUNT` | `discountAmount > 0` em `POST /pdv/comandas/{id}/close` | **V119** (`ROLE_ADMIN` apenas) | ✅ `SeedConfig` (`ROLE_ADMIN`) + `DevRoleBootstrapConfig` — **não** em `ATENDENTE_PERMISSIONS` |
 
 Comanda (PDV-F009) ganhou permissão **própria**, separada de `PDV_SALE_MANAGE` — é uma superfície
@@ -370,6 +418,11 @@ da leitura do módulo.
 `PDV_SESSION_CLOSE` é separada de `PDV_SESSION_MANAGE` porque a conferência do fechamento costuma
 ser do gerente, não de quem operou o caixa — e é a única operação da sessão que **não** exige ser o
 dono dela.
+
+Fechar o caixa **de outra pessoa** é a permissão `PDV_SESSION_CLOSE_ANY` desde **PDV-C037** (V145). Até
+2026-10-08 `PdvController.canCloseAnySession` olhava `ROLE_ADMIN`/`ROLE_DEV` fixos — a única alçada do
+módulo que não era permissão, e um gerente não podia receber a conferência sem virar admin. A V145
+concede a permissão às duas roles, então o comportamento delas não mudou.
 
 > A checagem de `PDV_SALE_DISCOUNT` é **programática**, no controller, e não por `@PreAuthorize`:
 > ela depende do corpo da requisição, e o `@PreAuthorize` decide antes de olhar o payload.
@@ -426,16 +479,30 @@ por venda, não por item. O rastro item a item continua no `stock_movement`, com
 esperado/contado/diferença — o ciclo de caixa é auditado ponta a ponta. Cashback creditado publica
 `CASHBACK_EARNED`, na venda de balcão e no fechamento de comanda.
 
+✅ **Venda offline (PDV-F043):** `OFFLINE_SALES_SYNCED` por lote (contagens de sincronizadas, duplicadas e
+recusadas), `OFFLINE_SALE_REJECTED` por venda que foi para revisão, `OFFLINE_SALE_RETRIED` e
+`OFFLINE_SALE_DISCARDED` (com o motivo) na resolução. **Não publicados** para a venda sincronizada: os
+eventos de pós-venda do controller online (`STOCK_MOVEMENT_REGISTERED`, `CASHBACK_EARNED`,
+`PDV_SALE_COMPLETED`) — o estoque e o cashback são gravados normalmente, mas a automação de
+`VENDA_PDV_CONCLUIDA` não dispara para venda offline.
+
 ✅ **A comanda tem `EventType` próprio desde PDV-C014**: `COMANDA_OPENED`, `COMANDA_ITEM_ADDED`,
 `COMANDA_ITEM_REMOVED`, `COMANDA_CLOSED` e `COMANDA_CANCELLED`, todos com o `comandaId` na frente do
 payload — é a chave por onde se procura a mesa depois de um fechamento estranho. Desde PDV-F029,
-`COMANDA_CANCELLED` leva também o `reason` opcional.
+`COMANDA_CANCELLED` leva também o `reason` opcional. Desde PDV-C036, a sessão servida que sai da mesa por
+desistência publica `COMANDA_SESSION_WITHDRAWN` (com `itemId` e `reason`) no lugar de `COMANDA_ITEM_REMOVED`.
 
 Antes disso a comanda inteira andava pendurada em `STOCK_MOVEMENT_REGISTERED`, discriminada por
 `origin`, e **abrir a mesa não deixava rastro nenhum**, ao contrário de abrir caixa. No lançamento e
 no cancelamento o evento emprestado era ao menos fiel (o estoque de fato se move); **no fechamento
 não era** — `closeComanda` não toca em saldo, e o evento entrava na trilha de movimentação de estoque
 descrevendo algo que não aconteceu.
+
+O cadastro do cardápio de sessão (faixa, adicional, utensílio e configuração) publica `SESSION_MENU_CHANGED`
+em todo create/update. Desde **PDV-C043** o payload leva o **estado gravado** — nome, preço, ativo,
+quantidade e incluso do utensílio, vasos, upgrade e dias de duplo — e não só `target`/`id`, que dizia que
+a faixa mudou mas não para quanto. Não há o valor **anterior**: quem precisa do antes lê o evento
+imediatamente anterior do mesmo `target`/`id`.
 
 Os eventos novos **substituíram** o emprestado em vez de conviver com ele: nada no código consulta o
 log de auditoria por tipo, e emitir dois eventos por lançamento dobraria o volume para manter viva
@@ -452,6 +519,10 @@ justamente a linha que mentia. **O rastro item a item continua onde sempre estev
 | `CrmUseCase.findCustomerNames` (chamada síncrona in-process) | resolve `customerName` em lote na listagem de mesas | listagem sem nome do cliente |
 | Cache de authorities (Redis/Caffeine, TTL 60s) | checagem de `@PreAuthorize` | latência maior |
 | `EstoqueUseCase` (chamada síncrona in-process) | baixa de saldo por item + alerta de reposição | venda inteira falha e reverte |
+| Cardápio de sessão (Postgres) | `session_tier`, `session_asset_type`, `comanda_session_asset`, `session_settings` (V128), `session_addon`/`comanda_item_addon` (V133) | lançar sessão falha; mesas já abertas seguem legíveis |
+| `StaleComandaSweepService` (`@Scheduled` + ShedLock) | 05:00 de São Paulo: cancela a mesa vazia esquecida, encerra a toda paga, alerta as com consumo | mesa esquecida volta a travar o fechamento do caixa (PDV-C005) |
+| `CashSessionStaleAlertJob` (`@Scheduled` + ShedLock) | de hora em hora: e-mail/notificação de caixa aberto há ≥ 12h | o aviso daquela janela se perde (PDV-C040) |
+| `NotificationUseCase` / e-mail operacional | alerta de mesa esquecida, caixa esquecido, comprovante por e-mail | o alerta não sai; a operação segue |
 
 Sem fila, sem impressora fiscal, sem integração de pagamento. Venda e baixa de estoque
 compartilham a **mesma transação**: `InsufficientStockException` em qualquer item reverte a
@@ -463,9 +534,12 @@ venda inteira, e nada é persistido.
 |---|---|---|
 | `pdv.sale.max-discount-percent` | `10` | Teto do desconto, **compartilhado** entre a venda de balcão (PDV-F004) e o fechamento de mesa (PDV-F014). Acima dele, `409 DISCOUNT_LIMIT_EXCEEDED` |
 | `pdv.comanda.service-fee-percent` | `10` | Taxa de serviço da mesa (PDV-F015). Zero desliga a cobrança sem mexer em código. Nunca incide sobre `SESSAO`/`ROSH_EXTRA` (PDV-F023) |
+| `pdv.sessao.legacy-enabled` | `false` | PDV-F021: religa a sessão por produto (PDV-F010), que o cardápio substituiu. Desligado, `LEGACY_SESSION_DISABLED` |
+| `pdv.comanda.stale.hours` / `.batch-size` / `.cron` | `12` / `200` / `0 0 5 * * *` | PDV-F013/F032: janela, lote e horário da varredura de mesa esquecida (`StaleComandaSweepService`, fuso de São Paulo) |
+| `pdv.session.stale-alert.cron` | `0 0 * * * *` | PDV-F037: de hora em hora, avisa os caixas que passaram de 12h abertos (`CashSessionStaleAlertJob`, fuso de São Paulo). Ver PDV-C040 |
 | `pdv.mesa.catalog-items-enabled` | `false` | PDV-F024 — a mesa aceita produto do catálogo (`/items`, `/kits`). Desligado, 409 `CATALOG_ITEM_NOT_ALLOWED_ON_TABLE`. O perfil de teste liga, para as ITs da comanda por produto |
 
-Ambas migram para `system_config` junto com o painel de configuração, como o resto das chaves de
+As chaves de política comercial migram para `system_config` junto com o painel de configuração, como o resto das chaves de
 política comercial do projeto.
 
 ### Limites operacionais
@@ -494,6 +568,10 @@ política comercial do projeto.
   que têm consumo. O que **permanece por decisão** é o resto: mesa esquecida com consumo real segue
   com o estoque debitado até alguém resolvê-la, porque devolver automaticamente reporia no sistema
   essência que já foi queimada. É limitação escolhida, não pendência — ver o Histórico.
+- **PDV-C036**: sessão já servida removível sem alçada; a linha some do histórico.
+- **Analytics de mesas agrega em memória** — desde PDV-C029 as consultas saem em lotes e não estouram mais o
+  limite de parâmetros do driver, mas 366 dias de mesas fechadas ainda são carregados com itens e pedidos
+  para agregar no Java. É requisição pesada, aceitável no volume de hoje; a saída definitiva é agregar em SQL.
 - **Junção de mesas antes de 01/10/2026** — deixou cópias das linhas na mesa de origem (PDV-C022,
   corrigido). As cópias já gravadas continuam no banco até o dono decidir a limpeza; ver
   `diagnostico-pdv-c022.sql`.
@@ -535,6 +613,26 @@ por um invisível, o saldo mentindo para cima até o próximo balanço. Quem dec
 linha**, por `ComandaItem.consumedPackage()`, e não uma releitura do catálogo: o produto pode ter
 deixado de ser vendido por sessão desde o lançamento, e o desfazimento tem que espelhar o que de
 fato aconteceu.
+
+**A sessão do cardápio — o caminho de produção — consome estoque só quando traz o sabor do catálogo
+(PDV-F042).** Tudo o que está acima vale para `addItem`, que em produção recusa item de catálogo e
+sessão legada (`pdv.mesa.catalog-items-enabled` e `pdv.sessao.legacy-enabled` em `false`). A sessão
+vendida pelo cardápio (`POST /pdv/comandas/{id}/sessoes`, `addRoshExtra`, `repeatSession`) tem SKU
+sintético `SESS-{faixa}`, sem estoque, e por isso guarda o sabor à parte em `comanda_item.essence_sku`
+(V147):
+
+| A sessão traz | Lançar | Remover / cancelar (sessão ainda na espera ou na fila) |
+|---|---|---|
+| Só texto (`essencia`) | não toca estoque — como antes de PDV-F042 | nada |
+| `essenciaSku` com `sessionsPerUnit` | `consumeSession` — um **uso** da lata aberta do sabor; `SAIDA 1` só ao abrir outra | `releaseSession` do sabor |
+| `essenciaSku` sem `sessionsPerUnit` | `SAIDA 1` do sabor, motivo "Uso da loja — sessão da comanda #N" | `ENTRADA 1` do sabor |
+
+Quem decide o desfazimento é a linha (`ComandaItem.consumedStock()`/`stockSku()`), e não uma releitura
+do catálogo. **Sessão que já saiu da espera queimou a essência** (`essenceBurned()`: preparando,
+entregue, recolhida — inclui a desistida): cancelar a mesa ou remover o rosh depois disso **não
+devolve nada**, nem uso nem unidade. O SKU é opcional por decisão do dono (2026-10-08), para o
+frontend migrar sem parar o salão; o inventário inicial das latas que já estavam abertas é
+`POST /estoque/open-packages/{sku}` (EST-F033).
 
 Duas operações de mesa **não movem estoque nenhum**, apesar da aparência: o fechamento (PDV-F009) e a
 junção de mesas (PDV-F016) — nesta, a mercadoria mudou de conta, não de lugar.
@@ -843,6 +941,23 @@ mudam juntos.
   `bought_in_store_at TIMESTAMP`.
 - Permissão `PDV_SESSION_PAY_LATER`, concedida ao `ROLE_ADMIN`.
 
+**V145 — `pdv_session_close_any`** (PDV-C037)
+- Permissão `PDV_SESSION_CLOSE_ANY`, concedida a `ROLE_ADMIN` e `ROLE_DEV`. Sem DDL.
+
+**V146 — `pdv_sessao_desistencia`** (PDV-C036)
+- `comanda_item.withdrawn_reason VARCHAR(200)` e `withdrawn_by VARCHAR(80)`, com
+  `ck_comanda_item_withdrawn` (desistência só em `SESSAO`/`ROSH_EXTRA` recolhida e cortesia).
+
+**V150 — `pdv_venda_offline`** (PDV-F043)
+- `sales_order.client_sale_id VARCHAR(36)` com `UNIQUE` `uk_sales_order_client_sale_id` (várias linhas nulas permitidas — o histórico segue sem chave) e `sales_order.client_sold_at TIMESTAMP` (hora no balcão da venda que chegou pela fila). Fora do record `Order`: só `OrderRepository.findIdByClientSaleId`/`stampClientSale` as leem/escrevem. A constraint é declarada também em `OrderEntity` para o H2 do perfil `dev` criá-la com o mesmo nome.
+- `offline_sale_rejection` (id, `session_id` FK, `client_sale_id` UNIQUE, `client_sold_at`, `customer_id`, `payload` TEXT com itens e pagamentos em JSON, `error_code`, `message`, `created_at/by`, `resolved_at/by`, `resolution` ∈ {RETRIED, DISCARDED}, `resolution_note`, `order_id`) — CHECK de `resolved_at`/`resolution` juntos; índice parcial das pendentes por sessão.
+- Permissão `PDV_OFFLINE_REVIEW` para `ROLE_ADMIN` e `ROLE_DEV`.
+
+**V147 — `pdv_sessao_essencia_do_catalogo`** (PDV-F042)
+- `comanda_item.essence_sku VARCHAR(50)` — o sabor do catálogo que a sessão do cardápio queimou; nulo na
+  sessão só em texto. `ck_comanda_item_essence_sku_menu_session` (só em `SESSAO`/`ROSH_EXTRA`). Sem FK,
+  como as demais colunas de SKU; entra em `ProductRepositoryImpl.SKU_COLUMNS` para a troca de SKU (EST-F030).
+
 **Nota de modelagem:** `sales_order`/`order_item`/`order_payment` referenciam depósito só por
 texto livre (`warehouse_code`), sem FK — mesmo padrão de `stock_balance`/`stock_movement` em
 `estoque` (ver EST-C002 no README daquele domínio). Nenhuma validação equivalente a
@@ -862,6 +977,11 @@ texto livre (`warehouse_code`), sem FK — mesmo padrão de `stock_balance`/`sto
 | `PdvServiceTest` | Unit (Mockito) | Sessão, fechamento (incl. PDV-C005: recusa com mesa aberta, sem nem calcular o esperado; e PDV-C017/C018: troco e estorno saindo do esperado), movimentos, venda (posse, preço do catálogo, desconto, ordem de validação de pagamento antes do estoque, `reserveForPickup`, cálculo de troco incl. pagamento dividido, propagação de falhas sem salvar), liquidação online (PDV-C015: pagamento capturado, recusa antes de consumir a reserva, recusa de excedente e encerramento da cobrança de gateway) |
 | `PdvCashCycleIT` | `@SpringBootTest` | Ciclo completo (abrir → vender → sangrar → fechar), pagamento dividido **com o troco saindo da gaveta** (PDV-C017), estorno em dinheiro reduzindo o esperado (PDV-C018), pedido do app liquidado em dinheiro entrando no esperado (PDV-C015), netting de movimentos, isolamento entre operadores, unicidade de numeração e (PDV-C013) a paginação de sessões percorrida página a página, exigindo que nenhuma se repita nem se perca |
 | `PdvSaleConcurrencyIT` | `@SpringBootTest` | Vendas concorrentes nunca vendem além do saldo |
+| `PdvComandaControllerTest` (PDV-C038) | MockMvc standalone | Caixa alheio na abertura com lead: 403 sem lead criado no CRM; a conferência do caixa vem antes da resolução do lead |
+| `InClauseBatchesTest` | Unit | PDV-C029 — `IN (:ids)` em lotes de 1000: divide, concatena na ordem e não consulta com lista vazia |
+| `ComandaRepositoryIT` (PDV-C036) | `@SpringBootTest` + `@Transactional` | Round-trip da desistência (motivo, autor, recolhida, cortesia) e a varredura tratando-a como nada devido |
+| `CashSessionCloseConcurrencyIT` | `@SpringBootTest` | PDV-C035 — quatro fechamentos simultâneos do mesmo caixa: exatamente um grava, os outros leem `CLOSED` |
+| `PdvSessaoMenuAuditPayloadTest` | Unit | PDV-C043 — payload do `SESSION_MENU_CHANGED` com o estado gravado de faixa, adicional, utensílio e configuração |
 | `OrderServiceTest` | Unit (Mockito) | `changeStatus` (incl. caso especial `pickedUp`), `cancelOrder` (libera reserva), `refundOrder` (fan-out de estoque/pagamento/cashback), guardas de duplo cancelamento/reembolso |
 | `OrderRefundIT` | `@SpringBootTest` | Reembolso e cancelamento fim a fim |
 | `OrderRefundConcurrencyIT` | `@SpringBootTest` | Reembolso concorrente: só um sucede |
@@ -971,17 +1091,35 @@ Convenções, variáveis e o environment compartilhado estão em
 | PDV-C026 | 🟡 Importante | Correção | rosh-na-fila-preparado-antes-do-pagamento | `SessionStatus` permite `NA_FILA → PREPARANDO` pelo `PATCH .../status` sem olhar a raiz: com a sessão ainda `AGUARDANDO_PAGAMENTO`, o 2º rosh do duplo vai ao preparo antes de a mesa pagar — contorna PDV-F027. O `ROSH_EXTRA` pago também é promovido da fila ao recolher a raiz, ainda sem pagamento. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — 409 `SESSION_NOT_PAID`; a promoção automática espera o pagamento |
 | PDV-C027 | 🟡 Importante | Correção | remover-rosh-nao-libera-utensilio | O utensílio só volta no `updateSessionStatus(RECOLHIDO)`, quando o grupo inteiro (sessão + roshs) está recolhido. Se a raiz já foi recolhida e o último rosh ativo é **removido** (`removeItem`), ninguém refaz a checagem: o vaso fica alocado até a mesa fechar, e o próximo rosh da fila não é promovido. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — `settleSessionGroup`, comum ao recolhimento e à remoção |
 | PDV-C028 | 🟡 Importante | Correção | put-do-cardapio-zera-campos-omitidos | `SessionAssetTypeRequest.quantidadeTotal`/`incluso` (e `ordem` em faixa e adicional) são primitivos: um `PUT` que omite o campo grava 0/`false` — a pinça passa a ter quantidade zero e todo `addSession` seguinte responde `SESSION_ASSET_UNAVAILABLE`. Correção: wrappers; no PUT, campo omitido mantém o valor atual. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — omitido no PUT mantém o valor atual (não 400: o POST usa o mesmo DTO) |
-| PDV-C029 | 🟡 Importante | Correção | analytics-de-mesa-sem-lote | `GET /pdv/comandas/analytics` carrega até 366 dias de comandas FECHADA com itens, busca os pedidos por `IN` sem lote e agrega em memória. Com vários pedidos parciais por mesa, a lista de ids pode passar do limite de 32767 parâmetros do JDBC do Postgres (500), e antes disso é uma requisição lenta e pesada. Caminho: agregação em SQL ou consulta em lotes. Análise de 2026-10-01. | Pendente |
 | PDV-C030 | 🟡 Importante | Correção | analytics-de-mesa-visivel-ao-atendente | `/pdv/comandas/history` e `/analytics` aceitam `PDV_READ` **ou** `ORDER_READ`, e `ROLE_ATENDENTE` tem `PDV_READ` (V86): o atendente vê a receita da loja inteira e a de cada colega. Precisa de decisão do dono sobre quem vê indicadores (permissão própria, ou só `ORDER_READ`). Análise de 2026-10-01. | Pendente |
 | PDV-C031 | 🟢 Melhoria | Correção | erros-da-sessao-sem-codigo-proprio | Essência em branco, duplo sem sabor do 2º rosh e "sessão do cardápio vai por /sessoes" lançam `IllegalArgumentException`, que o handler global achata em `400 BAD_REQUEST` "Requisição inválida" — o mesmo problema que PDV-C016 resolveu no desconto. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — `SESSION_ESSENCE_REQUIRED` e `MENU_SESSION_NOT_ALLOWED_ON_ITEMS` |
 | PDV-C032 | 🟢 Melhoria | Correção | its-de-mesa-com-flags-de-producao-desligadas | `application-dev.properties` liga `pdv.mesa.catalog-items-enabled` e as ITs de comanda ligam `pdv.sessao.legacy-enabled`; os construtores antigos de `ComandaService` também os ligam. Em produção os dois são `false`: boa parte da suíte de mesa exercita caminhos desligados, e o caminho real (só cardápio) só tem teste unitário. As ITs novas devem usar as flags de produção. Análise de 2026-10-01. | Pendente |
-| PDV-C033 | 🟢 Melhoria | Correção | travas-e-indices-da-comanda | `findByIdForUpdate` sem lock-timeout (espera indefinida); faltam índices para `findOpenIdsOlderThan (status, opened_at)` e para os filtros do histórico (`warehouse_code`, `opened_by`, `closed_by`); `ComandaService` usa `Instant.now()` enquanto `SessionMenuService` usa o `Clock` injetado. Aceitável no volume de hoje. Análise de 2026-10-01. | Pendente |
+| PDV-C033 | 🟢 Melhoria | Correção | travas-e-indices-da-comanda | `findByIdForUpdate` sem lock-timeout (espera indefinida); faltam índices para `findOpenIdsOlderThan (status, opened_at)` e para os filtros do histórico (`warehouse_code`, `opened_by`, `closed_by`); `ComandaService` usa `Instant.now()` enquanto `SessionMenuService` usa o `Clock` injetado. Aceitável no volume de hoje. Análise de 2026-10-01. **Acréscimo de 2026-10-08:** em `PdvService`, `clock` e `ZONA_LOJA` (`:72-76`, `:86`) não têm mais uso desde PDV-F037 (o corte de meia-noite saiu), e o service também chama `Instant.now()` direto; ou se usa o `Clock` ou se apaga. | Pendente |
+| PDV-C039 | 🟢 Melhoria | Correção | juncao-leva-sessao-paga-com-pedido-da-origem | Desde PDV-F031 a junção move também a sessão **paga** ainda no salão (`Comanda.itemIdsToMoveOnMerge`), e a linha leva o `closed_in_order_id` de um pedido cujo `comanda_id` é a **origem**. No destino isso vaza em três pontos: `finishComanda` grava `order_id = lastChargedOrderId()` (`Comanda:418`), que pode ser o pedido da outra mesa; a linha do tempo (`withTimeline`) só procura o horário de pagamento entre os pedidos do destino e fica sem ele; e o analytics conta a sessão no destino e a receita na origem. Correção: `lastChargedOrderId` e a linha do tempo resolverem pelos pedidos de fato ligados à comanda (`sales_order.comanda_id`), e o detalhe/analytics tratarem a linha movida já paga. Análise de 2026-10-08. | Pendente |
+| PDV-C040 | 🟢 Melhoria | Correção | alerta-de-caixa-esquecido-perde-janela | `CashSessionStaleAlertJob` (`:65-75`) avisa só os caixas que cruzaram as 12h **na última hora**, `(now−13h, now−12h]`, e não grava quem já foi avisado. Se uma execução não roda (deploy ou restart na hora cheia, ou o lock ainda preso), os caixas daquela janela nunca são avisados. Correção: gravar `stale_alerted_at` na sessão e avisar toda sessão `OPEN` ≥ 12h ainda não avisada. Análise de 2026-10-08. | Pendente |
+| PDV-C041 | 🟢 Melhoria | Correção | testes-das-entregas-de-outubro | Das entregas de 2026-10-05, três não têm teste: `GET /pdv/sessions/{id}/summary` (PDV-F038) não aparece em `PdvControllerTest` nem em `PdvControllerSecurityTest` (só o service é testado); `PdvComandaController.comandaLabel` (PDV-F039: rótulo vazio + cliente/lead → nome cortado em 100; rótulo digitado prevalece) não tem caso; e `CashRegisterSession.closeSuggested`/`horasAberto` (PDV-F037) não aparece em `CashRegisterSessionTest`. Análise de 2026-10-08. | Pendente |
+| PDV-C044 | 🟢 Melhoria | Correção | adicionais-sem-teto-e-nome-estoura-coluna | `AddSessionRequest.adicionalIds` (`:33`) não tem `@Size` nem deduplicação, e `SessionMenuService.requireActiveAddons` (`:123-131`) faz uma consulta por id. O nome da linha é montado por concatenação, `"Sessão {faixa} + vaso grande + {adicional}..."` (`ComandaService:528-532`), e grava em `comanda_item.product_name VARCHAR(200)` (V104:45). Com faixa e adicionais de até 60 caracteres cada, três adicionais já estouram a coluna, e o erro sobe do banco em vez de um 400. Id repetido cobra o adicional duas vezes: decidir se isso é intencional (dois filtros de gelo) e documentar, ou recusar. Correção: `@Size(max = N)` na lista e nome truncado (ou validado) antes de gravar. Análise de 2026-10-08 (2ª rodada). | Pendente |
+| PDV-C045 | 🟢 Melhoria | Correção | remover-sessao-com-duplo-acusa-linha-cobrada | `Comanda.chargedChildrenOf` devolve **qualquer** filha que não seja `TROCA`, cobrada ou não. Remover uma sessão com o 2º rosh do duplo (cortesia, R$ 0, ainda `NA_FILA`) responde `409 LINKED_ITEM_IS_CHARGED` (`ComandaService:701-705`) sem nada ter sido cobrado; o operador precisa remover o rosh antes e a sessão depois, e o erro diz o contrário do que aconteceu. Correção: só barrar filha com `closedInOrderId` preenchido, e levar junto o `ROSH_EXTRA` em aberto como já se leva a `TROCA` (`withRemovedItem`/`itemsRemovedWith`). Análise de 2026-10-08 (2ª rodada). | Pendente |
 | PDV-F031 | 🟡 Média | Feature | juntar-mesas-com-linhas-pagas | O merge recusa a origem com qualquer linha cobrada (`COMANDA_PARTIALLY_CLOSED`) — e, com a sessão paga no lançamento, isso é quase toda mesa de narguilé. Decisão do dono (2026-10-01): movem-se as linhas abertas **e** as sessões pagas ainda ativas (com os utensílios, para poderem ser recolhidas no destino); os pedidos pagos continuam apontando para a origem, que termina **FECHADA** se teve linha cobrada. Depende de PDV-C022. | ✅ Fechado (2026-10-01) — ver Histórico |
 | PDV-F032 | 🟡 Média | Feature | varredura-encerra-mesa-ja-paga | Mesa toda paga, com as sessões recolhidas, que ninguém encerrou com `finish` fica ABERTA para sempre: trava o fechamento do caixa (PDV-C005) e a varredura só manda alerta "aberta com consumo, total 0,00". Decisão do dono (2026-10-01): a varredura faz o `finish` com `closedBy = system`. | ✅ Fechado (2026-10-01) — ver Histórico |
 | PDV-F033 | 🟢 Baixa | Feature | analytics-de-rosh-carvao-e-adicionais | `SessoesNarguile` conta só linhas `SESSAO`: a receita do `ROSH_EXTRA` pago fica de fora, e carvão e adicionais são gravados (`order_item.charcoal`, `comanda_item_addon`) mas nenhum relatório os agrega. Análise de 2026-10-01. | Pendente |
 | PDV-F034 | 🟡 Média | Feature | sessao-paga-no-final | Desde PDV-F027 toda sessão espera o pagamento para ir ao preparo, mas há mesa que só paga depois de consumir. Decisão do dono (2026-10-02): lançar "pagar no final" com permissão própria, e o front avisa o risco. | ✅ Fechado (2026-10-02) — ver Histórico |
 | PDV-F035 | 🟡 Média | Feature | linha-do-tempo-da-sessao | O detalhe da mesa não dizia quanto tempo cada fase da sessão levou (espera, preparo, na mesa), embora os horários já estivessem gravados (V132). Base para analisar os dados de sessão depois. | ✅ Fechado (2026-10-02) — ver Histórico |
 | PDV-F036 | 🟡 Média | Feature | comprou-na-loja | Medir quantas mesas com sessão terminam numa compra na loja: pergunta "o cliente comprou algo na loja?", uma resposta por mesa. | ✅ Fechado (2026-10-02) — ver Histórico |
+| PDV-F041 | 🔴 Alta | Feature | central-de-cigarros | Área exclusiva de cigarros no PDV, no molde do assistente Kit Mahal (que é só do frontend: `frontend-admin/src/app/features/pdv/kit-mahal.config.ts`, atalho F6). `GET /pdv/cigarros` devolve as famílias (carteira, maço e unidade) com saldo e preço de cada nível, para venda rápida **solta ou em maço** via `registerSale`. Quando a unidade acaba, a quebra de embalagem é do estoque (**EST-F032**): a venda não precisa saber se abriu maço. O comprovante e o pedido registram o SKU vendido, e o ledger registra a quebra como reposição. Depende de EST-F032. (✅ 2026-10-08: `GET /estoque/products/{sku}/packaging?warehouseCode=` já devolve a cadeia com o disponível, e a venda de solto/maço já quebra embalagem sozinha.) Pedido do dono, `/1-analise` de 2026-10-08. | ✅ Fechado (2026-10-08) — `GET /pdv/cigarros`; ver Histórico. |
+| PDV-F042 | 🔴 Alta | Feature | essencia-do-catalogo-na-sessao | No caminho de produção (só cardápio: `pdv.mesa.catalog-items-enabled` e `pdv.sessao.legacy-enabled` desligados), `ComandaService.addSession` (`:516-566`) **não toca estoque**: a essência é texto livre (`AddSessionRequest.essencia :23`, `essenciaRosh :41`, gravado em `notes`). Com isso o mecanismo de lata aberta (EST-F027/PDV-F018) nunca roda, e o uso de essência da loja pela mesa é invisível. Decisão do dono (2026-10-08): a essência passa a ser **do catálogo**. `essenciaSku`/`essenciaRoshSku` em `AddSessionRequest` (o texto fica por compatibilidade enquanto o front migra), e `addSession`/`addRoshExtra`/`repeatSession`/duplo chamam `consumeSession` e carimbam `package_uses`. Remoção, desistência e cancelamento chamam `releaseSession`, como `removeItem` já faz. Esgotada a lata, a próxima é aberta com `SAIDA 1` da loja, que é a "baixa automática sobre uso da loja". O inventário inicial das latas já abertas vem de **EST-F033**. Recusar SKU que não seja `sessionProduct` (o mesmo `NOT_A_SESSION_PRODUCT` de PDV-C020). Depende de EST-F033 (✅ 2026-10-08) e de **EST-C025** (✅ 2026-10-08, trava pessimista no contador da lata). Pedido do dono, `/1-analise` de 2026-10-08. | ✅ Fechado (2026-10-08) — `essenciaSku` opcional, V147; ver Histórico. |
+| PDV-F043 | 🟡 Média | Feature | venda-offline-no-balcao | Hoje o PDV não funciona sem rede, e o backend nem permite retentar com segurança: `POST /pdv/sessions/{id}/sales` (`PdvController:253`) cria um pedido novo a cada chamada, sem chave de idempotência (só o webhook e o cashback têm). Escopo decidido com o dono (2026-10-08): **só venda de balcão**. **Fase 1 (backend):** `client_sale_id` (UUID gerado no cliente, `UNIQUE` em `sales_order`), com replay devolvendo a venda já gravada (vale também online: duplo clique e timeout deixam de duplicar venda); `soldAt` informado pelo cliente, com limite de defasagem; `POST /pdv/sessions/{id}/sales/sync` em lote. Política para falta de estoque no sync: a venda já aconteceu, então registrar e sinalizar divergência em vez de recusar (decidir com o dono se isso vira saldo negativo ou alerta). Preço congelado do cache, com divergência sinalizada. **Fase 2 (frontend):** PWA com catálogo e preços em cache e fila em IndexedDB. Só `DINHEIRO` e maquininha; mesa, Pix por gateway e venda marcada (fiado) continuam exigindo conexão. O caixa precisa estar aberto antes de cair. Fiscal (NFC-e em contingência) fica fora. Pedido do dono, `/1-analise` de 2026-10-08. | ✅ Fase 1 (backend) fechada (2026-10-09) — chave por venda, sync em lote, revisão das recusadas, V150. **Fase 2 (frontend: PWA, cache e fila local)** em [`PROMPT_FRONT_PDV_OFFLINE.md`](../../PROMPT_FRONT_PDV_OFFLINE.md). |
+
+> **EST-F036** (✅ 2026-10-08) — o SKU base de produto com variações responde `400 PARENT_NOT_SELLABLE`
+> na venda de balcão, na mesa e na sessão; o PDV esconde a base pela flag `parentSellable` do produto.
+
+> **EST-F032..F035** em [`estoque`](../estoque/README.md#backlog-do-módulo) completam este pacote:
+> embalagem com quebra automática (base de PDV-F041), cadastro de lata já aberta (base de PDV-F042)
+> e preço promocional por validade de lote, que aparece no PDV porque a venda lê `effectivePrice()`.
+
+> ✅ `SeedConfig.ADMIN_PERMISSIONS` não tinha `PDV_SALE_ON_ACCOUNT` (V137), `ORDER_PAYMENT_CORRECT[_CLOSED]`
+> (V136) nem `RECEIVABLE_READ`/`MANAGE` (V137), e o admin de `dev` tomava 403 ao marcar na venda ou na mesa.
+> Fechado como **PLAT-C059** (2026-10-08) em [`plataforma`](../plataforma/README.md#histórico-de-implementações).
 
 > A permissão `PDV_SALE_MANAGE` está ausente dos seeders de dev — rastreado como
 > **EST-C001** em [`estoque`](../estoque/README.md#backlog-do-módulo), porque o sintoma
@@ -1016,6 +1154,123 @@ Convenções, variáveis e o environment compartilhado estão em
 > Ver [`pedido`](../pedido/README.md#modelo-de-domínio).
 
 ## Histórico de Implementações
+
+- **2026-10-09** — `venda-offline-no-balcao`, fase 1 (PDV-F043, **V150**). O PDV não funcionava sem rede, e
+  o backend nem permitia reenviar uma venda com segurança: `POST /pdv/sessions/{id}/sales` criava um pedido
+  novo a cada chamada — um timeout seguido de reenvio já duplicava a venda, mesmo online. **Entregue:** (1)
+  `clientSaleId` na venda (online também): a mesma chave devolve o pedido já gravado, com 200 e sem tocar
+  em nada; o índice único reverte o envio simultâneo; (2) `POST /pdv/sessions/{id}/sales/sync`, até 50
+  vendas, cada uma na sua transação (`OfflineSaleService` não é transacional e chama o `PdvUseCase` pelo
+  proxy); (3) revisão das recusadas em `offline_sale_rejection`, com `retry` (em nome do operador do caixa)
+  e `discard` (motivo obrigatório) sob a permissão nova `PDV_OFFLINE_REVIEW`; (4) caixa não fecha com
+  recusa pendente. **Decisões do dono:** só venda de balcão; venda sem estoque é **recusada e vai para
+  revisão** (não entra sozinha nem some); sincronização só em caixa aberto, e o frontend bloqueia o
+  fechamento com fila local. **Escolhas de implementação:** a chave fica fora do record `Order` (duas
+  operações no repositório, nenhum dos pontos que montam pedido mudou); o código da recusa é o mesmo que a
+  venda online responderia (`INSUFFICIENT_STOCK`…), mapeado no service porque a recusa é gravada pelo core;
+  só dinheiro, débito e crédito offline. **Limites:** a venda sincronizada cobra o preço **atual** do
+  catálogo; a automação de pós-venda não dispara para ela; a fila local é invisível ao backend. Testes:
+  `OfflineSaleRejectionTest` (6), `PdvServiceOfflineTest` (4), `OfflineSaleServiceTest` (9),
+  `PdvOfflineControllerTest` (7), `PdvOfflineControllerSecurityTest` (5), `PdvControllerTest` (+2, e os
+  stubs de venda passaram a `registerSaleIdempotent`), `OfflineSaleFlowIT` (2), `OfflineSaleConcurrencyIT` (1).
+
+- **2026-10-08** — `central-de-cigarros` (PDV-F041, sem migration). A área de cigarros do PDV, no molde do
+  assistente Kit Mahal: `GET /pdv/cigarros?warehouseCode=` (`PDV_READ`) devolve cada produto **ativo** com
+  embalagem ligada e as suas cadeias — uma por cor, da carteira ao solto —, com SKU vendável, rótulo dos
+  atributos ("azul · maço"), preço efetivo e disponível de cada nível. **Decisões:** (1) entra na central
+  quem tem embalagem ligada, não quem está na categoria "Cigarros" (decisão do dono): ligar as embalagens
+  basta; (2) **só leitura** — a venda é a de balcão de sempre com o SKU do nível, e abrir maço/carteira é
+  da saída de estoque (EST-F032), então não há endpoint de venda novo; (3) a montagem mora no estoque
+  (`EstoqueUseCase.listPackagedFamilies`), dono da cadeia, do preço e do saldo, e o controller é próprio
+  (`PdvCigarrosController`) para não mudar o `PdvController`; (4) N+1 assumido (produto e saldo por nível),
+  limitado a algumas dezenas de SKUs. Testes: `EstoqueServiceTest` (+2), `PdvCigarrosControllerTest` (2),
+  `PdvSessaoControllerSecurityTest` (+2), `PackagingBreakIT` (+1).
+
+- **2026-10-08** — `essencia-do-catalogo-na-sessao` (PDV-F042, **V147**). A sessão do cardápio — o caminho
+  de produção da mesa — gravava a essência só como texto e não tocava estoque: o uso de essência da loja
+  pela mesa era invisível, e a lata aberta de EST-F027 nunca rodava. `/sessoes`, `/rosh` e `/repetir`
+  aceitam `essenciaSku` (e `essenciaRoshSku` no duplo), **opcional** por decisão do dono. Com ele, o
+  produto decide: com `sessionsPerUnit`, consome um uso da lata aberta do sabor (`consumeSession`); sem,
+  sai uma unidade como **uso da loja**. **Decisões:** (1) a linha guarda o sabor em
+  `comanda_item.essence_sku`, porque o SKU dela é a faixa `SESS-{id}` — sem isso o desfazimento não
+  saberia o que devolver; (2) recusa o que não é sabor de sessão (`NOT_A_SESSION_PRODUCT`) e o produto
+  **base** com variações (`ESSENCE_MUST_BE_FLAVOR`, novo `CatalogSaleInfo.parentWithVariants`): lata e
+  saldo são por sabor; a recusa vem antes de gravar e de reservar utensílio; (3) remover/cancelar
+  devolve uso ou unidade **do sabor**, mas só enquanto a sessão está na espera ou na fila — depois do
+  preparo a essência queimou (`ComandaItem.essenceBurned`), e a desistência nunca devolve; (4) repetir
+  sem sabor novo repete texto **e** SKU; sabor novo só em texto não arrasta o SKU antigo; (5)
+  `essencia` perdeu o `@NotBlank` do DTO: "texto ou SKU" é conferido no controller com o mesmo
+  `SESSION_ESSENCE_REQUIRED`. Pré-requisitos entregues no mesmo dia: EST-F033 (cadastro de lata já
+  aberta) e EST-C025 (trava no contador). Testes: `ComandaItemTest` (+6), `ComandaSessaoServiceTest`
+  (+14), `SessionMenuFlowIT` (+1, ponta a ponta com a lata cadastrada).
+
+- **2026-10-08** — `lead-criado-antes-de-validar-o-caixa` (PDV-C038, sem migration). `POST /pdv/comandas`
+  resolvia o cliente (com `lead`, find-or-create no CRM + `CUSTOMER_CREATED`) **antes** de a abertura
+  conferir o caixa; caixa de outro operador (403) ou fechado (409) deixava um lead criado e auditado por
+  uma mesa que não existe. `ComandaUseCase.requireCanOpenComanda` (mesma regra da abertura,
+  `PdvService.requireOwnOpenSession`, sem gravar) roda primeiro no controller. É `@Transactional` comum,
+  não `readOnly`: a conferência trava a sessão em `FOR SHARE` (PDV-C035), que o Postgres recusa em
+  transação somente leitura. A abertura reconfere travada; sobra só a janela entre as duas chamadas (o
+  caixa fechar nesse intervalo). Testes: `PdvComandaControllerTest` (2) e `ComandaServiceTest` (1).
+
+- **2026-10-08** — `analytics-de-mesa-sem-lote` (PDV-C029, sem migration). `GET /pdv/comandas/analytics`
+  carregava todas as mesas fechadas do período (até 366 dias) e os pedidos delas com `IN (:ids)` numa
+  consulta só; com vários pedidos parciais por mesa a lista passava do limite de 32767 parâmetros do
+  driver do Postgres e a requisição caía em 500. `InClauseBatches.fetch` (pacote de persistência) roda
+  essas consultas em lotes de 1000: `OrderRepositoryImpl.findByComandaIds` (as duas fases do ID-first,
+  reordenadas por `id` decrescente como a consulta única devolvia) e `ComandaRepositoryImpl.withItemsInOrder`
+  (histórico e analytics). A agregação continua em memória — ver Riscos conhecidos. Teste:
+  `InClauseBatchesTest`; o comportamento das listagens segue coberto por `ComandaHistoryIT`/`ComandaHistoryPostgresIT`.
+
+- **2026-10-08** — `remover-sessao-servida-sem-alcada` (PDV-C036, **V146**, branch
+  `feat/pdv-caixa-sessao-ajustes`). Decisão do dono: **motivo + desistência**, não alçada de cortesia.
+  `DELETE /pdv/comandas/{id}/items/{itemId}?reason=` (`@Size(max = 200)`): sessão do cardápio já servida
+  (`PREPARANDO`/`ENTREGUE`), não cobrada e não cortesia (`ComandaItem.requiresWithdrawal`) não é apagada —
+  `SessionProgress.withdrawn` a leva a `RECOLHIDO` com `withdrawnReason`/`withdrawnBy`, e
+  `ComandaItem.withdrawn` a torna cortesia a R$ 0 (não é mais dívida, ver PDV-C042). O grupo se acerta como
+  num recolhimento (`settleSessionGroup`: vaso volta, fila anda). Recusas:
+  `400 SESSION_WITHDRAWAL_REASON_REQUIRED` sem motivo e `409 LINKED_SESSION_STILL_ACTIVE` com rosh ligado
+  ainda no salão. `resolveClosingScope` deixa a desistência fora do pedido (não vai ao cupom como R$ 0);
+  `SessionTimeline.desistida` a conta, inclusive depois de entregue. Auditoria `COMANDA_SESSION_WITHDRAWN`.
+  `ComandaItemResponseDTO` ganhou `withdrawn`, `withdrawnReason` e `withdrawnBy`. Sessão aguardando
+  pagamento ou na fila e linhas de catálogo seguem a remoção de sempre. Testes: `SessionProgressTest`,
+  `SessionTimelineTest`, `ComandaSessaoServiceTest`, `PdvComandaControllerTest` e `ComandaRepositoryIT`.
+
+- **2026-10-08** — correções da `/1-analise` de PDV e mesa (PDV-C034, C035, C037, C042, C043 e
+  PLAT-C059, **V145**, branch `feat/pdv-caixa-sessao-ajustes`).
+  - **PDV-C042** — `Comanda.owedItems()` (abertas e não cortesia) e `hasNothingOwed()` (nada devido **e**
+    ao menos uma linha cobrada). `finishComanda` encerra a mesa com só cortesia em aberto (o rosh grátis
+    do `/rosh` avulso lançado depois do pagamento), e a recusa de mesa sem pedido virou
+    `409 COMANDA_ONLY_COURTESY` no lugar do `IllegalStateException`. A varredura usa a mesma regra: a
+    consulta `findStaleIdsWithNothingOwed` ignora cortesia em aberto, a mesa encerra no último pedido e
+    o alerta conta só `owedItems`. Mesa só de cortesia, sem nada cobrado, fica para o alerta.
+  - **PDV-C034** — `InvalidPaymentMethodException` → `400 INVALID_PAYMENT_METHOD`.
+    `OrderDTOConverter.toPaymentCommands` recusa método inexistente e `GATEWAY_PIX`; o fechamento de
+    mesa deixou a cópia inline da conversão e usa o mesmo converter; `PdvService.validatePaymentsAndComputeChange`
+    recusa `GATEWAY_PIX` também no domínio (cobre balcão, mesa e `settle`). A correção de pagamento
+    (`OrdersController`, PDV-F030) passa pelo mesmo converter e já respondia o mesmo código.
+  - **PDV-C035** — `CashRegisterRepository.lockForUpdate`/`lockForShare` (`EntityManager.refresh` com
+    `PESSIMISTIC_WRITE`/`PESSIMISTIC_READ`, para reler também a sessão já carregada no contexto).
+    `closeSession` trava exclusiva antes de ler; `requireOwnOpenSession`/`requireOpenSession` (venda,
+    movimento, liquidação, abertura e operação de mesa), a sessão que recebe o fechamento de mesa, a
+    quitação de marcado (`ReceivableService`) e a correção de pagamento (`OrderService`) travam
+    compartilhada. Dois fechamentos simultâneos: um grava, o outro lê `CLOSED`.
+  - **PDV-C037** — `PdvController.canCloseAnySession` olha `PDV_SESSION_CLOSE_ANY` (V145, `ROLE_ADMIN`
+    e `ROLE_DEV`) em vez das roles fixas.
+  - **PDV-C043** — o `SESSION_MENU_CHANGED` passou a levar o estado gravado (`PdvSessaoController.menuPayload`).
+    A análise que abriu o item dizia que o cadastro não publicava evento nenhum; **estava errada** — o
+    `audit(...)` já publicava em todo create/update, só sem os valores.
+  - **PLAT-C059** — `SeedConfig` ganhou `PDV_SESSION_CLOSE_ANY`, `PDV_SALE_ON_ACCOUNT`,
+    `ORDER_PAYMENT_CORRECT[_CLOSED]` e `RECEIVABLE_READ`/`MANAGE` (o atendente, `RECEIVABLE_READ`).
+  - De carona: `PdvController.registerSale` não põe mais `orderId` nulo no `PDV_SALE_COMPLETED`
+    (`Map.copyOf` recusa nulo e a venda já gravada respondia 500 — os testes do controller pegavam).
+  - Testes: `ComandaTest`, `ComandaSessaoServiceTest`, `ComandaServiceTest`, `PdvServiceTest`,
+    `PdvControllerTest`, `PdvComandaControllerTest`, `SeedConfigTest`, `PdvSessaoMenuAuditPayloadTest` e
+    `CashSessionCloseConcurrencyIT`. Suíte completa verde exceto três falhas anteriores e de fora do
+    módulo (`HexagonalArchitectureTest` no `ReceivableService$Position`, `UserServiceTest` do convite e
+    `AutomationDispatchServiceTest`).
+  - **Contrato:** `400 INVALID_PAYMENT_METHOD` em venda, fechamento de mesa e `settle`; `finish` aceita
+    mesa com só cortesia em aberto; fechar caixa alheio exige `PDV_SESSION_CLOSE_ANY`.
 
 - **2026-10-05** — `caixa-sem-corte`, `resumo-do-caixa`, `mesa-com-nome-do-lead` e
   `pagar-no-final-ao-recolher` (PDV-F037..F040, sem migration, branch `feat/pdv-caixa-sessao-ajustes`).
@@ -1613,6 +1868,10 @@ Convenções, variáveis e o environment compartilhado estão em
 
 ## Próximos passos
 
+> **Frontend (2026-10-09):** tudo o que o backend entrega e o `frontend-admin` ainda não usa está em
+> [`PROMPT_FRONT_PENDENCIAS_2026-10.md`](../../PROMPT_FRONT_PENDENCIAS_2026-10.md), em 12 partes independentes
+> (a parte 1 — desistência de sessão com motivo, PDV-C036 — já quebra a tela hoje).
+
 Roteiro completo — ordem, decisões já tomadas e armadilhas — em
 [`proximos-passos.md`](proximos-passos.md), que inclui um prompt pronto para colar numa sessão
 nova. Resumo da ordem (§6 do [plano](../../plano-pdv-marketplace.md)):
@@ -1731,8 +1990,13 @@ Fora do roteiro do plano original, o que a mesa trouxe:
   Negócio; quem abria a seção com o nome do assunto lia o desenho de julho. Reescrita com os quatro
   caminhos e apontando para o README de estoque em vez de duplicar a tabela. Par de **EST-C017**.
 
-**O backlog deste módulo está zerado.** Não resta feature nem correção pendente — PDV-F001 a F017 e
-PDV-C001 a C019 estão todos fechados. É a primeira vez desde a criação do módulo.
+> **2026-10-08:** o parágrafo abaixo descrevia 2026-08-31 e **deixou de valer**. Pendentes hoje, por
+> prioridade (C029, C034, C035, C036, C037, C042 e C043 fecharam no mesmo dia): 🟡 **C030** (decisão
+> do dono); 🟢 **C039**, **C040**, **C041**, **C044**, **C045**, **C032**, **C033** e **F033**. Ver
+> a tabela em [Backlog do Módulo](#backlog-do-módulo).
+
+~~**O backlog deste módulo está zerado.**~~ (2026-08-31) Não restava feature nem correção pendente —
+PDV-F001 a F017 e PDV-C001 a C019 estavam todos fechados.
 
 O que existe são **limitações escolhidas**, não pendências, e as duas valem ser lembradas por quem
 mexer aqui:

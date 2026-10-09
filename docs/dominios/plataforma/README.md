@@ -2,7 +2,7 @@
 
 **Status:** 🟢 Ativo — série `C001–C022` concluída; resíduos documentados abaixo
 **Escopo:** segurança, infraestrutura, CI/CD, testes, persistência, performance e documentação
-**Última atualização deste doc:** 2026-08-18 (PLAT-C036–C046 e PLAT-F001, auditoria `/1-analise ambas`)
+**Última atualização deste doc:** 2026-10-08 (PLAT-C059 aberto e fechado no mesmo dia, roteado de vendas-balcao). Antes: 2026-08-18 (PLAT-C036–C046 e PLAT-F001, auditoria `/1-analise ambas`)
 
 ## Objetivo
 
@@ -405,3 +405,24 @@ Roteiro completo, com prompt pronto para colar numa sessão nova, em
 - **PLAT-C034** 🟡 `archunit-exigindo-preauthorize-em-controller` — novo `arch/SecurityArchitectureTest.java`, no molde do `HexagonalArchitectureTest` existente. Varre todo método `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping` de `adapter.in.controller` e exige `@PreAuthorize`, com duas categorias de exceção deliberada (mapeadas 1:1 com a tabela de "Endpoints protegidos apenas por `anyRequest().authenticated()`" acima): a família `/auth/**` (classe inteira) e os self-service por identidade (`NotificationController`, `NotificationPreferenceController`, `AvatarController` inteiros; só os três métodos `/me` de `UserController`). Também revisado nesta sprint: PLAT-C035 tinha uma alegação desatualizada (ver linha da tabela) — corrigida sem mudar código.
 
 Também revisado (não é um card novo, é correção da alegação existente): **PLAT-C035** — a suíte já roda o Flyway completo contra Postgres real via `AuthFlowPostgresIT`/CI (`ENABLE_TC=true`) desde 2026-05-25/07-22, bem antes deste card ter sido aberto em 2026-07-28. Reduzido ao gap real (concorrência da V66 sob Postgres, não coberta).
+
+### 2026-10-08 — seed de dev (roteado da `/1-analise` de vendas-balcao)
+
+- **PLAT-C059** 🟡 `seed-de-dev-sem-permissoes-v136-v137` — `SeedConfig.ADMIN_PERMISSIONS` ganhou
+  `PDV_SALE_ON_ACCOUNT`, `ORDER_PAYMENT_CORRECT`, `ORDER_PAYMENT_CORRECT_CLOSED`, `RECEIVABLE_READ` e
+  `RECEIVABLE_MANAGE` (V136/V137), mais `PDV_SESSION_CLOSE_ANY` (V145, PDV-C037); `ATENDENTE_PERMISSIONS`
+  ganhou `RECEIVABLE_READ`, como na V137. Em `dev`, com o Flyway desligado, o admin tomava 403 ao marcar,
+  corrigir forma de pagamento e ver recebíveis. O `DevRoleBootstrapConfig` **não** foi tocado: ele já
+  concede ao `ROLE_DEV` toda permissão existente, e listar as novas ali as atribuía duas vezes
+  (`DevRoleBootstrapConfigTest` pegou). Teste: `SeedConfigTest.seedAll_grantsOnAccountCorrectionReceivableAndCloseAnyPermissions`.
+
+### 2026-10-08 — convite com e-mail em branco (auth)
+
+- `UserService.normalizeEmail` devolvia `""` para e-mail em branco. O guarda de e-mail obrigatório de
+  `inviteUser` não disparava, o fluxo seguia até `User.of` e quebrava em NPE: **500 em vez do 400**
+  `InviteEmailRequiredException`, e no cadastro o usuário ficava com e-mail `""` (colidiria no índice único
+  no segundo). Agora nulo ou em branco é "sem e-mail". Os outros chamadores não mudam de comportamento: as
+  rotas públicas já exigem `@NotBlank` e `updateUser`/`updateOwnProfile` tratam `null` como "não muda".
+  Testes: `UserServiceTest.inviteUser_withoutEmail_isRejected` (que falhava) e
+  `createUser_withBlankEmail_isCreatedWithoutEmail` (novo).
+

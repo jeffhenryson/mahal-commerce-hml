@@ -3,7 +3,16 @@
 **Status:** 🟢 Operacional — grade de produtos, saldo multi-depósito, ledger de movimentações (gravação e consulta), alerta de ponto de reposição, reserva, kits, lote/validade, custo médio ponderado e importação de entrada de mercadoria por XML de NF-e em produção
 **Pacote Java:** `com.cernecommerce.core.domain.model.estoque`
 **Rota HTTP base:** `/estoque`
-**Última atualização deste doc:** 2026-08-31 — **o backlog do módulo ficou sem correção
+**Última atualização deste doc:** 2026-10-08 — **EST-F036 entregue** (produto base com variações não
+vendável por padrão; V149). Antes, no mesmo dia — **EST-F032 entregue** (embalagem carteira → maço →
+unidade com quebra automática na saída; V148). Antes, no mesmo dia — **EST-F036** aberto (produto base com variações vendável;
+PDV-F042 passou a chamar `consumeSession` pela sessão do cardápio). Antes, no mesmo dia — **EST-C025 fechado** (trava pessimista no contador da
+lata). Antes, no mesmo dia — **EST-F033 entregue** (`POST /estoque/open-packages/{sku}`,
+cadastro de lata já aberta, sem baixa) e **EST-C025** aberto (contador da lata sem trava,
+pré-requisito de PDV-F042). Antes, no mesmo dia — `/1-analise` de features vinda do PDV: **EST-F032**
+(embalagem carteira→maço→unidade com quebra automática), **EST-F033** (cadastrar lata já aberta),
+**EST-F034** (preço promocional com vigência) e **EST-F035** (sugestão de promoção por validade de lote).
+Antes, 2026-08-31 — **o backlog do módulo ficou sem correção
 pendente**: fecharam **EST-F011** (curva ABC), **EST-C006** (como decisão) e **EST-C017** (a
 documentação da mesa). Resta só **EST-F016** (unidade de medida), 🟢, e **EST-F012**, despriorizado.
 Antes, no mesmo dia — **EST-C015** (leitura do ledger com
@@ -43,7 +52,9 @@ compact constructor e o par de fábricas `create()` (entidade nova, sem `id`) / 
 |---|---|---|
 | `Product` | `id, sku, name, category, active, variants, pricing` | `sku` e `name` obrigatórios; `variants` null vira `List.of()`, senão cópia defensiva; `pricing` null vira `Pricing.empty()`; `create` nasce `active = true` |
 | `Product` — campos de mesa (V112) | `availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice` | Acrescentados por PDV-F010 a `product`, que é tabela **deste** módulo, e por isso documentados aqui. `availableForTable` (default `true`) decide se o SKU pode ser lançado numa comanda — é a regra *"bebida e narguilé saem na mesa, cigarro e isqueiro não"* existindo no servidor. `sessionProduct` marca o que é vendido por sessão, e os sabores são as variações da grade. `sessionsPerUnit` **passou a movimentar saldo em EST-F027**: nasceu como sugestão de tela para a conversão e ficou dois meses sem nenhum leitor, o que fazia cada sessão baixar uma lata inteira. Hoje é ele que diz quantas sessões saem de uma unidade, e a lata em uso vive em `open_package`. `openRoshPrice` mora no SKU **pai** de propósito — a linha da comanda chega com o SKU da variação (para saber qual essência sai do estoque), mas cobra este valor. |
-| `OpenPackage` (V124) | `sku, warehouseId, uses, sessionsPerUnit, openedAt, openedBy, closedAt, closeReason` | EST-F027 — a lata de essência já aberta no balcão. **A unidade sai de `stock_balance` na abertura**, então o saldo passa a significar *latas lacradas na prateleira*, que é o que o operador conta no balanço; o consumo de dentro da lata é o contador daqui. `sessionsPerUnit` é **cópia** do catálogo no momento da abertura, não leitura viva — editar o produto não pode mudar o tamanho de uma lata pela metade. Uma lata em uso por par `(sku, depósito)`, garantido por índice único **parcial** (a tabela é histórico e guarda as fechadas). A lata esgotada continua aberta até a sessão seguinte, que é o que permite a tela mostrar "5 de 5". |
+| `Product.parentSellable` (V149) | `boolean`, default `false` | EST-F036 — a base de um produto **com variações** é vendável? `isSellable(sku)`: variação sempre; base só sem variações ou com o flag ligado. Desligado, a base não se vende (PDV, mesa, site) nem recebe `ENTRADA`; `SAIDA` e `AJUSTE` passam, para escoar e corrigir no balanço. Sem variações o flag não tem efeito. |
+| `OpenPackage` (V124) | `sku, warehouseId, uses, sessionsPerUnit, openedAt, openedBy, closedAt, closeReason` | EST-F027 — a lata de essência já aberta no balcão. **A unidade sai de `stock_balance` na abertura**, então o saldo passa a significar *latas lacradas na prateleira*, que é o que o operador conta no balanço; o consumo de dentro da lata é o contador daqui. `sessionsPerUnit` é **cópia** do catálogo no momento da abertura, não leitura viva — editar o produto não pode mudar o tamanho de uma lata pela metade. Uma lata em uso por par `(sku, depósito)`, garantido por índice único **parcial** (a tabela é histórico e guarda as fechadas). A lata esgotada continua aberta até a sessão seguinte, que é o que permite a tela mostrar "5 de 5". Duas fábricas: `open` (lata nova, `uses = 0`, com `SAIDA 1` no service) e `registered` (EST-F033: lata que **já estava aberta**, nasce com `uses = sessionsPerUnit − usesRemaining` e **sem** `SAIDA`; `usesRemaining` fora de `1..sessionsPerUnit` → `InvalidOpenPackageUsesException`). |
+| `SkuPackaging` (V148) | `childSku, parentSku, unitsPerParent` | EST-F032 — a embalagem: `parentSku` contém `unitsPerParent` de `childSku` (a carteira contém 10 maços, o maço contém 20 cigarros). Cada nível é um SKU próprio — na decisão do dono, uma **variação cor × embalagem** do mesmo produto —, com saldo, preço e código de barras próprios; o saldo de cada um é o que está fisicamente na prateleira. Invariantes: fator > 1 e filho ≠ pai. `parentsToOpen` arredonda para cima (não se abre meio maço). Um filho tem um pai só (PK); ciclo e profundidade (até 4 níveis) são regras do service. |
 | `Pricing` | `costPrice, markupPercent, salePrice` | Value object (EST-F019); os três campos são opcionais e **não negativos**; `empty()` é "não precificado". Deriva `suggestedPrice`, `effectivePrice`, `marginAmount`, `marginPercent`, `effectiveMarkupPercent` |
 | `ProductVariant` | `id, sku, attributes, active` | `sku` obrigatório; cópia defensiva dos atributos |
 | `ProductAttribute` | `type, value` | Ambos obrigatórios; **sem identidade própria** (persistido como `@ElementCollection`) |
@@ -114,6 +125,7 @@ optimistic locking.
 | Quantidade de movimentação deve ser estritamente maior que zero | `StockMovement` (compact constructor) + `@DecimalMin(inclusive=false)` no request | `StockMovementTest`, `EstoqueControllerTest.registerMovement_withNegativeQuantity_returns_400` |
 | Escritas concorrentes no mesmo saldo resultam em 409, não em saldo corrompido | `@Version` em `StockBalanceEntity` + handler global | `StockBalanceConcurrencyIT.saidas_concorrentes_nao_perdem_baixa_de_estoque` |
 | Primeira movimentação concorrente do mesmo par também resulta em 409, não em 500 | `uk_stock_balance_sku_warehouse` + `GlobalExceptionHandler.handleDataIntegrityViolation` | `StockBalanceConcurrencyIT.primeira_movimentacao_concorrente_do_mesmo_par_nao_duplica_saldo` |
+| Escritas simultâneas no contador da lata aberta fazem **fila** e todas contam — nenhum uso some, e ninguém toma 409 no uso comum (EST-C025) | `OpenPackageRepository.findOpenForUpdate` (`PESSIMISTIC_WRITE`) em consumir, desfazer, repor e cadastrar | `OpenPackageConcurrencyIT.concurrentSessions_onTheSamePackage_neverLoseAUse` |
 | Movimentar ou definir mínimo exige SKU existente no catálogo (pai ou variação) | `EstoqueService.requireKnownSku` → `ProductNotFoundException` | `EstoqueServiceTest.adjustStock_throwsWhenSkuNotInCatalog`, `adjustStock_acceptsVariantSkuNotJustParentSku`, `setReorderPoint_throwsWhenSkuNotInCatalog`, `EstoqueRepositoryIT.existsBySku_encontraTantoSkuPaiQuantoSkuDeVariacao` |
 | SKU desconhecido vindo de venda ou recebimento reverte a operação inteira | propagação de `ProductNotFoundException` por `PdvService`/`ComprasService` | `PdvServiceTest.registerSale_propagatesUnknownSkuAndDoesNotSaveSale`, `ComprasServiceTest.receiveGoods_propagatesUnknownSkuAndDoesNotSaveReceipt` |
 | SKU de variação duplicado é 409, não 500 | `EstoqueService.createProduct` valida pai e variações | `EstoqueServiceTest.createProduct_throwsWhenVariantSkuAlreadyExists`, `createProduct_throwsWhenPayloadRepeatsTheSameVariantSku`, `createProduct_throwsWhenVariantSkuEqualsParentSku` |
@@ -153,6 +165,17 @@ optimistic locking.
 | SKU órfão é diagnosticado por par SKU/depósito, considerando SKU pai **e** de variação como conhecidos | `StockIntegrityJpaRepository.findOrphanSkus` (anti-join `NOT EXISTS` contra `product` e `product_variant`) | `EstoqueRepositoryIT.orphanSkus_naoAcusaSkuPaiNemSkuDeVariacaoCadastrados`, `orphanSkus_acusaSkuForaDoCatalogoComSaldo` |
 | Par presente nas três tabelas de estoque vira **uma** linha do diagnóstico, não três | `UNION` (não `UNION ALL`) na origem da query | `EstoqueRepositoryIT.orphanSkus_naoDuplicaQuandoOParEstaNasTresTabelas` |
 | O diagnóstico de integridade é somente leitura — nenhum expurgo automático | `StockIntegrityRepository` sem operação de escrita | `EstoqueServiceTest.listOrphanSkus_doesNotTouchAnyWriteRepository` |
+| Cadastrar lata que já estava aberta **não baixa estoque** — ela já não está no saldo de lacradas (EST-F033) | `EstoqueService.registerOpenPackage` (sem `adjustStock`) | `EstoqueServiceTest.registerOpenPackage_criaALataSemBaixarEstoque` |
+| A lata cadastrada guarda o que já foi gasto: lata de 5 com 2 restantes nasce com 3 usos | `OpenPackage.registered` | `OpenPackageTest.registered_guardaOsUsosJaGastos`, `registered_cheia_nasceZerada` |
+| Restante fora de `1..sessionsPerUnit` é 400 `OPEN_PACKAGE_INVALID_USES`; o piso também é barrado no DTO (`@Min(1)`) | `OpenPackage.registered` + `RegisterOpenPackageRequest` | `OpenPackageTest.registered_recusaRestanteForaDaLata`, `EstoqueControllerTest.registerOpenPackage_withoutUsesRemaining_returns_400` |
+| Só uma lata aberta por `(sku, depósito)`: cadastrar com outra em uso é 409 `OPEN_PACKAGE_ALREADY_OPEN`, inclusive na corrida (índice parcial da V124 traduzido pelo handler) | `registerOpenPackage` + `GlobalExceptionHandler.handleDataIntegrityViolation` | `EstoqueServiceTest.registerOpenPackage_comLataJaAberta_eRecusado`, `GlobalExceptionHandlerTest.dataIntegrity_onOpenPackageConstraint_returnsOpenPackageAlreadyOpen` |
+| Saída que não cabe no **disponível** de um SKU dentro de embalagem abre o pai sozinha, para cima, e em cascata (unidade abre maço, maço abre carteira), na mesma transação (EST-F032) | `EstoqueService.breakPackagingIfShort` (autoinvocação de `adjustStock`) | `EstoqueServiceTest.saida_semSoltoSuficiente_abreUmMacoAutomaticamente`, `saida_semMaco_abreACarteiraEmCascata`, `PackagingBreakIT.venderSoltos_abreMacoECarteiraSozinho` |
+| A cadeia inteira não cobre: `INSUFFICIENT_STOCK` de sempre, e a venda reverte junto com as quebras | `StockBalance.apply` na `SAIDA` do pai | `EstoqueServiceTest.saida_semSaldoEmNenhumNivel_falhaComoSempre`, `PackagingBreakIT.venderAlemDaCadeia_falhaSemAbrirNada` |
+| Com saldo suficiente, a embalagem nem é consultada; SKU sem ligação se comporta como antes | gancho só quando falta | `EstoqueServiceTest.saida_comSaldoSuficiente_naoConsultaAEmbalagem`, `saida_semLigacao_naoQuebraNada` |
+| O filho aberto entra com o custo médio do pai dividido pelo fator | `breakPackagingIfShort` (`unitCost` na `ENTRADA`) | `EstoqueServiceTest.quebra_levaOCustoDoPaiDivididoPeloFator` |
+| Ligação recusada para kit, produto base com variações, produto com lote, ciclo e cadeia acima de 4 níveis | `EstoqueService.definePackaging` + `requirePackageableSku` | `EstoqueServiceTest.definePackaging_*` |
+| A base de um produto com variações não se vende por padrão: `400 PARENT_NOT_SELLABLE` antes de qualquer gravação, em todo caminho de venda (EST-F036) | `EstoqueService.resolveSaleInfo` + `Product.isSellable` | `EstoqueServiceTest.resolveSaleInfo_daBaseNaoVendavel_eRecusado`, `ProductTest.baseComVariacoes_naoEVendavelPorPadrao_masAsVariacoesSao` |
+| Entrada de estoque na base também é recusada; saída e ajuste continuam (o balanço não pode travar) | `EstoqueService.adjustStock` | `EstoqueServiceTest.entradaNaBaseNaoVendavel_eRecusada`, `saidaEAjusteNaBaseNaoVendavel_continuamLiberados` |
 
 ## API — Endpoints
 
@@ -186,8 +209,14 @@ Todos exigem `bearerAuth`. Controller: `adapter/in/controller/EstoqueController.
 | `GET` | `/estoque/open-packages` | `ESTOQUE_PRODUCT_READ` ou `PDV_COMANDA_MANAGE` | EST-F027 — as latas em uso de um depósito, com o contador de sessões de cada uma. É o "3 de 5" da tela de sessão. `404 WAREHOUSE_NOT_FOUND` |
 | `GET` | `/estoque/open-packages/{sku}` | `ESTOQUE_PRODUCT_READ` ou `PDV_COMANDA_MANAGE` | EST-F027 — a lata de um SKU. `404 OPEN_PACKAGE_NOT_FOUND` quando não há nenhuma aberta, que é **estado normal**, não erro: a próxima sessão abre uma |
 | `POST` | `/estoque/open-packages/{sku}/replace` | `ESTOQUE_STOCK_MANAGE` ou `PDV_COMANDA_MANAGE` | EST-F027 — "Repor essência": descarta a lata em uso e abre outra, baixando **uma** unidade. Quem repõe é o atendente, que tem `PDV_COMANDA_MANAGE` e não `STOCK_MANAGE` — exigir só a segunda deixaria o botão inalcançável para quem o aperta. `400 INSUFFICIENT_STOCK` (e a lata antiga **continua aberta**) / `NOT_A_PACKAGED_SESSION_PRODUCT`; `404 PRODUCT_NOT_FOUND`/`WAREHOUSE_NOT_FOUND` |
+| `POST` | `/estoque/open-packages/{sku}` | `ESTOQUE_STOCK_MANAGE` ou `PDV_COMANDA_MANAGE` | EST-F033 — cadastra uma lata que **já estava aberta** antes do sistema, com `{warehouseCode, usesRemaining}`. **Não baixa estoque.** `201` com o contador; `409 OPEN_PACKAGE_ALREADY_OPEN` se já houver lata em uso do SKU no depósito; `400 OPEN_PACKAGE_INVALID_USES` com restante fora de `1..sessionsPerUnit`; `400 NOT_A_PACKAGED_SESSION_PRODUCT`. |
+| `PUT` | `/estoque/products/{sku}/packaging` | `ESTOQUE_PRODUCT_MANAGE` | EST-F032 — liga o SKU à embalagem que o contém, `{parentSku, unitsPerParent ≥ 2}`; redefinir substitui. `400 INVALID_PACKAGING` (kit, produto base com variações, produto com lote, ciclo, cadeia acima de 4 níveis); `404` SKU desconhecido. Publica `PACKAGING_DEFINED`. |
+| `DELETE` | `/estoque/products/{sku}/packaging` | `ESTOQUE_PRODUCT_MANAGE` | EST-F032 — desliga; saldos não mudam. `404 PACKAGING_NOT_FOUND`. Publica `PACKAGING_REMOVED`. |
+| — | `EstoqueUseCase.listPackagedFamilies` (sem rota em `/estoque`) | — | PDV-F041 — as famílias com embalagem ligada, servidas por `GET /pdv/cigarros` em [`vendas-balcao`](../vendas-balcao/README.md#api--endpoints). |
+| `GET` | `/estoque/products/{sku}/packaging?warehouseCode=` | `ESTOQUE_PRODUCT_READ` ou `PDV_READ` | EST-F032 — a cadeia que passa pelo SKU, da embalagem mais externa à mais interna (`sku`, `containsSku`, `containsUnits`, `available` no depósito quando informado). `PDV_READ` porque é a base da central de cigarros (PDV-F041). |
 | `DELETE` | `/estoque/products/{sku}` | `ESTOQUE_PRODUCT_MANAGE` | EST-F026 — descarta um **rascunho**. `204`; `409 PRODUCT_NOT_DRAFT` (publicado: use `PATCH .../active`) / `PRODUCT_HAS_STOCK_HISTORY`; `404 PRODUCT_NOT_FOUND` |
 | `PATCH` | `/estoque/products/{sku}/lot-tracked` | `ESTOQUE_PRODUCT_MANAGE` | Ativa/desativa o rastreamento de lote e validade do SKU (EST-F008), opt-in — kit não pode. `200`; `400` se SKU é `KIT`; `404 PRODUCT_NOT_FOUND` |
+| `PATCH` | `/estoque/products/{sku}/parent-sellable` | `ESTOQUE_PRODUCT_MANAGE` | EST-F036 — `{parentSellable}` liga/desliga a venda da base de um produto com variações. `200` com o produto (que passa a trazer `parentSellable` em toda resposta); `400` sem o campo; `404` SKU pai desconhecido. Publica `PRODUCT_UPDATED` com o flag. |
 | `GET` | `/estoque/movements` | `ESTOQUE_PRODUCT_READ` ou `ESTOQUE_STOCK_MANAGE` | Histórico paginado do ledger por `sku` + `warehouseCode` (`page` = 0, `size` = 20, teto de 100), mais recentes primeiro. Par nunca movimentado devolve página vazia com `200`; `404 WAREHOUSE_NOT_FOUND`; `400 MISSING_PARAMETER` |
 | `POST` | `/estoque/stock-counts` | `ESTOQUE_STOCK_MANAGE` | Abre um balanço para o depósito. `201` + `Location`; `404 WAREHOUSE_NOT_FOUND`; `409 STOCK_COUNT_ALREADY_OPEN` |
 | `POST` | `/estoque/stock-counts/{id}/items` | `ESTOQUE_STOCK_MANAGE` | Registra a contagem física de um SKU (upsert; zero é válido). SKU lote-rastreado (EST-F008) exige `lotCode` — upsert então é por `(sku, lotCode)`, cada lote contado à parte. `200`; `404 PRODUCT_NOT_FOUND`/`STOCK_COUNT_NOT_FOUND`/`STOCK_LOT_NOT_FOUND`; `400 LOT_INFO_REQUIRED`/`LOT_INFO_NOT_APPLICABLE`; `409 STOCK_COUNT_NOT_OPEN` |
@@ -282,6 +311,9 @@ Toda operação que altera saldo publica `AuditEvent`:
 | `POST /estoque/stock-counts/{id}/cancel` | `EstoqueController` | `STOCK_COUNT_CANCELLED` |
 | `POST /estoque/movements` | `EstoqueController` | `STOCK_MOVEMENT_REGISTERED` |
 | `PUT /estoque/products/{sku}/reorder-point` | `EstoqueController` | `REORDER_POINT_SET` |
+| `PUT`/`DELETE /estoque/products/{sku}/packaging` | `EstoqueController` | `PACKAGING_DEFINED` / `PACKAGING_REMOVED` (EST-F032) |
+| Quebra automática de embalagem (qualquer `SAIDA`) | `EstoqueService` via `AuditEventPublisherPort` | `STOCK_PACKAGE_BROKEN` (EST-F032, com `parentSku`, `childSku`, `warehouseCode`, `parentsOpened`, `childUnits`; usuário = quem fez a saída) — os dois movimentos ficam no ledger com o motivo "Quebra automática de embalagem" |
+| `POST /estoque/open-packages/{sku}` | `EstoqueController` | `OPEN_PACKAGE_REGISTERED` (EST-F033, com `sku`, `warehouseCode`, `usesRemaining`) — única entrada no contador da lata sem `SAIDA` por trás |
 | `POST /pdv/sessions/{id}/sales` | `PdvController` | `STOCK_MOVEMENT_REGISTERED` (`origin: PDV_SALE`) |
 | `POST /compras/goods-receipts` | `ComprasController` | `STOCK_MOVEMENT_REGISTERED` (`origin: GOODS_RECEIPT`) |
 
@@ -329,6 +361,11 @@ notificação por item (EST-C003). Não há fila: se a entrega falhar, não há 
 
 ## Integrações entre Domínios
 
+> **EST-F032 — a quebra de embalagem vale para todo chamador de `SAIDA` por `adjustStock`** (venda de
+> balcão, mesa, estorno, conversão): quem vende o cigarro solto não sabe que um maço foi aberto. A
+> exceção é a **criação de reserva** do marketplace (`reserveStock`), que não abre embalagem — reserva
+> de solto sem solto disponível falha. O consumo da reserva não passa por `adjustStock` e não é afetado.
+
 Estoque é consumido por outros domínios através do port de entrada `EstoqueUseCase`, injetado
 em `infra/config/CoreBeanConfig.java`. Todas as integrações são **chamadas síncronas diretas**
 — não há evento, listener, fila nem outbox.
@@ -339,6 +376,7 @@ em `infra/config/CoreBeanConfig.java`. Todas as integrações são **chamadas s�
 | **PDV — venda no balcão** | `PdvService.registerSale` | `SAIDA` por item |
 | **PDV — liquidação de pedido online** | `PdvService.settleOnlineOrder` | consome a reserva |
 | **Mesa — lançamento na comanda** | `ComandaService.addItem` | `SAIDA`, **uma por lançamento** |
+| **Mesa — sessão do cardápio com sabor do catálogo** (PDV-F042) | `ComandaService.addSession`/`addRoshExtra`/`repeatSession` | `consumeSession` (uso da lata do sabor) ou `SAIDA 1` como uso da loja sem `sessionsPerUnit`; desfeito por `releaseSession`/`ENTRADA` só enquanto a sessão não saiu da espera |
 | **Mesa — remoção de linha** | `ComandaService.removeItem` | `ENTRADA` das linhas removidas |
 | **Mesa — cancelamento** | `ComandaService.cancelComanda` | `ENTRADA` de todos os itens |
 | **Pedido — cancelamento** | `OrderService.cancelOrder` | libera a reserva |
@@ -460,6 +498,9 @@ nem para `product_variant.sku`. Ver EST-C002.
 | `adapter/in/controller/EstoqueAlertaIT` | `@SpringBootTest` (profile `dev`) | E2E do alerta: depósito → ENTRADA 20 → mínimo 10 → SAIDA 12 → notificação em `GET /notifications` |
 | `core/service/ComprasServiceTest` | Unit | Recebimento ajusta estoque por item; falha do estoque (saldo, depósito ou SKU desconhecido) propaga e não salva o receipt |
 | `core/service/PdvServiceTest` | Unit | Venda dá baixa por item; `InsufficientStockException` e `ProductNotFoundException` revertem a venda inteira |
+| `core/domain/model/estoque/SkuPackagingTest` | Unit de domínio | EST-F032: invariantes da ligação, `parentsToOpen` arredondando para cima, `childUnits` |
+| `core/service/PackagingBreakIT` | `@SpringBootTest` (profile `dev`) | EST-F032 ponta a ponta pela venda do PDV: 2 carteiras, 25 soltos → 1 carteira, 8 maços, 15 soltos; maço sem maço fechado abre carteira; cadeia que não cobre falha; leitura da cadeia com disponível |
+| `core/service/OpenPackageConcurrencyIT` | `@SpringBootTest` (profile `dev`) | EST-C025: 8 sessões simultâneas na mesma lata registram exatamente 8 usos, sem baixar estoque |
 | `core/service/StockBalanceConcurrencyIT` | `@SpringBootTest` (profile `dev`) | 8 escritas simultâneas no mesmo saldo: sem lost update, conflitos tratados; idem na primeira movimentação do par |
 | `adapter/out/persistence/repository/EstoqueRepositoryIT` | `@SpringBootTest` + `@Transactional` | Os 6 `*RepositoryImpl`: round-trip de produto com variações/atributos, `existsBySku` em SKU pai e de variação, paginação ID-first, propagação do `version`, ordem do ledger, upsert do ponto de reposição, e os 7 cenários da query nativa de SKU órfão |
 | `infra/transaction/TransactionAfterCommitExecutorTest` | Unit | Agregação por chave, despacho único no commit, silêncio no rollback, isolamento entre transações da mesma thread, falha de um lote não derruba o próximo |
@@ -521,6 +562,12 @@ Convenções, variáveis e o environment compartilhado estão em
 - `sku` **sem FK** para `product`, mesma decisão de `stock_balance`/`stock_movement` (EST-C011): pode ser SKU de variação, que vive em outra tabela, e a checagem de existência mora no service.
 - `comanda_item.package_uses` / `package_sessions_per_unit` (nullable, com os mesmos dois CHECKs) — qual uso da lata a linha foi, congelado no lançamento. Snapshot e não FK para `open_package.id`: o histórico continua verdadeiro depois da reposição, e é por aqui que o cancelamento sabe, meses depois, que a linha consumiu **uso** e não unidade. `NULL` é toda linha anterior a esta migration; **sem backfill**, porque não há como saber quantas latas de fato foram abertas no passado.
 
+**V149 — `estoque_produto_base_vendavel`** (EST-F036)
+- `product.parent_sellable BOOLEAN NOT NULL DEFAULT FALSE` — **para todos, inclusive os já cadastrados** (decisão do dono, 2026-10-08). Efeito só em produto com variações (regra do domínio). Quem precisa vender a base liga por `PATCH .../parent-sellable`.
+
+**V148 — `estoque_embalagem`** (EST-F032)
+- `sku_packaging` (`child_sku` PK, `parent_sku`, `units_per_parent`) — CHECKs `units_per_parent > 1` e `child_sku <> parent_sku`; índice `idx_sku_packaging_parent`. PK no filho: um SKU está dentro de no máximo uma embalagem. Sem FK para `product`, como as demais colunas de SKU; as duas colunas entram em `ProductRepositoryImpl.SKU_COLUMNS` (EST-F030). Ciclo e profundidade são regras do service.
+
 **V125 — `compras_supplier_manage_permission`** (COM-F001) — documentada em [`compras`](../compras/README.md).
 
 ## Backlog do Módulo
@@ -545,8 +592,80 @@ Convenções, variáveis e o environment compartilhado estão em
 | EST-C023 | 🟡 Importante | Correção | backfill-de-brand-id-na-base-semeada | 190 produtos com marca em texto e **zero** com `brandId`; as 73 marcas cadastradas todas com `productCount: 0`. Não era defeito de código nem falha da V107 — o catálogo de demonstração foi semeado por `scripts/` **depois** da migration, inserindo direto em `product`. Na tela: coluna MARCA em "—", filtro de marca sem nada para filtrar, "Todas as Marcas" listando 73 cards de "0 SKUs". EST-008 do QA de 06/09/2026. | ✅ Fechado (2026-09-08) — V123 repete os três passos da V107 de forma idempotente, casando por `LOWER(unaccent(...))`. **O seed continua reabrindo o buraco**: toda carga em massa que não passe pelo `EstoqueService` nasce sem vínculo. |
 | EST-F026 | 🟡 Importante | Feature | excluir-rascunho-de-produto | O 409 `DRAFT_LIMIT_REACHED` orientava uma ação que o sistema não oferecia: dizia "publique ou remova um rascunho", e remover não existia. `PATCH .../active` com `false` **não** liberava a vaga (`status` e `active` são eixos independentes), então a única saída era publicar no catálogo um produto que o operador não queria publicar — cinco rascunhos abandonados desligavam o recurso para o tenant inteiro. EST-020 do QA de 06/09/2026. | ✅ Fechado (2026-09-08) — `DELETE /estoque/products/{sku}`, restrito a `RASCUNHO` (409 `PRODUCT_NOT_DRAFT` no publicado) e recusando rascunho com saldo/movimentação (409 `PRODUCT_HAS_STOCK_HISTORY`, mesma régua de EST-C011). |
 | EST-F027 | 🔴 Alta | Feature | lata-de-essencia-aberta | `sessions_per_unit` existia em `product` desde a V112 e **nunca era lido por ninguém**: cada sessão de narguilé baixava uma lata inteira. Medido no QA de 06/09/2026: `ESSE-ZGY-BLUEBERRY` foi de 50 para 49 numa sessão só — com `sessionsPerUnit: 5`, o estoque some cinco vezes mais rápido que a realidade, o alerta de reposição dispara cedo e a margem do open rosh, que é o número que o dono quer olhar, sai errada. Pedido levantado com o dono. | ✅ Fechado (2026-09-08) — `open_package` (V124) com contador de usos por `(sku, depósito)`, `GET /estoque/open-packages`, `.../{sku}` e `POST .../{sku}/replace`. **A baixa acontece na abertura**: o saldo passa a significar "latas lacradas na prateleira", que é o que o operador conta no balanço. Par de PDV-F018. |
+| EST-F032 | 🔴 Alta | Feature | hierarquia-de-embalagem-e-quebra-automatica | Central de cigarros: a carteira tem 10 maços e o maço tem 20 unidades, e a loja vende **solto e em maço**. Hoje não há relação entre SKUs: `ProductType` é só `SIMPLES`/`KIT`, `Product.unit` é rótulo, e abrir embalagem é um `POST /estoque/conversions` manual (EST-F025). Decisão do dono (2026-10-08): **três SKUs ligados**, cada saldo sendo o que está fisicamente na prateleira (carteiras lacradas, maços lacrados, cigarros soltos). Desenho: `product.parent_sku` + `units_per_parent` (V147). Em `adjustStock(SAIDA)` (`EstoqueService:1261`), se o saldo do filho não cobre a quantidade, chama `convertStock(pai→filho, 1, fator)` (`:1136`) **na mesma transação**, em cascata (unidade sem saldo abre maço, maço sem saldo abre carteira), quantas vezes for preciso, com `reason` "Quebra automática de embalagem (reposição)" nos dois movimentos. Só falha com `InsufficientStockException` quando a cadeia inteira não cobre. Recusar ciclo, auto-referência, profundidade > 3, `KIT` e `lotTracked` (lote atravessando embalagem fica fora desta entrega). Inclui cadastro em família (um POST cria os três SKUs já ligados). A compra ("comprei N carteiras") é ENTRADA comum no SKU carteira. Diferente de EST-F016 (unidade de medida dentro de **um** SKU). Par de **PDV-F041**. Pedido do dono, `/1-analise` de 2026-10-08. | ✅ Fechado (2026-10-08) — `sku_packaging` (V148) + quebra em `adjustStock`; cadastro em família ficou fora (ver Histórico). |
+| EST-F033 | 🔴 Alta | Feature | registrar-lata-ja-aberta | As essências da mesa saem da prateleira da loja, e o dono quer cadastrar as latas **já abertas** para ter controle e, a partir daí, baixa automática. Mas `OpenPackage.open` (`:71`) sempre nasce com `uses = 0` e `EstoqueService.openPackage` (`:1235`) sempre faz `SAIDA 1`: não há como registrar uma lata aberta **antes** do sistema sem baixar outra unidade, nem dizer quantos usos ela ainda tem. Desenho: `POST /estoque/open-packages/{sku}` com `{warehouseCode, usesRemaining}` cria a lata com `uses = sessionsPerUnit − usesRemaining`, **sem SAIDA**. Só vale se não houver lata aberta para `(sku, depósito)` (o índice parcial de V124 já garante) e para produto com `sessionProduct` e `sessionsPerUnit`. Permissão de `/replace` (`ESTOQUE_STOCK_MANAGE` ou `PDV_COMANDA_MANAGE`) e evento de auditoria próprio, porque é a única entrada no contador que não passa pelo ledger. Par de **PDV-F042**. Pedido do dono, `/1-analise` de 2026-10-08. | ✅ Fechado (2026-10-08) — `POST /estoque/open-packages/{sku}`, sem `SAIDA`; ver Histórico. |
+| EST-F034 | 🟡 Média | Feature | preco-promocional-com-vigencia | Não existe promoção no sistema: `onSale`/`superPromo` (V83) são flags de vitrine e `Pricing.originalPrice` é só o preço riscado (`Pricing.java:39-41`). Desenho: `product_promotion` com `sku`, `%` ou preço, `startsAt`/`endsAt`, `origin` (`MANUAL`/`VALIDADE`), `lot_id` opcional e quem criou. `Pricing.effectivePrice()` passa a considerar a promoção vigente. Como **os dois canais** resolvem preço por ali (`PdvService.registerSale:284-296` via `resolveSaleInfo`; `ShopService:138-149` e `:369`), a promoção vale no PDV e no catálogo do shop de uma vez, e `onSale` passa a ser derivado. **⚠️ Decisão do dono pendente:** o [plano](../../plano-pdv-marketplace.md) §8.3 tirou cupom e promoção do escopo para não ter dois descontos compondo com o cashback. Este item é **preço**, não motor de desconto (sem cupom, combo nem regra), e o cashback incide sobre o preço já reduzido, mas a decisão de 8.3 precisa ser revista explicitamente antes da sprint. Ver nota em [`ecommerce`](../ecommerce/README.md#backlog-do-módulo). Pedido do dono, `/1-analise` de 2026-10-08. | Pendente |
+| EST-F035 | 🟡 Média | Feature | sugestao-de-promocao-por-validade | Essências de narguilé perto do vencimento. A validade já existe **por lote** (EST-F008: `stock_lot.expiry_date`, FEFO na saída), e decisão do dono (2026-10-08) é usá-la, e não uma data única no produto. Hoje o lote só gera aviso: `StockLotExpiryAlertService` notifica 7 dias antes e não há listagem dos lotes vencendo entre produtos (só `GET /estoque/products/{sku}/lots`). Desenho: `GET /estoque/lots/expiring?days=` lista os lotes com saldo e o desconto sugerido (configurável; padrão ≤ 30 dias → 20%, ≤ 15 dias → 30%), e `POST /estoque/lots/{lotId}/promotion` aceita a sugestão com um clique, criando a promoção de **EST-F034** (`origin = VALIDADE`) até a validade do lote. Ela encerra sozinha quando o lote zera. O alerta diário passa a citar a sugestão. Pré-requisito operacional: marcar as essências como `lotTracked` e informar a validade na entrada. Depende de EST-F034. Pedido do dono, `/1-analise` de 2026-10-08. | Pendente |
+| EST-C025 | 🟡 Importante | Correção | lata-aberta-sem-trava-de-concorrencia | `OpenPackageEntity` **não tem `@Version`** e `OpenPackageRepositoryImpl.save` é read-modify-write (`findById`, reescreve `uses`). `consumeSession`/`releaseSession` (`EstoqueService:1159`, `:1184`) leem a lata sem trava: dois atendentes lançando sessão do mesmo sabor ao mesmo tempo leem `uses = 2` e gravam `3` os dois — **um uso some**, e a lata rende uma sessão a mais do que a realidade. O índice parcial da V124 só protege a **abertura** (duas latas), não o contador. Hoje inalcançável em produção (a sessão do cardápio não consome lata), mas **PDV-F042 liga esse caminho**: precisa entrar antes dela. Molde: o `@Version` de `StockBalanceEntity` com o 409 de `OptimisticLockingFailureException`, ou a trava pessimista de PDV-C008. Achado no Gate 1 da sprint de EST-F033 (2026-10-08). | ✅ Fechado (2026-10-08) — trava **pessimista** na leitura da lata, não `@Version`; ver Histórico. |
+| EST-F036 | 🟡 Média | Feature | produto-pai-com-variacoes-nao-vendavel | O produto **base** de um produto com variações aparece como vendável e aceita movimento, embora o estoque real esteja nas variações. Exemplo do dono (2026-10-08): "LM cigarro" com azul e vermelho mostra **três** itens no PDV — a base, que não existe na prateleira, e as duas cores; o mesmo vale para "Essência Zig" com os sabores. Hoje não há guarda em `EstoqueService` (só `KitHasVariantsException` para kit). Proposta: flag por produto "a base é vendável?" — padrão **não** quando há variações —, aplicada em `registerSale`, `adjustStock`, no checkout e na listagem do PDV/catálogo. PDV-F042 já recusa a base como essência (`ESSENCE_MUST_BE_FLAVOR`, via `CatalogSaleInfo.parentWithVariants`); este item generaliza. Ligado a EST-F032/PDV-F041 (cigarros). | ✅ Fechado (2026-10-08) — `parent_sellable` (V149), padrão desligado para todos; ver Histórico. |
+
+> **PDV-F041** (central de cigarros) e **PDV-F042** (essência do catálogo na sessão de mesa), em
+> [`vendas-balcao`](../vendas-balcao/README.md#backlog-do-módulo), são o lado do PDV de **EST-F032** e
+> **EST-F033**. A baixa do estoque continua sendo deste módulo.
 
 ## Histórico de Implementações
+
+- **2026-10-08** — `produto-pai-com-variacoes-nao-vendavel` (EST-F036, **V149**). "LM" com azul e vermelho
+  aparecia como **três** itens no PDV — a base, que não existe na prateleira, e as duas cores. Novo
+  `product.parent_sellable` e `Product.isSellable(sku)`: com variações, a base não se vende nem recebe
+  entrada até o dono ligar (`PATCH /estoque/products/{sku}/parent-sellable`). **Decisões:** (1) padrão
+  **desligado para todos**, inclusive os já cadastrados — decisão do dono; (2) a guarda de venda fica em
+  `resolveSaleInfo`, por onde passam PDV, mesa, essência da sessão e checkout, então é um ponto só e
+  antes de qualquer gravação; (3) entrada bloqueada, **saída e ajuste liberados** — o dono escolheu
+  bloquear também o ajuste para cima, mas o fechamento do balanço aplica `AJUSTE` e travaria inteiro por
+  uma base com contagem acima do saldo, então o ajuste ficou livre (registrado com o dono); (4) a lista
+  de latas lê o nome por `findProductBySku`, para ler não passar pela guarda de venda; (5) o produto
+  devolve `parentSellable`, que é o que o PDV usa para esconder a base na busca. **Fica de fora:** o
+  carrinho do site aceita a base e a recusa só aparece no checkout. Testes: `ProductTest` (+3),
+  `EstoqueServiceTest` (+6), `EstoqueControllerTest` (+3, e dois testes de lata passaram a mockar
+  `findProductBySku`), `EstoqueControllerSecurityTest` (+1).
+
+- **2026-10-08** — `hierarquia-de-embalagem-e-quebra-automatica` (EST-F032, **V148**). O cigarro é comprado
+  por carteira (10 maços) e vendido em maço e solto (20 por maço), e não havia relação entre SKUs: abrir
+  embalagem era `POST /estoque/conversions` à mão. Nova `sku_packaging` ("o pai contém N do filho") com
+  `PUT`/`DELETE`/`GET /estoque/products/{sku}/packaging`, e a **quebra automática**: toda `SAIDA` que não
+  cabe no disponível de um SKU ligado abre o pai sozinha, em cascata, na mesma transação. **Decisões:**
+  (1) modelo do dono — um produto ("LM") com variações **cor × embalagem**, cada uma com SKU, preço e
+  código de barras próprios; o produto base não entra em embalagem; (2) as duas pontas são
+  autoinvocação de `adjustStock` (mesmo idioma de `explodeKitMovement`), por isso a cascata é de graça
+  e a falta na cadeia inteira reverte a venda; motivos próprios ("Quebra automática de embalagem →/←"),
+  sem `MovementType` novo; (3) o filho entra com o custo médio do pai ÷ fator; (4) a conta usa o
+  **disponível** (reserva não é aberta para cobrir a si mesma) e o gancho só consulta a embalagem quando
+  falta — o caminho comum não paga leitura a mais; (5) teto de **4 níveis** (fardo → carteira → maço →
+  unidade), ciclo recusado; kit, base com variações e produto com lote recusados — lote atravessando
+  embalagem não tem regra; (6) `STOCK_PACKAGE_BROKEN` para a decisão do sistema, `PACKAGING_DEFINED/REMOVED`
+  para a do operador. **Fora:** o cadastro em família (um POST que cria a grade inteira) — a grade de
+  variações já existe; e a criação de reserva não quebra embalagem. Testes: `SkuPackagingTest` (6),
+  `EstoqueServiceTest` (+13), `EstoqueControllerTest` (+5), `EstoqueControllerSecurityTest` (+3),
+  `PackagingBreakIT` (4).
+
+- **2026-10-08** — `lata-aberta-sem-trava-de-concorrencia` (EST-C025): o contador de `open_package`
+  era read-modify-write sem trava, e dois atendentes lançando o mesmo sabor perdiam um uso. Novo
+  `OpenPackageRepository.findOpenForUpdate` (`PESSIMISTIC_WRITE`), usado pelos quatro caminhos de
+  escrita (`consumeSession`, `releaseSession`, `replaceOpenPackage`, `registerOpenPackage`); as
+  leituras seguem sem trava. **Pessimista e não `@Version`**, como a comanda (PDV-C008): as escritas
+  fazem fila e todas passam, em vez de o atendente perder a corrida com 409 no meio do salão — e sem
+  migration. **Limite que fica:** sem lata aberta não há linha a travar, então duas sessões que
+  encontram o par vazio (ou a lata acabando no mesmo instante) abrem cada uma a sua; a segunda colide
+  no índice parcial da V124 e responde 409 com a `SAIDA` revertida. É a janela da troca de lata, rara,
+  e o estoque não fica errado. Teste: `OpenPackageConcurrencyIT` (novo); `EstoqueServiceTest` passou a
+  mockar a leitura travada. Pré-requisito de PDV-F042, que liga esse caminho em produção.
+
+- **2026-10-08** — `registrar-lata-ja-aberta` (EST-F033): `POST /estoque/open-packages/{sku}` com
+  `{warehouseCode, usesRemaining}` cadastra uma lata que **já estava aberta** antes de o sistema saber
+  dela — o inventário inicial das essências da mesa, pedido do dono. Antes, toda lata nascia por
+  `openPackage`, que sempre faz `SAIDA 1`: não havia como registrar a lata da bancada sem tirar do
+  saldo uma segunda, ainda lacrada. **Decisões:** (1) **sem `SAIDA`** — a lata já não está no saldo de
+  lacradas; daí em diante segue o ciclo de EST-F027 (esgotou, a próxima sessão abre outra com baixa);
+  (2) o operador informa o que vê, **sessões restantes**, e o domínio guarda o gasto
+  (`OpenPackage.registered`: `uses = sessionsPerUnit − usesRemaining`); (3) com lata já em uso é **409
+  `OPEN_PACKAGE_ALREADY_OPEN`**, e a corrida entre dois cadastros, barrada pelo índice parcial da V124,
+  responde o mesmo código (o handler lê o nome da constraint, como PLAT-C055); (4) evento próprio
+  `OPEN_PACKAGE_REGISTERED`, porque é a única entrada no contador sem rastro em `stock_movement`;
+  (5) mesma permissão do `/replace` — quem cadastra é o atendente. Sem migration. Testes:
+  `OpenPackageTest` (+3), `EstoqueServiceTest` (+4), `EstoqueControllerTest` (+5),
+  `EstoqueControllerSecurityTest` (+2), `GlobalExceptionHandlerTest` (+1). O Gate 1 desta sprint abriu
+  **EST-C025** (contador da lata sem trava), pré-requisito de PDV-F042.
 
 - **2026-09-23** — `kit-montavel` (EST-F031, com ECM-F008 e PDV-F019): o "Kit Mahal", em que o
   cliente escolhe bag, seda, piteira, tubeck, tesoura, cuia e isqueiro e paga a soma dos itens menos

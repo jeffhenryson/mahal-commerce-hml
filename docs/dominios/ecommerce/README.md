@@ -3,7 +3,7 @@
 **Status:** 🟢 Marketplace completo — Fatia 8 (ECM-F001/F002), Fatia 9 (ECM-F003/C002) e Fatia 10 (ECM-F004, gateway InfinitePay) entregues
 **Pacote Java:** `com.cernecommerce...ecommerce`
 **Rota HTTP base:** `/ecommerce` (admin, stub), `/shop` (cliente final — `/shop/register`+`/shop/catalog/**` públicos, `/shop/cart/**`+`/shop/checkout`+`/shop/orders/**` autenticados) e `/webhooks/payments/{provider}` (público, gateway)
-**Última atualização deste doc:** 2026-08-18 (ECM-C003/C004, ECM-F005/F006/F007 — auditoria `/1-analise ambas`)
+**Última atualização deste doc:** 2026-10-08 (nota de EST-F034/F035, preço promocional vindo do estoque). Antes: 2026-08-18 (ECM-C003/C004, ECM-F005/F006/F007 — auditoria `/1-analise ambas`)
 
 ## Objetivo
 
@@ -278,6 +278,12 @@ Convenções, variáveis e o environment compartilhado estão em
 | ECM-F005 | 🟢 Baixa | Feature | saldo-e-extrato-de-cashback-do-cliente | `GET /shop/cashback` no marketplace — a permissão `SHOP_CASHBACK_OWN` já existe desde ECM-F001 e nunca ganhou endpoint (`ECM-C003`); o cliente do site hoje não vê o próprio saldo, reduzindo o incentivo do programa de cashback (`CRM-F003`). Implementar como novo método em `ShopAccountController`/`ShopService` delegando ao mesmo `CashbackUseCase` já usado por `CrmController`, reaproveitando `requireCustomerId`. Sugerido em análise de inovação de 2026-08-18. | Pendente |
 | ECM-F006 | 🔴 Alta | Feature | assinatura-recorrente-de-consumiveis | Clube de assinatura mensal de essência/carvão com cobrança automática. Transforma receita pontual de e-commerce em recorrência previsível — o gateway InfinitePay (`ECM-F004`) já está integrado como base de cobrança. Proposta: `Subscription` (plano, periodicidade, itens) gerando `Order` automaticamente via job agendado, reaproveitando `PaymentGatewayPort`/checkout existentes; avaliar se o InfinitePay suporta token de cartão ou se o modelo precisa ser link recorrente por ciclo. Toca `financeiro` no reconhecimento de receita quando o DRE existir. Sugerido em análise de inovação de 2026-08-18. | Pendente |
 | ECM-F007 | 🔴 Alta | Feature | motor-de-recomendacao-e-cross-sell | Sugestão de produtos complementares no e-commerce e no balcão ("quem levou X também levou Y"). Catálogo com variações e histórico de pedidos já existem prontos para alimentar análise de coocorrência sobre `order_item` histórico (batch offline, sem ML pesado no MVP), exposto em `GET /shop/catalog/{sku}/recommendations` e sugestão no fechamento do PDV. Aumenta ticket médio sem depender de desconto — cupom/promoção saíram de escopo por decisão (ver nota abaixo). Sugerido em análise de inovação de 2026-08-18. | Pendente |
+
+> **EST-F034** (preço promocional com vigência) e **EST-F035** (promoção sugerida por validade de
+> lote), em [`estoque`](../estoque/README.md#backlog-do-módulo), mudam o preço que o shop exibe e
+> cobra, porque `ShopService` lê `Pricing.effectivePrice()`. Não é o motor de cupom e promoção que
+> §Escopo deixou de fora (sem cupom, combo nem regra), mas encosta na decisão do
+> [plano](../../plano-pdv-marketplace.md) §8.3 e precisa dela revista pelo dono antes da sprint.
 
 > `EST-F013` (`reserva-estoque-checkout`) era o cruzamento `ecommerce↔estoque` rastreado em
 > [`estoque`](../estoque/README.md#backlog-do-módulo) — fechado por ECM-F003, que consome
