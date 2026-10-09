@@ -12,7 +12,13 @@ import com.cernecommerce.core.domain.exception.estoque.DuplicateWarehouseCodeExc
 import com.cernecommerce.core.domain.exception.estoque.InactiveProductException;
 import com.cernecommerce.core.domain.exception.estoque.InactiveWarehouseException;
 import com.cernecommerce.core.domain.exception.estoque.InsufficientStockException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
+import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException;
+import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
+import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
@@ -145,6 +151,7 @@ class EstoqueServiceTest {
     @Mock com.cernecommerce.core.ports.out.estoque.AttributeTypeRepository attributeTypeRepository;
     @Mock com.cernecommerce.core.ports.out.estoque.ReplenishmentListRepository replenishmentListRepository;
     @Mock com.cernecommerce.core.ports.out.estoque.OpenPackageRepository openPackageRepository;
+    @Mock com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository skuPackagingRepository;
     @Mock com.cernecommerce.core.ports.out.notification.ManagerNotificationPort managerNotificationPort;
     @Mock com.cernecommerce.core.ports.out.event.AuditEventPublisherPort auditEventPublisherPort;
 
@@ -172,7 +179,7 @@ class EstoqueServiceTest {
                 stockReservationRepository, notificationUseCase, userRepository, immediateExecutor,
                 RESERVATION_TTL, kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository,
                 brandRepository, attributeTypeRepository, replenishmentListRepository, openPackageRepository,
-                managerNotificationPort, auditEventPublisherPort);
+                managerNotificationPort, auditEventPublisherPort, skuPackagingRepository);
         lenient().when(reorderPointRepository.findBySkuAndWarehouseId(any(), any())).thenReturn(Optional.empty());
         // Padrão dos testes: o SKU existe no catálogo, que é a pré-condição das movimentações.
         // Os testes de createProduct e os de SKU desconhecido sobrescrevem este stub.
@@ -1898,7 +1905,9 @@ class EstoqueServiceTest {
 
     @Test
     void resolveSaleInfo_devolveNomeEPrecoNumaConsultaSo() {
-        when(productRepository.findByAnySku("NARG-001")).thenReturn(Optional.of(pricedProduct()));
+        // EST-F036 — NARG-001 tem variação: a base só se vende liberada.
+        when(productRepository.findByAnySku("NARG-001"))
+                .thenReturn(Optional.of(pricedProduct().withParentSellable(true)));
 
         CatalogSaleInfo info = estoqueService.resolveSaleInfo("NARG-001");
 
@@ -4417,7 +4426,7 @@ class EstoqueServiceTest {
     void consumeSession_abreALata_baixandoUmaUnicaUnidade() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
         comSaldoDeEssencia("50.000");
         when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4440,7 +4449,7 @@ class EstoqueServiceTest {
     void consumeSession_comLataAberta_naoTocaOEstoque() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         OpenPackage lata = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
@@ -4455,7 +4464,7 @@ class EstoqueServiceTest {
     void consumeSession_comLataEsgotada_fechaAVelhaEAbreOutra() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(5)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(5)));
         comSaldoDeEssencia("49.000");
         when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4489,7 +4498,7 @@ class EstoqueServiceTest {
     void consumeSession_semSaldoParaAbrir_falha() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
         comSaldoDeEssencia("0.000");
 
         assertThatThrownBy(() -> estoqueService.consumeSession("ESSE-BLUE", "LOJA-01",
@@ -4508,7 +4517,7 @@ class EstoqueServiceTest {
     void replaceOpenPackage_fechaAVelhaComSobra_eBaixaUmaUnidadeNaNova() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
         comSaldoDeEssencia("49.000");
         when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4532,7 +4541,7 @@ class EstoqueServiceTest {
     void replaceOpenPackage_semSaldo_naoFechaALataAtual() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(2)));
         comSaldoDeEssencia("0.000");
 
         assertThatThrownBy(() -> estoqueService.replaceOpenPackage("ESSE-BLUE", "LOJA-01", "atendente"))
@@ -4548,7 +4557,7 @@ class EstoqueServiceTest {
     @Test
     void releaseSession_decrementaOContador_semDevolverUnidade() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(3)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(3)));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         estoqueService.releaseSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE);
@@ -4561,7 +4570,7 @@ class EstoqueServiceTest {
     @Test
     void releaseSession_semLataAberta_naoFazNada() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
-        when(openPackageRepository.findOpen("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
 
         estoqueService.releaseSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE);
 
@@ -4577,6 +4586,374 @@ class EstoqueServiceTest {
 
         assertThatThrownBy(() -> estoqueService.findOpenPackage("ESSE-BLUE", "LOJA-01"))
                 .isInstanceOf(OpenPackageNotFoundException.class);
+    }
+
+    // ── Lata já aberta antes do sistema (EST-F033) ───────────────────────────────────────────
+
+    /**
+     * <b>O ponto da feature.</b> A lata cadastrada já saiu da prateleira antes de o sistema saber
+     * dela, então nenhuma unidade sai do saldo aqui — baixar seria tirar da prateleira uma segunda
+     * lata que continua lacrada lá. Só o contador nasce, com o que já foi gasto.
+     */
+    @Test
+    void registerOpenPackage_criaALataSemBaixarEstoque() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage lata = estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente");
+
+        assertThat(lata.uses()).isEqualTo(3);
+        assertThat(lata.sessionsPerUnit()).isEqualTo(5);
+        assertThat(lata.openedBy()).isEqualTo("atendente");
+        verifyNoInteractions(stockMovementRepository);
+        verify(stockBalanceRepository, never()).save(any());
+    }
+
+    /**
+     * Já existe lata em uso: cadastrar outra criaria duas verdades para a mesma prateleira, e o
+     * índice parcial da V124 recusaria de qualquer jeito. A saída para "esta acabou e abri outra"
+     * é o {@code /replace}, que baixa a nova.
+     */
+    @Test
+    void registerOpenPackage_comLataJaAberta_eRecusado() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(1)));
+
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente"))
+                .isInstanceOf(OpenPackageAlreadyOpenException.class);
+
+        verify(openPackageRepository, never()).save(any());
+    }
+
+    /** Produto sem lata no cadastro: o mesmo 400 de consumir e de repor. */
+    @Test
+    void registerOpenPackage_comProdutoSemSessionsPerUnit_eRecusado() {
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(null)));
+
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente"))
+                .isInstanceOf(NotAPackagedSessionProductException.class);
+
+        verifyNoInteractions(openPackageRepository);
+    }
+
+    /** O teto do restante é a lata do catálogo, que só o service conhece — daí não ser Bean Validation. */
+    @Test
+    void registerOpenPackage_comRestanteMaiorQueALata_eRecusado() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 6, "atendente"))
+                .isInstanceOf(InvalidOpenPackageUsesException.class);
+
+        verify(openPackageRepository, never()).save(any());
+    }
+
+    // ── Embalagem carteira → maço → unidade (EST-F032) ───────────────────────────────────────
+
+    private static final SkuPackaging UN_NO_MACO = new SkuPackaging("LM-AZUL-UN", "LM-AZUL-MACO", 20);
+    private static final SkuPackaging MACO_NA_CARTEIRA = new SkuPackaging("LM-AZUL-MACO", "LM-AZUL-CART", 10);
+
+    /** Saldos em memória: o fake guarda o que o service grava, para a cascata se enxergar. */
+    private final Map<String, StockBalance> saldos = new java.util.HashMap<>();
+
+    private void comSaldos(String... skuEQuantidade) {
+        for (int i = 0; i < skuEQuantidade.length; i += 2) {
+            String sku = skuEQuantidade[i];
+            saldos.put(sku, StockBalance.of(null, sku, 1L, new BigDecimal(skuEQuantidade[i + 1]), BigDecimal.ZERO,
+                    null, 0L));
+        }
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        lenient().when(stockBalanceRepository.findBySkuAndWarehouseId(any(), eq(1L)))
+                .thenAnswer(inv -> Optional.ofNullable(saldos.get(inv.<String>getArgument(0))));
+        lenient().when(stockBalanceRepository.save(any())).thenAnswer(inv -> {
+            StockBalance b = inv.getArgument(0);
+            saldos.put(b.sku(), b);
+            return b;
+        });
+    }
+
+    private BigDecimal saldo(String sku) {
+        return saldos.get(sku).quantity();
+    }
+
+    private static Product cigarroLm() {
+        return Product.of(1L, "LM", "LM", "Cigarros", true, List.of(
+                ProductVariant.create("LM-AZUL-CART", List.of(new ProductAttribute("embalagem", "carteira"))),
+                ProductVariant.create("LM-AZUL-MACO", List.of(new ProductAttribute("embalagem", "maço"))),
+                ProductVariant.create("LM-AZUL-UN", List.of(new ProductAttribute("embalagem", "unidade")))));
+    }
+
+    /**
+     * <b>O ponto da feature.</b> Vender 3 cigarros com 1 solto: o sistema abre um maço sozinho
+     * (−1 maço, +20 soltos) e só então baixa os 3. Os dois movimentos da quebra ficam no ledger
+     * com o motivo de reposição.
+     */
+    @Test
+    void saida_semSoltoSuficiente_abreUmMacoAutomaticamente() {
+        comSaldos("LM-AZUL-MACO", "2", "LM-AZUL-UN", "1");
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+
+        estoqueService.adjustStock("LM-AZUL-UN", "LOJA-01", MovementType.SAIDA, new BigDecimal("3"), "Venda", "caixa1");
+
+        assertThat(saldo("LM-AZUL-MACO")).isEqualByComparingTo("1");
+        assertThat(saldo("LM-AZUL-UN")).isEqualByComparingTo("18");
+        verify(stockMovementRepository).save(argThat(m -> m.sku().equals("LM-AZUL-MACO")
+                && m.type() == MovementType.SAIDA && m.quantity().compareTo(BigDecimal.ONE) == 0
+                && m.reason().contains("Quebra automática de embalagem")));
+        verify(stockMovementRepository).save(argThat(m -> m.sku().equals("LM-AZUL-UN")
+                && m.type() == MovementType.ENTRADA && m.quantity().compareTo(new BigDecimal("20")) == 0
+                && m.reason().contains("Quebra automática de embalagem")));
+        verify(auditEventPublisherPort).publish(argThat(e ->
+                e.type() == com.cernecommerce.core.domain.event.AuditEvent.EventType.STOCK_PACKAGE_BROKEN));
+    }
+
+    /** Sem maço fechado, a quebra sobe um nível: abre a carteira, que abre o maço, que cobre os soltos. */
+    @Test
+    void saida_semMaco_abreACarteiraEmCascata() {
+        comSaldos("LM-AZUL-CART", "1", "LM-AZUL-MACO", "0", "LM-AZUL-UN", "1");
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+        when(skuPackagingRepository.findByChild("LM-AZUL-MACO")).thenReturn(Optional.of(MACO_NA_CARTEIRA));
+
+        estoqueService.adjustStock("LM-AZUL-UN", "LOJA-01", MovementType.SAIDA, new BigDecimal("3"), "Venda", "caixa1");
+
+        assertThat(saldo("LM-AZUL-CART")).isEqualByComparingTo("0");
+        assertThat(saldo("LM-AZUL-MACO")).isEqualByComparingTo("9");
+        assertThat(saldo("LM-AZUL-UN")).isEqualByComparingTo("18");
+    }
+
+    /** Nada em nenhum nível: é o InsufficientStock de sempre, e a transação reverte a venda inteira. */
+    @Test
+    void saida_semSaldoEmNenhumNivel_falhaComoSempre() {
+        comSaldos("LM-AZUL-CART", "0", "LM-AZUL-MACO", "0", "LM-AZUL-UN", "0");
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+        when(skuPackagingRepository.findByChild("LM-AZUL-MACO")).thenReturn(Optional.of(MACO_NA_CARTEIRA));
+
+        assertThatThrownBy(() -> estoqueService.adjustStock("LM-AZUL-UN", "LOJA-01", MovementType.SAIDA,
+                BigDecimal.ONE, "Venda", "caixa1"))
+                .isInstanceOf(InsufficientStockException.class);
+    }
+
+    /** Com solto suficiente, a embalagem nem é consultada: o caminho comum não paga nada a mais. */
+    @Test
+    void saida_comSaldoSuficiente_naoConsultaAEmbalagem() {
+        comSaldos("LM-AZUL-UN", "5");
+
+        estoqueService.adjustStock("LM-AZUL-UN", "LOJA-01", MovementType.SAIDA, new BigDecimal("3"), "Venda", "caixa1");
+
+        assertThat(saldo("LM-AZUL-UN")).isEqualByComparingTo("2");
+        verifyNoInteractions(skuPackagingRepository);
+    }
+
+    /** SKU sem embalagem cadastrada: comportamento inalterado. */
+    @Test
+    void saida_semLigacao_naoQuebraNada() {
+        comSaldos("CARVAO-1KG", "1");
+
+        assertThatThrownBy(() -> estoqueService.adjustStock("CARVAO-1KG", "LOJA-01", MovementType.SAIDA,
+                new BigDecimal("2"), "Venda", "caixa1"))
+                .isInstanceOf(InsufficientStockException.class);
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /** O solto que nasce da quebra carrega o custo do maço dividido por 20 — o custo médio segue honesto. */
+    @Test
+    void quebra_levaOCustoDoPaiDivididoPeloFator() {
+        comSaldos("LM-AZUL-UN", "0");
+        saldos.put("LM-AZUL-MACO", StockBalance.of(null, "LM-AZUL-MACO", 1L, new BigDecimal("5"), BigDecimal.ZERO,
+                new BigDecimal("12.00"), 0L));
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+
+        estoqueService.adjustStock("LM-AZUL-UN", "LOJA-01", MovementType.SAIDA, BigDecimal.ONE, "Venda", "caixa1");
+
+        verify(stockMovementRepository).save(argThat(m -> m.type() == MovementType.ENTRADA
+                && m.unitCost() != null && m.unitCost().compareTo(new BigDecimal("0.60")) == 0));
+    }
+
+    @Test
+    void definePackaging_entreVariacoesDoMesmoProduto_eGravado() {
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(cigarroLm()));
+        when(skuPackagingRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SkuPackaging saved = estoqueService.definePackaging("LM-AZUL-UN", "LM-AZUL-MACO", 20);
+
+        assertThat(saved).isEqualTo(UN_NO_MACO);
+    }
+
+    /** Maço dentro de unidade, com unidade dentro de maço: um ciclo faria a quebra recursar para sempre. */
+    @Test
+    void definePackaging_comCiclo_eRecusado() {
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(cigarroLm()));
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+
+        assertThatThrownBy(() -> estoqueService.definePackaging("LM-AZUL-MACO", "LM-AZUL-UN", 20))
+                .isInstanceOf(InvalidPackagingException.class).hasMessageContaining("ciclo");
+        verify(skuPackagingRepository, never()).save(any());
+    }
+
+    /** O produto base com variações não existe na prateleira: não contém nem é contido. */
+    @Test
+    void definePackaging_comProdutoBase_eRecusado() {
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(cigarroLm()));
+
+        assertThatThrownBy(() -> estoqueService.definePackaging("LM-AZUL-UN", "LM", 20))
+                .isInstanceOf(InvalidPackagingException.class).hasMessageContaining("variações");
+    }
+
+    @Test
+    void definePackaging_comKit_eRecusado() {
+        Product kit = Product.of(2L, "KIT-1", "Kit", "Kits", true, List.of()).withType(ProductType.KIT);
+        when(productRepository.findByAnySku("KIT-1")).thenReturn(Optional.of(kit));
+        lenient().when(productRepository.findByAnySku("LM-AZUL-MACO")).thenReturn(Optional.of(cigarroLm()));
+
+        assertThatThrownBy(() -> estoqueService.definePackaging("KIT-1", "LM-AZUL-MACO", 20))
+                .isInstanceOf(InvalidPackagingException.class).hasMessageContaining("kit");
+    }
+
+    @Test
+    void definePackaging_comProdutoComLote_eRecusado() {
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(cigarroLm().withLotTracked(true)));
+
+        assertThatThrownBy(() -> estoqueService.definePackaging("LM-AZUL-UN", "LM-AZUL-MACO", 20))
+                .isInstanceOf(InvalidPackagingException.class).hasMessageContaining("lote");
+    }
+
+    /** Fardo → carteira → maço → unidade é o teto: uma quinta camada é recusada. */
+    @Test
+    void definePackaging_alemDeQuatroNiveis_eRecusado() {
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(cigarroLm()));
+        // Já existe: UN ⊂ MACO ⊂ CART ⊂ FARDO — quatro níveis, o teto.
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.of(UN_NO_MACO));
+        when(skuPackagingRepository.findByChild("LM-AZUL-MACO")).thenReturn(Optional.of(MACO_NA_CARTEIRA));
+        when(skuPackagingRepository.findByChild("LM-AZUL-CART"))
+                .thenReturn(Optional.of(new SkuPackaging("LM-AZUL-CART", "LM-AZUL-FARDO", 5)));
+
+        // Pôr qualquer coisa abaixo da unidade daria cinco.
+        assertThatThrownBy(() -> estoqueService.definePackaging("LM-AZUL-MINI", "LM-AZUL-UN", 2))
+                .isInstanceOf(InvalidPackagingException.class).hasMessageContaining("níveis");
+    }
+
+    // ── Central de cigarros (PDV-F041) ───────────────────────────────────────────────────────
+
+    private static Product lmComPrecos() {
+        return Product.of(1L, "LM", "LM", "Cigarros", true, List.of(
+                ProductVariant.create("LM-AZUL-CART", List.of(new ProductAttribute("cor", "azul"),
+                        new ProductAttribute("embalagem", "carteira")), Pricing.of(null, null, new BigDecimal("110.00"))),
+                ProductVariant.create("LM-AZUL-MACO", List.of(new ProductAttribute("cor", "azul"),
+                        new ProductAttribute("embalagem", "maço")), Pricing.of(null, null, new BigDecimal("12.00"))),
+                ProductVariant.create("LM-AZUL-UN", List.of(new ProductAttribute("cor", "azul"),
+                        new ProductAttribute("embalagem", "unidade")), Pricing.of(null, null, new BigDecimal("1.00")))));
+    }
+
+    /**
+     * Entra na central quem tem embalagem ligada (decisão do dono): cada linha é uma cadeia, da
+     * carteira ao solto, com preço e disponível de cada nível — o que a tela precisa para vender
+     * solto ou maço sem outra chamada.
+     */
+    @Test
+    void listPackagedFamilies_montaAFamiliaComACadeiaPrecoESaldo() {
+        comSaldos("LM-AZUL-CART", "1", "LM-AZUL-MACO", "8", "LM-AZUL-UN", "15");
+        when(skuPackagingRepository.findAll()).thenReturn(List.of(UN_NO_MACO, MACO_NA_CARTEIRA));
+        when(skuPackagingRepository.findByParent("LM-AZUL-CART")).thenReturn(List.of(MACO_NA_CARTEIRA));
+        when(skuPackagingRepository.findByParent("LM-AZUL-MACO")).thenReturn(List.of(UN_NO_MACO));
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(lmComPrecos()));
+
+        List<EstoqueUseCase.PackagedFamily> familias = estoqueService.listPackagedFamilies("LOJA-01");
+
+        assertThat(familias).singleElement().satisfies(f -> {
+            assertThat(f.productSku()).isEqualTo("LM");
+            assertThat(f.lines()).singleElement().satisfies(linha -> {
+                assertThat(linha.levels()).extracting(EstoqueUseCase.PackagedLevel::sku)
+                        .containsExactly("LM-AZUL-CART", "LM-AZUL-MACO", "LM-AZUL-UN");
+                EstoqueUseCase.PackagedLevel maco = linha.levels().get(1);
+                assertThat(maco.label()).isEqualTo("azul · maço");
+                assertThat(maco.price()).isEqualByComparingTo("12.00");
+                assertThat(maco.available()).isEqualByComparingTo("8");
+                assertThat(maco.containsSku()).isEqualTo("LM-AZUL-UN");
+                assertThat(maco.containsUnits()).isEqualTo(20);
+            });
+        });
+    }
+
+    /** Produto desativado sai da central: não se vende o que foi tirado de circulação. */
+    @Test
+    void listPackagedFamilies_ignoraProdutoInativo() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(skuPackagingRepository.findAll()).thenReturn(List.of(UN_NO_MACO));
+        when(productRepository.findByAnySku(any())).thenReturn(Optional.of(lmComPrecos().withActive(false)));
+
+        assertThat(estoqueService.listPackagedFamilies("LOJA-01")).isEmpty();
+    }
+
+    // ── Produto base com variações (EST-F036) ────────────────────────────────────────────────
+
+    /** Vender a base de "LM" (que tem cores) é recusado: o estoque está nas variações. */
+    @Test
+    void resolveSaleInfo_daBaseNaoVendavel_eRecusado() {
+        when(productRepository.findByAnySku("LM")).thenReturn(Optional.of(cigarroLm()));
+
+        assertThatThrownBy(() -> estoqueService.resolveSaleInfo("LM"))
+                .isInstanceOf(ParentNotSellableException.class);
+    }
+
+    @Test
+    void resolveSaleInfo_daVariacao_segueNormal() {
+        when(productRepository.findByAnySku("LM-AZUL-MACO")).thenReturn(Optional.of(cigarroLm()));
+
+        assertThat(estoqueService.resolveSaleInfo("LM-AZUL-MACO").productName()).isEqualTo("LM");
+    }
+
+    @Test
+    void resolveSaleInfo_daBaseLiberada_segueNormal() {
+        when(productRepository.findByAnySku("LM")).thenReturn(Optional.of(cigarroLm().withParentSellable(true)));
+
+        assertThat(estoqueService.resolveSaleInfo("LM").productName()).isEqualTo("LM");
+    }
+
+    /** Entrada de estoque na base também é recusada: a compra entra nas variações. */
+    @Test
+    void entradaNaBaseNaoVendavel_eRecusada() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("LM")).thenReturn(Optional.of(cigarroLm()));
+
+        assertThatThrownBy(() -> estoqueService.adjustStock("LM", "LOJA-01", MovementType.ENTRADA,
+                new BigDecimal("5"), "Compra", "gerente"))
+                .isInstanceOf(ParentNotSellableException.class);
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    /**
+     * Saída e ajuste continuam: o saldo que ficou na base por engano tem que poder ser escoado ou
+     * corrigido no balanço — recusar o ajuste travaria o fechamento do inventário inteiro.
+     */
+    @Test
+    void saidaEAjusteNaBaseNaoVendavel_continuamLiberados() {
+        comSaldos("LM", "3");
+        when(productRepository.findByAnySku("LM")).thenReturn(Optional.of(cigarroLm()));
+
+        estoqueService.adjustStock("LM", "LOJA-01", MovementType.SAIDA, BigDecimal.ONE, "Escoar", "gerente");
+        estoqueService.adjustStock("LM", "LOJA-01", MovementType.AJUSTE, BigDecimal.ZERO, "Balanço", "gerente");
+
+        assertThat(saldo("LM")).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void setParentSellable_gravaOFlag() {
+        when(productRepository.findBySku("LM")).thenReturn(Optional.of(cigarroLm()));
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(estoqueService.setParentSellable("LM", true).parentSellable()).isTrue();
+    }
+
+    @Test
+    void removePackaging_semLigacao_lanca404() {
+        when(skuPackagingRepository.findByChild("LM-AZUL-UN")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> estoqueService.removePackaging("LM-AZUL-UN"))
+                .isInstanceOf(PackagingNotFoundException.class);
     }
 
     // ── Exclusão de rascunho (EST-F026) ──────────────────────────────────────────────────────

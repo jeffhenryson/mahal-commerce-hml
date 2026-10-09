@@ -34,7 +34,13 @@ import com.cernecommerce.core.domain.exception.estoque.MissingLotInfoException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.ProductVariantNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.ReservedStockException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
+import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
+import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
+import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.estoque.SameSkuConversionException;
+import com.cernecommerce.core.domain.model.estoque.OpenPackage;
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedLotInfoException;
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedUnitCostException;
 import com.cernecommerce.core.domain.exception.estoque.StockCountAlreadyOpenException;
@@ -888,6 +894,204 @@ public class EstoqueControllerTest {
 
         verify(publisher, times(1)).publishEvent(argThat((Object e) ->
                 e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.STOCK_CONVERTED));
+    }
+
+    // ── Lata já aberta antes do sistema (EST-F033) ───────────────────────────────────────────
+
+    private static final String CADASTRO_DE_LATA = "{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":2}";
+
+    @Test
+    void registerOpenPackage_returns_201_withTheCounter() throws Exception {
+        when(estoqueUseCase.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "admin"))
+                .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
+        // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
+        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CADASTRO_DE_LATA))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sku").value("ESSE-BLUE"))
+                .andExpect(jsonPath("$.uses").value(3))
+                .andExpect(jsonPath("$.remaining").value(2))
+                .andExpect(jsonPath("$.sessionsPerUnit").value(5));
+    }
+
+    /**
+     * O cadastro é a única entrada no contador que não deixa rastro em {@code stock_movement} —
+     * por isso o evento é dele, e não emprestado do {@code OPEN_PACKAGE_REPLACED}.
+     */
+    @Test
+    void registerOpenPackage_publishesOpenPackageRegistered() throws Exception {
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+                .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
+        // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
+        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CADASTRO_DE_LATA))
+                .andExpect(status().isCreated());
+
+        verify(publisher, times(1)).publishEvent(argThat((Object e) ->
+                e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.OPEN_PACKAGE_REGISTERED));
+    }
+
+    @Test
+    void registerOpenPackage_withAPackageAlreadyOpen_returns_409() throws Exception {
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+                .thenThrow(new OpenPackageAlreadyOpenException("ESSE-BLUE", "LOJA-01"));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CADASTRO_DE_LATA))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_ALREADY_OPEN"));
+    }
+
+    @Test
+    void registerOpenPackage_withMoreRemainingThanThePackageHolds_returns_400() throws Exception {
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+                .thenThrow(new InvalidOpenPackageUsesException(6, 5));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":6}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_INVALID_USES"));
+    }
+
+    /** Sem restante, ou zero: barrado no DTO, antes de chegar ao service. */
+    @Test
+    void registerOpenPackage_withoutUsesRemaining_returns_400() throws Exception {
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":0}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"LOJA-01\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(estoqueUseCase, never()).registerOpenPackage(any(), any(), anyInt(), any());
+    }
+
+    // ── Produto base com variações (EST-F036) ────────────────────────────────────────────────
+
+    @Test
+    void setParentSellable_returns_200_withTheFlag_andPublishesProductUpdated() throws Exception {
+        when(estoqueUseCase.setParentSellable("NARG-001", true))
+                .thenReturn(product("NARG-001").withParentSellable(true));
+
+        mockMvc.perform(patch("/estoque/products/NARG-001/parent-sellable")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentSellable\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentSellable").value(true));
+
+        verify(publisher).publishEvent(argThat((Object e) ->
+                e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.PRODUCT_UPDATED));
+    }
+
+    @Test
+    void setParentSellable_withoutTheField_returns_400() throws Exception {
+        mockMvc.perform(patch("/estoque/products/NARG-001/parent-sellable")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    /** O produto devolve o flag: é o que o PDV usa para esconder a base na busca. */
+    @Test
+    void productResponse_carriesParentSellable() throws Exception {
+        when(estoqueUseCase.findProductBySku("NARG-001")).thenReturn(product("NARG-001"));
+
+        mockMvc.perform(get("/estoque/products/NARG-001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentSellable").value(false));
+    }
+
+    // ── Embalagem (EST-F032) ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void definePackaging_returns_200_andPublishesPackagingDefined() throws Exception {
+        when(estoqueUseCase.definePackaging("LM-AZUL-UN", "LM-AZUL-MACO", 20))
+                .thenReturn(new SkuPackaging("LM-AZUL-UN", "LM-AZUL-MACO", 20));
+
+        mockMvc.perform(put("/estoque/products/LM-AZUL-UN/packaging")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentSku\":\"LM-AZUL-MACO\",\"unitsPerParent\":20}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.childSku").value("LM-AZUL-UN"))
+                .andExpect(jsonPath("$.parentSku").value("LM-AZUL-MACO"))
+                .andExpect(jsonPath("$.unitsPerParent").value(20));
+
+        verify(publisher).publishEvent(argThat((Object e) ->
+                e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.PACKAGING_DEFINED));
+    }
+
+    @Test
+    void definePackaging_withACycle_returns_400() throws Exception {
+        when(estoqueUseCase.definePackaging(any(), any(), anyInt()))
+                .thenThrow(new InvalidPackagingException("ligação criaria um ciclo"));
+
+        mockMvc.perform(put("/estoque/products/LM-AZUL-MACO/packaging")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentSku\":\"LM-AZUL-UN\",\"unitsPerParent\":20}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_PACKAGING"));
+    }
+
+    /** Fator 1 não é embalagem: barrado no DTO. */
+    @Test
+    void definePackaging_withFactorOne_returns_400() throws Exception {
+        mockMvc.perform(put("/estoque/products/LM-AZUL-UN/packaging")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentSku\":\"LM-AZUL-MACO\",\"unitsPerParent\":1}"))
+                .andExpect(status().isBadRequest());
+
+        verify(estoqueUseCase, never()).definePackaging(any(), any(), anyInt());
+    }
+
+    @Test
+    void removePackaging_returns_204_andWithoutLink_404() throws Exception {
+        mockMvc.perform(delete("/estoque/products/LM-AZUL-UN/packaging").principal(AUTH))
+                .andExpect(status().isNoContent());
+        verify(publisher).publishEvent(argThat((Object e) ->
+                e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.PACKAGING_REMOVED));
+
+        doThrow(new PackagingNotFoundException("LM-AZUL-MACO")).when(estoqueUseCase).removePackaging("LM-AZUL-MACO");
+        mockMvc.perform(delete("/estoque/products/LM-AZUL-MACO/packaging").principal(AUTH))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("PACKAGING_NOT_FOUND"));
+    }
+
+    @Test
+    void getPackagingChain_returnsTheLevelsWithBalances() throws Exception {
+        when(estoqueUseCase.getPackagingChain("LM-AZUL-MACO", "LOJA-01")).thenReturn(List.of(
+                new EstoqueUseCase.PackagingLevel("LM-AZUL-CART", "LM-AZUL-MACO", 10, new BigDecimal("1")),
+                new EstoqueUseCase.PackagingLevel("LM-AZUL-MACO", "LM-AZUL-UN", 20, new BigDecimal("8")),
+                new EstoqueUseCase.PackagingLevel("LM-AZUL-UN", null, null, new BigDecimal("15"))));
+
+        mockMvc.perform(get("/estoque/products/LM-AZUL-MACO/packaging").param("warehouseCode", "LOJA-01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].sku").value("LM-AZUL-CART"))
+                .andExpect(jsonPath("$[0].containsUnits").value(10))
+                .andExpect(jsonPath("$[2].containsSku").doesNotExist())
+                .andExpect(jsonPath("$[2].available").value(15));
     }
 
     @Test

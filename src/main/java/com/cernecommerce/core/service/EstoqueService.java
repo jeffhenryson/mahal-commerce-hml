@@ -1,6 +1,7 @@
 package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.event.AuditEvent;
+import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
@@ -44,6 +45,12 @@ import com.cernecommerce.core.domain.exception.estoque.UnexpectedLotInfoExceptio
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedUnitCostException;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
+import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException;
+import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
+import com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
 import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryException;
@@ -163,6 +170,7 @@ public class EstoqueService implements EstoqueUseCase {
     private final ManagerNotificationPort managerNotifications;
 
     private final AuditEventPublisherPort auditEvents;
+    private final SkuPackagingRepository skuPackagingRepository;
 
     public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
             StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
@@ -175,7 +183,7 @@ public class EstoqueService implements EstoqueUseCase {
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
             OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
-            AuditEventPublisherPort auditEvents) {
+            AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository) {
         this.stockReservationRepository = stockReservationRepository;
         this.defaultReservationTtl = defaultReservationTtl;
         this.productRepository = productRepository;
@@ -198,6 +206,7 @@ public class EstoqueService implements EstoqueUseCase {
         this.openPackageRepository = openPackageRepository;
         this.auditEvents = auditEvents;
         this.managerNotifications = managerNotifications;
+        this.skuPackagingRepository = skuPackagingRepository;
     }
 
     @Override
@@ -875,12 +884,20 @@ public class EstoqueService implements EstoqueUseCase {
         // (mora sempre no pai, kit ou não), só a precificação precisa.
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
+        // EST-F036 — a base de um produto com variações não se vende (PDV, mesa, checkout): todos os
+        // caminhos de venda resolvem o item por aqui, e a recusa sai antes de qualquer gravação.
+        if (!product.isSellable(sku)) {
+            throw new ParentNotSellableException(sku);
+        }
         Pricing pricing = product.isKit() ? derivedKitPricing(product) : product.effectivePricingFor(sku);
         // availableForTable/sessionProduct/openRoshPrice vêm do PAI, mesmo quando o SKU pedido é o
         // de uma variação: disponibilidade na mesa e preço de open rosh não têm versão por sabor.
+        // PDV-F042 — o SKU pedido é a BASE de um produto com variações: o estoque real está nos
+        // sabores/cores, e quem precisa saber disso (a essência da sessão) recusa a base.
+        boolean parentWithVariants = product.sku().equals(sku) && !product.variants().isEmpty();
         return new CatalogSaleInfo(product.name(), pricing, product.availableForTable(),
                 product.sessionProduct(), product.openRoshPrice(), product.sessionsPerUnit(),
-                product.isKit());
+                product.isKit(), parentWithVariants);
     }
 
 
@@ -972,6 +989,14 @@ public class EstoqueService implements EstoqueUseCase {
         Product current = productRepository.findBySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
         return productRepository.save(current.withActive(active));
+    }
+
+    @Override
+    @Transactional
+    public Product setParentSellable(String sku, boolean parentSellable) {
+        Product current = productRepository.findBySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        return productRepository.save(current.withParentSellable(parentSellable));
     }
 
     @Override
@@ -1166,7 +1191,7 @@ public class EstoqueService implements EstoqueUseCase {
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
         int sessions = sessionsFor(quantity);
 
-        OpenPackage current = openPackageRepository.findOpen(sku, warehouse.id()).orElse(null);
+        OpenPackage current = openPackageRepository.findOpenForUpdate(sku, warehouse.id()).orElse(null);
         // A lata esgotada continua aberta até a sessão SEGUINTE — é ela que o atendente está
         // usando até o fim, e é o que permite a tela mostrar "5 de 5". Quem a fecha é este ponto.
         if (current != null && current.isExhausted()) {
@@ -1184,7 +1209,7 @@ public class EstoqueService implements EstoqueUseCase {
     public void releaseSession(String sku, String warehouseCode, BigDecimal quantity) {
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
-        openPackageRepository.findOpen(sku, warehouse.id())
+        openPackageRepository.findOpenForUpdate(sku, warehouse.id())
                 .ifPresent(open -> openPackageRepository.save(open.withoutUses(sessionsFor(quantity))));
     }
 
@@ -1199,7 +1224,7 @@ public class EstoqueService implements EstoqueUseCase {
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
 
-        Optional<OpenPackage> current = openPackageRepository.findOpen(sku, warehouse.id());
+        Optional<OpenPackage> current = openPackageRepository.findOpenForUpdate(sku, warehouse.id());
         // A nova é aberta ANTES de fechar a velha, e a ordem importa: abrir baixa estoque e pode
         // faltar saldo. Falhar depois de fechar deixaria o atendente sem lata nenhuma no sistema,
         // com uma na mão. Mesma razão pela qual convertStock faz a SAIDA primeiro.
@@ -1207,6 +1232,26 @@ public class EstoqueService implements EstoqueUseCase {
         current.ifPresent(open ->
                 openPackageRepository.save(open.closed(OpenPackageCloseReason.REPLACED, Instant.now())));
         return openPackageRepository.save(replacement);
+    }
+
+    @Override
+    @Transactional
+    public OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining, String username) {
+        Product product = productRepository.findByAnySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (!product.sessionProduct() || product.sessionsPerUnit() == null || product.sessionsPerUnit() <= 0) {
+            throw new NotAPackagedSessionProductException(sku);
+        }
+        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
+                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        // A checagem dá a mensagem certa no caso comum; a corrida entre dois cadastros simultâneos
+        // é barrada pelo índice parcial da V124 e traduzida no GlobalExceptionHandler.
+        if (openPackageRepository.findOpenForUpdate(sku, warehouse.id()).isPresent()) {
+            throw new OpenPackageAlreadyOpenException(sku, warehouseCode);
+        }
+        // Sem adjustStock, de propósito: ver o javadoc do port.
+        return openPackageRepository.save(OpenPackage.registered(sku, warehouse.id(), product.sessionsPerUnit(),
+                usesRemaining, username, Instant.now()));
     }
 
     @Override
@@ -1278,6 +1323,11 @@ public class EstoqueService implements EstoqueUseCase {
             return explodeKitMovement(product.get(), warehouse, type, quantity, reason, username);
         }
         requireActiveForInbound(sku, warehouse, type);
+        // EST-F036 — entrada na base de um produto com variações também é recusada: a compra entra
+        // nas variações. SAIDA e AJUSTE passam, para escoar e corrigir no balanço o que ficou na base.
+        if (type == MovementType.ENTRADA && product.isPresent() && !product.get().isSellable(sku)) {
+            throw new ParentNotSellableException(sku);
+        }
         boolean lotTracked = product.map(Product::lotTracked).orElse(false);
         validateLotInfo(sku, type, lotTracked, lotCode, expiryDate);
         validateUnitCost(sku, type, unitCost);
@@ -1290,6 +1340,12 @@ public class EstoqueService implements EstoqueUseCase {
 
         StockBalance current = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
                 .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
+        // EST-F032 — se o filho não cobre a saída, abre embalagens pai até cobrir, e a saída segue
+        // sobre o saldo já reposto. Só relê quando houve quebra: o caminho comum não paga nada a mais.
+        if (type == MovementType.SAIDA && breakPackagingIfShort(sku, warehouse, current, quantity, username)) {
+            current = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
+                    .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
+        }
         StockBalance updated = current.apply(type, quantity, unitCost);
 
         String movementLotCode = null;
@@ -1309,6 +1365,218 @@ public class EstoqueService implements EstoqueUseCase {
         notifyIfBelowReorderPoint(saved);
         notifyIfKitsNewlyBlocked(kitBuildableBefore, warehouse.id());
         return saved;
+    }
+
+    // ── Embalagem (EST-F032) ────────────────────────────────────────────────────────────────
+
+    /** Teto da cadeia: fardo → carteira → maço → unidade. */
+    private static final int MAX_PACKAGING_LINKS = 3;
+
+    /**
+     * Quebra automática de embalagem (EST-F032): a saída de {@code quantity} não cabe no
+     * <b>disponível</b> do SKU, e ele está dentro de uma embalagem — abre-se o necessário do pai,
+     * para cima (não existe meio maço), e o filho recebe o conteúdo.
+     *
+     * <p>As duas pontas são autoinvocação de {@link #adjustStock}: mesma transação da saída que
+     * disparou a quebra, e é isso que faz a cascata acontecer sozinha — o maço que não tem saldo
+     * abre a carteira pelo mesmo caminho. Se nem a cadeia inteira cobre, a {@code SAIDA} do pai
+     * lança {@code InsufficientStockException} e a venda reverte junto. O filho entra com o custo
+     * médio do pai dividido pelo fator, para o custo médio dele não sair do ar.</p>
+     *
+     * <p>Olha o <b>disponível</b>, não o físico: unidade reservada para um pedido online não está à
+     * venda, e a quebra cobre só o que falta além dela.</p>
+     *
+     * @return se abriu alguma embalagem — o chamador relê o saldo do filho só nesse caso
+     */
+    private boolean breakPackagingIfShort(String sku, Warehouse warehouse, StockBalance current, BigDecimal quantity,
+            String username) {
+        BigDecimal missing = quantity.subtract(current.availableQuantity());
+        if (missing.signum() <= 0) {
+            return false;
+        }
+        Optional<SkuPackaging> link = skuPackagingRepository.findByChild(sku);
+        if (link.isEmpty()) {
+            return false;
+        }
+        SkuPackaging packaging = link.get();
+        BigDecimal parents = packaging.parentsToOpen(missing);
+        StockBalance parent = adjustStock(packaging.parentSku(), warehouse.code(), MovementType.SAIDA, parents,
+                "Quebra automática de embalagem → " + sku, username);
+        BigDecimal unitCost = parent.averageCost() == null ? null
+                : parent.averageCost().divide(BigDecimal.valueOf(packaging.unitsPerParent()),
+                        Money.INTERMEDIATE_SCALE, Money.ROUNDING);
+        BigDecimal childUnits = packaging.childUnits(parents);
+        adjustStock(sku, warehouse.code(), MovementType.ENTRADA, childUnits,
+                "Quebra automática de embalagem ← " + packaging.parentSku(), username, null, null, unitCost, null);
+        // A venda que disparou a quebra publica o que sempre publicou; este evento guarda a decisão
+        // do SISTEMA de abrir a embalagem, que não tem autor humano.
+        auditEvents.publish(AuditEvent.of(AuditEvent.EventType.STOCK_PACKAGE_BROKEN, username, Map.of(
+                "parentSku", packaging.parentSku(),
+                "childSku", sku,
+                "warehouseCode", warehouse.code(),
+                "parentsOpened", parents,
+                "childUnits", childUnits)));
+        return true;
+    }
+
+    @Override
+    @Transactional
+    public SkuPackaging definePackaging(String childSku, String parentSku, int unitsPerParent) {
+        SkuPackaging packaging = new SkuPackaging(childSku, parentSku, unitsPerParent);
+        requirePackageableSku(childSku);
+        requirePackageableSku(parentSku);
+
+        // Sobe a cadeia a partir do pai: chegar no filho é ciclo, e a quebra recursaria para sempre.
+        int linksAbove = 0;
+        String current = parentSku;
+        Optional<SkuPackaging> up = skuPackagingRepository.findByChild(current);
+        while (up.isPresent()) {
+            if (up.get().parentSku().equals(childSku)) {
+                throw new InvalidPackagingException("ligação criaria um ciclo: " + childSku
+                        + " já está acima de " + parentSku);
+            }
+            linksAbove++;
+            current = up.get().parentSku();
+            up = skuPackagingRepository.findByChild(current);
+        }
+        if (linksAbove + 1 + linksBelow(childSku, 0) > MAX_PACKAGING_LINKS) {
+            throw new InvalidPackagingException("a cadeia de embalagem passaria de " + (MAX_PACKAGING_LINKS + 1)
+                    + " níveis (ex.: fardo → carteira → maço → unidade)");
+        }
+        return skuPackagingRepository.save(packaging);
+    }
+
+    @Override
+    @Transactional
+    public void removePackaging(String childSku) {
+        if (skuPackagingRepository.findByChild(childSku).isEmpty()) {
+            throw new PackagingNotFoundException(childSku);
+        }
+        skuPackagingRepository.deleteByChild(childSku);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EstoqueUseCase.PackagingLevel> getPackagingChain(String sku, String warehouseCode) {
+        requireKnownSku(sku);
+        Warehouse warehouse = warehouseCode == null ? null : requireWarehouse(warehouseCode);
+        // De cima para baixo: sobe até a embalagem mais externa e desce pelo primeiro filho de cada
+        // nível. Na prática a cadeia é uma linha (carteira → maço → unidade); um pai com dois
+        // filhos aparece pelo de menor SKU.
+        java.util.Deque<String> chain = new java.util.ArrayDeque<>();
+        chain.add(sku);
+        Optional<SkuPackaging> up = skuPackagingRepository.findByChild(sku);
+        while (up.isPresent()) {
+            chain.addFirst(up.get().parentSku());
+            up = skuPackagingRepository.findByChild(up.get().parentSku());
+        }
+        String below = sku;
+        Optional<SkuPackaging> down = firstChild(below);
+        while (down.isPresent()) {
+            chain.addLast(down.get().childSku());
+            down = firstChild(down.get().childSku());
+        }
+        List<EstoqueUseCase.PackagingLevel> levels = new ArrayList<>();
+        for (String level : chain) {
+            Optional<SkuPackaging> contains = firstChild(level);
+            BigDecimal available = warehouse == null ? null
+                    : stockBalanceRepository.findBySkuAndWarehouseId(level, warehouse.id())
+                            .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+            levels.add(new EstoqueUseCase.PackagingLevel(level, contains.map(SkuPackaging::childSku).orElse(null),
+                    contains.map(SkuPackaging::unitsPerParent).orElse(null), available));
+        }
+        return levels;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EstoqueUseCase.PackagedFamily> listPackagedFamilies(String warehouseCode) {
+        Warehouse warehouse = requireWarehouse(warehouseCode);
+        List<SkuPackaging> links = skuPackagingRepository.findAll();
+        Set<String> children = new LinkedHashSet<>();
+        links.forEach(l -> children.add(l.childSku()));
+        // Raiz = embalagem que não está dentro de nenhuma outra (a carteira, ou o fardo).
+        List<String> roots = links.stream().map(SkuPackaging::parentSku)
+                .filter(sku -> !children.contains(sku))
+                .distinct().sorted().toList();
+
+        // Uma consulta de produto e uma de saldo por nível — N+1 assumido, como o de toResponse das
+        // latas: a central tem algumas dezenas de SKUs, não o catálogo inteiro.
+        Map<String, Product> products = new LinkedHashMap<>();
+        Map<String, List<EstoqueUseCase.PackagedLine>> lines = new LinkedHashMap<>();
+        for (String root : roots) {
+            Optional<Product> product = productRepository.findByAnySku(root);
+            if (product.isEmpty() || !product.get().active()) {
+                continue;
+            }
+            Product p = product.get();
+            List<EstoqueUseCase.PackagedLevel> levels = new ArrayList<>();
+            String level = root;
+            while (level != null) {
+                Optional<SkuPackaging> contains = firstChild(level);
+                BigDecimal available = stockBalanceRepository.findBySkuAndWarehouseId(level, warehouse.id())
+                        .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+                levels.add(new EstoqueUseCase.PackagedLevel(level, packagedLabel(p, level),
+                        p.effectivePricingFor(level).effectivePrice(), available,
+                        contains.map(SkuPackaging::childSku).orElse(null),
+                        contains.map(SkuPackaging::unitsPerParent).orElse(null)));
+                level = contains.map(SkuPackaging::childSku).orElse(null);
+            }
+            products.putIfAbsent(p.sku(), p);
+            lines.computeIfAbsent(p.sku(), k -> new ArrayList<>()).add(new EstoqueUseCase.PackagedLine(levels));
+        }
+        return products.values().stream()
+                .sorted(java.util.Comparator.comparing(Product::name, String.CASE_INSENSITIVE_ORDER))
+                .map(p -> new EstoqueUseCase.PackagedFamily(p.sku(), p.name(), lines.get(p.sku())))
+                .toList();
+    }
+
+    /** "azul · maço": os atributos da variação, na ordem cadastrada; o nome do produto sem variação. */
+    private static String packagedLabel(Product product, String sku) {
+        return product.variants().stream()
+                .filter(v -> v.sku().equals(sku))
+                .findFirst()
+                .filter(v -> !v.attributes().isEmpty())
+                .map(v -> v.attributes().stream().map(ProductAttribute::value)
+                        .collect(java.util.stream.Collectors.joining(" · ")))
+                .orElse(product.name());
+    }
+
+    private Optional<SkuPackaging> firstChild(String parentSku) {
+        return skuPackagingRepository.findByParent(parentSku).stream()
+                .min(java.util.Comparator.comparing(SkuPackaging::childSku));
+    }
+
+    /** Ligações abaixo de {@code sku} no ramo mais fundo — o filho já pode conter outros níveis. */
+    private int linksBelow(String sku, int guard) {
+        if (guard > MAX_PACKAGING_LINKS) {
+            return guard;
+        }
+        int deepest = 0;
+        for (SkuPackaging child : skuPackagingRepository.findByParent(sku)) {
+            deepest = Math.max(deepest, 1 + linksBelow(child.childSku(), guard + 1));
+        }
+        return deepest;
+    }
+
+    /**
+     * Só entra em embalagem o que tem saldo próprio na prateleira: variação, ou produto simples
+     * sem variações. Kit não tem saldo; o produto base com variações também não (o estoque está
+     * nas variações); e lote atravessando embalagem não tem regra definida — a quebra teria de
+     * decidir de que lote do maço saíram os cigarros soltos.
+     */
+    private void requirePackageableSku(String sku) {
+        Product product = productRepository.findByAnySku(sku).orElseThrow(() -> new ProductNotFoundException(sku));
+        if (product.isKit()) {
+            throw new InvalidPackagingException("kit não tem saldo próprio e não entra em embalagem: " + sku);
+        }
+        if (product.sku().equals(sku) && !product.variants().isEmpty()) {
+            throw new InvalidPackagingException("o produto base " + sku
+                    + " tem variações: ligue as variações (cor × embalagem), não a base");
+        }
+        if (product.lotTracked()) {
+            throw new InvalidPackagingException("produto com controle de lote não entra em embalagem: " + sku);
+        }
     }
 
     /**

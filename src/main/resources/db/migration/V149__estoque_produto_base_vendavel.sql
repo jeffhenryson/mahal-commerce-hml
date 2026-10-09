@@ -1,0 +1,11 @@
+-- EST-F036 — a base de um produto com variações deixa de ser vendável por padrão.
+--
+-- "LM" com azul e vermelho aparecia como TRÊS itens no PDV — a base, que não existe na prateleira, e
+-- as duas cores. O estoque real está nas variações. Com parent_sellable = FALSE, o SKU base de um
+-- produto COM variações não se vende (PDV, mesa, site) nem recebe entrada de estoque; saída e ajuste
+-- continuam, para escoar saldo lançado na base por engano. Produto sem variações é sempre vendável —
+-- a coluna só tem efeito com variações, regra do domínio (Product.isSellable).
+--
+-- DEFAULT FALSE para todos, inclusive os já cadastrados: decisão do dono (2026-10-08). Quem precisar
+-- vender a base liga por PATCH /estoque/products/{sku}/parent-sellable.
+ALTER TABLE product ADD COLUMN parent_sellable BOOLEAN NOT NULL DEFAULT FALSE;

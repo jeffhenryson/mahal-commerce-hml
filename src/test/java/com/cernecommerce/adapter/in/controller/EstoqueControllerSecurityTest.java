@@ -1696,11 +1696,82 @@ public class EstoqueControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * EST-F033 — mesma régua do {@code /replace}: quem cadastra as latas que já estão abertas na
+     * bancada é o atendente da mesa. O 404 é do depósito ausente na base de teste.
+     */
+    @Test
+    void register_open_package_with_comanda_manage_reaches_the_route() throws Exception {
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":2}")
+                .with(user("atendente").authorities(
+                        new SimpleGrantedAuthority("ROLE_ATENDENTE"),
+                        new SimpleGrantedAuthority("PDV_COMANDA_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    /** Só leitura de catálogo não cadastra lata: ela muda o que a próxima sessão consome. */
+    @Test
+    void register_open_package_with_product_read_only_returns_403() throws Exception {
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":2}")
+                .with(user("bob").authorities(
+                        new SimpleGrantedAuthority("ROLE_USER"),
+                        new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void replace_open_package_with_user_role_only_returns_403() throws Exception {
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/replace")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"warehouseCode\":\"LOJA-01\"}")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── Produto base com variações (EST-F036) ────────────────────────────────────────────────
+
+    @Test
+    void set_parent_sellable_with_product_read_only_returns_403() throws Exception {
+        mockMvc.perform(patch("/estoque/products/LM/parent-sellable")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"parentSellable\":true}")
+                .with(user("bob").authorities(
+                        new SimpleGrantedAuthority("ROLE_USER"),
+                        new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── Embalagem (EST-F032) ─────────────────────────────────────────────────────────────────
+
+    /** Ligar embalagem muda o que toda venda futura faz sozinha: é cadastro de produto, não de caixa. */
+    @Test
+    void define_packaging_with_product_read_only_returns_403() throws Exception {
+        mockMvc.perform(put("/estoque/products/LM-AZUL-UN/packaging")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"parentSku\":\"LM-AZUL-MACO\",\"unitsPerParent\":20}")
+                .with(user("bob").authorities(
+                        new SimpleGrantedAuthority("ROLE_USER"),
+                        new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Com a permissão o RBAC deixa passar; o 404 é do SKU ausente na base de teste. */
+    @Test
+    void define_packaging_with_product_manage_reaches_the_route() throws Exception {
+        mockMvc.perform(put("/estoque/products/LM-AZUL-UN/packaging")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"parentSku\":\"LM-AZUL-MACO\",\"unitsPerParent\":20}")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("ESTOQUE_PRODUCT_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void read_packaging_with_user_role_only_returns_403() throws Exception {
+        mockMvc.perform(get("/estoque/products/LM-AZUL-UN/packaging")
                 .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
                 .andExpect(status().isForbidden());
     }

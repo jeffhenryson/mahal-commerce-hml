@@ -84,6 +84,10 @@ public class ProductEntity {
     @Column(name = "lot_tracked", nullable = false)
     private boolean lotTracked;
 
+    // EST-F036 — a base de um produto com variações é vendável? Só tem efeito com variações (V149).
+    @Column(name = "parent_sellable", nullable = false)
+    private boolean parentSellable;
+
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude
     private List<ProductVariantEntity> variants = new ArrayList<>();

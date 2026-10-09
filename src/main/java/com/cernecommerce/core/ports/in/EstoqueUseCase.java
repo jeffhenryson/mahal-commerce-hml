@@ -14,6 +14,7 @@ import com.cernecommerce.core.domain.model.estoque.MeasurementUnit;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.estoque.OrphanSku;
 import com.cernecommerce.core.domain.model.estoque.OpenPackage;
+import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
 import com.cernecommerce.core.domain.model.SortDirection;
 import com.cernecommerce.core.domain.model.estoque.Product;
@@ -708,14 +709,24 @@ public interface EstoqueUseCase {
      *        {@code pricing.effectivePrice()}. Nulo quando o produto não oferece consumo livre.
      */
     record CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
-            boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit) {
+            boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
+            boolean parentWithVariants) {
+
+        /**
+         * Forma sem {@code parentWithVariants} (PDV-F042) — compatibilidade: SKU tratado como
+         * vendável por si, que é o comportamento anterior.
+         */
+        public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
+                boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit) {
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, sessionsPerUnit, kit, false);
+        }
 
         /**
          * Forma curta, para quem só precisa do par nome/preço: resolve os campos de mesa para o
          * mesmo default da migration — disponível na mesa, não vendido por sessão, sem open rosh.
          */
         public CatalogSaleInfo(String productName, Pricing pricing) {
-            this(productName, pricing, true, false, null, null, false);
+            this(productName, pricing, true, false, null, null, false, false);
         }
 
         /**
@@ -724,7 +735,7 @@ public interface EstoqueUseCase {
          */
         public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
                 boolean sessionProduct, BigDecimal openRoshPrice) {
-            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, null, false);
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, null, false, false);
         }
 
         /**
@@ -784,6 +795,87 @@ public interface EstoqueUseCase {
      */
     OpenPackage replaceOpenPackage(String sku, String warehouseCode, String username);
 
+    /**
+     * Cadastra uma lata que <b>já estava aberta</b> antes de o sistema saber dela (EST-F033), com
+     * as sessões que ela ainda rende — o inventário inicial das essências da mesa.
+     *
+     * <p><b>Não baixa estoque</b>, ao contrário de abrir e repor: a lata saiu da prateleira antes,
+     * e baixar agora tiraria do saldo uma segunda lata que continua lacrada. Daqui em diante ela
+     * segue o ciclo normal — quando esgota, a próxima sessão abre outra com {@code SAIDA}.</p>
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException
+     *         se o SKU não for produto de sessão com {@code sessionsPerUnit} declarado.
+     * @throws com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException se
+     *         já houver lata aberta do SKU no depósito.
+     * @throws com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException se
+     *         {@code usesRemaining} não estiver entre 1 e {@code sessionsPerUnit}.
+     */
+    OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining, String username);
+
+    /**
+     * Liga {@code childSku} a uma embalagem (EST-F032): {@code parentSku} contém
+     * {@code unitsPerParent} dele — o maço contém 20 cigarros, a carteira contém 10 maços. A partir
+     * daí toda {@code SAIDA} do filho que não couber no disponível abre o pai sozinha, em cascata.
+     * Redefinir substitui a ligação do filho (um filho tem um pai só).
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException kit, produto
+     *         base com variações, produto com lote, ciclo ou cadeia acima de 4 níveis
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException SKU desconhecido
+     */
+    SkuPackaging definePackaging(String childSku, String parentSku, int unitsPerParent);
+
+    /**
+     * Desliga {@code childSku} da embalagem (EST-F032). Saldos não mudam.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException sem ligação
+     */
+    void removePackaging(String childSku);
+
+    /**
+     * A cadeia de embalagem que passa por {@code sku}, da mais externa para a mais interna, com o
+     * disponível de cada nível quando {@code warehouseCode} vem informado (EST-F032). SKU sem
+     * ligação devolve só ele mesmo.
+     */
+    List<PackagingLevel> getPackagingChain(String sku, String warehouseCode);
+
+    /**
+     * Um nível da cadeia de embalagem (EST-F032).
+     *
+     * @param containsSku o nível de dentro; nulo no nível mais interno
+     * @param containsUnits quantos do nível de dentro este contém; nulo no mais interno
+     * @param available disponível no depósito pedido; nulo sem depósito
+     */
+    record PackagingLevel(String sku, String containsSku, Integer containsUnits, BigDecimal available) {
+    }
+
+    /**
+     * A central de cigarros do PDV (PDV-F041): todo produto <b>ativo</b> com alguma embalagem ligada
+     * (decisão do dono — não depende da categoria), cada um com as suas cadeias (uma por cor, da
+     * carteira ao solto), e em cada nível o preço e o disponível no depósito. A venda continua sendo
+     * a do balcão; a quebra de embalagem é de EST-F032.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException depósito desconhecido
+     */
+    List<PackagedFamily> listPackagedFamilies(String warehouseCode);
+
+    /** Um produto da central de cigarros (PDV-F041) e as suas cadeias de embalagem. */
+    record PackagedFamily(String productSku, String productName, List<PackagedLine> lines) {
+    }
+
+    /** Uma cadeia, da embalagem mais externa à mais interna — tipicamente uma cor. */
+    record PackagedLine(List<PackagedLevel> levels) {
+    }
+
+    /**
+     * Um nível vendável da cadeia.
+     *
+     * @param label os atributos da variação ("azul · maço"); o nome do produto para SKU sem variação
+     * @param price o preço efetivo do SKU (o da variação, ou o do produto); nulo sem preço
+     */
+    record PackagedLevel(String sku, String label, BigDecimal price, BigDecimal available, String containsSku,
+            Integer containsUnits) {
+    }
+
     /** Latas em uso num depósito. */
     List<OpenPackage> listOpenPackages(String warehouseCode);
 
@@ -831,6 +923,15 @@ public interface EstoqueUseCase {
      * pai não existir.
      */
     Product setProductActive(String sku, boolean active);
+
+    /**
+     * EST-F036 — liga ou desliga a venda do SKU <b>base</b> de um produto com variações. Desligado
+     * (o padrão), a base não se vende nem recebe entrada de estoque; as variações não mudam. Sem
+     * variações não tem efeito. Só aceita o SKU pai.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException SKU pai desconhecido
+     */
+    Product setParentSellable(String sku, boolean parentSellable);
 
     /**
      * Ativa ou desativa o rastreamento de lote e validade de um produto (EST-F008) — opt-in por

@@ -93,6 +93,7 @@ public class ProductDTOConverter {
         dto.setPricing(toResponse(product.pricing()));
         dto.setType(product.type().name());
         dto.setLotTracked(product.lotTracked());
+        dto.setParentSellable(product.parentSellable());
         dto.setBarcode(product.barcode());
         dto.setUnit(product.unit().name());
         dto.setSampleProduct(product.sampleProduct());

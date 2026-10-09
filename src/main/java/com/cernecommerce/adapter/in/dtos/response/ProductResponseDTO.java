@@ -62,6 +62,13 @@ public class ProductResponseDTO {
     /** EST-F008 — opt-in: ENTRADA deste SKU passa a exigir lote e validade. */
     private boolean lotTracked;
 
+    /**
+     * EST-F036 — a base deste produto é vendável? Com variações e {@code false}, o SKU base não se
+     * vende nem recebe entrada de estoque, e o PDV deve listar só as variações. Sem variações, a base é
+     * sempre vendável e o campo não se aplica.
+     */
+    private boolean parentSellable;
+
     /** Código de barras/EAN, quando cadastrado. */
     private String barcode;
 

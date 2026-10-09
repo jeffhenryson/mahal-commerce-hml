@@ -28,6 +28,12 @@ import com.cernecommerce.adapter.in.dtos.request.ReorderPointRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockCountItemRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockCountRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockMovementRequest;
+import com.cernecommerce.adapter.in.dtos.request.RegisterOpenPackageRequest;
+import com.cernecommerce.adapter.in.dtos.request.DefinePackagingRequest;
+import com.cernecommerce.adapter.in.dtos.request.ParentSellableRequest;
+import com.cernecommerce.adapter.in.dtos.response.PackagingLevelResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.PackagingResponseDTO;
+import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.adapter.in.dtos.request.ReplaceOpenPackageRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockConversionRequest;
 import com.cernecommerce.adapter.in.dtos.request.WarehousePatchRequest;
@@ -742,6 +748,28 @@ public class EstoqueController {
         return ResponseEntity.ok(converter.toResponse(updated));
     }
 
+    @Operation(summary = "Libera ou bloqueia a venda do produto base com variações (EST-F036)",
+            description = "Com variações, o SKU base não existe na prateleira — o estoque está nelas — e por "
+                    + "padrão não se vende (PDV, mesa, site: `400 PARENT_NOT_SELLABLE`) nem recebe entrada de "
+                    + "estoque. Saída e ajuste continuam, para escoar o que ficou na base. Sem variações, o "
+                    + "campo não tem efeito. Só aceita o SKU pai.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Alterado", content = @Content(schema = @Schema(implementation = ProductResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Campo 'parentSellable' ausente", content = @Content),
+            @ApiResponse(responseCode = "404", description = "SKU pai não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PatchMapping("/products/{sku}/parent-sellable")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<ProductResponseDTO> setParentSellable(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody ParentSellableRequest request, Authentication authentication) {
+        Product updated = estoqueUseCase.setParentSellable(sku, request.getParentSellable());
+        publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_UPDATED, authentication.getName(),
+                Map.of("sku", updated.sku(), "parentSellable", updated.parentSellable())));
+        return ResponseEntity.ok(converter.toResponse(updated));
+    }
+
     @Operation(summary = "Ativa ou desativa o rastreamento de lote e validade de um produto (EST-F008)",
             description = "Opt-in por SKU — só essência/carvão/perecível costuma precisar. A partir daqui, "
                     + "ENTRADA deste SKU em POST /estoque/movements passa a exigir lotCode e expiryDate.")
@@ -1062,6 +1090,104 @@ public class EstoqueController {
         return ResponseEntity.ok(toResponse(replaced, request.getWarehouseCode()));
     }
 
+    // ── Embalagem (EST-F032) ─────────────────────────────────────────────────────────────────
+
+    @Operation(summary = "Liga um SKU à embalagem que o contém (EST-F032)",
+            description = "`parentSku` contém `unitsPerParent` deste SKU — o maço contém 20 cigarros, a "
+                    + "carteira contém 10 maços. A partir daí toda SAIDA deste SKU que não couber no "
+                    + "disponível **abre o pai sozinha**, em cascata (unidade abre maço, maço abre carteira), "
+                    + "com os dois movimentos no ledger como \"Quebra automática de embalagem\". "
+                    + "Redefinir substitui a ligação.\n\n"
+                    + "Ligue as **variações** (cor × embalagem), não o produto base. Recusa kit, produto base "
+                    + "com variações, produto com lote, ciclo e cadeia acima de 4 níveis (`400 INVALID_PACKAGING`).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Ligação gravada"),
+            @ApiResponse(responseCode = "400", description = "Ligação inválida (`INVALID_PACKAGING`) ou fator < 2", content = @Content),
+            @ApiResponse(responseCode = "404", description = "SKU não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PutMapping("/products/{sku}/packaging")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<PackagingResponseDTO> definePackaging(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody DefinePackagingRequest request, Authentication authentication) {
+        SkuPackaging saved = estoqueUseCase.definePackaging(sku, request.getParentSku(), request.getUnitsPerParent());
+        publisher.publishEvent(AuditEvent.of(EventType.PACKAGING_DEFINED, authentication.getName(),
+                Map.of("childSku", saved.childSku(), "parentSku", saved.parentSku(),
+                        "unitsPerParent", saved.unitsPerParent())));
+        return ResponseEntity.ok(new PackagingResponseDTO(saved.childSku(), saved.parentSku(), saved.unitsPerParent()));
+    }
+
+    @Operation(summary = "Desliga um SKU da embalagem (EST-F032)",
+            description = "A venda deste SKU deixa de abrir embalagem sozinha. Saldos não mudam.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Desligado"),
+            @ApiResponse(responseCode = "404", description = "SKU sem ligação (`PACKAGING_NOT_FOUND`)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @DeleteMapping("/products/{sku}/packaging")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<Void> removePackaging(@PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            Authentication authentication) {
+        estoqueUseCase.removePackaging(sku);
+        publisher.publishEvent(AuditEvent.of(EventType.PACKAGING_REMOVED, authentication.getName(),
+                Map.of("childSku", sku)));
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "A cadeia de embalagem de um SKU (EST-F032)",
+            description = "Da embalagem mais externa para a mais interna (carteira → maço → unidade), com "
+                    + "o disponível de cada nível quando `warehouseCode` vem informado — a base da central "
+                    + "de cigarros do PDV. SKU sem ligação devolve só ele.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "SKU ou depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/products/{sku}/packaging")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','PDV_READ')")
+    public ResponseEntity<List<PackagingLevelResponseDTO>> getPackagingChain(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @RequestParam(required = false) @Size(min = 2, max = 50) String warehouseCode) {
+        return ResponseEntity.ok(estoqueUseCase.getPackagingChain(sku, warehouseCode).stream()
+                .map(l -> new PackagingLevelResponseDTO(l.sku(), l.containsSku(), l.containsUnits(), l.available()))
+                .toList());
+    }
+
+    @Operation(summary = "Cadastrar uma lata que já está aberta (EST-F033)",
+            description = "Inventário inicial das essências da mesa: registra a lata que já saiu da "
+                    + "prateleira antes de o sistema saber dela, informando quantas sessões ela "
+                    + "ainda rende (`usesRemaining`, entre 1 e o `sessionsPerUnit` do produto).\n\n"
+                    + "**Não baixa estoque** — a lata já não está no saldo de lacradas, e baixar "
+                    + "agora tiraria uma segunda. Daí em diante segue o ciclo normal: quando esgota, "
+                    + "a próxima sessão abre outra com `SAIDA` de 1.\n\n"
+                    + "Se já houver lata aberta do SKU no depósito, responde `409 "
+                    + "OPEN_PACKAGE_ALREADY_OPEN`: para trocar, use `/replace`.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Cadastrada — devolve o contador"),
+            @ApiResponse(responseCode = "400", description = "`usesRemaining` fora da lata (`OPEN_PACKAGE_INVALID_USES`), ou SKU não é vendido por sessão", content = @Content),
+            @ApiResponse(responseCode = "404", description = "SKU ou depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Já existe lata aberta deste SKU no depósito", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/open-packages/{sku}")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_STOCK_MANAGE','PDV_COMANDA_MANAGE')")
+    public ResponseEntity<OpenPackageResponseDTO> registerOpenPackage(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody RegisterOpenPackageRequest request, Authentication authentication) {
+        OpenPackage registered = estoqueUseCase.registerOpenPackage(sku, request.getWarehouseCode(),
+                request.getUsesRemaining(), authentication.getName());
+        // Única entrada no contador que não passa por stock_movement: sem este evento, nada diria
+        // quem declarou que a lata tinha N sessões.
+        publisher.publishEvent(AuditEvent.of(EventType.OPEN_PACKAGE_REGISTERED, authentication.getName(),
+                Map.of("sku", sku, "warehouseCode", request.getWarehouseCode(),
+                        "usesRemaining", request.getUsesRemaining())));
+        // A URI é a da leitura: GET /open-packages/{sku}?warehouseCode= devolve esta mesma lata.
+        return ResponseEntity.created(URI.create("/estoque/open-packages/" + sku + "?warehouseCode="
+                        + request.getWarehouseCode()))
+                .body(toResponse(registered, request.getWarehouseCode()));
+    }
+
     /**
      * O nome do produto sai de {@code resolveSaleInfo}, uma consulta por lata. É N+1 assumido, e
      * limitado por construção: existe no máximo uma lata aberta por SKU de essência num depósito,
@@ -1072,7 +1198,9 @@ public class EstoqueController {
     private OpenPackageResponseDTO toResponse(OpenPackage open, String warehouseCode) {
         OpenPackageResponseDTO dto = new OpenPackageResponseDTO();
         dto.setSku(open.sku());
-        dto.setProductName(estoqueUseCase.resolveSaleInfo(open.sku()).productName());
+        // findProductBySku, e não resolveSaleInfo: ler o nome não é venda, e a guarda de EST-F036
+        // recusaria uma lata legada aberta no SKU base.
+        dto.setProductName(estoqueUseCase.findProductBySku(open.sku()).name());
         dto.setWarehouseCode(warehouseCode);
         dto.setUses(open.uses());
         dto.setSessionsPerUnit(open.sessionsPerUnit());

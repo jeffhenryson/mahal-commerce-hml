@@ -482,4 +482,42 @@ class ProductTest {
         // E a margem passa a refletir o custo real da variação, não o do pai.
         assertThat(efetivo.marginAmount()).isEqualByComparingTo("-10.00");
     }
+
+    // ── Produto base com variações (EST-F036) ────────────────────────────────────────────────
+
+    private static Product lmComCores() {
+        return Product.create("LM", "LM", "Cigarros", List.of(
+                ProductVariant.create("LM-AZUL", List.of(new ProductAttribute("cor", "azul"))),
+                ProductVariant.create("LM-VERM", List.of(new ProductAttribute("cor", "vermelho")))));
+    }
+
+    /**
+     * "LM" com azul e vermelho: a base não existe na prateleira — o estoque está nas cores —, e por
+     * padrão não se vende. As variações, sim.
+     */
+    @Test
+    void baseComVariacoes_naoEVendavelPorPadrao_masAsVariacoesSao() {
+        Product lm = lmComCores();
+
+        assertThat(lm.parentSellable()).isFalse();
+        assertThat(lm.isSellable("LM")).isFalse();
+        assertThat(lm.isSellable("LM-AZUL")).isTrue();
+    }
+
+    /** Sem variações, a base é o próprio item da prateleira: sempre vendável, o flag não se aplica. */
+    @Test
+    void produtoSemVariacoes_eSempreVendavel() {
+        Product carvao = Product.create("CARVAO-1KG", "Carvão", "Carvão", List.of());
+
+        assertThat(carvao.isSellable("CARVAO-1KG")).isTrue();
+    }
+
+    /** O dono pode ligar a venda da base, quando ela existe de verdade como item. */
+    @Test
+    void withParentSellable_liberaABase() {
+        Product lm = lmComCores().withParentSellable(true);
+
+        assertThat(lm.isSellable("LM")).isTrue();
+        assertThat(lm.withActive(false).parentSellable()).as("sobrevive às cópias").isTrue();
+    }
 }
