@@ -16,6 +16,13 @@ import java.util.Optional;
 public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
         JpaSpecificationExecutor<OrderEntity> {
 
+    /** PDV-F043 — o pedido gravado com a chave de venda do caixa. */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT o.id FROM OrderEntity o WHERE o.clientSaleId = :clientSaleId")
+    java.util.Optional<Long> findIdByClientSaleId(
+            @org.springframework.data.repository.query.Param("clientSaleId") String clientSaleId);
+
+
     /**
      * PED-C011 — trava a linha de {@code sales_order} para os caminhos que decidem sobre os pagamentos
      * do pedido (reembolso e correção).

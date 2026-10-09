@@ -101,6 +101,22 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public Optional<Long> findIdByClientSaleId(String clientSaleId) {
+        return orderJpaRepository.findIdByClientSaleId(clientSaleId);
+    }
+
+    @Override
+    public void stampClientSale(Long orderId, String clientSaleId, Instant clientSoldAt) {
+        OrderEntity entity = orderJpaRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalStateException("pedido " + orderId + " não encontrado para carimbar"));
+        entity.setClientSaleId(clientSaleId);
+        entity.setClientSoldAt(clientSoldAt);
+        // saveAndFlush: a colisão no índice único tem que estourar aqui, dentro da venda.
+        orderJpaRepository.saveAndFlush(entity);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Optional<Order> findById(Long id) {
         return orderJpaRepository.findById(id).map(this::toDomain);
     }
@@ -123,11 +139,16 @@ public class OrderRepositoryImpl implements OrderRepository {
         if (comandaIds == null || comandaIds.isEmpty()) {
             return List.of();
         }
-        List<Long> ids = orderJpaRepository.findIdsByComandaIdIn(comandaIds);
+        // PDV-C029 — em lotes: o analytics manda até 366 dias de mesas, e com vários pedidos parciais por
+        // mesa a lista de ids passava do limite de parâmetros do driver (500). Cada lote volta em
+        // id DESC; a ordenação final refaz a ordem global que a consulta única dava.
+        List<Long> ids = InClauseBatches.fetch(comandaIds, orderJpaRepository::findIdsByComandaIdIn);
         if (ids.isEmpty()) {
             return List.of();
         }
-        return orderJpaRepository.findAllByIdsWithItems(ids).stream().map(this::toDomain).toList();
+        return InClauseBatches.fetch(ids, orderJpaRepository::findAllByIdsWithItems).stream()
+                .sorted(java.util.Comparator.comparing(OrderEntity::getId).reversed())
+                .map(this::toDomain).toList();
     }
 
     /**

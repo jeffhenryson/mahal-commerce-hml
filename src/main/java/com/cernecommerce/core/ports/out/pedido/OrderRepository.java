@@ -23,6 +23,16 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /** PDV-F043 — o pedido gravado com a chave de venda do caixa, se houver. */
+    Optional<Long> findIdByClientSaleId(String clientSaleId);
+
+    /**
+     * PDV-F043 — carimba no pedido a chave de venda do caixa e a hora em que ela aconteceu no balcão.
+     * Grava na hora (flush): é o índice único que barra dois envios simultâneos da mesma venda, e a
+     * colisão precisa estourar dentro da venda, não no commit.
+     */
+    void stampClientSale(Long orderId, String clientSaleId, java.time.Instant clientSoldAt);
+
     /**
      * PED-C011 — o pedido com a linha travada até o fim da transação. Reembolso e correção de
      * pagamento decidem sobre as linhas de pagamento que leram; sem a trava, os dois em paralelo

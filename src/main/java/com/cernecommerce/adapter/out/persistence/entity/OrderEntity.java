@@ -18,7 +18,10 @@ import java.util.List;
 @NoArgsConstructor
 @Entity
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
-@Table(name = "sales_order")
+// PDV-F043 — a constraint é declarada aqui também para o H2 do perfil dev (sem Flyway) criá-la com o
+// MESMO nome da V150: é por ele que o GlobalExceptionHandler reconhece o reenvio simultâneo.
+@Table(name = "sales_order", uniqueConstraints = @UniqueConstraint(name = "uk_sales_order_client_sale_id",
+        columnNames = "client_sale_id"))
 // PDV-F022 — entrega em tabela própria (a regra de Order: endereço e frete fora de sales_order),
 // mapeada como tabela secundária em vez de @OneToOne: o lado não-dono de um @OneToOne não é LAZY
 // sem bytecode enhancement, e toda listagem de pedidos pagaria uma consulta por linha. A secundária
@@ -95,6 +98,18 @@ public class OrderEntity {
 
     @Column(name = "paid_at")
     private Instant paidAt;
+
+    /**
+     * PDV-F043 — chave da venda gerada no caixa (UUID), com índice único parcial (V150). Fora do
+     * domínio {@code Order} de propósito: só a idempotência da venda a lê, por
+     * {@code OrderRepository.findIdByClientSaleId}, e o {@code save} do pedido não a sobrescreve.
+     */
+    @Column(name = "client_sale_id", length = 36)
+    private String clientSaleId;
+
+    /** PDV-F043 — hora em que a venda aconteceu no balcão, quando chegou pela fila offline. */
+    @Column(name = "client_sold_at")
+    private Instant clientSoldAt;
 
     @Column(name = "concluded_at")
     private Instant concludedAt;
