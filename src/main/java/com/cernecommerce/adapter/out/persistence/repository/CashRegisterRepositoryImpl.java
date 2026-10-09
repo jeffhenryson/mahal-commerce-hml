@@ -12,6 +12,9 @@ import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +28,9 @@ import java.util.Optional;
 public class CashRegisterRepositoryImpl implements CashRegisterRepository {
 
     private final CashRegisterSessionJpaRepository cashRegisterSessionJpaRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public CashRegisterRepositoryImpl(CashRegisterSessionJpaRepository cashRegisterSessionJpaRepository) {
         this.cashRegisterSessionJpaRepository = cashRegisterSessionJpaRepository;
@@ -120,6 +126,32 @@ public class CashRegisterRepositoryImpl implements CashRegisterRepository {
         entity.setStatus(session.status().name());
         entity.setClosingNotes(session.closingNotes());
         return toDomain(cashRegisterSessionJpaRepository.save(entity));
+    }
+
+    @Override
+    public void lockForUpdate(Long id) {
+        lock(id, LockModeType.PESSIMISTIC_WRITE);
+    }
+
+    @Override
+    public void lockForShare(Long id) {
+        lock(id, LockModeType.PESSIMISTIC_READ);
+    }
+
+    /**
+     * PDV-C035 — {@code refresh} com trava, e não só {@code find}: se a sessão já estava no contexto
+     * de persistência (o fechamento de mesa a lê por {@code findOpenByOperator} antes), um
+     * {@code find} travado devolveria a cópia velha — trava sem releitura, e o "OPEN" lido antes do
+     * fechamento concorrente continuaria valendo.
+     */
+    private void lock(Long id, LockModeType mode) {
+        if (id == null) {
+            return;
+        }
+        CashRegisterSessionEntity entity = entityManager.find(CashRegisterSessionEntity.class, id);
+        if (entity != null) {
+            entityManager.refresh(entity, mode);
+        }
     }
 
     private CashRegisterSession toDomain(CashRegisterSessionEntity e) {
