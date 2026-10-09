@@ -2,7 +2,6 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -17,10 +16,18 @@ public class AddSessionRequest {
     @Schema(example = "2")
     private Long tierId;
 
-    @NotBlank
+    // Sem @NotBlank desde PDV-F042: texto OU essenciaSku — conferido no controller, com o mesmo
+    // SESSION_ESSENCE_REQUIRED de sempre.
     @Size(max = 150)
-    @Schema(description = "Marca e sabor da essência, texto livre.", example = "Zomo Blueberry")
+    @Schema(description = "Marca e sabor da essência, texto livre. Obrigatório se não vier essenciaSku; "
+            + "vazio com essenciaSku usa o nome do produto.", example = "Zomo Blueberry")
     private String essencia;
+
+    @Size(max = 50)
+    @Schema(description = "PDV-F042 — SKU do sabor no catálogo (a variação, não o produto base). Opcional: "
+            + "com ele a sessão consome um uso da lata aberta do sabor, ou 1 unidade como uso da loja se o "
+            + "produto não tiver sessionsPerUnit.", example = "ZOMO-BLUEBERRY")
+    private String essenciaSku;
 
     @Schema(description = "Upgrade para o vaso grande (acréscimo da configuração).")
     private boolean vasoGrande;
@@ -37,8 +44,12 @@ public class AddSessionRequest {
     private Modo modo;
 
     @Size(max = 150)
-    @Schema(description = "Essência do 2º rosh — obrigatória no DUPLO.", example = "Nay Uva")
+    @Schema(description = "Essência do 2º rosh — no DUPLO, ela ou essenciaRoshSku.", example = "Nay Uva")
     private String essenciaRosh;
+
+    @Size(max = 50)
+    @Schema(description = "PDV-F042 — SKU do sabor do 2º rosh no DUPLO.", example = "NAY-UVA")
+    private String essenciaRoshSku;
 
     @Schema(description = "Faixa do 2º rosh no DUPLO; nula usa a da sessão.")
     private Long tierIdRosh;

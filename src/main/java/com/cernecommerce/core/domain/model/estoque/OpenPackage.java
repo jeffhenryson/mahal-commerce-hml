@@ -1,5 +1,7 @@
 package com.cernecommerce.core.domain.model.estoque;
 
+import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
+
 import java.time.Instant;
 
 /**
@@ -71,6 +73,25 @@ public record OpenPackage(
     public static OpenPackage open(String sku, Long warehouseId, int sessionsPerUnit, String openedBy,
             Instant openedAt) {
         return new OpenPackage(null, sku, warehouseId, 0, sessionsPerUnit, openedAt, openedBy, null, null);
+    }
+
+    /**
+     * Cadastra uma lata que <b>já estava aberta</b> antes de o sistema saber dela (EST-F033) — o
+     * inventário inicial das essências da mesa.
+     *
+     * <p>Recebe o que o operador vê, quantas sessões a lata ainda rende, e guarda o que já foi
+     * gasto. Ao contrário de {@link #open}, não há {@code SAIDA} por trás: a lata saiu da
+     * prateleira antes, e baixar agora tiraria do saldo uma segunda lata que continua lacrada.</p>
+     */
+    public static OpenPackage registered(String sku, Long warehouseId, int sessionsPerUnit, int usesRemaining,
+            String openedBy, Instant openedAt) {
+        // Zero restante é lata vazia (vai para o lixo, não para o contador); acima do que a lata
+        // rende é erro de digitação, não lata maior.
+        if (usesRemaining < 1 || usesRemaining > sessionsPerUnit) {
+            throw new InvalidOpenPackageUsesException(usesRemaining, sessionsPerUnit);
+        }
+        return new OpenPackage(null, sku, warehouseId, sessionsPerUnit - usesRemaining, sessionsPerUnit,
+                openedAt, openedBy, null, null);
     }
 
     public boolean isOpen() {

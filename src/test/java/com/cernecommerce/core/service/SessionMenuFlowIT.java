@@ -217,4 +217,57 @@ class SessionMenuFlowIT {
         flushAndClear();
         assertThat(disponivel(sessionMenuUseCase.getMenu(), vasoP)).isEqualTo(1);
     }
+
+    /**
+     * PDV-F042 — a sessão do cardápio com o sabor do catálogo consome USO da lata aberta, sem tirar
+     * unidade da prateleira enquanto a lata rende; remover a sessão antes do preparo devolve o uso.
+     */
+    @Test
+    void sessionWithCatalogEssence_consumesTheOpenPackage_andRemovalGivesTheUseBack() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String operator = "caixa-" + suffix;
+        String warehouse = "LOUNGE-" + suffix;
+        String sabor = "ZOMO-" + suffix;
+
+        sessionMenuUseCase.createAssetType("VP" + suffix, "Vaso pequeno " + suffix, 2, false);
+        sessionMenuUseCase.updateSettings(new SessionSettings("VP" + suffix, null, new BigDecimal("10.00"), Set.of()));
+        SessionTier tradicional = sessionMenuUseCase.createTier("Tradicional " + suffix, new BigDecimal("25.00"),
+                "Zomo", 1);
+
+        estoqueUseCase.createWarehouse(warehouse, "Lounge " + suffix, WarehouseType.LOJA_FISICA);
+        estoqueUseCase.createProduct(sabor, "Zomo Blueberry " + suffix, "Essências", List.of(),
+                com.cernecommerce.core.domain.model.estoque.Pricing.of(new BigDecimal("40.00"), null,
+                        new BigDecimal("70.00")));
+        estoqueUseCase.updateProduct(sabor, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null,
+                new EstoqueUseCase.TableSessionCommand(true, true, 5, null));
+        estoqueUseCase.adjustStock(sabor, warehouse,
+                com.cernecommerce.core.domain.model.estoque.MovementType.ENTRADA, new BigDecimal("3.000"),
+                "carga inicial", operator);
+        // Inventário inicial (EST-F033): a lata da bancada já tinha rendido 3 de 5.
+        estoqueUseCase.registerOpenPackage(sabor, warehouse, 2, operator);
+
+        CashRegisterSession caixa = pdvUseCase.openSession(operator, BigDecimal.ZERO, warehouse);
+        Comanda mesa = comandaUseCase.openComanda(caixa.id(), "Mesa 9", operator);
+        flushAndClear();
+
+        ComandaItem sessao = comandaUseCase.addSession(mesa.id(), new ComandaUseCase.AddSessionCommand(
+                tradicional.id(), null, false, null, List.of(), false, null, null, false, sabor, null),
+                operator).items().get(0);
+        flushAndClear();
+
+        assertThat(sessao.essenceSku()).isEqualTo(sabor);
+        assertThat(sessao.notes()).isEqualTo("Zomo Blueberry " + suffix);
+        assertThat(sessao.packageUses()).isEqualTo(4);
+        assertThat(comandaUseCase.getComanda(mesa.id()).items().get(0).essenceSku()).isEqualTo(sabor);
+        assertThat(estoqueUseCase.findOpenPackage(sabor, warehouse).uses()).isEqualTo(4);
+        // A lata já estava aberta: nenhuma unidade saiu da prateleira.
+        assertThat(estoqueUseCase.getStockBalance(sabor, warehouse).quantity()).isEqualByComparingTo("3.000");
+
+        comandaUseCase.removeItem(mesa.id(), sessao.id(), operator);
+        flushAndClear();
+
+        assertThat(estoqueUseCase.findOpenPackage(sabor, warehouse).uses()).isEqualTo(3);
+        assertThat(estoqueUseCase.getStockBalance(sabor, warehouse).quantity()).isEqualByComparingTo("3.000");
+    }
 }

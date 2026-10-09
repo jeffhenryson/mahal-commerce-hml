@@ -12,12 +12,22 @@ public class RepeatSessionRequest {
     @Schema(description = "Sabor da nova sessão; nulo ou vazio repete o da origem.", example = "Sence Menta")
     private String essencia;
 
+    @Size(max = 50)
+    @Schema(description = "PDV-F042 — SKU do sabor no catálogo. Sem ele e sem essencia, repete o sabor E o "
+            + "SKU da origem; com essencia em texto e sem ele, a sessão nova fica só em texto.",
+            example = "SENCE-MENTA")
+    private String essenciaSku;
+
     @Schema(description = "Rosh duplo: cria também o 2º rosh a R$ 0, ligado, em NA_FILA.")
     private boolean duplo;
 
     @Size(max = 150)
     @Schema(description = "Sabor do 2º rosh. Obrigatório quando duplo=true.", example = "Zomo Uva")
     private String essenciaRosh;
+
+    @Size(max = 50)
+    @Schema(description = "PDV-F042 — SKU do sabor do 2º rosh no duplo.", example = "ZOMO-UVA")
+    private String essenciaRoshSku;
 
     @Schema(description = "Faixa do 2º rosh; nula usa a da sessão.", example = "1")
     private Long tierIdRosh;

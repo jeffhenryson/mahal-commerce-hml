@@ -26,6 +26,15 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
         return jpaRepository.findBySkuAndWarehouseIdAndClosedAtIsNull(sku, warehouseId).map(this::toDomain);
     }
 
+    /**
+     * Sem {@code readOnly}, de propósito: SELECT FOR UPDATE em transação somente-leitura é
+     * contraditório, e alguns drivers o rejeitam. Mesmo motivo de {@code ComandaRepositoryImpl}.
+     */
+    @Override
+    public Optional<OpenPackage> findOpenForUpdate(String sku, Long warehouseId) {
+        return jpaRepository.findOpenForUpdate(sku, warehouseId).map(this::toDomain);
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<OpenPackage> findAllOpen(Long warehouseId) {

@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.estoque;
 
+import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -143,5 +144,42 @@ class OpenPackageTest {
     void withUses_eWithoutUses_recusamContagemNaoPositiva() {
         assertThatThrownBy(() -> lata(5).withUses(0)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> lata(5).withoutUses(0)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ── Lata já aberta antes do sistema (EST-F033) ───────────────────────────────────────────
+
+    /**
+     * O operador informa o que ele vê — quantas sessões a lata ainda rende —, e o contador guarda
+     * o que já foi gasto. Uma lata de 5 com 2 restantes nasce com 3 usos.
+     */
+    @Test
+    void registered_guardaOsUsosJaGastos() {
+        OpenPackage lata = OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "atendente", T0);
+
+        assertThat(lata.uses()).isEqualTo(3);
+        assertThat(lata.remaining()).isEqualTo(2);
+        assertThat(lata.isOpen()).isTrue();
+        assertThat(lata.isExhausted()).isFalse();
+        assertThat(lata.openedAt()).isEqualTo(T0);
+    }
+
+    /** Lata recém-aberta cadastrada: o mesmo estado de {@code open}, só que sem a baixa. */
+    @Test
+    void registered_cheia_nasceZerada() {
+        assertThat(OpenPackage.registered("ESSE-BLUE", 1L, 5, 5, "atendente", T0).uses()).isZero();
+    }
+
+    /**
+     * Zero restante é lata vazia, que não tem o que cadastrar — vai para o lixo, não para o
+     * contador. E mais restante do que a lata rende é erro de digitação, não lata maior.
+     */
+    @Test
+    void registered_recusaRestanteForaDaLata() {
+        assertThatThrownBy(() -> OpenPackage.registered("ESSE-BLUE", 1L, 5, 0, "atendente", T0))
+                .isInstanceOf(InvalidOpenPackageUsesException.class)
+                .hasMessageContaining("entre 1 e 5");
+        assertThatThrownBy(() -> OpenPackage.registered("ESSE-BLUE", 1L, 5, 6, "atendente", T0))
+                .isInstanceOf(InvalidOpenPackageUsesException.class)
+                .hasMessageContaining("entre 1 e 5");
     }
 }
