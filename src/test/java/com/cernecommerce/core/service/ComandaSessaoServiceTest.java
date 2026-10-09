@@ -2,11 +2,14 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.pdv.ComandaEmptyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaHasOpenItemsException;
+import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
 import com.cernecommerce.core.domain.exception.pdv.InvalidSessionTransitionException;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotCollectedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemIsChargedException;
+import com.cernecommerce.core.domain.exception.pdv.LinkedSessionStillActiveException;
+import com.cernecommerce.core.domain.exception.pdv.SessionWithdrawalReasonRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
@@ -123,8 +126,8 @@ class ComandaSessaoServiceTest {
             for (ComandaItem i : c.items()) {
                 items.add(i.id() != null ? i : ComandaItem.of(next++, i.sku(), i.quantity(), i.unitPrice(),
                         i.costPrice(), i.productName(), i.addedAt(), i.mode(), i.courtesy(), i.linkedItemId(),
-                        i.notes(), i.surchargeAmount(), i.closedInOrderId(), null, null, null, null, null,
-                        i.session(), i.setup()));
+                        i.notes(), i.surchargeAmount(), i.closedInOrderId(), i.packageUses(),
+                        i.packageSessionsPerUnit(), null, null, null, i.session(), i.setup(), i.essenceSku()));
             }
             return Comanda.of(c.id(), c.sessionId(), c.warehouseCode(), c.tableOrCustomerLabel(), c.customerId(),
                     c.status(), items, c.orderId(), c.openedBy(), c.openedAt(), c.closedAt());
@@ -270,6 +273,89 @@ class ComandaSessaoServiceTest {
 
         verify(sessionMenu).release(List.of(1L));
         verifyNoInteractions(estoqueUseCase);
+    }
+
+    // ── PDV-C036: sessão servida sai como desistência, com motivo ───────────────────────────────
+
+    private static ComandaItem servidaPagaNoFinal(Long id) {
+        return sessaoEm(id, PREMIUM, SessionProgress.preparingPayLater(Instant.now())
+                .advanceTo(SessionStatus.ENTREGUE, Instant.now()), null);
+    }
+
+    /** Sem motivo, a sessão já servida e não paga não sai: apagá-la era cortesia sem alçada. */
+    @Test
+    void removeItem_servedUnpaidSession_withoutReason_isRefused() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(servidaPagaNoFinal(1L))));
+
+        assertThatThrownBy(() -> comandaService.removeItem(10L, 1L, "caixa1", null))
+                .isInstanceOf(SessionWithdrawalReasonRequiredException.class);
+        assertThatThrownBy(() -> comandaService.removeItem(10L, 1L, "caixa1", "   "))
+                .isInstanceOf(SessionWithdrawalReasonRequiredException.class);
+        verify(comandaRepository, never()).save(any());
+        verify(sessionMenu, never()).release(any());
+    }
+
+    /**
+     * Com motivo a linha NÃO some: vira desistência — cortesia a R$ 0, recolhida, com motivo e autor —,
+     * deixa de ser dívida (o finish encerra a mesa) e devolve o narguilé à casa.
+     */
+    @Test
+    void removeItem_servedUnpaidSession_withReason_keepsTheLineAsAWithdrawal() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L), servidaPagaNoFinal(2L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.removeItem(10L, 2L, "caixa1", "Cliente foi embora sem pagar");
+
+        ComandaItem linha = result.items().stream().filter(i -> i.id().equals(2L)).findFirst().orElseThrow();
+        assertThat(result.items()).hasSize(2);
+        assertThat(linha.courtesy()).isTrue();
+        assertThat(linha.unitPrice()).isEqualByComparingTo("0");
+        assertThat(linha.sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(linha.isWithdrawn()).isTrue();
+        assertThat(linha.session().withdrawnReason()).isEqualTo("Cliente foi embora sem pagar");
+        assertThat(linha.session().withdrawnBy()).isEqualTo("caixa1");
+        assertThat(result.owedItems()).isEmpty();
+        verify(sessionMenu).release(List.of(2L));
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** O 2º rosh ainda ativo usa o mesmo narguilé: a sessão não desiste sem antes resolver o rosh. */
+    @Test
+    void removeItem_servedSessionWithAnActiveRosh_isRefused() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                servidaPagaNoFinal(1L), roshEm(2L, 1L, SessionProgress.queued(true), null))));
+
+        assertThatThrownBy(() -> comandaService.removeItem(10L, 1L, "caixa1", "Cliente foi embora"))
+                .isInstanceOf(LinkedSessionStillActiveException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** Sessão que não saiu da espera não foi servida: continua sendo apagada, sem motivo. */
+    @Test
+    void removeItem_sessionAwaitingPayment_isStillDeletedWithoutReason() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.removeItem(10L, 1L, "caixa1", null);
+
+        assertThat(result.items()).isEmpty();
+        verify(sessionMenu).release(List.of(1L));
+    }
+
+    /** A desistência fica fora do fechamento total: não vai ao cupom como linha de R$ 0. */
+    @Test
+    void closeComanda_total_leavesTheWithdrawnSessionOutOfTheOrder() {
+        ComandaItem desistida = servidaPagaNoFinal(2L).withdrawn("Cliente foi embora", "caixa1", Instant.now());
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                catalogo(1L, "10.00"), desistida)));
+        givenClosingSucceeds();
+
+        Order order = comandaService.closeComanda(10L, dinheiro("10.00"), null, false, null, "caixa1");
+
+        assertThat(order.items()).hasSize(1);
+        assertThat(order.items().get(0).sku()).isNotEqualTo(desistida.sku());
     }
 
     @Test
@@ -659,6 +745,34 @@ class ComandaSessaoServiceTest {
         assertThat(result.status()).isEqualTo(ComandaStatus.FECHADA);
         assertThat(result.orderId()).isEqualTo(401L);
         verify(comandaRepository).recordClosing(10L, "caixa1", null);
+    }
+
+    /**
+     * PDV-C042 — o rosh grátis de dia de duplo, lançado pelo {@code /rosh} avulso depois de a sessão
+     * já ter sido paga, fica em aberto sem nada a cobrar. Antes ele travava o finish (409
+     * COMANDA_HAS_OPEN_ITEMS), o close (409 COMANDA_ONLY_COURTESY) e, por PDV-C005, o caixa.
+     */
+    @Test
+    void finishComanda_withOnlyAFreeRoshStillOpen_closesWithTheLastOrder() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L), roshEm(2L, 1L, recolhido(), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.finishComanda(10L, "caixa1");
+
+        assertThat(result.status()).isEqualTo(ComandaStatus.FECHADA);
+        assertThat(result.orderId()).isEqualTo(400L);
+    }
+
+    /** Só cortesia, nenhuma linha cobrada: não há pedido para pendurar no cabeçalho. */
+    @Test
+    void finishComanda_withOnlyCourtesyAndNoChargedLine_isRefused() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                roshEm(2L, null, recolhido(), null))));
+
+        assertThatThrownBy(() -> comandaService.finishComanda(10L, "caixa1"))
+                .isInstanceOf(ComandaOnlyCourtesyException.class);
+        verify(comandaRepository, never()).save(any());
     }
 
     @Test
@@ -1056,5 +1170,261 @@ class ComandaSessaoServiceTest {
                 && t.equals(c.items().get(0).session().startedAt())
                 && Long.valueOf(500L).equals(c.items().get(0).closedInOrderId())));
         verify(sessionMenu, never()).release(any());
+    }
+
+    // ── Essência do catálogo na sessão (PDV-F042) ────────────────────────────────────────────
+
+    private static final Pricing PRECO_ESSENCIA = Pricing.of(new BigDecimal("40.00"), null, new BigDecimal("70.00"));
+
+    /** Sabor do catálogo: produto de sessão, com ou sem lata configurada. */
+    private static EstoqueUseCase.CatalogSaleInfo sabor(Integer sessionsPerUnit) {
+        return new EstoqueUseCase.CatalogSaleInfo("Zomo Blueberry", PRECO_ESSENCIA, true, true, null,
+                sessionsPerUnit, false, false);
+    }
+
+    private static ComandaUseCase.AddSessionCommand sessaoComSabor(String essencia, String essenciaSku) {
+        return new ComandaUseCase.AddSessionCommand(2L, essencia, false, null, List.of(), false, null, null,
+                false, essenciaSku, null);
+    }
+
+    /**
+     * <b>O ponto da feature.</b> A essência escolhida do catálogo consome USO da lata aberta, e a
+     * linha guarda o sabor e "qual uso" foi — é o que permite desfazer depois.
+     */
+    @Test
+    void addSession_comEssenciaDeLata_consomeUsoDaLataECarimbaOSabor() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenMenuForSession();
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(5));
+        when(estoqueUseCase.consumeSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(com.cernecommerce.core.domain.model.estoque.OpenPackage
+                        .registered("ZOMO-BLUE", 1L, 5, 3, "caixa1", Instant.now()).withUses(1));
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, sessaoComSabor("Zomo Blueberry", "ZOMO-BLUE"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.sku()).isEqualTo("SESS-2");
+        assertThat(linha.essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(linha.packageUses()).isEqualTo(3);
+        assertThat(linha.packageSessionsPerUnit()).isEqualTo(5);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+    }
+
+    /** Essência sem lata configurada: a escolha veio da prateleira de venda, sai 1 unidade como uso da loja. */
+    @Test
+    void addSession_comEssenciaSemLata_baixaUmaUnidadeComoUsoDaLoja() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenMenuForSession();
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(null));
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, sessaoComSabor("Zomo Blueberry", "ZOMO-BLUE"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(linha.consumedPackage()).isFalse();
+        verify(estoqueUseCase).adjustStock(eq("ZOMO-BLUE"), eq("LOJA-01"),
+                eq(com.cernecommerce.core.domain.model.estoque.MovementType.SAIDA), eq(BigDecimal.ONE),
+                argThat(reason -> reason.contains("Uso da loja")), eq("caixa1"));
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+    }
+
+    /** Sem texto, o nome do produto vira a essência da linha — o operador escolheu do catálogo. */
+    @Test
+    void addSession_soComOSku_usaONomeDoProdutoComoEssencia() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenMenuForSession();
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(null));
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, sessaoComSabor(null, "ZOMO-BLUE"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.notes()).isEqualTo("Zomo Blueberry");
+    }
+
+    /** Produto que não é de sessão (isqueiro, kit...) não vira essência — o mesmo 400 de PDV-C020. */
+    @Test
+    void addSession_comSkuQueNaoEDeSessao_eRecusadoAntesDeGravar() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(estoqueUseCase.resolveSaleInfo("ISQ-BIC")).thenReturn(
+                new EstoqueUseCase.CatalogSaleInfo("Isqueiro", PRECO_ESSENCIA, false, false, null, null, false, false));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, sessaoComSabor("Isqueiro", "ISQ-BIC"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.NotASessionProductException.class);
+        verify(comandaRepository, never()).save(any());
+        verify(sessionMenu, never()).reserveAssetsForSession(any(), anyBoolean());
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+    }
+
+    /**
+     * O SKU base de um produto com variações ("Essência Zig" com os sabores como variação) não tem
+     * lata nem saldo próprios: a lata é por sabor. Escolher a base é recusado.
+     */
+    @Test
+    void addSession_comSkuPaiComVariacoes_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(estoqueUseCase.resolveSaleInfo("ZIG")).thenReturn(
+                new EstoqueUseCase.CatalogSaleInfo("Essência Zig", PRECO_ESSENCIA, true, true, null, 5, false, true));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, sessaoComSabor("Zig", "ZIG"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.EssenceMustBeFlavorException.class);
+        verify(comandaRepository, never()).save(any());
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+    }
+
+    /** No duplo, o 2º rosh queima outra essência: as duas consomem a sua lata. */
+    @Test
+    void addSession_duplo_consomeAsDuasEssencias() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenMenuForSession();
+        when(sessionMenu.requireActiveTier(1L)).thenReturn(TRADICIONAL);
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(5));
+        when(estoqueUseCase.resolveSaleInfo("PRED-MENTA")).thenReturn(
+                new EstoqueUseCase.CatalogSaleInfo("Pred Menta", PRECO_ESSENCIA, true, true, null, 5, false, false));
+        when(estoqueUseCase.consumeSession(any(), eq("LOJA-01"), eq(BigDecimal.ONE), eq("caixa1")))
+                .thenAnswer(inv -> com.cernecommerce.core.domain.model.estoque.OpenPackage
+                        .open(inv.getArgument(0), 1L, 5, "caixa1", Instant.now()).withUses(1));
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(2L, "Zomo", false,
+                null, List.of(), true, "Pred Menta", 1L, false, "ZOMO-BLUE", "PRED-MENTA"), "caixa1");
+
+        assertThat(result.items().get(0).essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(result.items().get(1).essenceSku()).isEqualTo("PRED-MENTA");
+        verify(estoqueUseCase).consumeSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE, "caixa1");
+        verify(estoqueUseCase).consumeSession("PRED-MENTA", "LOJA-01", BigDecimal.ONE, "caixa1");
+    }
+
+    @Test
+    void addRoshExtra_comSku_consomeAEssenciaDoRosh() {
+        Comanda comanda = comanda(sessao(1L, PREMIUM));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.isDuploRoshDay(SETTINGS, comanda.openedAt())).thenReturn(false);
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(5));
+        when(estoqueUseCase.consumeSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(com.cernecommerce.core.domain.model.estoque.OpenPackage
+                        .open("ZOMO-BLUE", 1L, 5, "caixa1", Instant.now()).withUses(2));
+        givenSaveAssignsItemIds();
+
+        ComandaItem rosh = comandaService.addRoshExtra(10L, 1L, null, null, "ZOMO-BLUE", "caixa1").items().get(1);
+
+        assertThat(rosh.essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(rosh.packageUses()).isEqualTo(2);
+        assertThat(rosh.notes()).isEqualTo("Zomo Blueberry");
+    }
+
+    /** Sessão removida antes de servir: o uso volta para a lata do sabor, não para o SKU da faixa. */
+    @Test
+    void removeItem_sessaoComLata_devolveOUsoDaLataDoSabor() {
+        ComandaItem linha = sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null)
+                .withEssence("ZOMO-BLUE").withPackageCounter(3, 5);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(linha)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.removeItem(10L, 1L, "caixa1");
+
+        verify(estoqueUseCase).releaseSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+    }
+
+    /** Sem lata, a unidade que saiu como uso da loja volta por ENTRADA do sabor. */
+    @Test
+    void removeItem_sessaoSemLata_devolveAUnidadeDoSabor() {
+        ComandaItem linha = sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null).withEssence("ZOMO-BLUE");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(linha)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.removeItem(10L, 1L, "caixa1");
+
+        verify(estoqueUseCase).adjustStock(eq("ZOMO-BLUE"), eq("LOJA-01"),
+                eq(com.cernecommerce.core.domain.model.estoque.MovementType.ENTRADA), eq(BigDecimal.ONE), any(),
+                eq("caixa1"));
+        verify(estoqueUseCase, never()).releaseSession(any(), any(), any());
+    }
+
+    /**
+     * Desistência é sessão SERVIDA: a essência foi queimada e não volta — nem uso, nem unidade.
+     * Devolver aqui inventaria saldo.
+     */
+    @Test
+    void removeItem_desistenciaDeSessaoComEssencia_naoDevolveNada() {
+        ComandaItem servida = servidaPagaNoFinal(1L).withEssence("ZOMO-BLUE").withPackageCounter(3, 5);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(servida)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.removeItem(10L, 1L, "caixa1", "Cliente foi embora");
+
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** Cancelar a mesa desfaz a essência das sessões como desfaz o resto. */
+    @Test
+    void cancelComanda_sessaoComLata_devolveOUso() {
+        ComandaItem linha = sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null)
+                .withEssence("ZOMO-BLUE").withPackageCounter(3, 5);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(linha)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.cancelComanda(10L, "caixa1");
+
+        verify(estoqueUseCase).releaseSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE);
+    }
+
+    /** Repetir sem trocar o sabor repete também a essência do catálogo — e consome de novo. */
+    @Test
+    void repeatSession_semNovoSabor_herdaASkuDaEssencia() {
+        ComandaItem origem = sessaoEm(1L, PREMIUM, entregue(), 400L).withEssence("ZOMO-BLUE");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(origem)));
+        givenMenuForSession();
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(null));
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null), "caixa1");
+
+        assertThat(result.items().get(1).essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(result.items().get(1).notes()).isEqualTo("Zomo Blueberry");
+    }
+
+    /** Trocar o sabor só pelo texto não arrasta o SKU antigo: a linha nova fica sem essência do catálogo. */
+    @Test
+    void repeatSession_comNovoSaborEmTexto_naoHerdaOSkuAntigo() {
+        ComandaItem origem = sessaoEm(1L, PREMIUM, entregue(), 400L).withEssence("ZOMO-BLUE");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(origem)));
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand("Sence Menta", false, null, null), "caixa1");
+
+        assertThat(result.items().get(1).essenceSku()).isNull();
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /**
+     * Cancelar a mesa com uma sessão que já foi ao preparo: a essência queimou e NÃO volta, enquanto
+     * a que ainda aguardava pagamento volta para a lata.
+     */
+    @Test
+    void cancelComanda_sessaoJaPreparada_naoDevolveAEssencia() {
+        ComandaItem preparada = sessaoEm(1L, PREMIUM, SessionProgress.preparingPayLater(Instant.now()), null)
+                .withEssence("ZOMO-BLUE").withPackageCounter(3, 5);
+        ComandaItem aguardando = sessaoEm(2L, PREMIUM, SessionProgress.awaitingPayment(), null)
+                .withEssence("PRED-MENTA").withPackageCounter(1, 5);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(preparada, aguardando)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.cancelComanda(10L, "caixa1");
+
+        verify(estoqueUseCase).releaseSession("PRED-MENTA", "LOJA-01", BigDecimal.ONE);
+        verify(estoqueUseCase, never()).releaseSession(eq("ZOMO-BLUE"), any(), any());
     }
 }

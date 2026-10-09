@@ -25,7 +25,10 @@ import com.cernecommerce.adapter.in.dtos.response.SessionTierResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
+import com.cernecommerce.core.domain.model.pdv.SessionAddon;
+import com.cernecommerce.core.domain.model.pdv.SessionAssetType;
 import com.cernecommerce.core.domain.model.pdv.SessionSettings;
+import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
@@ -112,11 +115,13 @@ public class PdvSessaoController {
     public ResponseEntity<ComandaResponseDTO> addSession(@PathVariable("id") Long comandaId,
             @Valid @RequestBody AddSessionRequest request, Authentication authentication) {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
-        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
+        requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
+        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), request.getEssenciaRoshSku(),
+                authentication);
         Comanda comanda = comandaUseCase.addSession(comandaId, new ComandaUseCase.AddSessionCommand(
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
                 request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh(),
-                request.isPagarNoFinal()),
+                request.isPagarNoFinal(), request.getEssenciaSku(), request.getEssenciaRoshSku()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
@@ -149,10 +154,12 @@ public class PdvSessaoController {
             @PathVariable("itemId") Long sourceItemId, @Valid @RequestBody RepeatSessionRequest request,
             Authentication authentication) {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
-        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), authentication);
+        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), request.getEssenciaRoshSku(),
+                authentication);
         Comanda comanda = comandaUseCase.repeatSession(comandaId, sourceItemId,
                 new ComandaUseCase.RepeatSessionCommand(request.getEssencia(), request.isDuplo(),
-                        request.getEssenciaRosh(), request.getTierIdRosh(), request.isPagarNoFinal()),
+                        request.getEssenciaRosh(), request.getTierIdRosh(), request.isPagarNoFinal(),
+                        request.getEssenciaSku(), request.getEssenciaRoshSku()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
@@ -177,8 +184,9 @@ public class PdvSessaoController {
     public ResponseEntity<ComandaResponseDTO> addRoshExtra(@PathVariable("id") Long comandaId,
             @PathVariable("itemId") Long sessionItemId, @Valid @RequestBody AddRoshExtraRequest request,
             Authentication authentication) {
+        requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
         Comanda comanda = comandaUseCase.addRoshExtra(comandaId, sessionItemId, request.getTierId(),
-                request.getEssencia(), authentication.getName());
+                request.getEssencia(), request.getEssenciaSku(), authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
         payload.put("sessionItemId", sessionItemId);
@@ -228,7 +236,7 @@ public class PdvSessaoController {
             Authentication authentication) {
         var tier = sessionMenuUseCase.createTier(request.getNome(), request.getPreco(), request.getMarcas(),
                 request.getOrdem() == null ? 0 : request.getOrdem());
-        audit(authentication, "faixa", tier.id());
+        audit(authentication, menuPayload("faixa", tier));
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionTierResponseDTO.of(tier));
     }
 
@@ -240,7 +248,7 @@ public class PdvSessaoController {
             @Valid @RequestBody SessionTierRequest request, Authentication authentication) {
         var tier = sessionMenuUseCase.updateTier(id, request.getNome(), request.getPreco(), request.getMarcas(),
                 request.getOrdem(), request.getAtivo() == null || request.getAtivo());
-        audit(authentication, "faixa", id);
+        audit(authentication, menuPayload("faixa", tier));
         return ResponseEntity.ok(SessionTierResponseDTO.of(tier));
     }
 
@@ -258,7 +266,7 @@ public class PdvSessaoController {
             Authentication authentication) {
         var addon = sessionMenuUseCase.createAddon(request.getNome(), request.getPreco(),
                 request.getOrdem() == null ? 0 : request.getOrdem());
-        audit(authentication, "adicional", addon.id());
+        audit(authentication, menuPayload("adicional", addon));
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionAddonResponseDTO.of(addon));
     }
 
@@ -270,7 +278,7 @@ public class PdvSessaoController {
             @Valid @RequestBody SessionAddonRequest request, Authentication authentication) {
         var addon = sessionMenuUseCase.updateAddon(id, request.getNome(), request.getPreco(), request.getOrdem(),
                 request.getAtivo() == null || request.getAtivo());
-        audit(authentication, "adicional", id);
+        audit(authentication, menuPayload("adicional", addon));
         return ResponseEntity.ok(SessionAddonResponseDTO.of(addon));
     }
 
@@ -293,7 +301,7 @@ public class PdvSessaoController {
         var type = sessionMenuUseCase.createAssetType(request.getCodigo(), request.getNome(),
                 request.getQuantidadeTotal() == null ? 0 : request.getQuantidadeTotal(),
                 Boolean.TRUE.equals(request.getIncluso()));
-        audit(authentication, "utensilio", type.id());
+        audit(authentication, menuPayload("utensilio", type));
         return ResponseEntity.status(HttpStatus.CREATED).body(SessionAssetTypeResponseDTO.of(type));
     }
 
@@ -304,7 +312,7 @@ public class PdvSessaoController {
             @Valid @RequestBody SessionAssetTypeRequest request, Authentication authentication) {
         var type = sessionMenuUseCase.updateAssetType(id, request.getNome(), request.getQuantidadeTotal(),
                 request.getIncluso(), request.getAtivo() == null || request.getAtivo());
-        audit(authentication, "utensilio", id);
+        audit(authentication, menuPayload("utensilio", type));
         return ResponseEntity.ok(SessionAssetTypeResponseDTO.of(type));
     }
 
@@ -322,13 +330,55 @@ public class PdvSessaoController {
             Authentication authentication) {
         SessionSettings saved = sessionMenuUseCase.updateSettings(new SessionSettings(request.getVasoPadraoCodigo(),
                 request.getVasoGrandeCodigo(), request.getUpgradeVasoGrandePreco(), request.getDiasDuploRosh()));
-        audit(authentication, "config", 1L);
+        audit(authentication, menuPayload("config", saved));
         return ResponseEntity.ok(SessionSettingsResponseDTO.of(saved));
     }
 
-    private void audit(Authentication authentication, String target, Long id) {
-        publisher.publishEvent(AuditEvent.of(EventType.SESSION_MENU_CHANGED, authentication.getName(),
-                Map.of("target", target, "id", String.valueOf(id))));
+    private void audit(Authentication authentication, Map<String, Object> payload) {
+        publisher.publishEvent(AuditEvent.of(EventType.SESSION_MENU_CHANGED, authentication.getName(), payload));
+    }
+
+    /**
+     * PDV-C043 — o evento levava só {@code target} e {@code id}: dizia que a faixa 2 mudou, não para
+     * quanto. O preço de toda sessão da casa sai daqui, então o payload leva o estado gravado (preço,
+     * ativo, quantidade de utensílio, dias de duplo). Campo nulo fica de fora — {@code AuditEvent}
+     * serializa o mapa, e nulo não diz nada que a ausência não diga.
+     */
+    static Map<String, Object> menuPayload(String target, Object saved) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("target", target);
+        if (saved instanceof SessionTier t) {
+            p.put("id", String.valueOf(t.id()));
+            putIfPresent(p, "nome", t.nome());
+            putIfPresent(p, "preco", t.preco());
+            p.put("ativo", t.ativo());
+        } else if (saved instanceof SessionAddon a) {
+            p.put("id", String.valueOf(a.id()));
+            putIfPresent(p, "nome", a.nome());
+            putIfPresent(p, "preco", a.preco());
+            p.put("ativo", a.ativo());
+        } else if (saved instanceof SessionAssetType u) {
+            p.put("id", String.valueOf(u.id()));
+            putIfPresent(p, "codigo", u.codigo());
+            putIfPresent(p, "nome", u.nome());
+            p.put("quantidadeTotal", u.quantidadeTotal());
+            p.put("incluso", u.incluso());
+            p.put("ativo", u.ativo());
+        } else if (saved instanceof SessionSettings c) {
+            p.put("id", "1");
+            putIfPresent(p, "vasoPadraoCodigo", c.vasoPadraoCodigo());
+            putIfPresent(p, "vasoGrandeCodigo", c.vasoGrandeCodigo());
+            putIfPresent(p, "upgradeVasoGrandePreco", c.upgradeVasoGrandePreco());
+            putIfPresent(p, "diasDuploRosh", c.diasDuploRosh() == null ? null
+                    : c.diasDuploRosh().stream().map(Enum::name).sorted().toList());
+        }
+        return p;
+    }
+
+    private static void putIfPresent(Map<String, Object> payload, String key, Object value) {
+        if (value != null) {
+            payload.put(key, value);
+        }
     }
 
     /** Mesmo enriquecimento de nome de cliente de {@code PdvComandaController}. */
@@ -346,7 +396,8 @@ public class PdvSessaoController {
      * atendente lançava toda sessão como duplo. Decisão do dono (01/10/2026). O sabor do 2º rosh
      * vem depois da permissão: quem não pode lançar não precisa saber o que faltou no corpo.
      */
-    private void requireDuploAllowed(boolean duplo, String essenciaRosh, Authentication authentication) {
+    private void requireDuploAllowed(boolean duplo, String essenciaRosh, String essenciaRoshSku,
+            Authentication authentication) {
         if (!duplo) {
             return;
         }
@@ -356,8 +407,17 @@ public class PdvSessaoController {
         if (!allowed) {
             throw new CourtesyNotAllowedException(authentication.getName());
         }
-        if (essenciaRosh == null || essenciaRosh.isBlank()) {
-            throw new SessionEssenceRequiredException("essenciaRosh");
+        requireEssence("essenciaRosh", essenciaRosh, essenciaRoshSku);
+    }
+
+    /**
+     * PDV-F042 — a essência vem em texto <b>ou</b> do catálogo; sem as duas é o
+     * {@code SESSION_ESSENCE_REQUIRED} de sempre. Conferido aqui, antes do use case, pela mesma razão
+     * do {@code essenciaRosh} do duplo: o erro de corpo não depende de a comanda existir.
+     */
+    private static void requireEssence(String field, String essencia, String essenciaSku) {
+        if ((essencia == null || essencia.isBlank()) && (essenciaSku == null || essenciaSku.isBlank())) {
+            throw new SessionEssenceRequiredException(field);
         }
     }
 

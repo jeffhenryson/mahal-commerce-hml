@@ -12,7 +12,7 @@ import java.time.Instant;
  *                  passa por {@link SessionStatus#AGUARDANDO_PAGAMENTO}.
  */
 public record SessionProgress(SessionStatus status, Instant startedAt, Instant deliveredAt, Instant collectedAt,
-        boolean payLater) {
+        boolean payLater, String withdrawnReason, String withdrawnBy) {
 
     public SessionProgress {
         if (status == null) {
@@ -24,6 +24,16 @@ public record SessionProgress(SessionStatus status, Instant startedAt, Instant d
         if (payLater && status == SessionStatus.AGUARDANDO_PAGAMENTO) {
             throw new IllegalArgumentException("sessão paga no final não aguarda pagamento");
         }
+        // PDV-C036 — desistência é uma forma de sair do salão: só existe na sessão recolhida
+        // (espelha ck_comanda_item_withdrawn da V146).
+        if (withdrawnReason != null && status != SessionStatus.RECOLHIDO) {
+            throw new IllegalArgumentException("desistência só existe em sessão recolhida: " + status);
+        }
+    }
+
+    public SessionProgress(SessionStatus status, Instant startedAt, Instant deliveredAt, Instant collectedAt,
+            boolean payLater) {
+        this(status, startedAt, deliveredAt, collectedAt, payLater, null, null);
     }
 
     /** Sessão paga antes de ir ao salão — o caso de sempre. */
@@ -85,6 +95,30 @@ public record SessionProgress(SessionStatus status, Instant startedAt, Instant d
             case RECOLHIDO -> new SessionProgress(next, startedAt, deliveredAt, at, payLater);
             case NA_FILA, AGUARDANDO_PAGAMENTO -> throw new IllegalStateException("nada volta para " + next);
         };
+    }
+
+    /**
+     * PDV-C036 — a sessão servida (em preparo ou na mesa) de que o cliente desistiu sem pagar. Sai do
+     * salão como recolhida, com o motivo e quem registrou; a linha não é apagada. Na fila ou aguardando
+     * pagamento ela não foi servida, e sai pela remoção comum.
+     */
+    public SessionProgress withdrawn(String reason, String by, Instant at) {
+        if (status != SessionStatus.PREPARANDO && status != SessionStatus.ENTREGUE) {
+            throw new IllegalStateException("só desiste quem já foi servido; sessão " + status);
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("desistência exige motivo");
+        }
+        return new SessionProgress(SessionStatus.RECOLHIDO, startedAt, deliveredAt, at, payLater, reason, by);
+    }
+
+    public boolean isWithdrawn() {
+        return withdrawnReason != null;
+    }
+
+    /** PDV-C036 — em preparo ou na mesa: a sessão já foi servida. */
+    public boolean isServed() {
+        return status == SessionStatus.PREPARANDO || status == SessionStatus.ENTREGUE;
     }
 
     public boolean isAwaitingPayment() {

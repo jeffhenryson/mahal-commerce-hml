@@ -39,7 +39,8 @@ public record SessionTimeline(Long itemId, ConsumptionMode mode, Long linkedItem
         // O backfill da V132 deu às sessões de mesa já encerrada RECOLHIDO com início = lançamento e
         // sem entrega. Não é desistência, é falta de registro: as fases dela ficam desconhecidas.
         boolean backfill = semEntrega && !s.payLater() && s.startedAt().equals(item.addedAt());
-        boolean desistida = semEntrega && !backfill;
+        // PDV-C036 — a desistência registrada também conta, mesmo depois de entregue.
+        boolean desistida = (semEntrega && !backfill) || s.isWithdrawn();
         Instant fimPreparo = s.deliveredAt() != null ? s.deliveredAt() : (desistida ? s.collectedAt() : null);
         return new SessionTimeline(item.id(), item.mode(), item.linkedItemId(), item.productName(), s.payLater(),
                 s.status(), desistida, esperaDe(item, s), item.addedAt(), paidAt, s.startedAt(), s.deliveredAt(),

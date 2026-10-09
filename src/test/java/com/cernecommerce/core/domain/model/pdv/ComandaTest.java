@@ -306,6 +306,31 @@ class ComandaTest {
         assertThat(parcial.items()).hasSize(2);
     }
 
+    /**
+     * PDV-C042 — cortesia em aberto não é dívida. O rosh grátis do dia de duplo, lançado depois de a
+     * sessão ser paga, fica sem pedido; contá-lo como "a cobrar" deixava a mesa sem caminho de saída.
+     */
+    @Test
+    void owedItems_ignoresOpenCourtesyLines() {
+        Comanda comanda = comandaComLinhas(
+                linha(1L, "SESS-1", "30.00", ConsumptionMode.NORMAL, false, null),
+                linha(2L, "SESS-1", "0.00", ConsumptionMode.NORMAL, true, null))
+                .withItemsClosedIn(99L, List.of(1L));
+
+        assertThat(comanda.openItems()).extracting(ComandaItem::id).containsExactly(2L);
+        assertThat(comanda.owedItems()).isEmpty();
+        assertThat(comanda.hasNothingOwed()).isTrue();
+    }
+
+    /** Mesa sem nenhuma linha cobrada não "deve nada" só porque o resto é cortesia: não há pedido. */
+    @Test
+    void hasNothingOwed_requiresAChargedLine() {
+        Comanda soCortesia = comandaComLinhas(linha(1L, "SESS-1", "0.00", ConsumptionMode.NORMAL, true, null));
+
+        assertThat(soCortesia.owedItems()).isEmpty();
+        assertThat(soCortesia.hasNothingOwed()).isFalse();
+    }
+
     /** Fechar parte da conta NÃO muda o status: quem encerra a mesa é o service. */
     @Test
     void withItemsClosedIn_doesNotChangeTheStatus() {

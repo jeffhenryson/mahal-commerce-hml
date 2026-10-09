@@ -40,6 +40,38 @@ class SessionProgressTest {
         assertThat(collected.isCollected()).isTrue();
     }
 
+    /** PDV-C036 — desistência: a sessão servida sai do salão como recolhida, com motivo e autor. */
+    @Test
+    void withdrawn_fromDelivered_collectsWithReasonAndAuthor() {
+        SessionProgress delivered = SessionProgress.preparingPayLater(T0).advanceTo(SessionStatus.ENTREGUE, T1);
+
+        SessionProgress withdrawn = delivered.withdrawn("Cliente foi embora", "caixa1", T1.plusSeconds(60));
+
+        assertThat(withdrawn.status()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(withdrawn.collectedAt()).isEqualTo(T1.plusSeconds(60));
+        assertThat(withdrawn.deliveredAt()).isEqualTo(T1);
+        assertThat(withdrawn.isWithdrawn()).isTrue();
+        assertThat(withdrawn.withdrawnReason()).isEqualTo("Cliente foi embora");
+        assertThat(withdrawn.withdrawnBy()).isEqualTo("caixa1");
+        assertThat(withdrawn.payLater()).isTrue();
+    }
+
+    /** Na fila ou aguardando pagamento a sessão não foi servida: sai pela remoção comum. */
+    @Test
+    void withdrawn_fromTheQueueOrAwaitingPayment_isRefused() {
+        assertThatThrownBy(() -> SessionProgress.queued().withdrawn("x", "caixa1", T1))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> SessionProgress.awaitingPayment().withdrawn("x", "caixa1", T1))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** O motivo só existe na sessão recolhida — espelha o CHECK da V146. */
+    @Test
+    void withdrawnReason_requiresCollected() {
+        assertThatThrownBy(() -> new SessionProgress(SessionStatus.ENTREGUE, T0, T1, null, true, "motivo", "caixa1"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void advanceTo_invalidTransition_isRefused() {
         assertThatThrownBy(() -> SessionProgress.preparing(T0).advanceTo(SessionStatus.NA_FILA, T1))

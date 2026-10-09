@@ -40,6 +40,19 @@ class SessionTimelineTest {
         assertThat(t.pagarNoFinal()).isFalse();
     }
 
+    /** PDV-C036 — desistência depois de entregue também é desistida, embora tenha entrega. */
+    @Test
+    void sessaoDesistidaDepoisDeEntregue_contaComoDesistida() {
+        SessionProgress p = SessionProgress.preparingPayLater(LANCADA)
+                .advanceTo(SessionStatus.ENTREGUE, mais(8))
+                .withdrawn("Cliente foi embora", "caixa1", mais(20));
+
+        SessionTimeline t = SessionTimeline.of(linha(ConsumptionMode.SESSAO, null, p, null), null);
+
+        assertThat(t.desistida()).isTrue();
+        assertThat(t.naMesaMin()).isEqualTo(12L);
+    }
+
     @Test
     void sessaoPagaNoFinal_naoEspera_eFicaSemPagamentoEnquantoAReceber() {
         SessionProgress p = SessionProgress.preparingPayLater(LANCADA)

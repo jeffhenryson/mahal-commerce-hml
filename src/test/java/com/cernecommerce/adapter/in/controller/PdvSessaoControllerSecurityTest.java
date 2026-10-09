@@ -36,6 +36,23 @@ public class PdvSessaoControllerSecurityTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
+    // ── PDV-F041: central de cigarros ──
+
+    /** O atendente do balcão lê a central (PDV_READ); o 404 é do depósito ausente na base de teste. */
+    @Test
+    void cigarros_with_pdv_read_reaches_the_route() throws Exception {
+        mockMvc.perform(get("/pdv/cigarros").param("warehouseCode", "LOJA-INEXISTENTE")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void cigarros_without_pdv_read_returns_403() throws Exception {
+        mockMvc.perform(get("/pdv/cigarros").param("warehouseCode", "LOJA-01")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void menu_without_auth_returns_401() throws Exception {
         mockMvc.perform(get("/pdv/sessao/cardapio")).andExpect(status().isUnauthorized());
