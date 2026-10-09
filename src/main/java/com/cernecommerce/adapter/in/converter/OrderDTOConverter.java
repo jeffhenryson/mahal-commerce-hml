@@ -54,11 +54,28 @@ public class OrderDTOConverter {
     public List<PaymentCommand> toPaymentCommands(List<SalePaymentRequest> requests) {
         return requests.stream()
                 .map(r -> {
-                    PaymentMethod method = PaymentMethod.valueOf(r.getMethod());
+                    PaymentMethod method = operatorPaymentMethod(r.getMethod());
                     return new PaymentCommand(method, r.getAmount(), r.getInstallments(), r.getChannel(),
                             r.getProvider(), method == PaymentMethod.MARCADO ? r.getDueDate() : null);
                 })
                 .toList();
+    }
+
+    /**
+     * PDV-C034 — o texto do request vira enum aqui, e só nas formas que o operador lança. Um
+     * {@code valueOf} cru deixava passar {@code GATEWAY_PIX} e respondia "BOLETO" com o 400 genérico.
+     */
+    private static PaymentMethod operatorPaymentMethod(String raw) {
+        PaymentMethod method;
+        try {
+            method = PaymentMethod.valueOf(raw);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException(raw);
+        }
+        if (method == PaymentMethod.GATEWAY_PIX) {
+            throw new com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException(raw);
+        }
+        return method;
     }
 
     public OrderResponseDTO toResponse(Order order) {

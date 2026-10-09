@@ -40,4 +40,14 @@ public class SaleRequest {
             + "RETIRADA grava CONCLUIDO (retirada imediata) ou RESERVADO com reserveForPickup=true. "
             + "delivery.fee entra no total a pagar.")
     private DeliveryRequest delivery;
+
+    @jakarta.validation.constraints.Pattern(regexp = CLIENT_SALE_ID_PATTERN, message = "clientSaleId deve ser um UUID")
+    @Schema(description = "PDV-F043 — chave da venda gerada no caixa (UUID). Opcional: com ela, reenviar a "
+            + "mesma venda devolve a já registrada em vez de registrar outra.",
+            example = "3f1c9a2e-7b4d-4c1e-9a8f-2d6b5e0c1a7b")
+    private String clientSaleId;
+
+    /** UUID em texto, minúsculo ou maiúsculo. */
+    public static final String CLIENT_SALE_ID_PATTERN =
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 }
