@@ -21,6 +21,7 @@ import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.recebivel.CreditLimits;
+import com.cernecommerce.core.domain.model.recebivel.CreditPosition;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
@@ -137,7 +138,7 @@ public class ReceivableService implements ReceivableUseCase {
         if (overdue.signum() > 0) {
             throw new CustomerHasOverdueException(customerId, overdue);
         }
-        Position position = position(customerId);
+        CreditPosition position = position(customerId);
         BigDecimal limit = position.limit(channel);
         BigDecimal open = position.open(channel);
         if (open.add(line.amount()).compareTo(limit) > 0) {
@@ -173,7 +174,7 @@ public class ReceivableService implements ReceivableUseCase {
     public OnAccountEligibility eligibility(Long customerId, OnAccountChannel channel, boolean operatorMayMark) {
         requireCustomer(customerId);
         LocalDate today = today();
-        Position position = position(customerId);
+        CreditPosition position = position(customerId);
         BigDecimal limit = position.limit(channel);
         BigDecimal open = position.open(channel);
         BigDecimal overdue = receivableRepository.sumOverdueBalance(customerId, today);
@@ -253,7 +254,7 @@ public class ReceivableService implements ReceivableUseCase {
     @Override
     @Transactional(readOnly = true)
     public CustomerBalance balance(Long customerId) {
-        Position position = position(customerId);
+        CreditPosition position = position(customerId);
         return new CustomerBalance(position.limit(null), position.openTotal(),
                 receivableRepository.sumOverdueBalance(customerId, today()));
     }
@@ -471,50 +472,14 @@ public class ReceivableService implements ReceivableUseCase {
                 .add(channelLimit(own, OnAccountChannel.MESA, defaults));
     }
 
-    private Position position(Long customerId) {
+    private CreditPosition position(Long customerId) {
         CreditLimits own = creditLimitRepository.findByCustomerId(customerId);
         Map<OnAccountChannel, BigDecimal> defaults = channelDefaults();
-        return new Position(own,
+        return new CreditPosition(own,
                 channelLimit(own, OnAccountChannel.BALCAO, defaults),
                 channelLimit(own, OnAccountChannel.MESA, defaults),
                 receivableRepository.sumOpenBalance(customerId, OnAccountChannel.BALCAO),
                 receivableRepository.sumOpenBalance(customerId, OnAccountChannel.MESA));
-    }
-
-    /**
-     * Limites (já com os padrões) e saldos de um cliente nos dois canais. Canal {@code null} nos
-     * métodos = o cliente inteiro.
-     */
-    private record Position(CreditLimits own, BigDecimal limitBalcao, BigDecimal limitMesa, BigDecimal openBalcao,
-            BigDecimal openMesa) {
-
-        BigDecimal openTotal() {
-            return openBalcao.add(openMesa);
-        }
-
-        BigDecimal open(OnAccountChannel channel) {
-            if (channel == null) {
-                return openTotal();
-            }
-            return channel == OnAccountChannel.BALCAO ? openBalcao : openMesa;
-        }
-
-        /** No total: o teto, se houver; senão, a soma dos dois canais. */
-        BigDecimal limit(OnAccountChannel channel) {
-            if (channel == null) {
-                return own.total() != null ? own.total() : limitBalcao.add(limitMesa);
-            }
-            return channel == OnAccountChannel.BALCAO ? limitBalcao : limitMesa;
-        }
-
-        /** O que cabe: o do canal, sem passar do que sobra no teto total. */
-        BigDecimal available(OnAccountChannel channel) {
-            BigDecimal fit = channel == null
-                    ? ReceivableService.available(limitBalcao, openBalcao)
-                            .add(ReceivableService.available(limitMesa, openMesa))
-                    : ReceivableService.available(limit(channel), open(channel));
-            return own.total() == null ? fit : fit.min(ReceivableService.available(own.total(), openTotal()));
-        }
     }
 
     private static BigDecimal available(BigDecimal limit, BigDecimal open) {
@@ -523,6 +488,8 @@ public class ReceivableService implements ReceivableUseCase {
 
     /** Mesma regra de {@code PdvService.registerSale}: caixa aberto e do operador (o corte de meia-noite caiu no PDV-F037). */
     private CashRegisterSession requireOwnOpenSession(Long sessionId, String username) {
+        // PDV-C035 — a quitação entra no esperado deste caixa: trava compartilhada, como a venda.
+        cashRegisterRepository.lockForShare(sessionId);
         CashRegisterSession session = cashRegisterRepository.findById(sessionId)
                 .orElseThrow(() -> new CashRegisterSessionNotFoundException(sessionId));
         if (!session.isOpen()) {

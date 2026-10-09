@@ -48,6 +48,14 @@ public class SeedConfig {
         "FINANCEIRO_READ", "FINANCEIRO_CASH_FLOW_MANAGE", "LOGISTICA_READ",
         "PDV_READ", "PDV_SALE_MANAGE", "PDV_SALE_DISCOUNT",
         "PDV_SESSION_MANAGE", "PDV_SESSION_CLOSE", "PDV_COMANDA_MANAGE", "PDV_COMANDA_COURTESY",
+        // PDV-C037 — fechar o caixa de outro operador (V145): era ROLE_ADMIN/ROLE_DEV fixo no código.
+        "PDV_SESSION_CLOSE_ANY",
+        // PDV-F043 — revisar venda offline recusada: reenviar ou descartar (V150).
+        "PDV_OFFLINE_REVIEW",
+        // PLAT-C059 — marcar (V137) e corrigir forma de pagamento (V136): sem elas o admin de dev,
+        // com o Flyway desligado, tomava 403 na venda a prazo, na correção e nos recebíveis.
+        "PDV_SALE_ON_ACCOUNT", "ORDER_PAYMENT_CORRECT", "ORDER_PAYMENT_CORRECT_CLOSED",
+        "RECEIVABLE_READ", "RECEIVABLE_MANAGE",
         // PDV-F034 — sessão que vai ao preparo antes de paga: risco de calote, decisão da casa (V139).
         "PDV_SESSION_PAY_LATER",
         // PDV-F011 — como a COURTESY, só no admin: acréscimo manual é decisão da casa (V117).
@@ -82,7 +90,9 @@ public class SeedConfig {
         "ESTOQUE_PRODUCT_READ", "ESTOQUE_WAREHOUSE_READ", "ESTOQUE_RESERVATION_READ",
         "CRM_CUSTOMER_READ", "CRM_CUSTOMER_LOOKUP", "CRM_LEAD_CREATE",
         "CASHBACK_READ",
-        "ORDER_READ"
+        "ORDER_READ",
+        // PLAT-C059 — a V137 concede a leitura de recebíveis também ao atendente.
+        "RECEIVABLE_READ"
     };
 
     // DEV_ONLY_PERMISSIONS e ROLE_DEV são gerenciados pelo DevRoleBootstrapConfig (todos os profiles).

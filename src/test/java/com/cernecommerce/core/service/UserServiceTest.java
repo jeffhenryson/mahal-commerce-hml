@@ -111,6 +111,22 @@ class UserServiceTest {
         verifyNoInteractions(emailPort);
     }
 
+    /**
+     * E-mail em branco é "sem e-mail": não consulta duplicidade nem grava {@code ""}, que colidiria no
+     * índice único de e-mail no segundo usuário criado assim.
+     */
+    @Test
+    void createUser_withBlankEmail_isCreatedWithoutEmail() {
+        when(passwordHash.hash(anyString())).thenReturn("hashed");
+        when(userRepository.findByUsername(anyString())).thenReturn(Optional.empty());
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        User created = userService.createUser("alice", "Password@123", "   ", List.of());
+
+        assertThat(created.getEmail()).isNull();
+        verify(userRepository, never()).findByEmail(any());
+    }
+
     // ── convite (USER_INVITE) ─────────────────────────────────────────────────
 
     @Test

@@ -184,6 +184,44 @@ class PdvServiceTest {
         when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
     }
 
+    /**
+     * PDV-C035 — o fechamento trava a sessão ANTES de ler: é a leitura travada que garante que
+     * nenhuma venda, movimento ou mesa entra entre o "está aberta" e o esperado gravado, e que um
+     * segundo fechamento simultâneo veja CLOSED em vez de sobrescrever o primeiro.
+     */
+    @Test
+    void closeSession_locksTheSessionForUpdateBeforeReadingIt() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(BigDecimal.ZERO);
+        when(cashMovementRepository.sumSignedAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
+        givenNoCashOutflows();
+        when(cashRegisterRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        pdvService.closeSession(1L, new BigDecimal("10.00"), "gerente");
+
+        org.mockito.InOrder ordem = org.mockito.Mockito.inOrder(cashRegisterRepository);
+        ordem.verify(cashRegisterRepository).lockForUpdate(1L);
+        ordem.verify(cashRegisterRepository).findById(1L);
+    }
+
+    /**
+     * PDV-C035 — quem escreve na sessão (venda, movimento, mesa) trava em modo compartilhado antes de
+     * conferir que ela está aberta: escritores não se bloqueiam entre si, mas o fechamento espera.
+     */
+    @Test
+    void registerSale_locksTheSessionForShareBeforeCheckingItIsOpen() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(closedSession()));
+
+        assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("44.00"), null)), "caixa1"))
+                .isInstanceOf(CashRegisterSessionClosedException.class);
+
+        org.mockito.InOrder ordem = org.mockito.Mockito.inOrder(cashRegisterRepository);
+        ordem.verify(cashRegisterRepository).lockForShare(1L);
+        ordem.verify(cashRegisterRepository).findById(1L);
+    }
+
     @Test
     void closeSession_computesExpectedFromOpeningCashSalesAndMovements() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
@@ -1135,6 +1173,23 @@ class PdvServiceTest {
         assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
                 cash("40.00"), "caixa1"))
                 .isInstanceOf(InsufficientPaymentException.class);
+
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    /**
+     * PDV-C034 — GATEWAY_PIX é capturado pelo webhook do gateway, nunca lançado pelo operador. Aceito
+     * aqui, a venda concluía com uma linha que payment-totals e o fechamento pulam: paga e invisível.
+     */
+    @Test
+    void registerSale_withGatewayPix_isRefusedBeforeTouchingStock() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+
+        assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                List.of(new PaymentCommand(PaymentMethod.GATEWAY_PIX, new BigDecimal("44.00"), null)), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException.class);
 
         verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
         verify(orderRepository, never()).save(any());

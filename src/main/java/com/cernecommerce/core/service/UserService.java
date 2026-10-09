@@ -555,8 +555,12 @@ public class UserService implements UserUseCase {
         return PasswordPolicy.isValid(password);
     }
 
+    /**
+     * Nulo ou em branco é "sem e-mail". Devolver {@code ""} para o branco deixava o convite passar pelo
+     * guarda de e-mail obrigatório e quebrar em NPE (500 em vez de 400), e no cadastro gravava {@code ""}.
+     */
     private static String normalizeEmail(String email) {
-        if (email == null) return null;
+        if (email == null || email.isBlank()) return null;
         return email.strip().toLowerCase();
     }
 }

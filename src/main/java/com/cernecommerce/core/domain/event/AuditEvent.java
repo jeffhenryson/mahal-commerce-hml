@@ -49,6 +49,17 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // da lata que não aparece em stock_movement: a SAIDA da lata nova está lá, o descarte da
         // velha não movimenta nada (a unidade já tinha saído do saldo quando foi aberta).
         OPEN_PACKAGE_REPLACED,
+        // EST-F033 — cadastrar uma lata que já estava aberta é a única entrada no contador sem
+        // SAIDA por trás: sem este evento, nada diria quem declarou quantas sessões ela tinha.
+        OPEN_PACKAGE_REGISTERED,
+        // EST-F032 — ligar/desligar embalagem muda o que a próxima venda faz sozinha (abrir maço,
+        // abrir carteira); a quebra em si é decisão do SISTEMA, sem autor humano, e por isso tem
+        // evento próprio além dos dois movimentos no ledger.
+        PACKAGING_DEFINED, PACKAGING_REMOVED, STOCK_PACKAGE_BROKEN,
+        // PDV-F043 — venda offline: o lote sincronizado (contagens), a venda recusada que foi para
+        // revisão, e as duas saídas da revisão — reenviada ou descartada com motivo, que é dinheiro
+        // acertado fora do sistema e precisa de autor.
+        OFFLINE_SALES_SYNCED, OFFLINE_SALE_REJECTED, OFFLINE_SALE_RETRIED, OFFLINE_SALE_DISCARDED,
         // COM-F001 — cadastro de fornecedor é dado de compliance (taxId entra em nota fiscal), e
         // ativar/desativar tem evento próprio pelo mesmo motivo de PRODUCT_DEACTIVATED: tirar um
         // fornecedor de circulação é uma decisão, corrigir a razão social dele é uma digitação.
@@ -99,6 +110,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_SESSION_ADDED, COMANDA_ROSH_EXTRA_ADDED, SESSION_MENU_CHANGED,
         // PDV-F023
         COMANDA_SESSION_STATUS_CHANGED, COMANDA_FINISHED,
+        // PDV-C036 — sessão servida que sai da mesa por desistência, com motivo (a linha não é apagada).
+        COMANDA_SESSION_WITHDRAWN,
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,

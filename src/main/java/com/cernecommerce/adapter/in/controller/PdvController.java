@@ -76,6 +76,7 @@ import java.time.Instant;
 public class PdvController {
 
     private static final String DISCOUNT_AUTHORITY = "PDV_SALE_DISCOUNT";
+    private static final String CLOSE_ANY_AUTHORITY = "PDV_SESSION_CLOSE_ANY";
 
     private final PdvUseCase pdvUseCase;
     private final OrderDTOConverter orderConverter;
@@ -191,12 +192,12 @@ public class PdvController {
 
     @Operation(summary = "Fecha o caixa confrontando o contado com o esperado",
             description = "Divergência NÃO impede o fechamento — é registrada, como no fechamento de "
-                    + "um balanço de inventário. Admin e dev fecham o caixa de qualquer operador (a "
-                    + "conferência costuma ser do gerente); os demais só o próprio. `notes` registra o "
+                    + "um balanço de inventário. Com PDV_SESSION_CLOSE_ANY fecha-se o caixa de qualquer "
+                    + "operador (a conferência costuma ser do gerente); sem ela, só o próprio. `notes` registra o "
                     + "motivo do fechamento.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Fechado, com esperado × contado × diferença", content = @Content(schema = @Schema(implementation = CashRegisterSessionResponseDTO.class))),
-            @ApiResponse(responseCode = "403", description = "Caixa de outro operador, sem ser admin/dev", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caixa de outro operador, sem PDV_SESSION_CLOSE_ANY", content = @Content),
             @ApiResponse(responseCode = "404", description = "Sessão não encontrada", content = @Content),
             @ApiResponse(responseCode = "409", description = "Sessão já encerrada ou com mesas abertas", content = @Content)
     })
@@ -241,9 +242,13 @@ public class PdvController {
                     + "pagar depois — exige PDV_SALE_ON_ACCOUNT (403 ON_ACCOUNT_NOT_ALLOWED), cliente "
                     + "(400 CUSTOMER_REQUIRED_FOR_ON_ACCOUNT), tag VIP (403 CUSTOMER_NOT_ELIGIBLE), "
                     + "nenhum vencido (409 CUSTOMER_HAS_OVERDUE) e limite (409 CREDIT_LIMIT_EXCEEDED). "
-                    + "A linha fica ON_ACCOUNT, fora do caixa; o pedido conclui normalmente.")
+                    + "A linha fica ON_ACCOUNT, fora do caixa; o pedido conclui normalmente. "
+                    + "PDV-F043: `clientSaleId` (UUID gerado no caixa, opcional) torna o reenvio seguro — a "
+                    + "mesma chave devolve 200 com a venda já registrada; dois envios simultâneos, 409 "
+                    + "DUPLICATE_CLIENT_SALE.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Criada", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
+            @ApiResponse(responseCode = "200", description = "PDV-F043 — reenvio com o mesmo clientSaleId: devolve a venda já registrada, sem registrar outra", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Saldo ou pagamento insuficiente para a venda", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sessão de outro operador, ou desconto sem PDV_SALE_DISCOUNT", content = @Content),
             @ApiResponse(responseCode = "404", description = "Sessão de caixa ou SKU não encontrado", content = @Content),
@@ -259,8 +264,15 @@ public class PdvController {
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
-        Order order = pdvUseCase.registerSale(sessionId, request.getCustomerId(), items, payments,
-                authentication.getName(), Boolean.TRUE.equals(request.getReserveForPickup()), delivery);
+        PdvUseCase.SaleRegistration registration = pdvUseCase.registerSaleIdempotent(sessionId,
+                request.getCustomerId(), items, payments, authentication.getName(),
+                Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null);
+        Order order = registration.order();
+        // PDV-F043 — reenvio da mesma venda: nada aconteceu agora, então nenhum evento é publicado de
+        // novo (estoque, cashback, automação de pós-venda). 200 com o pedido que já existia.
+        if (registration.replayed()) {
+            return ResponseEntity.ok(orderConverter.toResponse(order, pdvUseCase.getOrderPayments(order.id())));
+        }
 
         // EST-C004: a venda é o caminho de maior volume de movimentação de estoque. É um evento por
         // operação (não por item) para não inundar a trilha numa venda com muitos itens.
@@ -276,7 +288,11 @@ public class PdvController {
         OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         // Venda paga (concluída ou reservada para retirada): dispara as automações de VENDA_PDV_CONCLUIDA.
         Map<String, Object> saleDetails = new HashMap<>();
-        saleDetails.put("orderId", order.id());
+        // AuditEvent.of copia o mapa com Map.copyOf, que recusa valor nulo: um id ausente derrubava a
+        // venda já gravada com 500 depois do commit.
+        if (order.id() != null) {
+            saleDetails.put("orderId", order.id());
+        }
         saleDetails.put("orderNumber", String.valueOf(order.orderNumber()));
         saleDetails.put("status", order.status().name());
         if (order.customerId() != null) {
@@ -449,9 +465,14 @@ public class PdvController {
         }
     }
 
-    /** Admin e dev encerram o caixa de qualquer operador; os demais, só o próprio. */
+    /**
+     * PDV-C037 — quem tem {@code PDV_SESSION_CLOSE_ANY} encerra o caixa de qualquer operador; os
+     * demais, só o próprio. Era {@code ROLE_ADMIN}/{@code ROLE_DEV} fixo aqui, a única alçada do
+     * módulo que não era permissão: um gerente não podia receber a conferência sem virar admin. A
+     * V145 concede a permissão às duas roles, então o comportamento delas não mudou.
+     */
     private static boolean canCloseAnySession(Authentication authentication) {
         return authentication.getAuthorities().stream()
-                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_DEV".equals(a.getAuthority()));
+                .anyMatch(a -> CLOSE_ANY_AUTHORITY.equals(a.getAuthority()));
     }
 }

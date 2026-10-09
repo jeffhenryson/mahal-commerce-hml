@@ -150,7 +150,9 @@ class AutomationDispatchServiceTest {
     void ocorrenciaJaReservada_naoDisparaDeNovo() {
         CampaignAutomation automation = evento(1L, AutomationEvent.CLIENTE_CRIADO, null, webhook("https://x.com/h"), null);
         when(automationRepository.findActiveByEvent(AutomationEvent.CLIENTE_CRIADO)).thenReturn(List.of(automation));
-        when(logRepository.claim(any())).thenReturn(Optional.empty());
+        // doReturn, e não when(...): when(claim(any())) chamaria claim(null) e rodaria a resposta do
+        // setUp, que faz Optional.of(null) e lança NPE antes de o teste começar.
+        doReturn(Optional.empty()).when(logRepository).claim(any());
 
         service.dispatch(AutomationOccurrence.event(AutomationEvent.CLIENTE_CRIADO, 10L, null, "CLIENTE:10", null));
 

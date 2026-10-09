@@ -515,6 +515,15 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getBody().errorCode()).isEqualTo("EMAIL_ALREADY_EXISTS");
     }
 
+    /** EST-F033: a corrida entre dois cadastros da mesma lata responde igual à checagem do service. */
+    @Test
+    void dataIntegrity_onOpenPackageConstraint_returnsOpenPackageAlreadyOpen() {
+        ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(
+                uniqueViolation("uk_open_package_sku_warehouse_open"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("OPEN_PACKAGE_ALREADY_OPEN");
+    }
+
     @Test
     void dataIntegrity_onOtherConstraint_keepsGenericCode() {
         ResponseEntity<ApiError> resp = handler.handleDataIntegrityViolation(uniqueViolation("uk_products_sku"), req);

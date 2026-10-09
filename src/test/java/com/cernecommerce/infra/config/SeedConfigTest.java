@@ -114,4 +114,30 @@ class SeedConfigTest {
         verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "CRM_CUSTOMER_LOOKUP");
         verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "ORDER_READ");
     }
+
+    /**
+     * PLAT-C059 + PDV-C037 — as permissões de V136/V137/V145 não estavam no seed: em dev, com o
+     * Flyway desligado, o admin tomava 403 ao marcar, corrigir pagamento e ver recebíveis. Fechar
+     * caixa alheio é do admin; o atendente só lê recebíveis.
+     */
+    @Test
+    void seedAll_grantsOnAccountCorrectionReceivableAndCloseAnyPermissions() throws Exception {
+        UserUseCase userUseCase = mock(UserUseCase.class);
+        RoleUseCase roleUseCase = mock(RoleUseCase.class);
+        PermissionUseCase permissionUseCase = mock(PermissionUseCase.class);
+        CashbackUseCase cashbackUseCase = mock(CashbackUseCase.class);
+        when(userUseCase.findByUsername(anyString())).thenReturn(Optional.empty());
+
+        CommandLineRunner runner = seedConfig.seedAll(userUseCase, roleUseCase, permissionUseCase,
+                cashbackUseCase, "administrador", "Admin@dev1", "User@dev1", "Atendente@dev1");
+        runner.run();
+
+        for (String perm : new String[] {"PDV_SESSION_CLOSE_ANY", "PDV_SALE_ON_ACCOUNT", "ORDER_PAYMENT_CORRECT",
+                "ORDER_PAYMENT_CORRECT_CLOSED", "RECEIVABLE_READ", "RECEIVABLE_MANAGE"}) {
+            verify(permissionUseCase).createPermission(perm);
+            verify(roleUseCase).assignPermission("ROLE_ADMIN", perm);
+        }
+        verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "RECEIVABLE_READ");
+        verify(roleUseCase, org.mockito.Mockito.never()).assignPermission("ROLE_ATENDENTE", "PDV_SESSION_CLOSE_ANY");
+    }
 }

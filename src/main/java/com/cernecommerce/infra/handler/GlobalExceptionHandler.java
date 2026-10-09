@@ -55,6 +55,11 @@ import com.cernecommerce.core.domain.exception.estoque.CategoryNotFoundException
 import com.cernecommerce.core.domain.exception.estoque.DuplicateCategoryNameException;
 import com.cernecommerce.core.domain.exception.estoque.ReplenishmentItemNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
+import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException;
+import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
@@ -153,6 +158,12 @@ import com.cernecommerce.core.domain.exception.pdv.CourtesyNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionProductException;
+import com.cernecommerce.core.domain.exception.pdv.SessionHasPendingOfflineSalesException;
+import com.cernecommerce.core.domain.exception.pdv.OfflinePaymentNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.OfflineSoldAtOutOfWindowException;
+import com.cernecommerce.core.domain.exception.pdv.OfflineRejectionNotFoundException;
+import com.cernecommerce.core.domain.exception.pdv.OfflineRejectionAlreadyResolvedException;
+import com.cernecommerce.core.domain.exception.pdv.EssenceMustBeFlavorException;
 import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
 import com.cernecommerce.core.domain.exception.pdv.SessionTierNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundException;
@@ -384,6 +395,34 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleOpenPackageNotFound(OpenPackageNotFoundException ex,
             HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "OPEN_PACKAGE_NOT_FOUND", req);
+    }
+
+    /** EST-F036 — venda ou entrada no SKU base de um produto com variações. */
+    @ExceptionHandler(ParentNotSellableException.class)
+    public ResponseEntity<ApiError> handleParentNotSellable(ParentNotSellableException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PARENT_NOT_SELLABLE", req);
+    }
+
+    @ExceptionHandler(InvalidPackagingException.class)
+    public ResponseEntity<ApiError> handleInvalidPackaging(InvalidPackagingException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_PACKAGING", req);
+    }
+
+    @ExceptionHandler(PackagingNotFoundException.class)
+    public ResponseEntity<ApiError> handlePackagingNotFound(PackagingNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "PACKAGING_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(OpenPackageAlreadyOpenException.class)
+    public ResponseEntity<ApiError> handleOpenPackageAlreadyOpen(OpenPackageAlreadyOpenException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "OPEN_PACKAGE_ALREADY_OPEN", req);
+    }
+
+    @ExceptionHandler(InvalidOpenPackageUsesException.class)
+    public ResponseEntity<ApiError> handleInvalidOpenPackageUses(InvalidOpenPackageUsesException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "OPEN_PACKAGE_INVALID_USES", req);
     }
 
     @ExceptionHandler(NotAPackagedSessionProductException.class)
@@ -1210,6 +1249,13 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "NOT_A_SESSION_PRODUCT", req);
     }
 
+    /** PDV-F042 — a essência da sessão é o sabor (a variação), não o produto base com variações. */
+    @ExceptionHandler(EssenceMustBeFlavorException.class)
+    public ResponseEntity<ApiError> handleEssenceMustBeFlavor(EssenceMustBeFlavorException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "ESSENCE_MUST_BE_FLAVOR", req);
+    }
+
     /** PDV-F010 — open rosh num produto sem preço de consumo livre. Sem fallback: recusa. */
     @ExceptionHandler(OpenRoshNotPricedException.class)
     public ResponseEntity<ApiError> handleOpenRoshNotPriced(OpenRoshNotPricedException ex,
@@ -1313,6 +1359,25 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_PAYMENT_CHANNEL", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException.class)
+    public ResponseEntity<ApiError> handleInvalidPaymentMethod(
+            com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_PAYMENT_METHOD", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pdv.SessionWithdrawalReasonRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionWithdrawalReasonRequired(
+            com.cernecommerce.core.domain.exception.pdv.SessionWithdrawalReasonRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_WITHDRAWAL_REASON_REQUIRED", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pdv.LinkedSessionStillActiveException.class)
+    public ResponseEntity<ApiError> handleLinkedSessionStillActive(
+            com.cernecommerce.core.domain.exception.pdv.LinkedSessionStillActiveException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "LINKED_SESSION_STILL_ACTIVE", req);
+    }
+
     @ExceptionHandler(LegacySessionDisabledException.class)
     public ResponseEntity<ApiError> handleLegacySessionDisabled(LegacySessionDisabledException ex,
             HttpServletRequest req) {
@@ -1330,6 +1395,37 @@ public class GlobalExceptionHandler {
      * de apenas registrar — divergência de contagem é um achado, mesa aberta é uma porta que não
      * dará mais para fechar depois.
      */
+    /** PDV-F043 — mesma natureza da mesa aberta: o caixa não fecha com venda offline em revisão. */
+    @ExceptionHandler(SessionHasPendingOfflineSalesException.class)
+    public ResponseEntity<ApiError> handleSessionHasPendingOfflineSales(SessionHasPendingOfflineSalesException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_HAS_PENDING_OFFLINE_SALES", req);
+    }
+
+    @ExceptionHandler(OfflinePaymentNotAllowedException.class)
+    public ResponseEntity<ApiError> handleOfflinePaymentNotAllowed(OfflinePaymentNotAllowedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "OFFLINE_PAYMENT_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(OfflineSoldAtOutOfWindowException.class)
+    public ResponseEntity<ApiError> handleOfflineSoldAtOutOfWindow(OfflineSoldAtOutOfWindowException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "OFFLINE_SOLD_AT_OUT_OF_WINDOW", req);
+    }
+
+    @ExceptionHandler(OfflineRejectionNotFoundException.class)
+    public ResponseEntity<ApiError> handleOfflineRejectionNotFound(OfflineRejectionNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "OFFLINE_REJECTION_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(OfflineRejectionAlreadyResolvedException.class)
+    public ResponseEntity<ApiError> handleOfflineRejectionAlreadyResolved(OfflineRejectionAlreadyResolvedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "OFFLINE_REJECTION_ALREADY_RESOLVED", req);
+    }
+
     @ExceptionHandler(CashRegisterSessionHasOpenComandasException.class)
     public ResponseEntity<ApiError> handleSessionHasOpenComandas(
             CashRegisterSessionHasOpenComandasException ex, HttpServletRequest req) {
@@ -1572,6 +1668,17 @@ public class GlobalExceptionHandler {
         }
         if (constraint.contains("uk_user_email")) {
             return error(HttpStatus.CONFLICT, "Email já existe", "EMAIL_ALREADY_EXISTS", req);
+        }
+        // EST-F033: dois cadastros simultâneos da mesma lata passam juntos pelo findOpen e o
+        // segundo colide no índice parcial da V124 — é o mesmo "já existe lata aberta".
+        // PDV-F043: dois envios simultâneos da mesma venda — o segundo colide na chave do caixa. O
+        // cliente consulta a venda de novo e encontra a que entrou.
+        if (constraint.contains("uk_sales_order_client_sale_id")) {
+            return error(HttpStatus.CONFLICT, "Esta venda já foi registrada", "DUPLICATE_CLIENT_SALE", req);
+        }
+        if (constraint.contains("uk_open_package_sku_warehouse_open")) {
+            return error(HttpStatus.CONFLICT, "Já existe lata aberta deste SKU no depósito",
+                    "OPEN_PACKAGE_ALREADY_OPEN", req);
         }
         return error(HttpStatus.CONFLICT, "A operação conflita com um registro já existente, tente novamente",
                 "DATA_INTEGRITY_VIOLATION", req);

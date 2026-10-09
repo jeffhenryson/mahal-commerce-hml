@@ -280,6 +280,9 @@ public class OrderService implements OrderUseCase {
             throw new PaymentTotalMismatchException(informed, target);
         }
 
+        // PDV-C035 — "caixa aberto ou fechado" decide onde a diferença vai; sem a trava, um
+        // fechamento concorrente faria a correção valer o caixa aberto num esperado já gravado.
+        cashRegisterRepository.lockForShare(order.sessionId());
         CashRegisterSession session = cashRegisterRepository.findById(order.sessionId())
                 .orElseThrow(() -> new CashRegisterSessionNotFoundException(order.sessionId()));
         boolean sessionClosed = !session.isOpen();

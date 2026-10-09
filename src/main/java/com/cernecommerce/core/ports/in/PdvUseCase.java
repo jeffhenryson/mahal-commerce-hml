@@ -17,6 +17,8 @@ import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
+import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -187,6 +189,24 @@ public interface PdvUseCase {
     Order registerSale(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup,
             OrderDelivery delivery);
+
+    /**
+     * Venda idempotente (PDV-F043): com {@code clientSaleId} (UUID gerado no caixa), reenviar a mesma
+     * venda devolve o pedido já gravado em vez de criar outro — {@code replayed = true}, sem tocar em
+     * estoque nem pagamento. Vale online (timeout seguido de reenvio) e na sincronização offline, em
+     * que {@code clientSoldAt} guarda a hora em que a venda aconteceu no balcão. Sem chave, é a venda
+     * de sempre.
+     */
+    SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt);
+
+    /** O pedido já gravado com esta chave de venda, se houver (PDV-F043). */
+    Optional<Long> findOrderIdByClientSaleId(String clientSaleId);
+
+    /** Resultado da venda idempotente: o pedido e se ele já existia. */
+    record SaleRegistration(Order order, boolean replayed) {
+    }
 
     /** Pagamentos de um pedido, na ordem em que foram lançados (PDV-F006). */
     List<OrderPayment> getOrderPayments(Long orderId);

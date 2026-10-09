@@ -6,6 +6,8 @@ import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTota
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
+import com.cernecommerce.core.domain.exception.pdv.SessionHasPendingOfflineSalesException;
+import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
@@ -44,6 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Optional;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -65,6 +68,8 @@ public class PdvService implements PdvUseCase {
      * ciclo de beans.
      */
     private final ComandaRepository comandaRepository;
+    /** PDV-F043 — nulo nos construtores antigos; ver o construtor completo. */
+    private final OfflineSaleRejectionRepository offlineRejections;
 
     /** Teto de desconto por pedido, em percentual sobre o bruto. */
     private final BigDecimal maxDiscountPercent;
@@ -92,6 +97,23 @@ public class PdvService implements PdvUseCase {
             OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
             CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
             BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase) {
+        this(cashRegisterRepository, cashMovementRepository, orderRepository, orderPaymentRepository,
+                estoqueUseCase, cashbackUseCase, comandaRepository, maxDiscountPercent, clock, receivableUseCase,
+                null);
+    }
+
+    /**
+     * Forma completa, com as vendas offline recusadas (PDV-F043) — a que o {@code CoreBeanConfig} usa.
+     * As anteriores passam {@code null} e o fechamento não consulta a revisão, o que mantém os testes
+     * de caixa que não tratam de venda offline como estavam.
+     */
+    public PdvService(CashRegisterRepository cashRegisterRepository,
+            CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
+            OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
+            CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
+            BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase,
+            OfflineSaleRejectionRepository offlineRejections) {
+        this.offlineRejections = offlineRejections;
         this.clock = clock;
         this.receivableUseCase = receivableUseCase;
         this.cashRegisterRepository = cashRegisterRepository;
@@ -173,6 +195,12 @@ public class PdvService implements PdvUseCase {
     @Transactional
     public CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes,
             String username, boolean canCloseAny) {
+        // PDV-C035 — trava exclusiva ANTES de ler. Sem ela o fechamento lia "OPEN", calculava o
+        // esperado e gravava enquanto uma venda, um movimento ou uma mesa entravam na mesma sessão
+        // (o pagamento ficava num caixa já fechado, fora do esperado), e dois fechamentos
+        // simultâneos terminavam em last-writer-wins. Com a trava, quem escreve na sessão termina
+        // antes, e quem chega depois relê CLOSED.
+        cashRegisterRepository.lockForUpdate(sessionId);
         CashRegisterSession session = getSession(sessionId);
         if (!session.isOpen()) {
             throw new CashRegisterSessionClosedException(sessionId);
@@ -197,6 +225,15 @@ public class PdvService implements PdvUseCase {
         List<Long> openComandaIds = comandaRepository.findOpenIdsBySessionId(sessionId);
         if (!openComandaIds.isEmpty()) {
             throw new CashRegisterSessionHasOpenComandasException(sessionId, openComandaIds);
+        }
+        // PDV-F043 — mesma natureza da mesa aberta: venda offline recusada esperando revisão só tem
+        // como entrar enquanto o caixa existe, e o dinheiro dela já está na gaveta. Fechar agora
+        // deixaria o esperado sem ela para sempre.
+        if (offlineRejections != null) {
+            List<Long> pendingOffline = offlineRejections.findPendingIdsBySessionId(sessionId);
+            if (!pendingOffline.isEmpty()) {
+                throw new SessionHasPendingOfflineSalesException(sessionId, pendingOffline);
+            }
         }
         //
         // PDV-F006: só DINHEIRO entra na conferência da gaveta. Débito, crédito e PIX não passam
@@ -277,6 +314,30 @@ public class PdvService implements PdvUseCase {
     @Transactional
     public Order registerSale(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery) {
+        return registerSaleIdempotent(sessionId, customerId, items, payments, username, reserveForPickup, delivery,
+                null, null).order();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Long> findOrderIdByClientSaleId(String clientSaleId) {
+        return orderRepository.findIdByClientSaleId(clientSaleId);
+    }
+
+    @Override
+    @Transactional
+    public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt) {
+        // PDV-F043 — o reenvio da mesma venda devolve o pedido já gravado, ANTES de qualquer checagem
+        // de caixa: o timeout pode ter acontecido no último segundo do turno, e o caixa já fechado não
+        // pode transformar um reenvio inofensivo em erro. Nada é tocado — estoque, pedido, pagamento.
+        if (clientSaleId != null) {
+            Optional<Long> existing = orderRepository.findIdByClientSaleId(clientSaleId);
+            if (existing.isPresent()) {
+                return new SaleRegistration(getOrder(existing.get()), true);
+            }
+        }
         CashRegisterSession session = requireOwnOpenSession(sessionId, username);
 
         // PDV-F004: o preço e o custo vêm do catálogo. resolveSaleInfo já lança
@@ -333,7 +394,12 @@ public class PdvService implements PdvUseCase {
         recordReceivableIfOnAccount(saved, null, payments, username);
         // Depois das linhas: o cashback desconta a fração marcada (ver CashbackService).
         cashbackUseCase.recordEarnedForOrder(saved);
-        return saved;
+        // PDV-F043 — com flush: é o índice único da chave que barra dois envios simultâneos da mesma
+        // venda, e a colisão tem que estourar aqui, revertendo esta venda inteira.
+        if (clientSaleId != null) {
+            orderRepository.stampClientSale(saved.id(), clientSaleId, clientSoldAt);
+        }
+        return new SaleRegistration(saved, false);
     }
 
     // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────
@@ -384,6 +450,12 @@ public class PdvService implements PdvUseCase {
         BigDecimal nonCashTotal = BigDecimal.ZERO;
         BigDecimal cashTotal = BigDecimal.ZERO;
         for (PaymentCommand payment : payments) {
+            // PDV-C034 — guarda do domínio, além da do converter: GATEWAY_PIX só o webhook captura.
+            // Lançado aqui, a venda saía paga e fora de payment-totals e do esperado do fechamento.
+            if (payment.method() == PaymentMethod.GATEWAY_PIX) {
+                throw new com.cernecommerce.core.domain.exception.pdv.InvalidPaymentMethodException(
+                        payment.method().name());
+            }
             if (payment.method() == PaymentMethod.DINHEIRO) {
                 cashTotal = cashTotal.add(payment.amount());
             } else {
@@ -502,6 +574,8 @@ public class PdvService implements PdvUseCase {
      * vez de duplicar a regra de posse de sessão.</p>
      */
     CashRegisterSession requireOwnOpenSession(Long sessionId, String username) {
+        // PDV-C035 — trava compartilhada: o fechamento espera esta escrita terminar.
+        cashRegisterRepository.lockForShare(sessionId);
         CashRegisterSession session = getSession(sessionId);
         if (!session.isOpen()) {
             throw new CashRegisterSessionClosedException(sessionId);
@@ -528,6 +602,8 @@ public class PdvService implements PdvUseCase {
      * compartilhada entre operadores.</p>
      */
     CashRegisterSession requireOpenSession(Long sessionId) {
+        // PDV-C035 — mesma trava compartilhada de requireOwnOpenSession.
+        cashRegisterRepository.lockForShare(sessionId);
         CashRegisterSession session = getSession(sessionId);
         if (!session.isOpen()) {
             throw new CashRegisterSessionClosedException(sessionId);

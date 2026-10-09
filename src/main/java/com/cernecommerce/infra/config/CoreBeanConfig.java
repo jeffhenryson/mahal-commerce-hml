@@ -114,6 +114,10 @@ import com.cernecommerce.core.ports.out.estoque.StockCountRepository;
 import com.cernecommerce.core.ports.out.estoque.StockIntegrityRepository;
 import com.cernecommerce.core.ports.out.estoque.StockLotRepository;
 import com.cernecommerce.core.ports.out.estoque.OpenPackageRepository;
+import com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository;
+import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
+import com.cernecommerce.core.ports.in.OfflineSaleUseCase;
+import com.cernecommerce.core.service.OfflineSaleService;
 import com.cernecommerce.core.ports.out.estoque.StockMovementRepository;
 import com.cernecommerce.core.ports.out.estoque.StockReservationRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
@@ -306,10 +310,23 @@ class CoreBeanConfig {
             // system_config junto com o painel de configuração.
             @Value("${pdv.sale.max-discount-percent:10}") BigDecimal maxDiscountPercent,
             // CRM-F010 — o marcar na venda e a quitação no caixa de quem recebe.
-            ReceivableUseCase receivableUseCase) {
+            ReceivableUseCase receivableUseCase,
+            // PDV-F043 — o fechamento recusa caixa com venda offline recusada esperando revisão.
+            OfflineSaleRejectionRepository offlineSaleRejectionRepository) {
         return new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
-                maxDiscountPercent, Clock.systemUTC(), receivableUseCase);
+                maxDiscountPercent, Clock.systemUTC(), receivableUseCase, offlineSaleRejectionRepository);
+    }
+
+    /**
+     * PDV-F043 — sincronização da fila offline e revisão das recusadas. Recebe o {@code PdvUseCase}
+     * (o proxy transacional), e não o {@code PdvService}: cada venda do lote precisa da sua transação.
+     */
+    @Bean
+    OfflineSaleUseCase offlineSaleUseCase(PdvUseCase pdvUseCase,
+            OfflineSaleRejectionRepository offlineSaleRejectionRepository,
+            AuditEventPublisherPort auditEventPublisherPort) {
+        return new OfflineSaleService(pdvUseCase, offlineSaleRejectionRepository, auditEventPublisherPort);
     }
 
     @Bean
@@ -381,13 +398,14 @@ class CoreBeanConfig {
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
             OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotificationPort,
-            AuditEventPublisherPort auditEventPublisherPort) {
+            AuditEventPublisherPort auditEventPublisherPort, SkuPackagingRepository skuPackagingRepository) {
         return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
                 stockMovementRepository, reorderPointRepository, stockIntegrityRepository,
                 stockCountRepository, stockReservationRepository, notificationUseCase, userRepository,
                 afterCommitExecutor, defaultReservationTtl, kitComponentRepository, stockLotRepository,
                 systemConfigPort, categoryRepository, brandRepository, attributeTypeRepository,
-                replenishmentListRepository, openPackageRepository, managerNotificationPort, auditEventPublisherPort);
+                replenishmentListRepository, openPackageRepository, managerNotificationPort, auditEventPublisherPort,
+                skuPackagingRepository);
     }
 
     @Bean
