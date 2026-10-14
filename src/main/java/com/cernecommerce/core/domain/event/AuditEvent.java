@@ -45,10 +45,14 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // aparente, e a trilha perderia justamente o que importa auditar: que foram a mesma decisão.
         // Mesma lição de PDV-C014, que tirou a comanda do EventType emprestado.
         STOCK_CONVERTED,
+        // EST-F039 — transferência entre depósitos: mesmo raciocínio, um ato com duas pontas.
+        STOCK_TRANSFERRED,
         // EST-F027 — descartar uma lata pela metade é uma DECISÃO do atendente, e é a única parte
         // da lata que não aparece em stock_movement: a SAIDA da lata nova está lá, o descarte da
         // velha não movimenta nada (a unidade já tinha saído do saldo quando foi aberta).
         OPEN_PACKAGE_REPLACED,
+        // EST-F037 — "Acabou": a lata fechada à mão, sem abrir outra. Também sem movimento de estoque.
+        OPEN_PACKAGE_FINISHED,
         // EST-F033 — cadastrar uma lata que já estava aberta é a única entrada no contador sem
         // SAIDA por trás: sem este evento, nada diria quem declarou quantas sessões ela tinha.
         OPEN_PACKAGE_REGISTERED,
@@ -112,6 +116,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_SESSION_STATUS_CHANGED, COMANDA_FINISHED,
         // PDV-C036 — sessão servida que sai da mesa por desistência, com motivo (a linha não é apagada).
         COMANDA_SESSION_WITHDRAWN,
+        // PDV-F044 — o sabor do 2º rosh do duplo, escolhido quando a 1ª sessão acaba.
+        COMANDA_ROSH_FLAVOR_SET,
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,
@@ -121,6 +127,10 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
         RECEIVABLE_CREATED, RECEIVABLE_PAID, RECEIVABLE_DUE_DATE_CHANGED, RECEIVABLE_CANCELLED,
         CUSTOMER_CREDIT_LIMIT_CHANGED,
+        // PDV-F046 — o gerente trocou o teto do limite que o vendedor pode dar.
+        ATTENDANT_CREDIT_LIMIT_CAP_CHANGED,
+        // PDV-F047 — atividade do operador anotada na sessão de caixa (varrer, trocar dinheiro...).
+        CASH_SESSION_ACTIVITY_REGISTERED,
         // PDV-F022 — códigos da 99, rastreio, entregador preenchidos depois da venda.
         ORDER_DELIVERY_UPDATED,
         // Falha ao processar notificação do gateway de pagamento — vira alerta para os devs.

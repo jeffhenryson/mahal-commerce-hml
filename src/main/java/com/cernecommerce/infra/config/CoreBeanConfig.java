@@ -1,5 +1,9 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
+import com.cernecommerce.core.service.CashSessionActivityService;
+import com.cernecommerce.core.ports.out.pdv.CashSessionActivityRepository;
+import com.cernecommerce.core.ports.in.CashSessionActivityUseCase;
 import com.cernecommerce.core.ports.in.ReceiptEmailUseCase;
 import com.cernecommerce.core.ports.out.recebivel.CustomerCreditLimitRepository;
 import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
@@ -282,9 +286,12 @@ class CoreBeanConfig {
             OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
             CashRegisterRepository cashRegisterRepository,
             OrderPaymentCorrectionRepository orderPaymentCorrectionRepository,
-            ReceivableUseCase receivableUseCase) {
+            ReceivableUseCase receivableUseCase,
+            // PED-F004 — as unidades já estornadas, que limitam o próximo estorno.
+            OrderItemRefundRepository orderItemRefundRepository) {
         return new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
-                cashRegisterRepository, orderPaymentCorrectionRepository, receivableUseCase);
+                cashRegisterRepository, orderPaymentCorrectionRepository, receivableUseCase,
+                orderItemRefundRepository);
     }
 
     @Bean
@@ -316,6 +323,13 @@ class CoreBeanConfig {
         return new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
                 maxDiscountPercent, Clock.systemUTC(), receivableUseCase, offlineSaleRejectionRepository);
+    }
+
+    /** PDV-F047 — atividades do operador na sessão de caixa. */
+    @Bean
+    CashSessionActivityUseCase cashSessionActivityUseCase(CashRegisterRepository cashRegisterRepository,
+            CashSessionActivityRepository cashSessionActivityRepository) {
+        return new CashSessionActivityService(cashRegisterRepository, cashSessionActivityRepository);
     }
 
     /**
@@ -370,11 +384,14 @@ class CoreBeanConfig {
             @Value("${pdv.sessao.legacy-enabled:false}") boolean legacySessionEnabled,
             // PDV-F024 — a mesa é só sessão do cardápio; produto do catálogo vai pelo balcão.
             // Religável por propriedade, sem deploy, se a casa voltar a lançar produto na mesa.
-            @Value("${pdv.mesa.catalog-items-enabled:false}") boolean catalogItemsEnabled) {
+            @Value("${pdv.mesa.catalog-items-enabled:false}") boolean catalogItemsEnabled,
+            // PDV-F049 — essência só em texto na sessão. Ligada durante o rollout do catálogo do
+            // Salão; desligar exige o SKU do sabor em toda sessão nova.
+            @Value("${pdv.sessao.essencia-livre-permitida:true}") boolean freeTextEssenceAllowed) {
         return new ComandaService(comandaRepository, estoqueUseCase, orderRepository,
                 orderPaymentRepository, cashbackUseCase, pdvService, notificationUseCase,
                 userRepository, serviceFeePercent, kitBuilderUseCase, sessionMenuService, legacySessionEnabled,
-                catalogItemsEnabled);
+                catalogItemsEnabled, freeTextEssenceAllowed);
     }
 
     /** PDV-F021 — bean concreto: o ComandaService usa as regras de lançamento, como faz com o PdvService. */
@@ -398,14 +415,18 @@ class CoreBeanConfig {
             BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
             ReplenishmentListRepository replenishmentListRepository,
             OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotificationPort,
-            AuditEventPublisherPort auditEventPublisherPort, SkuPackagingRepository skuPackagingRepository) {
+            AuditEventPublisherPort auditEventPublisherPort, SkuPackagingRepository skuPackagingRepository,
+            SessionMenuRepository sessionMenuRepository,
+            // PDV-F052 — essência de sessão sem faixa recusada na ficha. Desligada até corrigir os
+            // produtos antigos (SELECT sku FROM product WHERE session_product AND session_tier_id IS NULL).
+            @Value("${estoque.produto.faixa-sessao-obrigatoria:false}") boolean sessionTierRequired) {
         return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
                 stockMovementRepository, reorderPointRepository, stockIntegrityRepository,
                 stockCountRepository, stockReservationRepository, notificationUseCase, userRepository,
                 afterCommitExecutor, defaultReservationTtl, kitComponentRepository, stockLotRepository,
                 systemConfigPort, categoryRepository, brandRepository, attributeTypeRepository,
                 replenishmentListRepository, openPackageRepository, managerNotificationPort, auditEventPublisherPort,
-                skuPackagingRepository);
+                skuPackagingRepository, sessionMenuRepository, sessionTierRequired);
     }
 
     @Bean

@@ -551,4 +551,43 @@ public class PdvControllerSecurityTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.grossAmount").value(fixture.price().doubleValue()));
     }
+
+    // ── PDV-F047: atividades da sessão de caixa ──────────────────────────────────────────────
+
+    @Test
+    void registrarAtividade_semPdvSaleManage_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/999999/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"VARRER_LOJA\"}")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void registrarAtividade_comPdvSaleManage_chegaAoServico() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/999999/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"VARRER_LOJA\"}")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void registrarAtividade_outroSemNota_returns_400() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/999999/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"OUTRO\"}")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listarAtividades_aceitaOrderRead() throws Exception {
+        mockMvc.perform(get("/pdv/sessions/999999/activities")
+                        .with(user("ana").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/pdv/sessions/999999/activities")
+                        .with(user("ana").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isForbidden());
+    }
 }

@@ -67,6 +67,10 @@ import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryExc
 import com.cernecommerce.core.domain.exception.estoque.DuplicateSkuException;
 import com.cernecommerce.core.domain.exception.estoque.DraftLimitReachedException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateWarehouseCodeException;
+import com.cernecommerce.core.domain.exception.estoque.LotTrackedTransferUnsupportedException;
+import com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException;
+import com.cernecommerce.core.domain.exception.estoque.SalaoWarehouseAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.estoque.SameWarehouseTransferException;
 import com.cernecommerce.core.domain.exception.estoque.EmptyKitRecipeException;
 import com.cernecommerce.core.domain.exception.estoque.InactiveProductException;
 import com.cernecommerce.core.domain.exception.estoque.InactiveWarehouseException;
@@ -110,15 +114,20 @@ import com.cernecommerce.core.domain.exception.crm.AutomationWebhookNotConfigure
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.crm.CustomerUnderageException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
+import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
+import com.cernecommerce.core.domain.exception.pedido.RefundQuantityExceededException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateCustomerEmailException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
+import com.cernecommerce.core.domain.exception.crm.TagNotAllowedException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
+import com.cernecommerce.core.domain.exception.recebivel.CreditLimitAboveCapException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
@@ -174,8 +183,17 @@ import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledExceptio
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SameFlavorMixException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
+import com.cernecommerce.core.domain.exception.pdv.SessionAlreadyDuploException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
+import com.cernecommerce.core.domain.exception.pdv.ItemNotRoshExtraException;
+import com.cernecommerce.core.domain.exception.pdv.RoshFlavorNotPendingException;
+import com.cernecommerce.core.domain.exception.pdv.RoshFlavorPendingException;
+import com.cernecommerce.core.domain.exception.pdv.CashSessionWarehouseMismatchException;
+import com.cernecommerce.core.domain.exception.estoque.NotEnoughClosedPackagingException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
@@ -442,6 +460,31 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "WAREHOUSE_CODE_ALREADY_EXISTS", req);
     }
 
+    @ExceptionHandler(SalaoWarehouseAlreadyExistsException.class)
+    public ResponseEntity<ApiError> handleSalaoWarehouseAlreadyExists(SalaoWarehouseAlreadyExistsException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "WAREHOUSE_SALAO_ALREADY_EXISTS", req);
+    }
+
+    @ExceptionHandler(SameWarehouseTransferException.class)
+    public ResponseEntity<ApiError> handleSameWarehouseTransfer(SameWarehouseTransferException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SAME_WAREHOUSE_TRANSFER", req);
+    }
+
+    @ExceptionHandler(LotTrackedTransferUnsupportedException.class)
+    public ResponseEntity<ApiError> handleLotTrackedTransferUnsupported(LotTrackedTransferUnsupportedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "LOT_TRACKED_TRANSFER_UNSUPPORTED", req);
+    }
+
+    // A mensagem é a que o PDV mostra ao atendente; o SKU fica no log, não no texto.
+    @ExceptionHandler(SalaoSemEstoqueException.class)
+    public ResponseEntity<ApiError> handleSalaoSemEstoque(SalaoSemEstoqueException ex, HttpServletRequest req) {
+        log.info("Salão sem lata fechada de {}", ex.sku());
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SALAO_SEM_ESTOQUE", req);
+    }
+
     @ExceptionHandler(WarehouseNotFoundException.class)
     public ResponseEntity<ApiError> handleWarehouseNotFound(WarehouseNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "WAREHOUSE_NOT_FOUND", req);
@@ -573,6 +616,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(StockCountNotOpenException.class)
     public ResponseEntity<ApiError> handleStockCountNotOpen(StockCountNotOpenException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "STOCK_COUNT_NOT_OPEN", req);
+    }
+
+    /** PDV-F045 — abrir à mão sem embalagem fechada bastante. 409, com o código que o PDV espera. */
+    @ExceptionHandler(NotEnoughClosedPackagingException.class)
+    public ResponseEntity<ApiError> handleNotEnoughClosedPackaging(NotEnoughClosedPackagingException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "INSUFFICIENT_STOCK", req);
     }
 
     @ExceptionHandler(InsufficientStockException.class)
@@ -723,6 +773,22 @@ public class GlobalExceptionHandler {
                 ex.getMatchedBy().stream().sorted().toList(), ex.getCustomerId()));
     }
 
+    @ExceptionHandler(RefundQuantityExceededException.class)
+    public ResponseEntity<ApiError> handleRefundQuantityExceeded(RefundQuantityExceededException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "REFUND_QUANTITY_EXCEEDED", req);
+    }
+
+    @ExceptionHandler(RefundNotOwnSessionException.class)
+    public ResponseEntity<ApiError> handleRefundNotOwnSession(RefundNotOwnSessionException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "REFUND_NOT_OWN_SESSION", req);
+    }
+
+    @ExceptionHandler(CustomerUnderageException.class)
+    public ResponseEntity<ApiError> handleCustomerUnderage(CustomerUnderageException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "CUSTOMER_UNDERAGE", req);
+    }
+
     @ExceptionHandler(CustomerNotFoundException.class)
     public ResponseEntity<ApiError> handleCustomerNotFound(CustomerNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CUSTOMER_NOT_FOUND", req);
@@ -731,6 +797,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateTagNameException.class)
     public ResponseEntity<ApiError> handleDuplicateTagName(DuplicateTagNameException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "TAG_ALREADY_EXISTS", req);
+    }
+
+    @ExceptionHandler(TagNotAllowedException.class)
+    public ResponseEntity<ApiError> handleTagNotAllowed(TagNotAllowedException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "TAG_NOT_ALLOWED", req);
     }
 
     @ExceptionHandler(TagNotFoundException.class)
@@ -1089,6 +1160,11 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "ON_ACCOUNT_NOT_ALLOWED", req);
     }
 
+    @ExceptionHandler(CreditLimitAboveCapException.class)
+    public ResponseEntity<ApiError> handleCreditLimitAboveCap(CreditLimitAboveCapException ex, HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "CREDIT_LIMIT_ABOVE_CAP", req);
+    }
+
     @ExceptionHandler(CreditLimitExceededException.class)
     public ResponseEntity<CreditLimitError> handleCreditLimitExceeded(CreditLimitExceededException ex,
             HttpServletRequest req) {
@@ -1320,6 +1396,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "NOT_A_SESSION_LINE", req);
     }
 
+    /** PDV-F053 — converter em duplo uma sessão que já tem rosh ligado. */
+    @ExceptionHandler(SessionAlreadyDuploException.class)
+    public ResponseEntity<ApiError> handleSessionAlreadyDuplo(SessionAlreadyDuploException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ALREADY_DUPLO", req);
+    }
+
     // ── PDV-F023 — status da sessão e encerramento da mesa ──────────────────────────────────
 
     @ExceptionHandler(InvalidSessionTransitionException.class)
@@ -1528,10 +1610,52 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_ESSENCE_REQUIRED", req);
     }
 
+    @ExceptionHandler(SessionEssenceSkuRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionEssenceSkuRequired(SessionEssenceSkuRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_ESSENCE_SKU_REQUIRED", req);
+    }
+
+    @ExceptionHandler(SessionTierRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionTierRequired(SessionTierRequiredException ex,
+            HttpServletRequest req) {
+        log.info("Sessão sem faixa: sku={}", ex.sku());
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_TIER_REQUIRED", req);
+    }
+
+    @ExceptionHandler(SameFlavorMixException.class)
+    public ResponseEntity<ApiError> handleSameFlavorMix(SameFlavorMixException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SAME_FLAVOR_MIX", req);
+    }
+
     @ExceptionHandler(SessionNotPaidForCollectException.class)
     public ResponseEntity<ApiError> handleSessionNotPaidForCollect(SessionNotPaidForCollectException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_PAID_FOR_COLLECT", req);
+    }
+
+    // ── PDV-F044 — sabor do 2º rosh escolhido na hora de consumir ───────────────────────────
+
+    @ExceptionHandler(ItemNotRoshExtraException.class)
+    public ResponseEntity<ApiError> handleItemNotRoshExtra(ItemNotRoshExtraException ex, HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "ITEM_NOT_ROSH_EXTRA", req);
+    }
+
+    @ExceptionHandler(RoshFlavorNotPendingException.class)
+    public ResponseEntity<ApiError> handleRoshFlavorNotPending(RoshFlavorNotPendingException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ROSH_FLAVOR_NOT_PENDING", req);
+    }
+
+    @ExceptionHandler(CashSessionWarehouseMismatchException.class)
+    public ResponseEntity<ApiError> handleCashSessionWarehouseMismatch(CashSessionWarehouseMismatchException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "WAREHOUSE_MISMATCH", req);
+    }
+
+    @ExceptionHandler(RoshFlavorPendingException.class)
+    public ResponseEntity<ApiError> handleRoshFlavorPending(RoshFlavorPendingException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ROSH_FLAVOR_PENDING", req);
     }
 
     @ExceptionHandler(SessionNotPaidException.class)
@@ -1675,6 +1799,11 @@ public class GlobalExceptionHandler {
         // cliente consulta a venda de novo e encontra a que entrou.
         if (constraint.contains("uk_sales_order_client_sale_id")) {
             return error(HttpStatus.CONFLICT, "Esta venda já foi registrada", "DUPLICATE_CLIENT_SALE", req);
+        }
+        // Dois "criar depósito do Salão" simultâneos: o segundo colide no índice parcial da V157.
+        if (constraint.contains("uk_warehouse_salao_ativo")) {
+            return error(HttpStatus.CONFLICT, "Já existe um depósito do Salão ativo",
+                    "WAREHOUSE_SALAO_ALREADY_EXISTS", req);
         }
         if (constraint.contains("uk_open_package_sku_warehouse_open")) {
             return error(HttpStatus.CONFLICT, "Já existe lata aberta deste SKU no depósito",
