@@ -300,6 +300,7 @@ não ter número.
 | **V118** | `sales_order.service_fee_amount` (PDV-F015), `NOT NULL DEFAULT 0` + `CHECK ck_sales_order_service_fee_only_mesa`. **Coluna própria, fora de `net_amount`** — ver "netAmount é receita" acima |
 | **V136** | PDV-F030 — `order_payment_correction`, `cash_session_adjustment`, colunas de correção em `order_payment`, status `CORRECTED`, permissões `ORDER_PAYMENT_CORRECT`/`_CLOSED`. O comentário da migration diz "PDV-F027", número trocado depois para não colidir com as sessões paralelas |
 | **V137** | CRM-F010 — `order_payment.due_date`, método `MARCADO`, status `ON_ACCOUNT`; o recebível em si está no README do [CRM](../crm/README.md) |
+| **V156** | PED-F004 — `order_item_refund` (unidades estornadas por item, destino, valor, custo, sessão) e `order_payment.refund_session_id` com `CHECK` só em `REFUNDED`; a permissão `ORDER_REFUND_OWN_SESSION` veio na V154 |
 
 > As migrations de permissão do fechamento de mesa (V115 `PDV_COMANDA_COURTESY`, V117
 > `PDV_COMANDA_SURCHARGE`, V119 `PDV_COMANDA_DISCOUNT`) pertencem a
@@ -345,6 +346,33 @@ ao menos um pedido.
 [`vendas-balcao`](../vendas-balcao/README.md).
 
 ## Histórico de Implementações
+
+- **2026-10-13** — `estorno-por-item-com-destino` (PED-F004, **V156**). Pedido do `frontend-admin` em
+  `PROMPT_BACKEND_PDV_SESSAO_VIP_LIMITE.md` §3 (e o `restock` do `BACKEND_TODO.md`). `POST /orders/{id}/refund`
+  aceita `items [{sku, quantity, destination}]` e `restock`; o contrato antigo (`reason` + `itemLots`)
+  continua igual. **Decisões do dono:** `DISCARD` não gera movimento (a unidade já saiu na venda; uma SAIDA
+  baixaria duas vezes) — a perda fica em `order_item_refund` com o custo congelado; o vendedor estorna só
+  pedido da própria sessão aberta (`ORDER_REFUND_OWN_SESSION`, 403 `REFUND_NOT_OWN_SESSION`).
+  **Escolhas de implementação:**
+  - o plano do estorno é por **posição** do item, não por id: duas linhas do mesmo SKU são itens distintos,
+    e o pedido montado em teste não tem id;
+  - dinheiro rateado entre as formas pelo peso na venda, em centavos, com o resíduo para a maior; o
+    `REFUNDED` não aponta a linha de origem, então o já estornado de cada método é descontado das linhas
+    `CAPTURED` daquele método em ordem;
+  - a parte `MARCADO` abate o recebível (`CustomerReceivable.reducedBy`: fecha QUITADO se o resto já foi
+    pago, CANCELADO se nada foi) — o que o cliente já pagou do marcado não volta, a mesma regra do
+    `cancelOpenForOrder`;
+  - o último estorno devolve **todo** o restante de cada pagamento: cobre taxa de serviço/entrega e o
+    arredondamento dos parciais;
+  - `order_payment.refund_session_id`: o estorno conta na gaveta de quem estorna (`COALESCE` com a sessão
+    do pedido na soma). Vale também para o reembolso total, que antes caía sempre na sessão do pedido;
+  - cashback: o ledger reverte uma entrada `EARNED` inteira (`findEarnedByOrderId` trata qualquer
+    `REVERSED` que a referencie como reversão total), então o ganho do item só é revertido quando a última
+    unidade dele sai. **Limite aceito:** quem devolve 1 de 3 unidades mantém o cashback das 3 até estornar
+    as outras duas.
+  **Limites:** relatórios de faturamento que olham o status `REEMBOLSADO` não enxergam o estorno parcial.
+  Testes: `OrderServiceTest` (+10), `OrderRefundIT` (+1), `OrderPaymentTest` (+3), `CustomerReceivableTest`
+  (4), `OrdersControllerSecurityTest` (+2).
 
 - **2026-10-01** — rodada `mesas-e-fluxo-de-pedido` (branch `fix/pdv-mesas-pedido`):
   - **PED-C005** — `OrderRepositoryImpl.save` só escreve itens na **criação**. Antes apagava e

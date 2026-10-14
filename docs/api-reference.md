@@ -889,6 +889,12 @@ referenciado como texto livre por `stock_balance`, `stock_movement` e `stock_reo
 FK, então renomeá-lo tornaria órfão todo o histórico do produto. Limitação da semântica
 "null = manter": não há como **limpar** a `category`, só trocá-la.
 
+**Faixa da sessão (PDV-F048).** `sessionTierId` (também no `POST /estoque/products` e no `ProductResponse`)
+liga a essência à faixa (`session_tier`) que o PDV sugere na sessão — o operador pode trocar. No PATCH,
+nulo mantém e `"clearSessionTier": true` apaga (vence `sessionTierId`). Faixa inexistente → `404
+SESSION_TIER_NOT_FOUND`. A V159 migrou o antigo atributo "Faixa da sessão" para este campo (casando o
+nome sem acento e sem caixa) e removeu o atributo.
+
 ---
 
 ### PATCH /estoque/products/{sku}/parent-sellable — Permissão: ESTOQUE_PRODUCT_MANAGE
@@ -930,10 +936,21 @@ ativo se ele e o produto pai estiverem ativos.
 {
   "code": "LOJA-01",         // 2–50 chars, obrigatório, único
   "name": "Loja Centro",      // obrigatório
-  "type": "LOJA_FISICA"       // obrigatório — LOJA_FISICA | ECOMMERCE
+  "type": "LOJA_FISICA"       // obrigatório — LOJA_FISICA | ECOMMERCE | SALAO
 }
 // Response 201 + Location → WarehouseResponse / 409 WAREHOUSE_CODE_ALREADY_EXISTS / 400 VALIDATION_ERROR
+// 409 WAREHOUSE_SALAO_ALREADY_EXISTS — já há um depósito SALAO ativo
 ```
+
+**Depósito do Salão (EST-F038).** Só um `SALAO` ativo por vez (índice parcial da V157). Nenhuma migração o
+cria: **criá-lo é o que liga o consumo de sessão por ele** — o mesmo vale para reativá-lo
+(`PATCH …/active`) ou mudar o tipo de outro depósito para `SALAO`. Na mesma transação, todas as latas em
+uso (`/estoque/open-packages`) passam para o Salão, mantendo usos, abertura e quem abriu, sem movimento
+de estoque; havendo duas do mesmo SKU em caixas diferentes, a mais antiga é fechada com `REPLACED`.
+Daí em diante a sessão de narguilé consome a lata do Salão seja qual for o caixa da comanda, e sem lata
+fechada do sabor lá a sessão responde `409 SALAO_SEM_ESTOQUE` ("Sem lata fechada deste sabor no Salão —
+traga da loja em Salão › Essências."), sem cair para o estoque da loja. Essência sem `sessionsPerUnit`
+("uso da loja") continua baixando do caixa. Desativar o Salão volta o consumo para o depósito do caixa.
 
 ```json
 // WarehouseResponse
@@ -1168,9 +1185,11 @@ GET /estoque/open-packages?warehouseCode=LOJA-01
   "uses": 3,                 // sessões já lançadas nesta lata
   "sessionsPerUnit": 5,      // cópia do cadastro no momento da ABERTURA
   "remaining": 2,
-  "exhausted": false,        // rendeu tudo; continua aberta até a próxima sessão
+  "exhausted": false,        // EST-F037: atingiu/passou a estimativa — selo, não fim
   "openedAt": "2026-09-08T20:14:03Z",
-  "openedBy": "atendente"
+  "openedBy": "atendente",
+  "closedAt": null,          // EST-F037: preenchido só na resposta do /close
+  "closeReason": null        // FINISHED | REPLACED | EXHAUSTED (antigas); nulo em uso
 }
 ```
 
@@ -1181,6 +1200,10 @@ instante físico em que alguém tira a lata da prateleira.
 
 `sessionsPerUnit` é **cópia** do catálogo, feita na abertura, e não leitura viva: o admin pode
 corrigir o cadastro no meio da noite, e uma lata pela metade não pode mudar de tamanho por isso.
+
+**EST-F037 — `sessionsPerUnit` é estimativa, não limite.** A lata **não fecha mais sozinha** ao atingir
+o número: continua recebendo sessões (`uses > sessionsPerUnit` é válido, `remaining` fica em 0 e
+`exhausted` em `true`) até o atendente marcar "Acabou" (`/close`) ou repor (`/replace`).
 
 ### GET /estoque/open-packages/{sku} — Permissão: ESTOQUE_PRODUCT_READ ou PDV_COMANDA_MANAGE
 
@@ -1219,6 +1242,84 @@ lata nenhuma no sistema, com uma na mão.
 `PDV_COMANDA_MANAGE` é aceita porque **quem repõe a essência é o atendente**, que tem essa permissão
 (V111) e não `ESTOQUE_STOCK_MANAGE` — exigir só a segunda deixaria o botão inalcançável justamente
 para quem o aperta.
+
+### POST /estoque/open-packages/{sku}/close — Permissão: PDV_COMANDA_MANAGE ou ESTOQUE_PRODUCT_MANAGE
+
+EST-F037 — "Acabou": fecha a lata em uso com `FINISHED`, **sem** abrir outra e **sem** baixa. A próxima
+sessão do sabor abre uma nova com `SAIDA` de 1, como quando não há lata aberta.
+
+```json
+{ "warehouseCode": "LOJA-01" }   // obrigatório, 2..50
+// Response 200 → OpenPackageResponse da lata FECHADA (closedAt e closeReason = "FINISHED")
+// 404 OPEN_PACKAGE_NOT_FOUND — não há lata aberta do SKU
+// 404 WAREHOUSE_NOT_FOUND
+```
+
+Escreve pela mesma trava pessimista de todo uso da lata (EST-C025). Evento `OPEN_PACKAGE_FINISHED`.
+
+### POST /estoque/transfers — Permissão: ESTOQUE_STOCK_MANAGE
+
+EST-F039 — transfere um SKU entre depósitos **a preço de custo**, numa transação: `SAIDA` na origem e
+`ENTRADA` no destino. É o Salão "comprando" latas da loja; não gera venda, pedido, caixa nem fluxo de caixa.
+
+```json
+{
+  "sku": "ZOMO-50G-MENTA",                            // obrigatório, 3..50 — variação, ou base com parentSellable
+  "fromWarehouseCode": "PRINCIPAL",                   // obrigatório, 2..50
+  "toWarehouseCode": "SALAO",                         // obrigatório, 2..50
+  "quantity": 3,                                      // obrigatório, inteiro >= 1
+  "reason": "Consumo do Salão (transferência a custo)" // obrigatório, máx. 200
+}
+// Response 200
+{ "sku": "ZOMO-50G-MENTA", "fromBalance": 7, "toBalance": 5, "unitCost": 32.00, "totalCost": 96.00 }
+// 400 SAME_WAREHOUSE_TRANSFER / 400 PARENT_NOT_SELLABLE / 400 LOT_TRACKED_TRANSFER_UNSUPPORTED
+// 400 INSUFFICIENT_STOCK / 400 RESERVED_STOCK (nada é movimentado) / 400 KIT_DIRECT_ADJUSTMENT / 400 VALIDATION_ERROR
+// 404 PRODUCT_NOT_FOUND / 404 WAREHOUSE_NOT_FOUND
+// 409 WAREHOUSE_INACTIVE (destino desativado)
+```
+
+- **Custo:** o custo médio do SKU na origem; sem ele, o `costPrice` do cadastro (variação, depois produto).
+  Só a `ENTRADA` grava `unit_cost` — custo só se aplica a entrada (EST-F007) — e é ela que forma o custo
+  médio do destino. `unitCost`/`totalCost` vêm nulos se o SKU não tem custo nenhum.
+- **Ledger:** sem `MovementType` novo. As duas pontas guardam `counterpart_warehouse_id` (V158) e o motivo
+  com a seta: `"<reason> → SALAO"` na saída, `"<reason> ← PRINCIPAL"` na entrada. A saída **não** abre
+  embalagem pai (EST-F032). Evento de auditoria `STOCK_TRANSFERRED`.
+
+### GET /estoque/transfers/summary — Permissão: ESTOQUE_PRODUCT_READ ou ESTOQUE_STOCK_MANAGE
+
+O que entrou num depósito **por transferência** no período, a preço de custo — com `toWarehouseCode=SALAO`,
+quanto o Salão consumiu de essência.
+
+```
+GET /estoque/transfers/summary?toWarehouseCode=SALAO&from=2026-10-01&to=2026-10-31
+// from/to opcionais (datas inclusivas, fuso America/Sao_Paulo)
+// Response 200
+{ "items": [ { "sku": "ZOMO-50G-MENTA", "productName": "Zomo Menta 50g", "quantity": 12, "totalCost": 384.00 } ],
+  "totalQuantity": 12, "totalCost": 384.00 }
+// 400 — from depois de to / 404 WAREHOUSE_NOT_FOUND
+```
+
+### GET /estoque/open-packages/yield — Permissão: ESTOQUE_PRODUCT_READ ou PDV_COMANDA_MANAGE
+
+EST-F037 — o rendimento real por sabor, tirado das latas **fechadas** (`FINISHED`, `REPLACED` e as
+`EXHAUSTED` de antes desta feature) com **ao menos um uso** — a lata reposta logo depois de aberta, por
+engano, distorceria a média.
+
+```
+GET /estoque/open-packages/yield?warehouseCode=LOJA-01&from=2026-09-01T00:00:00Z&to=2026-10-09T23:59:59Z
+// from/to opcionais (ISO-8601), filtram por closedAt; sem eles, tudo
+// Response 200
+[ { "sku": "ZOMO-MENTA", "productName": "Zomo Menta",
+    "closedCount": 5,      // latas fechadas no período, com uso
+    "avgSessions": 4.6,    // média de uses, uma casa
+    "totalSessions": 23,   // soma de uses
+    "estimate": 5 } ]      // sessionsPerUnit ATUAL do produto (nulo sem cadastro)
+// 400 — from depois de to
+// 404 WAREHOUSE_NOT_FOUND
+```
+
+Pedido o depósito do Salão (EST-F038), soma as latas fechadas de **todos** os depósitos: as fechadas
+antes de o Salão existir ficaram no caixa, e são elas que dão a média real.
 
 ### PUT /estoque/products/{sku}/packaging — Permissão: ESTOQUE_PRODUCT_MANAGE
 
@@ -1298,7 +1399,10 @@ acertado fora do sistema. Mesmos 404/409.
 
 ### GET /pdv/cigarros — Permissão: PDV_READ
 
-Central de cigarros do PDV (PDV-F041): todo produto ativo com embalagem ligada (EST-F032).
+Central de cigarros do PDV (PDV-F041): todo produto ativo com embalagem ligada (EST-F032). PDV-F045:
+mais todo produto ativo de categoria de cigarros (`cigarette = true`) **sem** embalagem — cada SKU
+vendável dele (as variações ativas, ou o próprio produto sem variações) numa cadeia de **um nível**, com
+`containsSku`/`containsUnits` nulos.
 
 ```
 GET /pdv/cigarros?warehouseCode=LOJA-01
@@ -1312,8 +1416,30 @@ GET /pdv/cigarros?warehouseCode=LOJA-01
 // 404 WAREHOUSE_NOT_FOUND
 ```
 
-Só leitura: vende-se por `POST /pdv/sessions/{id}/sales` com o `sku` do nível. Vender além do
+Vende-se por `POST /pdv/sessions/{id}/sales` com o `sku` do nível. Vender além do
 `available` abre a embalagem de fora sozinho (EST-F032).
+
+### POST /pdv/cigarros/abrir — Permissão: PDV_SALE_MANAGE
+
+PDV-F045 — o atendente abre à mão, na Central, **1 carteira em maços** ou **1 maço em soltos** (por
+exemplo, maços avulsos para a vitrine), sem `ESTOQUE_STOCK_MANAGE`. Exige **caixa aberto** do operador:
+o depósito é o do caixa.
+
+```json
+{ "sku": "LM-AZUL-CART",       // obrigatório: a embalagem fechada a abrir
+  "quantidade": 1,             // obrigatório, 1..100
+  "warehouseCode": "PRINCIPAL" } // opcional; diferente do depósito do caixa → 400 WAREHOUSE_MISMATCH
+// Response 200
+{ "aberto": { "sku": "LM-AZUL-CART", "available": 1 },
+  "dentro": { "sku": "LM-AZUL-MACO", "available": 13 } }
+// 404 PACKAGING_NOT_FOUND — o SKU não contém nada (não é parent_sku em sku_packaging)
+// 404 NO_OPEN_SESSION     — o operador não tem caixa aberto
+// 409 INSUFFICIENT_STOCK  — não há `quantidade` fechada DISPONÍVEL do SKU de fora
+```
+
+Numa transação: `SAIDA` de `quantidade` do SKU de fora **sem** abrir o nível de cima (diferente da venda),
+`ENTRADA` de `quantidade × unitsPerParent` no de dentro com o custo médio de fora ÷ N, e
+`STOCK_PACKAGE_BROKEN` com o operador e `reason = "aberto no balcão (PDV)"`.
 
 ### POST /estoque/open-packages/{sku} — Permissão: ESTOQUE_STOCK_MANAGE ou PDV_COMANDA_MANAGE
 
@@ -1322,17 +1448,24 @@ inicial das essências da mesa.
 
 ```json
 { "warehouseCode": "LOJA-01",   // obrigatório, 2..50
-  "usesRemaining": 2 }          // obrigatório, >= 1 e <= sessionsPerUnit do produto
+  "usesRemaining": 2,           // obrigatório, >= 1 e <= sessionsPerUnit do produto
+  "openedAt": "2026-10-13",     // opcional (EST-F040), hoje ou antes — padrão: agora
+  "withdraw": false }           // opcional (EST-F040) — true dá SAIDA de 1 na mesma transação
 // Response 201 → OpenPackageResponse (uses = sessionsPerUnit − usesRemaining)
 //   Location: /estoque/open-packages/{sku}?warehouseCode=LOJA-01
 // 400 OPEN_PACKAGE_INVALID_USES — usesRemaining acima do que a lata rende (o piso é Bean Validation)
 // 400 NOT_A_PACKAGED_SESSION_PRODUCT — SKU não é vendido por sessão, ou sem sessionsPerUnit
 // 404 PRODUCT_NOT_FOUND / 404 WAREHOUSE_NOT_FOUND
 // 409 OPEN_PACKAGE_ALREADY_OPEN — já há lata em uso do SKU no depósito (também na corrida entre dois cadastros)
+// 400 INSUFFICIENT_STOCK — withdraw=true sem saldo (nada é cadastrado)
 ```
 
-**Não baixa estoque**, ao contrário de abrir e repor: a lata já saiu da prateleira, e baixar agora
-tiraria do saldo uma segunda lata que continua lacrada. Daí em diante segue o ciclo normal — quando
+`openedAt` vira o `openedAt` da lata, à meia-noite do dia no fuso da loja.
+
+**Por padrão não baixa estoque**, ao contrário de abrir e repor: a lata já saiu da prateleira, e baixar agora
+tiraria do saldo uma segunda lata que continua lacrada. `withdraw: true` é o caso contrário — era uma lata
+fechada do saldo, aberta agora sem passar pelo PDV: a `SAIDA` de 1 corre **antes** do cadastro, na mesma
+transação. Daí em diante segue o ciclo normal — quando
 esgota, a próxima sessão abre outra com `SAIDA` de 1. Para trocar uma lata já cadastrada, o caminho é
 o `/replace`. Publica `OPEN_PACKAGE_REGISTERED`.
 
@@ -1958,11 +2091,35 @@ Exige sessão aberta **e do próprio operador**.
 > **Contrato alterado em PDV-C012** (2026-08-30): devolvia a lista na raiz do corpo e passa a
 > devolver `PageResult` — os itens saíram da raiz para `content`.
 
+### POST /pdv/sessions/{id}/activities — Permissão: PDV_SALE_MANAGE
+
+PDV-F047 — o que o operador fez no turno além de vender. Não entra em nenhum cálculo de gaveta.
+
+```json
+{ "type": "TROCAR_DINHEIRO", "note": "Troquei 2 notas de 100 no mercado" }
+// 201 → { "id": 7, "type": "TROCAR_DINHEIRO", "note": "Troquei 2 notas de 100 no mercado",
+//         "username": "caixa1", "createdAt": "2026-10-13T15:02:00Z" }
+// 400 (OUTRO sem note, note > 280) / 403 SESSION_NOT_OWNED / 404 CASH_REGISTER_SESSION_NOT_FOUND
+// 409 CASH_REGISTER_SESSION_CLOSED
+```
+
+`type ∈ {VARRER_LOJA, PASSAR_PANO, TROCAR_DINHEIRO, REPOSICAO, LIMPEZA_BANHEIRO, OUTRO}`; `OUTRO`
+exige `note`. `username` vem do token. Só na sessão **aberta** do próprio operador — com
+`PDV_SESSION_CLOSE_ANY` (gerente), em qualquer uma. Publica `CASH_SESSION_ACTIVITY_REGISTERED`.
+
+### GET /pdv/sessions/{id}/activities — Permissão: PDV_READ ou ORDER_READ
+
+Lista as atividades da sessão, **mais recentes primeiro**, sem paginação (um turno tem dezenas).
+
 ### GET /pdv/sessions/{id}/payment-totals — Permissão: PDV_READ
 
 Totais da sessão por forma de pagamento. As quatro formas (`DINHEIRO`, `DEBITO`, `CREDITO`, `PIX`)
 aparecem sempre, mesmo zeradas. Só pagamento `CAPTURED` conta — `CORRECTED` (PDV-F030) e
 `ON_ACCOUNT` (CRM-F010) ficam fora.
+
+`refundedAmount` (PED-F004) soma os estornos feitos **nesta** sessão — o caixa aberto de quem estornou,
+mesmo que o pedido seja de outra. Estorno sem sessão registrada (anterior a PED-F004, ou feito por
+quem não tinha caixa aberto) conta na sessão do pedido.
 
 ```json
 [ { "method": "DINHEIRO", "amount": 300.00, "refundedAmount": 0.00, "changeAmount": 12.00,
@@ -2429,6 +2586,101 @@ remover as linhas ainda abertas e encerrar com `POST /pdv/comandas/{id}/finish`.
 
 ---
 
+### PUT /pdv/comandas/{id}/itens/{itemId}/rosh-sabor — Permissão: PDV_COMANDA_MANAGE
+
+PDV-F044 — o sabor do 2º rosh do duplo, escolhido quando a 1ª sessão acaba. Desde PDV-F044, `modo=DUPLO`
+em `POST …/sessoes` (e `duplo=true` em `…/repetir`) aceita **não** mandar `essenciaRosh`/`essenciaRoshSku`/
+`tierIdRosh`: o `ROSH_EXTRA` nasce cortesia a R$ 0, `NA_FILA`, sem nota e **sem baixar estoque**, com
+`essenciaPendente: true` no `ComandaItemResponseDTO`. Recolher a sessão **não** promove esse rosh (ele
+fica na fila, e o vaso continua preso); mandá-lo ao preparo à mão é `409 ROSH_FLAVOR_PENDING`. Desistir
+dele é a remoção comum (`DELETE …/items/{itemId}`), sem nada a devolver.
+
+`{itemId}` é o **`ROSH_EXTRA`**, não a sessão.
+
+```json
+{ "essencia": "Zomo Menta", "essenciaSku": "ZOMO-MENTA", "essenciaSku2": "ZIGY-BANANA", "tierId": 2 }
+```
+
+| Campo | Regra |
+|---|---|
+| `essencia` | Texto (≤150). Obrigatório sem `essenciaSku`; vazio com SKU usa o nome do produto. |
+| `essenciaSku` | Opcional. Sabor (variação) do catálogo: consome um uso da lata aberta do sabor (ou abre uma), ou 1 unidade como uso da loja — o mesmo de PDV-F042. |
+| `essenciaSku2` | PDV-F051 — opcional. 2º sabor da mescla: exige `essenciaSku`, outro sabor; 1 uso da lata de cada. |
+| `tierId` | Opcional. Faixa do 2º rosh: ignorada se a essência tiver faixa na ficha (PDV-F050); nula usa a da sessão. O preço continua R$ 0. |
+
+Numa transação: grava o sabor e a faixa, consome a lata e, se a sessão já está recolhida, põe o rosh em
+`PREPARANDO` (com `startedAt`). Com a sessão ainda no salão, o rosh fica `NA_FILA` e o recolhimento o
+promove — as duas ordens funcionam. **200** com o `ComandaResponseDTO`. Evento `COMANDA_ROSH_FLAVOR_SET`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem `essencia` e sem `essenciaSku` | 400 | `SESSION_ESSENCE_REQUIRED` |
+| Sem `essenciaSku` com `pdv.sessao.essencia-livre-permitida=false` (PDV-F049) | 400 | `SESSION_ESSENCE_SKU_REQUIRED` |
+| Sem lata fechada do sabor no Salão (EST-F038) | 409 | `SALAO_SEM_ESTOQUE` |
+| SKU que não é sabor de sessão | 400 | `NOT_A_SESSION_PRODUCT`, `ESSENCE_MUST_BE_FLAVOR` |
+| Mescla com o mesmo sabor / 2º sabor sem o 1º (PDV-F051) | 400 | `SAME_FLAVOR_MIX` / `SESSION_ESSENCE_SKU_REQUIRED` |
+| Comanda, item ou faixa inexistente | 404 | `COMANDA_ITEM_NOT_FOUND`, `SESSION_TIER_NOT_FOUND` |
+| O rosh já tem sabor (ou já saiu do salão) | 409 | `ROSH_FLAVOR_NOT_PENDING` |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| O item não é um 2º rosh | 422 | `ITEM_NOT_ROSH_EXTRA` |
+
+> **Sessão e o Salão (EST-F038 / PDV-F049), valendo para `POST …/sessoes`, `…/repetir`, `…/rosh-extra` e
+> `PUT …/rosh-sabor`.** Com depósito `SALAO` ativo, o sabor com lata consome a lata **do Salão**, não a do
+> caixa da comanda; sem lata fechada lá → `409 SALAO_SEM_ESTOQUE`. Com
+> `pdv.sessao.essencia-livre-permitida=false` (padrão `true`), sabor sem `essenciaSku` → `400
+> SESSION_ESSENCE_SKU_REQUIRED`; repetir sem sabor novo repete o SKU da origem, e origem só em texto
+> também é recusada.
+
+> **Faixa pela essência e sessão mesclada (PDV-F050 / PDV-F051), mesmos endpoints.**
+> - **Faixa:** com `essenciaSku` de produto com `sessionTierId` **ativo**, a faixa (e o preço) é a da ficha,
+>   e o `tierId` do pedido é ignorado. `tierId` virou **opcional** em `POST …/sessoes`; vale só para
+>   sessão em texto e essência sem faixa. Sem faixa de onde tirar → `400 SESSION_TIER_REQUIRED` ("Esta
+>   essência está sem faixa — defina a faixa na ficha do produto."). No rosh (DUPLO, `…/rosh-extra`,
+>   `…/rosh-sabor`), sem faixa na ficha nem no pedido, vale a da sessão. **Repetir** trocando o sabor
+>   recalcula a faixa pela nova essência; sem sabor novo, copia a da origem.
+> - **Mescla:** `essenciaSku2` em `POST …/sessoes`, `…/repetir` e `PUT …/rosh-sabor`; `essenciaRoshSku2`
+>   no DUPLO. Exige `essenciaSku` e outro sabor (`400 SAME_FLAVOR_MIX`). Faixa = a de **maior preço**
+>   entre os dois. Consome 1 uso da lata de cada sabor na mesma transação; faltou lata de qualquer um
+>   (`409 SALAO_SEM_ESTOQUE`), nada é consumido. Remover/cancelar devolve os dois. Sem texto, a
+>   `essencia` vira `"nome1 + nome2"`. Repetir sem sabor novo repete a mescla; com `essenciaSku` novo e
+>   sem `essenciaSku2`, sai com um sabor. `ComandaItemResponseDTO.essenciaSku2` (nulo sem mescla).
+>   `…/rosh-extra` não tem mescla.
+
+---
+
+### POST /pdv/comandas/{id}/sessoes/{itemId}/duplo — Permissão: PDV_COMANDA_MANAGE + PDV_COMANDA_COURTESY
+
+PDV-F053 — converte em duplo a sessão lançada como simples. **Sem corpo.** Cria o mesmo 2º rosh do
+`modo=DUPLO` lançado sem sabor (PDV-F044): `ROSH_EXTRA` a R$ 0, cortesia, `linkedItemId` = a sessão,
+`NA_FILA` com `essenciaPendente: true`, na faixa da sessão, **sem baixar estoque** e sem alocar
+utensílio (usa o narguilé da sessão). Herda o `pagarNoFinal` da sessão. O preço da sessão não muda. O
+sabor vem depois por `PUT …/itens/{itemId}/rosh-sabor`, e o recolhimento da sessão promove o rosh, como
+no duplo lançado.
+
+Vale em qualquer status antes de recolher (`AGUARDANDO_PAGAMENTO`, `PREPARANDO`, `ENTREGUE`), inclusive
+com a sessão já paga. Numa sessão ainda `AGUARDANDO_PAGAMENTO`, o pagamento por `itemIds` passa a exigir
+os dois ids, como no duplo de sempre. **201** com o `ComandaResponseDTO`. Evento
+`COMANDA_ROSH_EXTRA_ADDED` com `{comandaId, sessionItemId, duplo: true, convertido: true}`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem `PDV_COMANDA_COURTESY` (o 2º rosh do duplo é cortesia, PDV-C025) | 403 | `COURTESY_NOT_ALLOWED` |
+| Comanda inexistente / faixa da sessão inativa | 404 | `COMANDA_NOT_FOUND` / `SESSION_TIER_NOT_FOUND` |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| Caixa da comanda fechado | 409 | `CASH_REGISTER_SESSION_CLOSED` |
+| `{itemId}` não é `SESSAO` desta comanda ainda no salão (recolhida ou desistida) | 409 | `NOT_A_SESSION_LINE` |
+| A sessão já tem `ROSH_EXTRA` ligado | 409 | `SESSION_ALREADY_DUPLO` |
+
+> **Duplo pago no final cobra no 2º rosh (PDV-C046), em `PATCH …/sessoes/{itemId}/status`.** Recolher
+> a sessão `pagarNoFinal` ainda a cobrar continua `409 SESSION_NOT_PAID_FOR_COLLECT` (PDV-F040), **exceto**
+> quando ela tem um `ROSH_EXTRA` ligado ainda no salão (na fila, sabor pendente incluído; o recolhido e o
+> desistido não contam). Aí ela sai sem pagar, o rosh é promovido e os utensílios só voltam com o grupo
+> inteiro recolhido. Em troca, recolher o `ROSH_EXTRA` (inclusive a desistência `PREPARANDO → RECOLHIDO`)
+> com a sessão raiz paga no final ainda a cobrar é `409 SESSION_NOT_PAID_FOR_COLLECT`: paga-se sessão +
+> rosh (`itemIds`) e recolhe-se. Quem desistiu do rosh sem pagar o remove (`DELETE …/items/{itemId}`), e a
+> sessão fica a receber, cobrada pelo pagamento dela ou no encerramento da mesa. Sem campo nem código
+> novo.
+
 ## Pedidos (visão do administrador) — `/orders`
 
 Atravessa canais: enxerga venda de balcão e pedido de marketplace na mesma superfície. Separada do
@@ -2447,6 +2699,9 @@ Cada linha traz `operatorName` (PED-F003): o usuário que operava o caixa do ped
 caixa, como pedido do app ainda não pago). Também vem em `GET /orders/{id}`.
 
 ### GET /orders/{id} — Permissão: ORDER_READ
+
+> PED-F004 — cada item traz `refundedQuantity` (unidades já estornadas; o próximo estorno aceita até
+> `quantity − refundedQuantity`). Nas listagens o campo vem nulo.
 
 ```json
 // OrderAdminResponseDTO — além dos campos do PDV:
@@ -2557,6 +2812,42 @@ uma devolução, e devolução é entrada de estoque.
 > `REVERSED` no **cashback** (depende da Fatia 4). Marcar como reembolsado, distinto de cancelado, é
 > `PDV-F007` no backlog.
 
+### POST /orders/{id}/refund — Permissão: ORDER_REFUND ou ORDER_REFUND_OWN_SESSION
+
+Reembolso **depois** do pagamento confirmado (PDV-F007), total ou por item (PED-F004).
+
+```json
+{
+  "reason": "Cliente devolveu uma unidade com defeito",   // obrigatório
+  "restock": true,                                         // só sem items; padrão true
+  "itemLots": [],                                          // lote de retorno por SKU (EST-F008)
+  "items": [                                               // opcional — vazio = tudo o que resta
+    { "sku": "SEDA-001", "quantity": 1, "destination": "DISCARD" },
+    { "sku": "ISQ-020",  "quantity": 2, "destination": "RESTOCK" }
+  ]
+}
+// 200 → OrderAdminResponseDTO, com items[].refundedQuantity
+// 403 REFUND_NOT_OWN_SESSION / 404 / 409 INVALID_STATUS_TRANSITION / 422 REFUND_QUANTITY_EXCEEDED
+```
+
+- **Sem `items`**: estorna tudo o que ainda não foi estornado. `restock=false` devolve só o dinheiro.
+- **Com `items`**: só essas unidades (no máximo vendidas − já estornadas, por SKU; SKU em duas linhas
+  é tirado na ordem da venda). O pedido continua `PAGO`/`CONCLUIDO`; vira `REEMBOLSADO` quando a
+  última unidade sai.
+- **Destino**: `RESTOCK` dá `ENTRADA` no estoque; `DISCARD` (perda/avaria) e `CUSTOMER_KEEPS` não
+  mexem no saldo — a unidade já saiu na venda. Pedido de **mesa** e sessão do cardápio nunca voltam
+  ao estoque: `RESTOCK` é gravado como `CUSTOMER_KEEPS`.
+- **Dinheiro**: o líquido proporcional das unidades (`netAmount / quantity × unidades`), rateado entre
+  as formas de pagamento pelo peso de cada uma na venda; uma linha `REFUNDED` por forma. A parte
+  `MARCADO` abate o recebível em aberto (o que o cliente já pagou do marcado não volta por aqui). O
+  estorno que completa o pedido devolve todo o restante, taxas de serviço e entrega incluídas, e
+  cancela o marcado em aberto.
+- **Caixa**: o estorno conta na sessão aberta de quem estorna (`payment-totals.refundedAmount` e
+  esperado da gaveta em dinheiro). Sem caixa aberto, na sessão do pedido.
+- **Cashback**: o ganho do item é revertido quando a última unidade dele é estornada; no total, todos.
+- **`ORDER_REFUND_OWN_SESSION`** (vendedor): só pedido da própria sessão de caixa **aberta**.
+- Publica `ORDER_REFUNDED` com `statusBefore`, `statusAfter`, `partial`, `restock` e os itens.
+
 ---
 
 ## CRM — `/crm`
@@ -2569,13 +2860,19 @@ uma devolução, e devolução é entrada de estoque.
   "contato": "11999998888",         // opcional (CRM-C005), máx. 30 chars
   "email": "maria@example.com",     // opcional (CRM-C005), formato de email quando informado, máx. 255 chars, único
   "cpf": "12345678900",             // opcional, identificador OFICIAL do cadastro, exatamente 11 chars, único
-  "origem": "loja-fisica"           // opcional, máx. 100 chars
+  "origem": "loja-fisica",          // opcional, máx. 100 chars
+  "dataNascimento": "1990-05-17"     // opcional (CRM-F012), yyyy-MM-dd, 18 a 120 anos
 }
 // Response 201 + Location → CustomerResponse
+// 400 CUSTOMER_UNDERAGE (menos de 18 anos) / 400 (data no futuro ou mais de 120 anos)
 // 409 CUSTOMER_EMAIL_ALREADY_EXISTS / 409 CUSTOMER_CPF_ALREADY_EXISTS
 // 400 VALIDATION_ERROR (nome ausente, ou email/cpf com formato inválido)
 // 400 BAD_REQUEST (nenhum dos três identificadores — cpf, email, contato — foi informado)
 ```
+
+> **CRM-F012:** `dataNascimento` vale também no `PUT /crm/customers/{id}` (omitida, mantém a gravada)
+> e no `POST /crm/customers/lead` (só completa cliente que ainda não tem data — nunca sobrescreve).
+> Volta em `CustomerResponse.dataNascimento`. É a base da automação de aniversário.
 
 > **CRM-C005:** pelo menos um entre `cpf`, `email` e `contato` é obrigatório — não há mais um
 > campo único obrigatório. Cliente sem `cpf` ("cliente leve", achado só por email/contato) é
@@ -2766,7 +3063,7 @@ Cada transição é registrada com autor (username autenticado, nunca informado 
 
 ---
 
-### POST /crm/tags — Permissão: CRM_CUSTOMER_MANAGE
+### POST /crm/tags — Permissão: CRM_CUSTOMER_MANAGE ou CRM_CUSTOMER_VIP_MANAGE
 
 ```json
 {
@@ -2779,6 +3076,12 @@ Cada transição é registrada com autor (username autenticado, nunca informado 
 // TagResponse
 { "id": 1, "nome": "VIP" }
 ```
+
+---
+
+> **PDV-F046:** com só `CRM_CUSTOMER_VIP_MANAGE` (o vendedor), estas três rotas aceitam apenas a tag
+> `VIP` (sem diferenciar maiúsculas): criar outra tag, ou associar/remover outra, responde
+> `403 TAG_NOT_ALLOWED`.
 
 ---
 
@@ -2804,7 +3107,7 @@ Cada transição é registrada com autor (username autenticado, nunca informado 
 
 ---
 
-### POST /crm/customers/{id}/tags — Permissão: CRM_CUSTOMER_MANAGE
+### POST /crm/customers/{id}/tags — Permissão: CRM_CUSTOMER_MANAGE ou CRM_CUSTOMER_VIP_MANAGE
 
 ```json
 {
@@ -2816,7 +3119,7 @@ Cada transição é registrada com autor (username autenticado, nunca informado 
 
 ---
 
-### DELETE /crm/customers/{id}/tags/{tagId} — Permissão: CRM_CUSTOMER_MANAGE
+### DELETE /crm/customers/{id}/tags/{tagId} — Permissão: CRM_CUSTOMER_MANAGE ou CRM_CUSTOMER_VIP_MANAGE
 
 ```
 // Response 204 / 404 CUSTOMER_NOT_FOUND ou TAG_NOT_FOUND
@@ -3060,7 +3363,7 @@ regras da venda).
 para devolver a mercadoria, o caminho é o reembolso do pedido, que já cancela o marcado em aberto.
 `409 RECEIVABLE_NOT_OPEN` se não está em aberto. Publica `RECEIVABLE_CANCELLED`.
 
-### PUT /crm/customers/{id}/credit-limit — Permissão: RECEIVABLE_MANAGE
+### PUT /crm/customers/{id}/credit-limit — Permissão: RECEIVABLE_MANAGE ou RECEIVABLE_LIMIT_SET_CAPPED
 
 ```json
 { "creditLimit": 200.00, "channel": "BALCAO" }   // limite do balcão
@@ -3079,6 +3382,20 @@ cadastro regrava a ficha inteira. `400` valor negativo; `404` cliente inexistent
 `0`, ou seja, sem limite individual o cliente não marca) e, desde a V142,
 `pdv.on-account.default-credit-limit.balcao` / `.mesa` (semeadas com o valor do padrão geral; sem a
 chave, vale o padrão geral).
+
+**Teto do vendedor (PDV-F046).** Com só `RECEIVABLE_LIMIT_SET_CAPPED`, `creditLimit` acima de
+`pdv.on-account.attendant-max-credit-limit` (padrão `100.00`, vale por canal e para o total) responde
+`422 CREDIT_LIMIT_ABOVE_CAP` ("Seu limite máximo é R$ X. Valores maiores só com um gerente."). `null`
+(voltar ao padrão) é sempre aceito. Com `RECEIVABLE_MANAGE` não há teto.
+
+### GET /pdv/config/credit-limit-cap — Permissão: PDV_SALE_MANAGE, RECEIVABLE_LIMIT_SET_CAPPED ou RECEIVABLE_MANAGE
+
+`{ "maxCreditLimit": 100.00 }` — o teto de quem chama. `null` para o gerente (`RECEIVABLE_MANAGE`): sem teto.
+
+### PUT /pdv/config/credit-limit-cap — Permissão: RECEIVABLE_MANAGE
+
+`{ "maxCreditLimit": 150.00 }` (≥ 0, 2 casas) → `200 { "maxCreditLimit": 150.00 }`. Limites já dados
+acima do novo teto continuam valendo. Publica `ATTENDANT_CREDIT_LIMIT_CAP_CHANGED` (`before`, `after`).
 
 ---
 
@@ -3742,7 +4059,10 @@ interface TotpConfirmResponse {
 | `PDV_SALE_MANAGE` | `POST /pdv/sessions/{id}/sales` — venda com baixa de estoque |
 | `PDV_COMANDA_MANAGE` | `POST /pdv/comandas` e `.../items`/`.../close`/`.../cancel` — comanda de mesa (PDV-F009) |
 | `PDV_READ` **ou** `ORDER_READ` | `GET /pdv/comandas/{id}`, `/pdv/comandas/history` e `/pdv/comandas/analytics` (PDV-F029) |
-| `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda ou no fechamento de mesa (CRM-F010). Só ADMIN |
+| `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda ou no fechamento de mesa (CRM-F010). ADMIN e, desde a V154, ATENDENTE |
+| `CRM_CUSTOMER_VIP_MANAGE` | Criar/associar/remover **só a tag VIP** (PDV-F046). ADMIN, DEV e ATENDENTE |
+| `RECEIVABLE_LIMIT_SET_CAPPED` | `PUT /crm/customers/{id}/credit-limit` até o teto `pdv.on-account.attendant-max-credit-limit` (PDV-F046). ADMIN, DEV e ATENDENTE |
+| `ORDER_REFUND_OWN_SESSION` | `POST /orders/{id}/refund` só de pedido da própria sessão de caixa aberta (PED-F004). ATENDENTE |
 | `RECEIVABLE_READ` | Leituras de `/receivables/**` e `GET /crm/customers/{id}/receivables` (CRM-F010). ADMIN e ATENDENTE |
 | `RECEIVABLE_MANAGE` | Renegociar e cancelar marcado, `PUT /crm/customers/{id}/credit-limit` (CRM-F010). Só ADMIN |
 | `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto (PDV-F030). ADMIN e ATENDENTE |

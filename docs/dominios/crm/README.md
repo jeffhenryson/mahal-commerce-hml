@@ -260,6 +260,17 @@ Novas features e correções do CRM seguem as séries `CRM-F001+` e `CRM-C002+`.
 
 ## Histórico de Implementações
 
+- **2026-10-13** — `data-de-nascimento-do-cliente` (CRM-F012, **V153**). Pedido do `frontend-admin` em
+  `PROMPT_BACKEND_SALAO.md` §3. `customers.data_nascimento` (opcional) + índice de expressão por mês/dia,
+  para o job de `ANIVERSARIO_CLIENTE` (que ainda não existe). `dataNascimento` em `CustomerRequest`/
+  `CustomerResponseDTO` nos três endpoints de cadastro. A regra de idade (18 a 120 anos, no fuso da loja;
+  menor → 400 `CUSTOMER_UNDERAGE`) mora no `CrmService`, não no record: um cliente lido do banco não pode
+  virar inválido só porque o tempo passou. O `PUT` sem o campo mantém a data (client antigo não apaga o
+  aniversário); o lead só completa, nunca sobrescreve. `CrmUseCase` ganhou as sobrecargas com a data e
+  manteve as antigas como `default`, para o lead da mesa e o marketplace não mudarem. Também nesta rodada
+  (PDV-F046): `Tag.VIP`/`isVip()` viraram a fonte da regra "VIP é a tag", antes uma constante do
+  `ReceivableService`. Testes: `CrmServiceTest` (+6), `CrmControllerTest` (+3), `CustomerSearchPostgresIT` (+1).
+
 - **2026-10-08** — reparos de build, achados ao fechar a suíte das correções do PDV (sem migration, sem
   mudança de comportamento):
   - `ReceivableService` tinha um `private record Position` aninhado, e o `HexagonalArchitectureTest`
