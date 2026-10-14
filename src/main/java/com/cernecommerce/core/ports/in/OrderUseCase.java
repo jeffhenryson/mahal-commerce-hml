@@ -125,6 +125,56 @@ public interface OrderUseCase {
     Order refundOrder(Long orderId, String reason, String username, List<RefundItemLot> itemLots);
 
     /**
+     * Unidades de um SKU a estornar e o destino delas (PED-F004). Um SKU que aparece em mais de uma
+     * linha do pedido é distribuído pelas linhas na ordem em que foram vendidas.
+     */
+    record RefundItemCommand(String sku, java.math.BigDecimal quantity,
+            com.cernecommerce.core.domain.model.pedido.RefundDestination destination) {
+    }
+
+    /**
+     * O estorno completo (PED-F004).
+     *
+     * @param restock  sem {@code items}: se a mercadoria volta ao estoque (o padrão de sempre) ou fica
+     *                 com o cliente
+     * @param items    vazio = estorna tudo o que ainda não foi estornado; preenchido = só essas unidades
+     */
+    record RefundCommand(String reason, boolean restock, List<RefundItemLot> itemLots,
+            List<RefundItemCommand> items) {
+
+        public RefundCommand {
+            itemLots = itemLots == null ? List.of() : List.copyOf(itemLots);
+            items = items == null ? List.of() : List.copyOf(items);
+        }
+    }
+
+    /**
+     * Estorno total ou por item (PED-F004).
+     *
+     * <ul>
+     *   <li>Sem {@code items}: o comportamento de {@link #refundOrder(Long, String, String, List)} sobre o
+     *       que ainda não foi estornado, com {@code restock} decidindo o estoque.</li>
+     *   <li>Com {@code items}: estorna só as unidades pedidas. O dinheiro é o líquido proporcional delas,
+     *       rateado entre as formas de pagamento do pedido; {@code RESTOCK} dá ENTRADA no estoque,
+     *       {@code DISCARD} e {@code CUSTOMER_KEEPS} não mexem no saldo. O pedido só vira
+     *       {@code REEMBOLSADO} quando a última unidade sai — e esse último estorno devolve todo o
+     *       restante pago, taxas incluídas.</li>
+     * </ul>
+     *
+     * O estorno conta no caixa aberto de {@code username}; sem caixa aberto, no caixa do pedido.
+     *
+     * @param ownSessionOnly quem estorna só pode estornar pedido da própria sessão de caixa aberta
+     * @throws com.cernecommerce.core.domain.exception.pedido.RefundQuantityExceededException se pedir
+     *         mais do que resta de um SKU
+     * @throws com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException se
+     *         {@code ownSessionOnly} e o pedido não for da sessão aberta de {@code username}
+     */
+    Order refundOrder(Long orderId, RefundCommand command, String username, boolean ownSessionOnly);
+
+    /** PED-F004 — unidades já estornadas por item do pedido; item sem estorno fica fora do mapa. */
+    Map<Long, java.math.BigDecimal> getRefundedQuantities(Long orderId);
+
+    /**
      * Corrige a forma de pagamento de um pedido sem perder o registro do erro (PDV-F030).
      *
      * <p>As linhas {@code CAPTURED} vigentes passam a {@code CORRECTED}; as informadas nascem

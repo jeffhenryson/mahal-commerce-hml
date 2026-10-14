@@ -76,4 +76,8 @@ public class OrderPaymentEntity {
     // CRM-F010 — vencimento da linha MARCADO (V137).
     @Column(name = "due_date")
     private java.time.LocalDate dueDate;
+
+    /** PED-F004 — sessão de caixa onde o estorno foi feito. Só em linha REFUNDED; nula nas antigas. */
+    @Column(name = "refund_session_id")
+    private Long refundSessionId;
 }

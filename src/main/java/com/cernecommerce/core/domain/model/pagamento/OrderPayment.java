@@ -18,7 +18,17 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
         Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
         Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
-        java.time.LocalDate dueDate) {
+        java.time.LocalDate dueDate, Long refundSessionId) {
+
+    /** Sem a sessão do estorno — toda linha que não é REFUNDED, e as REFUNDED anteriores a PED-F004. */
+    public OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+            java.time.LocalDate dueDate) {
+        this(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt, createdAt,
+                channel, provider, correctionId, originCorrectionId, correctedAt, correctedBy, dueDate, null);
+    }
 
     public OrderPayment {
         if (orderId == null) {
@@ -61,6 +71,10 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         if ((method == PaymentMethod.MARCADO) != (status == PaymentStatus.ON_ACCOUNT)
                 || (method == PaymentMethod.MARCADO) != (dueDate != null)) {
             throw new IllegalArgumentException("MARCADO, ON_ACCOUNT e dueDate andam juntos");
+        }
+        // PED-F004 — a sessão do estorno só existe na linha do estorno.
+        if (refundSessionId != null && status != PaymentStatus.REFUNDED) {
+            throw new IllegalArgumentException("refundSessionId só existe em linha REFUNDED");
         }
         // PDV-F030 — espelha ck_order_payment_corrected.
         if ((status == PaymentStatus.CORRECTED)
@@ -105,13 +119,26 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
      * índice único de referência de gateway no futuro.</p>
      */
     public static OrderPayment refunded(OrderPayment original) {
+        return refunded(original, original.amount(), null);
+    }
+
+    /**
+     * Estorno de {@code amount} de um pagamento CAPTURED (PED-F004) — o valor inteiro ou só a parte
+     * das unidades devolvidas. {@code refundSessionId} é a sessão de caixa <b>onde</b> o estorno foi
+     * feito: é nela que o dinheiro sai da gaveta. Nula (quem estornou não tinha caixa aberto), a soma
+     * do caixa cai na sessão do pedido, como antes.
+     */
+    public static OrderPayment refunded(OrderPayment original, BigDecimal amount, Long refundSessionId) {
         if (original.status() != PaymentStatus.CAPTURED) {
             throw new IllegalArgumentException("só se estorna um pagamento CAPTURED");
         }
+        if (amount == null || amount.signum() <= 0 || amount.compareTo(original.amount()) > 0) {
+            throw new IllegalArgumentException("valor do estorno fora do pagamento: " + amount);
+        }
         Instant now = Instant.now();
-        return new OrderPayment(null, original.orderId(), original.method(), original.amount(),
+        return new OrderPayment(null, original.orderId(), original.method(), amount,
                 PaymentStatus.REFUNDED, original.installments(), null, now, null, now, original.channel(),
-                original.provider(), null, null, null, null, null);
+                original.provider(), null, null, null, null, null, refundSessionId);
     }
 
     /** Reconstitui um pagamento a partir de persistência. */
@@ -145,9 +172,20 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
             Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
             java.time.LocalDate dueDate) {
+        return of(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt,
+                createdAt, channel, provider, correctionId, originCorrectionId, correctedAt, correctedBy, dueDate,
+                null);
+    }
+
+    /** Reconstitui um pagamento completo, inclusive a sessão do estorno (PED-F004). */
+    public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+            java.time.LocalDate dueDate, Long refundSessionId) {
         return new OrderPayment(id, orderId, method, amount, status, installments, gatewayRef,
                 authorizedAt, capturedAt, createdAt, channel, provider, correctionId, originCorrectionId,
-                correctedAt, correctedBy, dueDate);
+                correctedAt, correctedBy, dueDate, refundSessionId);
     }
 
     /**

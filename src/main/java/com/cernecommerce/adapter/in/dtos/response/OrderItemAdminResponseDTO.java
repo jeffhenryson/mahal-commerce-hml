@@ -65,4 +65,8 @@ public class OrderItemAdminResponseDTO {
             + "campo próprio, na mesma lógica de discountAmount. Nulo em toda venda que não veio "
             + "de mesa.")
     private BigDecimal surchargeAmount;
+
+    @Schema(description = "PED-F004 — unidades já estornadas desta linha. Só no GET /orders/{id} e na resposta do "
+            + "estorno; nulo nas listagens. O próximo estorno aceita até quantity − refundedQuantity.")
+    private BigDecimal refundedQuantity;
 }

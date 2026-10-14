@@ -8,6 +8,10 @@ import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryExceptio
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
+import com.cernecommerce.core.domain.model.pedido.RefundDestination;
+import com.cernecommerce.core.domain.model.pedido.OrderItemRefund;
+import com.cernecommerce.core.domain.exception.pedido.RefundQuantityExceededException;
+import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
@@ -46,12 +50,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
@@ -68,13 +74,14 @@ class OrderServiceTest {
     @Mock CashRegisterRepository cashRegisterRepository;
     @Mock OrderPaymentCorrectionRepository correctionRepository;
     @Mock com.cernecommerce.core.ports.in.ReceivableUseCase receivableUseCase;
+    @Mock com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository itemRefundRepository;
 
     OrderService orderService;
 
     @BeforeEach
     void setUp() {
         orderService = new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
-                cashRegisterRepository, correctionRepository, receivableUseCase);
+                cashRegisterRepository, correctionRepository, receivableUseCase, itemRefundRepository);
         // PED-C011 — reembolso e correção leem travado; nos testes de unidade a leitura travada é a
         // mesma do findById que cada teste já prepara.
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(any()))
@@ -457,6 +464,207 @@ class OrderServiceTest {
         orderService.refundOrder(1L, "devolução no prazo", "gerente");
 
         verify(cashbackUseCase).reverseEarningsForOrder(order);
+    }
+
+    // ── PED-F004: estorno por item com destino ──────────────────────────────────────────────
+
+    /** 3 sedas a R$ 10 (custo 4) + 2 isqueiros a R$ 5 (custo 2): líquido R$ 40. Itens com id. */
+    private static Order concludedWithIds() {
+        List<OrderItem> items = List.of(
+                OrderItem.of(10L, "SEDA-001", new BigDecimal("3.000"), new BigDecimal("10.00"),
+                        new BigDecimal("4.00"), BigDecimal.ZERO, null, "Seda"),
+                OrderItem.of(11L, "ISQ-020", new BigDecimal("2.000"), new BigDecimal("5.00"),
+                        new BigDecimal("2.00"), BigDecimal.ZERO, null, "Isqueiro"));
+        return Order.openBalcao(1L, "LOJA-01", null, items).concluded("000001000", null, NOW);
+    }
+
+    private static OrderUseCase.RefundCommand partial(OrderUseCase.RefundItemCommand... items) {
+        return new OrderUseCase.RefundCommand("devolução", true, List.of(), List.of(items));
+    }
+
+    private static OrderUseCase.RefundItemCommand refundItem(String sku, String qty, RefundDestination destination) {
+        return new OrderUseCase.RefundItemCommand(sku, new BigDecimal(qty), destination);
+    }
+
+    @Test
+    void refundParcial_restockEntraNoEstoque_discardNaoMexeNoSaldo_eOPedidoNaoMudaDeStatus() {
+        Order order = concludedWithIds();
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+        OrderPayment cash = OrderPayment.captured(1L, PaymentMethod.DINHEIRO, new BigDecimal("40.00"), null);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(cash));
+
+        Order result = orderService.refundOrder(1L, partial(
+                refundItem("SEDA-001", "1", RefundDestination.DISCARD),
+                refundItem("ISQ-020", "2", RefundDestination.RESTOCK)), "gerente", false);
+
+        assertThat(result.status()).isEqualTo(OrderStatus.CONCLUIDO);
+        verify(orderRepository, never()).save(any());
+        verify(estoqueUseCase).adjustStock(eq("ISQ-020"), eq("LOJA-01"), eq(MovementType.ENTRADA),
+                argThat(q -> q.compareTo(new BigDecimal("2")) == 0), eq("Estorno parcial do pedido 000001000"), eq("gerente"), isNull(), isNull());
+        verify(estoqueUseCase, never()).adjustStock(eq("SEDA-001"), any(), any(), any(), any(), any(), any(), any());
+
+        ArgumentCaptor<OrderPayment> payment = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository).save(payment.capture());
+        assertThat(payment.getValue().status()).isEqualTo(PaymentStatus.REFUNDED);
+        assertThat(payment.getValue().amount()).isEqualByComparingTo("20.00");
+
+        // Só o isqueiro zerou: só o cashback dele é revertido.
+        verify(cashbackUseCase).reverseEarningsForOrderItems(order, List.of(11L));
+        verify(cashbackUseCase, never()).reverseEarningsForOrder(any());
+        verify(receivableUseCase, never()).cancelOpenForOrder(any(), any(), any());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<OrderItemRefund>> saved = ArgumentCaptor.forClass(List.class);
+        verify(itemRefundRepository).saveAll(saved.capture());
+        assertThat(saved.getValue())
+                .extracting(OrderItemRefund::orderItemId, OrderItemRefund::destination, OrderItemRefund::amount,
+                        OrderItemRefund::costAmount)
+                .containsExactly(
+                        tuple(10L, RefundDestination.DISCARD, new BigDecimal("10.00"), new BigDecimal("4.00")),
+                        tuple(11L, RefundDestination.RESTOCK, new BigDecimal("10.00"), new BigDecimal("4.00")));
+    }
+
+    @Test
+    void refundParcial_acimaDoQueResta_recusaSemEscreverNada() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        when(itemRefundRepository.sumQuantityByOrderItem(1L)).thenReturn(Map.of(10L, new BigDecimal("3.000")));
+
+        assertThatThrownBy(() -> orderService.refundOrder(1L,
+                partial(refundItem("SEDA-001", "1", RefundDestination.RESTOCK)), "gerente", false))
+                .isInstanceOf(RefundQuantityExceededException.class);
+
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(orderPaymentRepository, never()).save(any());
+        verify(itemRefundRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void refundParcial_skuForaDoPedido_recusa() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+
+        assertThatThrownBy(() -> orderService.refundOrder(1L,
+                partial(refundItem("OUTRO-1", "1", RefundDestination.RESTOCK)), "gerente", false))
+                .isInstanceOf(RefundQuantityExceededException.class);
+    }
+
+    @Test
+    void refundParcial_ultimaUnidade_completaOPedidoEDevolveTodoORestante() {
+        Order order = concludedWithIds();
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(itemRefundRepository.sumQuantityByOrderItem(1L))
+                .thenReturn(Map.of(10L, new BigDecimal("2.000"), 11L, new BigDecimal("2.000")));
+        OrderPayment cash = OrderPayment.captured(1L, PaymentMethod.DINHEIRO, new BigDecimal("40.00"), null);
+        OrderPayment earlier = OrderPayment.refunded(cash, new BigDecimal("30.00"), null);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(cash, earlier));
+
+        Order result = orderService.refundOrder(1L,
+                partial(refundItem("SEDA-001", "1", RefundDestination.CUSTOMER_KEEPS)), "gerente", false);
+
+        assertThat(result.status()).isEqualTo(OrderStatus.REEMBOLSADO);
+        ArgumentCaptor<OrderPayment> payment = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository).save(payment.capture());
+        assertThat(payment.getValue().amount()).isEqualByComparingTo("10.00");
+        verify(cashbackUseCase).reverseEarningsForOrder(order);
+        verify(receivableUseCase).cancelOpenForOrder(eq(1L), any(), eq("gerente"));
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refundTotal_semRestock_naoMexeNoEstoque() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Order result = orderService.refundOrder(1L,
+                new OrderUseCase.RefundCommand("cliente ficou", false, List.of(), List.of()), "gerente", false);
+
+        assertThat(result.status()).isEqualTo(OrderStatus.REEMBOLSADO);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any(), any(), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<OrderItemRefund>> saved = ArgumentCaptor.forClass(List.class);
+        verify(itemRefundRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(OrderItemRefund::destination)
+                .containsOnly(RefundDestination.CUSTOMER_KEEPS);
+    }
+
+    @Test
+    void refundParcial_rateiaEntreAsFormasDePagamento() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        OrderPayment cash = OrderPayment.captured(1L, PaymentMethod.DINHEIRO, new BigDecimal("30.00"), null);
+        OrderPayment debit = OrderPayment.captured(1L, PaymentMethod.DEBITO, new BigDecimal("10.00"), null);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(cash, debit));
+
+        orderService.refundOrder(1L, partial(refundItem("SEDA-001", "1", RefundDestination.RESTOCK)), "gerente",
+                false);
+
+        ArgumentCaptor<OrderPayment> payments = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository, times(2)).save(payments.capture());
+        assertThat(payments.getAllValues())
+                .extracting(OrderPayment::method, OrderPayment::amount)
+                .containsExactlyInAnyOrder(
+                        tuple(PaymentMethod.DINHEIRO, new BigDecimal("7.50")),
+                        tuple(PaymentMethod.DEBITO, new BigDecimal("2.50")));
+    }
+
+    @Test
+    void refund_contaNaSessaoAbertaDeQuemEstorna() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        when(cashRegisterRepository.findOpenByOperator("gerente")).thenReturn(Optional.of(CashRegisterSession.of(
+                5L, "gerente", NOW, BigDecimal.TEN, "LOJA-01", null, null, null, null, null,
+                CashRegisterSession.Status.OPEN)));
+        OrderPayment cash = OrderPayment.captured(1L, PaymentMethod.DINHEIRO, new BigDecimal("40.00"), null);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(cash));
+
+        orderService.refundOrder(1L, partial(refundItem("ISQ-020", "1", RefundDestination.RESTOCK)), "gerente",
+                false);
+
+        ArgumentCaptor<OrderPayment> payment = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository).save(payment.capture());
+        assertThat(payment.getValue().refundSessionId()).isEqualTo(5L);
+        assertThat(payment.getValue().amount()).isEqualByComparingTo("5.00");
+    }
+
+    @Test
+    void refund_soDaPropriaSessao_pedidoDeOutraSessao_recusa() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        when(cashRegisterRepository.findOpenByOperator("vendedor")).thenReturn(Optional.of(CashRegisterSession.of(
+                99L, "vendedor", NOW, BigDecimal.TEN, "LOJA-01", null, null, null, null, null,
+                CashRegisterSession.Status.OPEN)));
+
+        assertThatThrownBy(() -> orderService.refundOrder(1L,
+                partial(refundItem("ISQ-020", "1", RefundDestination.RESTOCK)), "vendedor", true))
+                .isInstanceOf(RefundNotOwnSessionException.class);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refund_soDaPropriaSessao_semCaixaAberto_recusa() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+
+        assertThatThrownBy(() -> orderService.refundOrder(1L,
+                partial(refundItem("ISQ-020", "1", RefundDestination.RESTOCK)), "vendedor", true))
+                .isInstanceOf(RefundNotOwnSessionException.class);
+    }
+
+    @Test
+    void refundParcial_marcado_abateORecebivelEmVezDeDevolverDinheiro() {
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(concludedWithIds()));
+        OrderPayment cash = OrderPayment.captured(1L, PaymentMethod.DINHEIRO, new BigDecimal("20.00"), null);
+        OrderPayment marcado = OrderPayment.onAccount(1L, new BigDecimal("20.00"), LocalDate.parse("2026-08-28"));
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(cash, marcado));
+        com.cernecommerce.core.domain.model.recebivel.CustomerReceivable receivable =
+                com.cernecommerce.core.domain.model.recebivel.CustomerReceivable.open(42L, 1L, null, 1L,
+                        new BigDecimal("20.00"), LocalDate.parse("2026-08-28"), "caixa", NOW, List.of());
+        when(receivableUseCase.findByOrderId(1L)).thenReturn(Optional.of(receivable));
+
+        orderService.refundOrder(1L, partial(refundItem("SEDA-001", "1", RefundDestination.RESTOCK)), "gerente",
+                false);
+
+        ArgumentCaptor<OrderPayment> payment = ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository).save(payment.capture());
+        assertThat(payment.getValue().method()).isEqualTo(PaymentMethod.DINHEIRO);
+        assertThat(payment.getValue().amount()).isEqualByComparingTo("5.00");
+        verify(receivableUseCase).reduceOpenForOrder(eq(1L), eq(new BigDecimal("5.00")), any(), eq("gerente"));
     }
 
     /** Pré-pagamento nunca tem o que reembolsar — só {@code cancelOrder} faz sentido. */

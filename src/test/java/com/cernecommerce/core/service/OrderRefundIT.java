@@ -14,6 +14,7 @@ import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.domain.model.pedido.RefundDestination;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -148,6 +149,52 @@ class OrderRefundIT {
         // O ganho revertido não conta mais como pendente.
         CashbackBalance balance = cashbackUseCase.getCustomerBalance(customer.id());
         assertThat(balance.pending()).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * PED-F004 — estorno por item contra banco real: RESTOCK volta ao saldo, DISCARD não; o dinheiro
+     * sai na sessão de quem estorna; o pedido só vira REEMBOLSADO quando a última unidade sai.
+     */
+    @Test
+    void refundPorItem_parcialDepoisTotal() {
+        String suffix = uniqueSuffix();
+        String operator = "caixa-" + suffix;
+        String[] setup = givenStockedWarehouse(operator, suffix).split("\\|");
+        String warehouseCode = setup[0];
+        String sku = setup[1];
+
+        CashRegisterSession session = pdvUseCase.openSession(operator, new BigDecimal("100.00"), warehouseCode);
+        Order order = pdvUseCase.registerSale(session.id(), null,
+                List.of(new SaleItemCommand(sku, new BigDecimal("3"), null)), cash("300.00"), operator);
+        flushAndClear();
+        assertThat(estoqueUseCase.getStockBalance(sku, warehouseCode).quantity()).isEqualByComparingTo("7.000");
+
+        Order partial = orderUseCase.refundOrder(order.id(), new OrderUseCase.RefundCommand("defeito", true, List.of(),
+                List.of(new OrderUseCase.RefundItemCommand(sku, BigDecimal.ONE, RefundDestination.DISCARD),
+                        new OrderUseCase.RefundItemCommand(sku, BigDecimal.ONE, RefundDestination.RESTOCK))),
+                operator, false);
+        flushAndClear();
+
+        assertThat(partial.status()).isNotEqualTo(OrderStatus.REEMBOLSADO);
+        // Só o RESTOCK voltou: 7 + 1. A unidade descartada já tinha saído na venda.
+        assertThat(estoqueUseCase.getStockBalance(sku, warehouseCode).quantity()).isEqualByComparingTo("8.000");
+        assertThat(orderUseCase.getRefundedQuantities(order.id()).values())
+                .singleElement().satisfies(q -> assertThat(q).isEqualByComparingTo("2"));
+        assertThat(pdvUseCase.getSessionPaymentTotals(session.id()))
+                .filteredOn(t -> t.method() == PaymentMethod.DINHEIRO)
+                .singleElement()
+                .satisfies(t -> assertThat(t.refundedAmount()).isEqualByComparingTo("200.00"));
+
+        Order refunded = orderUseCase.refundOrder(order.id(), "desistiu do resto", operator);
+        flushAndClear();
+
+        assertThat(refunded.status()).isEqualTo(OrderStatus.REEMBOLSADO);
+        assertThat(estoqueUseCase.getStockBalance(sku, warehouseCode).quantity()).isEqualByComparingTo("9.000");
+        assertThat(pdvUseCase.getOrderPayments(order.id()))
+                .filteredOn(p -> p.status() == PaymentStatus.REFUNDED)
+                .extracting(OrderPayment::amount)
+                .usingElementComparator(BigDecimal::compareTo)
+                .containsExactlyInAnyOrder(new BigDecimal("200.00"), new BigDecimal("100.00"));
     }
 
     @Test

@@ -84,6 +84,35 @@ class OrderPaymentTest {
         assertThat(refunded.gatewayRef()).isNull();
     }
 
+    /** PED-F004 — estorno parcial: só a parte devolvida, com a sessão onde o dinheiro saiu. */
+    @Test
+    void refunded_parcial_levaOValorEASessaoDoEstorno() {
+        OrderPayment original = OrderPayment.captured(7L, PaymentMethod.DINHEIRO, new BigDecimal("40.00"), null);
+
+        OrderPayment refunded = OrderPayment.refunded(original, new BigDecimal("12.50"), 5L);
+
+        assertThat(refunded.amount()).isEqualByComparingTo("12.50");
+        assertThat(refunded.status()).isEqualTo(PaymentStatus.REFUNDED);
+        assertThat(refunded.refundSessionId()).isEqualTo(5L);
+    }
+
+    @Test
+    void refunded_parcial_recusaValorAcimaDoPagamento() {
+        OrderPayment original = OrderPayment.captured(7L, PaymentMethod.DINHEIRO, new BigDecimal("40.00"), null);
+
+        assertThatThrownBy(() -> OrderPayment.refunded(original, new BigDecimal("40.01"), null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void refundSessionId_soExisteEmLinhaRefunded() {
+        Instant now = Instant.now();
+
+        assertThatThrownBy(() -> OrderPayment.of(1L, 7L, PaymentMethod.DINHEIRO, BigDecimal.TEN,
+                PaymentStatus.CAPTURED, null, null, now, now, now, null, null, null, null, null, null, null, 5L))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void refunded_rejectsNonCapturedOriginal() {
         Instant now = Instant.now();

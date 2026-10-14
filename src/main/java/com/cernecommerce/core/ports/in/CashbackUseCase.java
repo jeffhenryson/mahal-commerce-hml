@@ -91,6 +91,14 @@ public interface CashbackUseCase {
     void reverseEarningsForOrder(Order order);
 
     /**
+     * PED-F004 — reverte só os ganhos {@code EARNED} dos itens informados: os que o estorno parcial
+     * acabou de zerar. O ledger reverte uma entrada inteira (a {@code REVERSED} referencia a
+     * {@code EARNED}), então o item com parte das unidades estornadas mantém o cashback até a última
+     * unidade sair.
+     */
+    void reverseEarningsForOrderItems(Order order, java.util.Collection<Long> orderItemIds);
+
+    /**
      * Saldo do cliente: disponível, pendente (em carência) e a expirar em breve.
      *
      * @throws com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException se o cliente

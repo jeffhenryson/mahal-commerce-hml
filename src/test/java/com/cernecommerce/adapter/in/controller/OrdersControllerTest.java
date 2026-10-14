@@ -12,6 +12,7 @@ import java.time.Instant;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -362,7 +363,8 @@ public class OrdersControllerTest {
         
         Order after = mock(Order.class);
         when(after.status()).thenReturn(OrderStatus.REEMBOLSADO);
-        when(orderUseCase.refundOrder(eq(1L), eq("Motivo"), eq("admin"), anyList())).thenReturn(after);
+        when(orderUseCase.refundOrder(eq(1L), any(OrderUseCase.RefundCommand.class), eq("admin"), anyBoolean()))
+                .thenReturn(after);
 
         OrderAdminResponseDTO mockResponse = mock(OrderAdminResponseDTO.class);
         when(orderConverter.toAdminResponse(after)).thenReturn(mockResponse);

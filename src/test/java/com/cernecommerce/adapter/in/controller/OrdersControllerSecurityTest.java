@@ -216,4 +216,23 @@ public class OrdersControllerSecurityTest {
                         new SimpleGrantedAuthority("ORDER_REFUND"))))
                 .andExpect(status().isNotFound());
     }
+
+    /** PED-F004 — o vendedor, só com ORDER_REFUND_OWN_SESSION, passa pela rota (a regra da sessão é do serviço). */
+    @Test
+    void refund_order_with_own_session_permission_reaches_the_service() throws Exception {
+        mockMvc.perform(post("/orders/999999/refund")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"Motivo\"}")
+                .with(user("vendedor").authorities(new SimpleGrantedAuthority("ORDER_REFUND_OWN_SESSION"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void refund_item_with_zero_quantity_returns_400() throws Exception {
+        mockMvc.perform(post("/orders/999999/refund")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"Motivo\",\"items\":[{\"sku\":\"X\",\"quantity\":0,\"destination\":\"RESTOCK\"}]}")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("ORDER_REFUND"))))
+                .andExpect(status().isBadRequest());
+    }
 }

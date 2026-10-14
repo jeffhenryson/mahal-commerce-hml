@@ -12,6 +12,15 @@ import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundEx
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
+import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
+import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.pedido.RefundDestination;
+import com.cernecommerce.core.domain.model.pedido.OrderItemRefund;
+import com.cernecommerce.core.domain.model.pedido.RefundPlanLine;
+import com.cernecommerce.core.domain.model.pagamento.RefundPot;
+import com.cernecommerce.core.domain.model.Money;
+import com.cernecommerce.core.domain.exception.pedido.RefundQuantityExceededException;
+import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.pagamento.CashSessionAdjustment;
@@ -44,6 +53,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -58,12 +68,14 @@ public class OrderService implements OrderUseCase {
     private final CashRegisterRepository cashRegisterRepository;
     private final OrderPaymentCorrectionRepository correctionRepository;
     private final ReceivableUseCase receivableUseCase;
+    private final OrderItemRefundRepository itemRefundRepository;
 
     public OrderService(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
             OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
             CashRegisterRepository cashRegisterRepository, OrderPaymentCorrectionRepository correctionRepository,
-            ReceivableUseCase receivableUseCase) {
+            ReceivableUseCase receivableUseCase, OrderItemRefundRepository itemRefundRepository) {
         this.receivableUseCase = receivableUseCase;
+        this.itemRefundRepository = itemRefundRepository;
         this.orderRepository = orderRepository;
         this.estoqueUseCase = estoqueUseCase;
         this.orderPaymentRepository = orderPaymentRepository;
@@ -179,57 +191,285 @@ public class OrderService implements OrderUseCase {
     @Override
     @Transactional
     public Order refundOrder(Long orderId, String reason, String username, List<RefundItemLot> itemLots) {
+        return refundOrder(orderId, new RefundCommand(reason, true, itemLots, List.of()), username, false);
+    }
+
+    // ── PED-F004: estorno total ou por item ─────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public Order refundOrder(Long orderId, RefundCommand command, String username, boolean ownSessionOnly) {
         // PED-C011 — travado: decide sobre as linhas de pagamento, como a correção.
         Order order = getOrderForUpdate(orderId);
+        String reason = command.reason();
 
-        // refunded() valida a transição (só sai de estado pós-pagamento) e recusa reembolsar duas
-        // vezes. Chamá-lo ANTES de mexer em estoque/pagamento/cashback é o que impede um segundo
-        // reembolso de estornar tudo de novo.
-        Order refunded = order.refunded(reason, Instant.now());
+        // A transição é validada ANTES de mexer em estoque/pagamento/cashback: é o que impede um
+        // estorno de pedido já REEMBOLSADO (ou ainda não pago) de estornar tudo de novo. O estorno
+        // parcial não muda o status, mas exige o mesmo estado de origem.
+        if (!order.allowedTransitions().contains(OrderStatus.REEMBOLSADO)) {
+            throw new InvalidOrderStatusTransitionException(orderId, order.status(), OrderStatus.REEMBOLSADO,
+                    order.allowedTransitions());
+        }
 
+        // O estorno sai da gaveta de quem estorna. Sem caixa aberto, a soma cai no caixa do pedido.
+        Long refundSessionId = cashRegisterRepository.findOpenByOperator(username)
+                .map(CashRegisterSession::id).orElse(null);
+        if (ownSessionOnly && (refundSessionId == null || !refundSessionId.equals(order.sessionId()))) {
+            throw new RefundNotOwnSessionException(orderId, username);
+        }
+
+        Map<Long, BigDecimal> already = itemRefundRepository.sumQuantityByOrderItem(orderId);
+        List<RefundPlanLine> lines = command.items().isEmpty()
+                ? remainingLines(order, already,
+                        command.restock() ? RefundDestination.RESTOCK : RefundDestination.CUSTOMER_KEEPS)
+                : requestedLines(order, already, command.items());
+        Map<Integer, BigDecimal> planned = plannedByIndex(lines);
+        boolean completes = completes(order, already, planned);
+        Instant now = Instant.now();
+
+        returnToStock(order, lines, command.itemLots(), completes, username);
+
+        BigDecimal requested = lines.stream().map(RefundPlanLine::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        refundPayments(orderId, completes, requested, refundSessionId, reason, username);
+
+        // O ledger reverte uma entrada EARNED inteira: no parcial, só a do item que zerou agora.
+        if (completes) {
+            cashbackUseCase.reverseEarningsForOrder(order);
+        } else {
+            cashbackUseCase.reverseEarningsForOrderItems(order, zeroedItems(order, already, planned));
+        }
+
+        itemRefundRepository.saveAll(lines.stream()
+                .map(l -> OrderItemRefund.register(orderId, l.item().id(), l.item().sku(), l.quantity(),
+                        l.destination(), l.amount(), costOf(l.item(), l.quantity()), reason, refundSessionId,
+                        username, now))
+                .toList());
+
+        if (!completes) {
+            return order;
+        }
+        // CRM-F010 — devolvida a mercadoria, o marcado em aberto do pedido deixa de ser devido.
+        receivableUseCase.cancelOpenForOrder(orderId, "Pedido reembolsado: " + reason, username);
+        return orderRepository.save(order.refunded(reason, now));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, BigDecimal> getRefundedQuantities(Long orderId) {
+        return itemRefundRepository.sumQuantityByOrderItem(orderId);
+    }
+
+    /** Sem {@code items}: tudo o que ainda não foi estornado, com um destino só. */
+    private static List<RefundPlanLine> remainingLines(Order order, Map<Long, BigDecimal> already,
+            RefundDestination destination) {
+        List<RefundPlanLine> lines = new ArrayList<>();
+        for (int i = 0; i < order.items().size(); i++) {
+            BigDecimal remaining = remainingOf(order, i, already, new HashMap<>());
+            if (remaining.signum() > 0) {
+                lines.add(line(order, i, remaining, destination));
+            }
+        }
+        return lines;
+    }
+
+    /**
+     * Com {@code items}: cada pedido de SKU é distribuído pelas linhas daquele SKU, na ordem da venda,
+     * até onde cada uma ainda tem unidade. Faltou → 422 antes de qualquer escrita.
+     */
+    private static List<RefundPlanLine> requestedLines(Order order, Map<Long, BigDecimal> already,
+            List<RefundItemCommand> commands) {
+        Map<Integer, BigDecimal> planned = new HashMap<>();
+        List<RefundPlanLine> lines = new ArrayList<>();
+        for (RefundItemCommand command : commands) {
+            if (command.sku() == null || command.destination() == null
+                    || command.quantity() == null || command.quantity().signum() <= 0) {
+                throw new IllegalArgumentException("item de estorno precisa de sku, quantity > 0 e destination");
+            }
+            List<Integer> candidates = new ArrayList<>();
+            for (int i = 0; i < order.items().size(); i++) {
+                if (order.items().get(i).sku().equals(command.sku())) {
+                    candidates.add(i);
+                }
+            }
+            BigDecimal available = candidates.stream()
+                    .map(i -> remainingOf(order, i, already, planned))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (command.quantity().compareTo(available) > 0) {
+                throw new RefundQuantityExceededException(command.sku(), command.quantity(), available);
+            }
+            BigDecimal need = command.quantity();
+            for (int i : candidates) {
+                if (need.signum() <= 0) {
+                    break;
+                }
+                BigDecimal take = need.min(remainingOf(order, i, already, planned));
+                if (take.signum() <= 0) {
+                    continue;
+                }
+                planned.merge(i, take, BigDecimal::add);
+                lines.add(line(order, i, take, command.destination()));
+                need = need.subtract(take);
+            }
+        }
+        return lines;
+    }
+
+    /** Vendidas − já estornadas (por id, do banco) − planejadas neste estorno (por posição). */
+    private static BigDecimal remainingOf(Order order, int index, Map<Long, BigDecimal> already,
+            Map<Integer, BigDecimal> planned) {
+        OrderItem item = order.items().get(index);
+        BigDecimal refunded = item.id() == null ? BigDecimal.ZERO : already.getOrDefault(item.id(), BigDecimal.ZERO);
+        return item.quantity()
+                .subtract(refunded)
+                .subtract(planned.getOrDefault(index, BigDecimal.ZERO))
+                .max(BigDecimal.ZERO);
+    }
+
+    /**
+     * PED-C007 — pedido de MESA não devolve nada ao estoque (o consumo foi servido e queimado), nem a
+     * sessão do cardápio (PDV-F021, SKU sintético). Nesses casos RESTOCK vale como CUSTOMER_KEEPS, e é
+     * o destino efetivo que fica gravado.
+     */
+    private static RefundPlanLine line(Order order, int index, BigDecimal quantity, RefundDestination requested) {
+        OrderItem item = order.items().get(index);
+        boolean canRestock = order.channel() != SalesChannel.MESA && item.mode().isCatalogLine();
+        RefundDestination destination = requested == RefundDestination.RESTOCK && !canRestock
+                ? RefundDestination.CUSTOMER_KEEPS : requested;
+        return new RefundPlanLine(index, item, quantity, destination, amountOf(item, quantity));
+    }
+
+    /** O líquido proporcional das unidades: {@code netAmount / quantity × unidades}. */
+    private static BigDecimal amountOf(OrderItem item, BigDecimal units) {
+        BigDecimal net = item.netAmount();
+        if (net == null || net.signum() <= 0) {
+            return BigDecimal.ZERO.setScale(Money.MONEY_SCALE);
+        }
+        if (units.compareTo(item.quantity()) == 0) {
+            return net;
+        }
+        return net.multiply(units).divide(item.quantity(), Money.MONEY_SCALE, Money.ROUNDING);
+    }
+
+    private static BigDecimal costOf(OrderItem item, BigDecimal units) {
+        return item.costPrice() == null ? null
+                : item.costPrice().multiply(units).setScale(Money.MONEY_SCALE, Money.ROUNDING);
+    }
+
+    private static Map<Integer, BigDecimal> plannedByIndex(List<RefundPlanLine> lines) {
+        Map<Integer, BigDecimal> planned = new HashMap<>();
+        lines.forEach(l -> planned.merge(l.index(), l.quantity(), BigDecimal::add));
+        return planned;
+    }
+
+    /** Depois deste estorno, nenhuma unidade do pedido fica sem estorno. */
+    private static boolean completes(Order order, Map<Long, BigDecimal> already, Map<Integer, BigDecimal> planned) {
+        for (int i = 0; i < order.items().size(); i++) {
+            if (remainingOf(order, i, already, planned).signum() > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Ids dos itens que este estorno zerou agora. */
+    private static List<Long> zeroedItems(Order order, Map<Long, BigDecimal> already,
+            Map<Integer, BigDecimal> planned) {
+        List<Long> zeroed = new ArrayList<>();
+        for (int i = 0; i < order.items().size(); i++) {
+            OrderItem item = order.items().get(i);
+            if (item.id() != null && planned.containsKey(i) && remainingOf(order, i, already, planned).signum() == 0) {
+                zeroed.add(item.id());
+            }
+        }
+        return zeroed;
+    }
+
+    /**
+     * RESTOCK dá ENTRADA no estoque; DISCARD e CUSTOMER_KEEPS não mexem no saldo. Devolução é entrada
+     * de estoque legítima, inclusive para pedido já entregue; o motivo carrega o número do pedido para
+     * a trilha do movimento ser reconstruível.
+     */
+    private void returnToStock(Order order, List<RefundPlanLine> lines, List<RefundItemLot> itemLots, boolean completes,
+            String username) {
         // Casamento por sku: pedido com duas linhas do mesmo SKU recebem a mesma info de lote.
         Map<String, RefundItemLot> lotBySku = itemLots.stream()
                 .collect(Collectors.toMap(RefundItemLot::sku, Function.identity(), (first, second) -> first));
-
-        // Devolução é entrada de estoque legítima, inclusive para pedido já entregue. O motivo
-        // carrega o número do pedido: sem ele, a trilha do movimento não é reconstruível.
-        String movementReason = "Reembolso do pedido " + order.orderNumber();
-        // PED-C007 — pedido de MESA não devolve nada: o consumo foi servido e queimado. A essência de
-        // lata consumiu USO, não unidade (EST-F027), e o OrderItem não carrega o contador; cortesia e
-        // TROCA também voltariam como mercadoria. É a mesma assimetria de ComandaService.undoStock.
-        // Reposição real, se houver (bebida fechada devolvida), é ajuste manual de estoque.
-        List<OrderItem> returnable = order.channel() == SalesChannel.MESA ? List.of() : order.items();
-        for (OrderItem item : returnable) {
-            // PDV-F021 — sessão do cardápio não saiu do estoque (SKU sintético): nada a devolver.
-            if (!item.mode().isCatalogLine()) {
+        String movementReason = (completes ? "Reembolso do pedido " : "Estorno parcial do pedido ")
+                + order.orderNumber();
+        for (RefundPlanLine line : lines) {
+            if (!line.destination().returnsToStock()) {
                 continue;
             }
-            RefundItemLot lot = lotBySku.get(item.sku());
-            // Sempre a sobrecarga de 8 argumentos (EST-F008): sem entrada em lotBySku, lotCode/
-            // expiryDate chegam nulos e o comportamento é idêntico ao overload antigo — válido só
-            // se o SKU não for lote-rastreado (senão adjustStock lança MissingLotInfoException).
-            estoqueUseCase.adjustStock(item.sku(), order.warehouseCode(), MovementType.ENTRADA,
-                    item.quantity(), movementReason, username,
+            RefundItemLot lot = lotBySku.get(line.item().sku());
+            // Sempre a sobrecarga de 8 argumentos (EST-F008): sem lote, lotCode/expiryDate chegam nulos,
+            // o que só vale se o SKU não for lote-rastreado (senão MissingLotInfoException).
+            estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
+                    line.quantity(), movementReason, username,
                     lot == null ? null : lot.lotCode(), lot == null ? null : lot.expiryDate());
         }
+    }
 
-        // Cada pagamento CAPTURED ganha uma linha REFUNDED do mesmo valor — nunca um update, pelo
-        // mesmo motivo do resto do ledger. Pagamento que nunca chegou a ser capturado (FAILED,
-        // PENDING) não tem o que estornar.
-        for (OrderPayment payment : orderPaymentRepository.findByOrderId(orderId)) {
+    /**
+     * Devolve o dinheiro. Cada estorno é uma linha REFUNDED nova — nunca um update —, na forma de
+     * pagamento original e na sessão de quem estorna.
+     *
+     * <ul>
+     *   <li>O estorno que completa o pedido devolve todo o restante de cada pagamento CAPTURED (taxa de
+     *       serviço e de entrega incluídas); o marcado é cancelado por quem chama.</li>
+     *   <li>O parcial devolve o líquido das unidades, limitado ao que ainda resta, rateado entre as
+     *       formas de pagamento pelo peso de cada uma na venda. A parte do marcado abate o recebível.</li>
+     * </ul>
+     */
+    private void refundPayments(Long orderId, boolean completes, BigDecimal requested, Long refundSessionId,
+            String reason, String username) {
+        List<OrderPayment> payments = orderPaymentRepository.findByOrderId(orderId);
+        // O REFUNDED não aponta a linha de origem: o já estornado de cada método é descontado das
+        // linhas CAPTURED daquele método, na ordem em que foram lançadas.
+        Map<PaymentMethod, BigDecimal> refundedByMethod = new EnumMap<>(PaymentMethod.class);
+        payments.stream().filter(p -> p.status() == PaymentStatus.REFUNDED)
+                .forEach(p -> refundedByMethod.merge(p.method(), p.amount(), BigDecimal::add));
+        List<RefundPot> pots = new ArrayList<>();
+        for (OrderPayment payment : payments) {
             if (payment.status() == PaymentStatus.CAPTURED) {
-                orderPaymentRepository.save(OrderPayment.refunded(payment));
+                BigDecimal used = refundedByMethod.getOrDefault(payment.method(), BigDecimal.ZERO).min(payment.amount());
+                refundedByMethod.merge(payment.method(), used.negate(), BigDecimal::add);
+                pots.add(new RefundPot(payment, payment.amount(), payment.amount().subtract(used)));
+            } else if (payment.status() == PaymentStatus.ON_ACCOUNT && !completes) {
+                BigDecimal open = receivableUseCase.findByOrderId(orderId)
+                        .filter(r -> r.status().isOpen())
+                        .map(CustomerReceivable::amountOpen)
+                        .orElse(BigDecimal.ZERO);
+                pots.add(new RefundPot(payment, payment.amount(), open));
             }
         }
 
-        // Reverte só os ganhos EARNED ainda não revertidos. Cashback resgatado (fatia futura de
-        // resgate) não é desfeito por aqui.
-        cashbackUseCase.reverseEarningsForOrder(order);
+        if (completes) {
+            for (RefundPot pot : pots) {
+                if (pot.remaining().signum() > 0) {
+                    orderPaymentRepository.save(OrderPayment.refunded(pot.payment(), pot.remaining(), refundSessionId));
+                }
+            }
+            return;
+        }
 
-        // CRM-F010 — devolvida a mercadoria, o marcado em aberto do pedido deixa de ser devido.
-        receivableUseCase.cancelOpenForOrder(orderId, "Pedido reembolsado: " + reason, username);
-
-        return orderRepository.save(refunded);
+        BigDecimal available = pots.stream().map(RefundPot::remaining).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = requested.min(available);
+        if (total.signum() <= 0) {
+            return;
+        }
+        List<BigDecimal> shares = RefundPot.allocate(total, pots);
+        for (int i = 0; i < pots.size(); i++) {
+            BigDecimal share = shares.get(i);
+            if (share.signum() <= 0) {
+                continue;
+            }
+            OrderPayment payment = pots.get(i).payment();
+            if (payment.status() == PaymentStatus.CAPTURED) {
+                orderPaymentRepository.save(OrderPayment.refunded(payment, share, refundSessionId));
+            } else {
+                receivableUseCase.reduceOpenForOrder(orderId, share, "Estorno parcial: " + reason, username);
+            }
+        }
     }
 
     // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────

@@ -82,6 +82,8 @@ import java.util.Objects;
 @Validated
 public class OrdersController {
 
+    private static final String REFUND_AUTHORITY = "ORDER_REFUND";
+
     private final OrderUseCase orderUseCase;
     private final OrderReportUseCase orderReportUseCase;
     private final CrmUseCase crmUseCase;
@@ -227,6 +229,7 @@ public class OrdersController {
         enrichOperatorNames(List.of(dto));
         // PDV-F026 — o detalhe deixa de precisar do recibo só para saber como o pedido foi pago.
         dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
+        fillRefundedQuantities(dto, orderId);
         // CRM-F010 — situação do marcado, se houver.
         var receivable = receivableUseCase.findByOrderId(orderId).orElse(null);
         dto.setPaymentStatus(OrderDTOConverter.paymentStatus(receivable));
@@ -467,10 +470,14 @@ public class OrdersController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Reembolsado", content = @Content(schema = @Schema(implementation = OrderAdminResponseDTO.class))),
             @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Transição não permitida: sem pagamento confirmado (use /cancel), ou já CANCELADO/REEMBOLSADO", content = @Content)
+            @ApiResponse(responseCode = "403", description = "REFUND_NOT_OWN_SESSION — com só ORDER_REFUND_OWN_SESSION, "
+                    + "o pedido não é da sessão de caixa aberta de quem estorna", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Transição não permitida: sem pagamento confirmado (use /cancel), ou já CANCELADO/REEMBOLSADO", content = @Content),
+            @ApiResponse(responseCode = "422", description = "REFUND_QUANTITY_EXCEEDED — mais unidades do que restam "
+                    + "para estornar", content = @Content)
     })
     @PostMapping("/{id}/refund")
-    @PreAuthorize("hasAuthority('ORDER_REFUND')")
+    @PreAuthorize("hasAnyAuthority('ORDER_REFUND', 'ORDER_REFUND_OWN_SESSION')")
     public ResponseEntity<OrderAdminResponseDTO> refundOrder(@PathVariable("id") Long orderId,
             @Valid @RequestBody OrderRefundRequest request, Authentication authentication) {
         Order before = orderUseCase.getOrder(orderId);
@@ -478,15 +485,42 @@ public class OrdersController {
                 : request.getItemLots().stream()
                         .map(l -> new OrderUseCase.RefundItemLot(l.getSku(), l.getLotCode(), l.getExpiryDate()))
                         .toList();
-        Order order = orderUseCase.refundOrder(orderId, request.getReason(), authentication.getName(), itemLots);
+        List<OrderUseCase.RefundItemCommand> items = request.getItems() == null ? List.of()
+                : request.getItems().stream()
+                        .map(i -> new OrderUseCase.RefundItemCommand(i.getSku(), i.getQuantity(), i.getDestination()))
+                        .toList();
+        boolean restock = request.getRestock() == null || request.getRestock();
+        // PED-F004 — sem ORDER_REFUND, a rota só foi liberada por ORDER_REFUND_OWN_SESSION (o vendedor).
+        boolean ownSessionOnly = !AuthUtils.hasAuthority(authentication, REFUND_AUTHORITY);
+        Order order = orderUseCase.refundOrder(orderId,
+                new OrderUseCase.RefundCommand(request.getReason(), restock, itemLots, items),
+                authentication.getName(), ownSessionOnly);
         Map<String, Object> details = new HashMap<>();
         details.put("orderId", orderId);
         details.put("orderNumber", String.valueOf(order.orderNumber()));
         details.put("statusBefore", before.status().name());
+        details.put("statusAfter", order.status().name());
         details.put("reason", request.getReason());
-        details.put("skus", order.items().stream().map(item -> item.sku()).toList());
+        details.put("partial", !items.isEmpty() && order.status() != OrderStatus.REEMBOLSADO);
+        details.put("restock", restock);
+        details.put("skus", items.isEmpty()
+                ? order.items().stream().map(item -> item.sku()).toList()
+                : items.stream().map(i -> i.sku() + " x" + i.quantity().stripTrailingZeros().toPlainString()
+                        + " " + i.destination()).toList());
         publisher.publishEvent(
                 AuditEvent.of(EventType.ORDER_REFUNDED, authentication.getName(), details));
-        return ResponseEntity.ok(orderConverter.toAdminResponse(order));
+        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(order);
+        fillRefundedQuantities(dto, orderId);
+        return ResponseEntity.ok(dto);
+    }
+
+    /** PED-F004 — unidades já estornadas por linha, para o front limitar o próximo estorno. */
+    private void fillRefundedQuantities(OrderAdminResponseDTO dto, Long orderId) {
+        if (dto == null || dto.getItems() == null) {
+            return;
+        }
+        Map<Long, java.math.BigDecimal> refunded = orderUseCase.getRefundedQuantities(orderId);
+        dto.getItems().forEach(item -> item.setRefundedQuantity(
+                item.getId() == null ? null : refunded.getOrDefault(item.getId(), java.math.BigDecimal.ZERO)));
     }
 }

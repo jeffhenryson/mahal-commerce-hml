@@ -88,6 +88,29 @@ public record CustomerReceivable(Long id, Long customerId, Long orderId, Long co
         return with(amountPaid, dueDate, ReceivableStatus.CANCELADO, null, reason, by, at);
     }
 
+    /**
+     * PED-F004 — estorno parcial de um pedido marcado: o cliente passa a dever {@code value} a menos.
+     * {@code value} não passa do saldo em aberto (quem chama limita). Se o que resta devido for só o
+     * que já foi pago, o recebível fecha: QUITADO se houve pagamento, CANCELADO se não houve — um
+     * {@code amount} zero não é um recebível.
+     */
+    public CustomerReceivable reducedBy(BigDecimal value, String reason, String by, Instant at) {
+        if (!status.isOpen()) {
+            throw new IllegalStateException("recebível " + id + " não está em aberto: " + status);
+        }
+        if (value == null || value.signum() <= 0 || value.compareTo(amountOpen()) > 0) {
+            throw new IllegalArgumentException("valor a abater fora do saldo: " + value);
+        }
+        if (value.compareTo(amountOpen()) == 0 && amountPaid.signum() == 0) {
+            return cancelled(reason, by, at);
+        }
+        BigDecimal newAmount = amount.subtract(value);
+        boolean settled = newAmount.compareTo(amountPaid) == 0;
+        return new CustomerReceivable(id, customerId, orderId, comandaId, sessionId, newAmount, amountPaid, dueDate,
+                settled ? ReceivableStatus.QUITADO : status, createdAt, createdBy, settled ? at : settledAt,
+                cancelReason, cancelledBy, cancelledAt, version, items);
+    }
+
     public CustomerReceivable withItems(List<ReceivableItem> newItems) {
         return new CustomerReceivable(id, customerId, orderId, comandaId, sessionId, amount, amountPaid, dueDate,
                 status, createdAt, createdBy, settledAt, cancelReason, cancelledBy, cancelledAt, version, newItems);

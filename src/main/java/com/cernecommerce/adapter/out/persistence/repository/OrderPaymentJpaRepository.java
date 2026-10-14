@@ -45,12 +45,16 @@ public interface OrderPaymentJpaRepository extends JpaRepository<OrderPaymentEnt
      * para o histórico, e exatamente por isso a soma de capturados sozinha não descreve a gaveta.
      * Sem esta subtração, estornar uma venda em dinheiro devolve a cédula ao cliente e o esperado
      * do fechamento continua contando-a.</p>
+     *
+     * <p>PED-F004 — o estorno conta na sessão <b>onde foi feito</b> ({@code refundSessionId}): é dessa
+     * gaveta que a cédula sai. Linha sem ela (anterior a PED-F004, ou estorno feito por quem não tinha
+     * caixa aberto) cai na sessão do pedido, como antes.</p>
      */
     @Query("""
             SELECT COALESCE(SUM(p.amount), 0)
             FROM OrderPaymentEntity p, OrderEntity o
             WHERE p.orderId = o.id
-              AND o.sessionId = :sessionId
+              AND COALESCE(p.refundSessionId, o.sessionId) = :sessionId
               AND p.status = 'REFUNDED'
               AND p.method = :method
             """)

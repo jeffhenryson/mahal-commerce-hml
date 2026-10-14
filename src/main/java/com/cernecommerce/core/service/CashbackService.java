@@ -257,6 +257,20 @@ public class CashbackService implements CashbackUseCase {
     }
 
     @Override
+    @Transactional
+    public void reverseEarningsForOrderItems(Order order, java.util.Collection<Long> orderItemIds) {
+        if (orderItemIds == null || orderItemIds.isEmpty()) {
+            return;
+        }
+        Instant now = Instant.now();
+        for (CashbackEntry earned : cashbackEntryRepository.findEarnedByOrderId(order.id())) {
+            if (earned.orderItemId() != null && orderItemIds.contains(earned.orderItemId())) {
+                cashbackEntryRepository.save(CashbackEntry.reversed(earned, now));
+            }
+        }
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public CashbackBalance getCustomerBalance(Long customerId) {
         customerRepository.findById(customerId)
