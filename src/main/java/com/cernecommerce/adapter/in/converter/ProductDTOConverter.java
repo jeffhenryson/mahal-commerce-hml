@@ -104,6 +104,7 @@ public class ProductDTOConverter {
         dto.setSessionProduct(product.sessionProduct());
         dto.setSessionsPerUnit(product.sessionsPerUnit());
         dto.setOpenRoshPrice(product.openRoshPrice());
+        dto.setSessionTierId(product.sessionTierId());
         dto.setStatus(product.status().name());
         return dto;
     }

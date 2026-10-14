@@ -362,6 +362,23 @@ public record Comanda(
     }
 
     /**
+     * PDV-F044 — troca a linha {@code updated.id()} pela versão com o sabor do 2º rosh. Cópia — a
+     * comanda permanece imutável.
+     */
+    public Comanda withUpdatedItem(ComandaItem updated) {
+        requireOpen();
+        boolean exists = items.stream().anyMatch(i -> updated.id() != null && updated.id().equals(i.id()));
+        if (!exists) {
+            throw new IllegalArgumentException("item " + updated.id() + " não pertence à comanda " + id);
+        }
+        List<ComandaItem> newItems = items.stream()
+                .map(i -> updated.id().equals(i.id()) ? updated : i)
+                .toList();
+        return new Comanda(id, sessionId, warehouseCode, tableOrCustomerLabel, customerId, status, newItems, orderId,
+                openedBy, openedAt, closedAt);
+    }
+
+    /**
      * PDV-F027 — as linhas pagas agora que aguardavam pagamento entram no preparo. Cópia — a comanda
      * permanece imutável.
      */
@@ -392,11 +409,13 @@ public record Comanda(
     /**
      * A primeira linha {@code NA_FILA} ligada à sessão {@code rootId}, pela ordem de lançamento — quem
      * entra quando a atual sai. PDV-F027: a fila é por narguilé, não por mesa; com sessões em paralelo,
-     * recolher uma não pode começar o rosh de outra.
+     * recolher uma não pode começar o rosh de outra. PDV-F044 — o 2º rosh ainda sem sabor não entra:
+     * não há o que preparar, e ele espera na fila até alguém escolher.
      */
     public Optional<ComandaItem> nextQueuedSessionOf(Long rootId) {
         return items.stream()
                 .filter(i -> i.sessionStatus() == SessionStatus.NA_FILA)
+                .filter(i -> !i.isEssencePending())
                 .filter(i -> rootId != null && rootId.equals(i.linkedItemId()))
                 .min(Comparator.comparing(ComandaItem::addedAt)
                         .thenComparing(i -> i.id() == null ? Long.MAX_VALUE : i.id()));

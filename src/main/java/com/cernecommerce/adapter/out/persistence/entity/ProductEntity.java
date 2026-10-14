@@ -88,6 +88,10 @@ public class ProductEntity {
     @Column(name = "parent_sellable", nullable = false)
     private boolean parentSellable;
 
+    // PDV-F048 — faixa da sessão sugerida no PDV para esta essência (V159). FK só no banco, como brand_id.
+    @Column(name = "session_tier_id")
+    private Long sessionTierId;
+
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude
     private List<ProductVariantEntity> variants = new ArrayList<>();

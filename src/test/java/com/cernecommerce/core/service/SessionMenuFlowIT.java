@@ -245,7 +245,7 @@ class SessionMenuFlowIT {
                 com.cernecommerce.core.domain.model.estoque.MovementType.ENTRADA, new BigDecimal("3.000"),
                 "carga inicial", operator);
         // Inventário inicial (EST-F033): a lata da bancada já tinha rendido 3 de 5.
-        estoqueUseCase.registerOpenPackage(sabor, warehouse, 2, operator);
+        estoqueUseCase.registerOpenPackage(sabor, warehouse, 2, null, false, operator);
 
         CashRegisterSession caixa = pdvUseCase.openSession(operator, BigDecimal.ZERO, warehouse);
         Comanda mesa = comandaUseCase.openComanda(caixa.id(), "Mesa 9", operator);
@@ -269,5 +269,73 @@ class SessionMenuFlowIT {
 
         assertThat(estoqueUseCase.findOpenPackage(sabor, warehouse).uses()).isEqualTo(3);
         assertThat(estoqueUseCase.getStockBalance(sabor, warehouse).quantity()).isEqualByComparingTo("3.000");
+    }
+
+    /**
+     * PDV-F044 — o duplo lançado sem o sabor do 2º rosh: o rosh persiste sem nota e sem baixa, não sai
+     * da fila quando a 1ª sessão é recolhida (e o vaso fica preso), e o sabor escolhido depois consome
+     * a lata do sabor e o põe no preparo.
+     */
+    @Test
+    void duploWithoutRoshFlavor_waitsInTheQueue_andTheFlavorChosenLaterConsumesThePackage() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String operator = "caixa-" + suffix;
+        String warehouse = "LOUNGE-" + suffix;
+        String vasoP = "VP" + suffix;
+        String sabor = "ZOMO-" + suffix;
+
+        sessionMenuUseCase.createAssetType(vasoP, "Vaso pequeno " + suffix, 1, false);
+        sessionMenuUseCase.updateSettings(new SessionSettings(vasoP, null, BigDecimal.ZERO, Set.of()));
+        SessionTier tradicional = sessionMenuUseCase.createTier("Tradicional " + suffix, new BigDecimal("25.00"),
+                "Zomo", 1);
+        estoqueUseCase.createWarehouse(warehouse, "Lounge " + suffix, WarehouseType.LOJA_FISICA);
+        estoqueUseCase.createProduct(sabor, "Zomo Menta " + suffix, "Essências", List.of(),
+                com.cernecommerce.core.domain.model.estoque.Pricing.of(new BigDecimal("40.00"), null,
+                        new BigDecimal("70.00")));
+        estoqueUseCase.updateProduct(sabor, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null,
+                new EstoqueUseCase.TableSessionCommand(true, true, 5, null));
+        estoqueUseCase.adjustStock(sabor, warehouse,
+                com.cernecommerce.core.domain.model.estoque.MovementType.ENTRADA, new BigDecimal("2.000"),
+                "carga inicial", operator);
+
+        CashRegisterSession caixa = pdvUseCase.openSession(operator, BigDecimal.ZERO, warehouse);
+        Comanda mesa = comandaUseCase.openComanda(caixa.id(), "Mesa 7", operator);
+        Comanda comDuplo = comandaUseCase.addSession(mesa.id(), new ComandaUseCase.AddSessionCommand(
+                tradicional.id(), "Zomo Uva", false, null, List.of(), true, null, null), operator);
+        flushAndClear();
+
+        ComandaItem sessao = comDuplo.items().stream().filter(i -> i.mode() == ConsumptionMode.SESSAO)
+                .findFirst().orElseThrow();
+        ComandaItem rosh = comandaUseCase.getComanda(mesa.id()).items().stream()
+                .filter(i -> i.mode() == ConsumptionMode.ROSH_EXTRA).findFirst().orElseThrow();
+        assertThat(rosh.isEssencePending()).isTrue();
+        assertThat(rosh.notes()).isNull();
+        assertThat(estoqueUseCase.getStockBalance(sabor, warehouse).quantity()).isEqualByComparingTo("2.000");
+
+        // Paga a sessão (o rosh vai junto, a R$ 0) e recolhe: o rosh sem sabor fica na fila, com o vaso.
+        comandaUseCase.closeComanda(mesa.id(),
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("25.00"), null)),
+                null, false, List.of(sessao.id(), rosh.id()), operator);
+        comandaUseCase.updateSessionStatus(mesa.id(), sessao.id(), SessionStatus.RECOLHIDO, operator);
+        flushAndClear();
+        assertThat(comandaUseCase.getComanda(mesa.id()).items()).filteredOn(i -> i.id().equals(rosh.id()))
+                .singleElement().satisfies(i -> {
+                    assertThat(i.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+                    assertThat(i.isEssencePending()).isTrue();
+                });
+        assertThat(disponivel(sessionMenuUseCase.getMenu(), vasoP)).isZero();
+
+        // O sabor escolhido depois: abre a lata (SAIDA de 1), carimba o sabor e põe o rosh no preparo.
+        comandaUseCase.setRoshFlavor(mesa.id(), rosh.id(), null, sabor, null, operator);
+        flushAndClear();
+        ComandaItem servido = comandaUseCase.getComanda(mesa.id()).items().stream()
+                .filter(i -> i.id().equals(rosh.id())).findFirst().orElseThrow();
+        assertThat(servido.sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(servido.essenceSku()).isEqualTo(sabor);
+        assertThat(servido.notes()).isEqualTo("Zomo Menta " + suffix);
+        assertThat(servido.isEssencePending()).isFalse();
+        assertThat(estoqueUseCase.findOpenPackage(sabor, warehouse).uses()).isEqualTo(1);
+        assertThat(estoqueUseCase.getStockBalance(sabor, warehouse).quantity()).isEqualByComparingTo("1.000");
     }
 }

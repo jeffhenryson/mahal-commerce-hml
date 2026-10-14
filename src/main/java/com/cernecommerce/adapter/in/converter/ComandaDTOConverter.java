@@ -50,6 +50,8 @@ public class ComandaDTOConverter {
         dto.setPackageUses(item.packageUses());
         dto.setPackageSessionsPerUnit(item.packageSessionsPerUnit());
         dto.setEssenciaSku(item.essenceSku());
+        dto.setEssenciaSku2(item.essenceSku2());
+        dto.setEssenciaPendente(item.isEssencePending());
         dto.setKitBundleId(item.kitBundleId());
         dto.setKitTemplateId(item.kitTemplateId());
         dto.setKitDiscountAmount(item.kitDiscountAmount());

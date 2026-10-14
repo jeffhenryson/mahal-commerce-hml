@@ -146,6 +146,9 @@ public class ProductRequest {
     @PositiveOrZero(message = "openRoshPrice não pode ser negativo")
     private BigDecimal openRoshPrice;
 
+    /** PDV-F048 — faixa da sessão sugerida no PDV para esta essência. Nulo = sem faixa. */
+    private Long sessionTierId;
+
     /**
      * {@code SIMPLES} ou {@code KIT}. Omitido, nasce {@code SIMPLES} — comportamento anterior a
      * EST-F023 preservado. {@code KIT} não pode vir com {@code variants} nem com

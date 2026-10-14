@@ -2,7 +2,6 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -12,8 +11,11 @@ import java.util.List;
 @Data
 public class AddSessionRequest {
 
-    @NotNull
-    @Schema(example = "2")
+    // PDV-F050 — opcional: com essenciaSku de produto com faixa ativa, a faixa é a da ficha e este
+    // campo é ignorado. Só vale para a essência sem faixa e para a sessão em texto livre.
+    @Schema(description = "Faixa da sessão. Ignorada quando a essência do catálogo tem faixa na ficha "
+            + "(PDV-F050); obrigatória para sessão em texto e essência sem faixa (400 SESSION_TIER_REQUIRED).",
+            example = "2")
     private Long tierId;
 
     // Sem @NotBlank desde PDV-F042: texto OU essenciaSku — conferido no controller, com o mesmo
@@ -28,6 +30,12 @@ public class AddSessionRequest {
             + "com ele a sessão consome um uso da lata aberta do sabor, ou 1 unidade como uso da loja se o "
             + "produto não tiver sessionsPerUnit.", example = "ZOMO-BLUEBERRY")
     private String essenciaSku;
+
+    @Size(max = 50)
+    @Schema(description = "PDV-F051 — 2º sabor da sessão mesclada (exige o 1º e tem de ser outro: 400 "
+            + "SAME_FLAVOR_MIX). Consome 1 uso da lata de cada sabor; a faixa é a de maior preço entre os dois.",
+            example = "ZIGY-MENTA")
+    private String essenciaSku2;
 
     @Schema(description = "Upgrade para o vaso grande (acréscimo da configuração).")
     private boolean vasoGrande;
@@ -44,14 +52,19 @@ public class AddSessionRequest {
     private Modo modo;
 
     @Size(max = 150)
-    @Schema(description = "Essência do 2º rosh — no DUPLO, ela ou essenciaRoshSku.", example = "Nay Uva")
+    @Schema(description = "Essência do 2º rosh no DUPLO. Opcional desde PDV-F044: sem ela e sem essenciaRoshSku, o 2º rosh nasce aguardando sabor (PUT …/rosh-sabor).", example = "Nay Uva")
     private String essenciaRosh;
 
     @Size(max = 50)
     @Schema(description = "PDV-F042 — SKU do sabor do 2º rosh no DUPLO.", example = "NAY-UVA")
     private String essenciaRoshSku;
 
-    @Schema(description = "Faixa do 2º rosh no DUPLO; nula usa a da sessão.")
+    @Size(max = 50)
+    @Schema(description = "PDV-F051 — 2º sabor do 2º rosh no DUPLO (mescla).", example = "NAY-MENTA")
+    private String essenciaRoshSku2;
+
+    @Schema(description = "Faixa do 2º rosh no DUPLO, ignorada se o sabor do rosh tiver faixa (PDV-F050); "
+            + "nula usa a da sessão.")
     private Long tierIdRosh;
 
     @Schema(description = "PDV-F034 — a sessão vai direto ao preparo e fica a receber até a conta. Exige "

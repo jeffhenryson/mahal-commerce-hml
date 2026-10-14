@@ -41,7 +41,9 @@ public record ComandaItem(
         BigDecimal kitDiscountAmount,
         SessionProgress session,
         SessionSetup setup,
-        String essenceSku) {
+        String essenceSku,
+        String essenceSku2,
+        boolean essence2Package) {
 
     /** Sufixo que a sessão de vaso grande leva na {@link #notes}, depois da essência (PDV-F021). */
     public static final String VASO_GRANDE_NOTE_SUFFIX = " · Vaso grande";
@@ -131,6 +133,14 @@ public record ComandaItem(
         if (essenceSku != null && (essenceSku.isBlank() || !mode.isMenuSession())) {
             throw new IllegalArgumentException("essenceSku só existe em SESSAO/ROSH_EXTRA: mode=" + mode);
         }
+        // PDV-F051 — espelha ck_comanda_item_essence_sku2 (V160): o 2º sabor da mescla só existe com
+        // o 1º, e é outro sabor. A marca de lata do 2º não existe sem ele.
+        if (essenceSku2 != null && (essenceSku2.isBlank() || essenceSku == null || essenceSku2.equals(essenceSku))) {
+            throw new IllegalArgumentException("essenceSku2 exige essenceSku e outro sabor: " + essenceSku2);
+        }
+        if (essenceSku2 == null && essence2Package) {
+            throw new IllegalArgumentException("essence2Package sem essenceSku2");
+        }
     }
 
     /**
@@ -145,7 +155,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, null, false);
     }
 
     /**
@@ -177,7 +187,8 @@ public record ComandaItem(
             throw new ProductNotPricedException(sku);
         }
         return new ComandaItem(null, sku, quantity, unitPrice, pricing.costPrice(), productName,
-                Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null);
+                Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null,
+                null, false);
     }
 
     /**
@@ -199,7 +210,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, BigDecimal.ONE, unitPrice, null, productName, Instant.now(), mode,
                 courtesy, linkedItemId, notes, null, null, null, null, null, null, null, session,
-                setup == null || setup.isEmpty() ? null : setup, null);
+                setup == null || setup.isEmpty() ? null : setup, null, null, false);
     }
 
     /** Reconstitui um item a partir de persistência. */
@@ -296,9 +307,54 @@ public record ComandaItem(
             Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
             Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
             BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku) {
+        return of(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy, linkedItemId,
+                notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit, kitBundleId,
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, null, false);
+    }
+
+    /**
+     * Reconstitui um item a partir de persistência, com o 2º sabor da sessão mesclada (PDV-F051).
+     * Linha anterior à V160 lê {@code null}/{@code false}: um sabor só.
+     */
+    public static ComandaItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, String productName, Instant addedAt, ConsumptionMode mode, boolean courtesy,
+            Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
+            Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
+            BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
+            String essenceSku2, boolean essence2Package) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                essence2Package);
+    }
+
+    /**
+     * PDV-F044 — o 2º rosh do duplo lançado sem sabor: o cliente decide quando a 1ª sessão acaba.
+     *
+     * <p>Derivado, não coluna: até aqui todo {@code ROSH_EXTRA} nascia com a essência na
+     * {@link #notes} ({@code sessionNotes} recusa vazio), então nota nula num rosh só existe por este
+     * caminho, e as linhas antigas leem {@code false} sem migration. Só enquanto está no salão: o
+     * rosh pendente que sai dele (removido ou desistido) não espera mais sabor nenhum.</p>
+     */
+    public boolean isEssencePending() {
+        return mode == ConsumptionMode.ROSH_EXTRA && notes == null && isActiveSession();
+    }
+
+    /**
+     * PDV-F044 — grava o sabor escolhido no 2º rosh pendente: a faixa (SKU sintético e nome) e a
+     * essência na nota. Preço e cortesia não mudam — a faixa é registro e custo. A baixa da lata é
+     * do service, por {@link #withPackageCounter} e {@link #withEssence}, como no lançamento.
+     */
+    public ComandaItem withRoshFlavor(String tierSku, String productName, String notes) {
+        if (!isEssencePending()) {
+            throw new IllegalStateException("item " + id + " não é um 2º rosh aguardando sabor");
+        }
+        if (notes == null || notes.isBlank()) {
+            throw new IllegalArgumentException("o sabor do 2º rosh é obrigatório");
+        }
+        return new ComandaItem(id, tierSku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**
@@ -322,7 +378,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, orderId, packageUses, packageSessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**
@@ -337,7 +393,7 @@ public record ComandaItem(
     public ComandaItem withPackageCounter(int uses, int sessionsPerUnit) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, uses, sessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**
@@ -348,7 +404,23 @@ public record ComandaItem(
     public ComandaItem withEssence(String essenceSku) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+    }
+
+    /**
+     * PDV-F051 — carimba o 2º sabor da sessão mesclada e se ele saiu de lata aberta ({@code true}) ou
+     * como unidade do saldo. É o par que o desfazimento lê, como {@link #consumedPackage()} no 1º.
+     */
+    public ComandaItem withSecondEssence(String essenceSku2, boolean fromPackage) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                fromPackage);
+    }
+
+    /** PDV-F051 — a sessão tem dois sabores mesclados. */
+    public boolean isMixed() {
+        return essenceSku2 != null;
     }
 
     /**
@@ -384,7 +456,7 @@ public record ComandaItem(
     public ComandaItem withKit(String bundleId, Long templateId, BigDecimal discountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                bundleId, templateId, discountAmount, session, setup, essenceSku);
+                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**
@@ -398,7 +470,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**
@@ -453,7 +525,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, BigDecimal.ZERO, costPrice, productName, addedAt, mode, true,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package);
     }
 
     public ComandaItem withSessionPaid(Instant at) {
@@ -462,7 +534,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package);
     }
 
     /**

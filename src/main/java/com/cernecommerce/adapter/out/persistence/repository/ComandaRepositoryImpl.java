@@ -274,6 +274,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setPackageUses(item.packageUses());
             itemEntity.setPackageSessionsPerUnit(item.packageSessionsPerUnit());
             itemEntity.setEssenceSku(item.essenceSku());
+            itemEntity.setEssenceSku2(item.essenceSku2());
+            itemEntity.setEssence2Package(item.essence2Package());
             itemEntity.setKitBundleId(item.kitBundleId());
             itemEntity.setKitTemplateId(item.kitTemplateId());
             itemEntity.setKitDiscountAmount(item.kitDiscountAmount());
@@ -323,7 +325,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.getSessionStatus() == null ? null : new SessionProgress(SessionStatus.valueOf(e.getSessionStatus()),
                         e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater(),
                         e.getWithdrawnReason(), e.getWithdrawnBy()),
-                toSetup(e), e.getEssenceSku());
+                toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package());
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {

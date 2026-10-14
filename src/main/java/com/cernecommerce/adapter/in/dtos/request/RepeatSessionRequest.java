@@ -18,11 +18,17 @@ public class RepeatSessionRequest {
             example = "SENCE-MENTA")
     private String essenciaSku;
 
+    @Size(max = 50)
+    @Schema(description = "PDV-F051 — 2º sabor (mescla). Sem sabor novo, a mescla da origem é repetida; com "
+            + "essenciaSku novo e sem este, a sessão sai com um sabor só. Trocando o sabor, a faixa é "
+            + "recalculada pela essência (PDV-F050).", example = "ZIGY-MENTA")
+    private String essenciaSku2;
+
     @Schema(description = "Rosh duplo: cria também o 2º rosh a R$ 0, ligado, em NA_FILA.")
     private boolean duplo;
 
     @Size(max = 150)
-    @Schema(description = "Sabor do 2º rosh. Obrigatório quando duplo=true.", example = "Zomo Uva")
+    @Schema(description = "Sabor do 2º rosh no duplo. Opcional desde PDV-F044: sem ele, o 2º rosh nasce aguardando sabor.", example = "Zomo Uva")
     private String essenciaRosh;
 
     @Size(max = 50)

@@ -292,4 +292,47 @@ class ComandaItemTest {
         assertThat(preparando.withSessionStatus(SessionStatus.ENTREGUE, t).essenceBurned()).isTrue();
         assertThat(ComandaItem.fromCatalog("CARVAO-1KG", BigDecimal.ONE, PRICED, "Carvão").essenceBurned()).isFalse();
     }
+
+    // ── PDV-F044 — 2º rosh do duplo aguardando sabor ─────────────────────────────────────────
+
+    private static ComandaItem roshDoDuplo(String notes) {
+        return ComandaItem.forMenuSession("SESS-2", BigDecimal.ZERO, "2º rosh Premium (duplo rosh)",
+                ConsumptionMode.ROSH_EXTRA, true, 1L, notes, SessionProgress.queued(), null);
+    }
+
+    @Test
+    void isEssencePending_soNoRoshSemNotaAindaNoSalao() {
+        Instant t = Instant.now();
+        ComandaItem pendente = roshDoDuplo(null);
+
+        assertThat(pendente.isEssencePending()).isTrue();
+        assertThat(roshDoDuplo("Pred Menta").isEssencePending()).isFalse();
+        // A sessão sem nota não é rosh: nunca "aguarda sabor".
+        assertThat(ComandaItem.forMenuSession("SESS-2", BigDecimal.TEN, "Sessão Premium", ConsumptionMode.SESSAO,
+                false, null, null, SessionProgress.awaitingPayment(), null).isEssencePending()).isFalse();
+        // Saiu do salão (aqui, preparado e recolhido à força): não espera mais sabor nenhum.
+        ComandaItem recolhido = pendente.withSessionStatus(SessionStatus.PREPARANDO, t)
+                .withSessionStatus(SessionStatus.RECOLHIDO, t);
+        assertThat(recolhido.isEssencePending()).isFalse();
+    }
+
+    @Test
+    void withRoshFlavor_gravaFaixaNomeENota_eMantemPrecoECortesia() {
+        ComandaItem comSabor = roshDoDuplo(null).withRoshFlavor("SESS-1", "2º rosh Tradicional (duplo rosh)",
+                "Zomo Menta");
+
+        assertThat(comSabor.sku()).isEqualTo("SESS-1");
+        assertThat(comSabor.productName()).isEqualTo("2º rosh Tradicional (duplo rosh)");
+        assertThat(comSabor.notes()).isEqualTo("Zomo Menta");
+        assertThat(comSabor.unitPrice()).isEqualByComparingTo("0");
+        assertThat(comSabor.courtesy()).isTrue();
+        assertThat(comSabor.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(comSabor.isEssencePending()).isFalse();
+    }
+
+    @Test
+    void withRoshFlavor_emRoshQueJaTemSabor_eRecusado() {
+        assertThatThrownBy(() -> roshDoDuplo("Pred Menta").withRoshFlavor("SESS-1", "x", "Zomo"))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

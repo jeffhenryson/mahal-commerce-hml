@@ -99,6 +99,9 @@ public class ProductResponseDTO {
     /** Consumo livre por valor fixo, cobrado uma vez por sessão. Nulo quando o produto não tem open rosh. */
     private BigDecimal openRoshPrice;
 
+    /** PDV-F048 — faixa da sessão sugerida no PDV para esta essência. Nulo = sem faixa. */
+    private Long sessionTierId;
+
     /** {@code RASCUNHO} ou {@code ATIVO} (EST-F023). */
     private String status;
 }

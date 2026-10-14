@@ -109,6 +109,14 @@ public class ComandaItemEntity {
     @Column(name = "essence_sku", length = 50)
     private String essenceSku;
 
+    /** PDV-F051 — 2º sabor da sessão mesclada (V160); nulo com um sabor só. */
+    @Column(name = "essence_sku2", length = 50)
+    private String essenceSku2;
+
+    /** PDV-F051 — o 2º sabor saiu de lata aberta ({@code true}) ou como unidade do saldo. */
+    @Column(name = "essence2_package", nullable = false)
+    private boolean essence2Package;
+
     // PDV-F019 — kit montável: o pacote, o modelo e a parte do desconto do kit desta linha.
     @Column(name = "kit_bundle_id", length = 36)
     private String kitBundleId;

@@ -10,6 +10,7 @@ import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedExce
 import com.cernecommerce.adapter.in.converter.ComandaDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.AddRoshExtraRequest;
 import com.cernecommerce.adapter.in.dtos.request.RepeatSessionRequest;
+import com.cernecommerce.adapter.in.dtos.request.SetRoshFlavorRequest;
 import com.cernecommerce.adapter.in.dtos.request.SessionAddonRequest;
 import com.cernecommerce.adapter.in.dtos.response.SessionAddonResponseDTO;
 import com.cernecommerce.adapter.in.dtos.request.UpdateSessionStatusRequest;
@@ -102,10 +103,12 @@ public class PdvSessaoController {
                     + "limitadas ao utensílio livre. modo=DUPLO cria também o 2º rosh a R$ 0 ligado à "
                     + "sessão, em NA_FILA, na mesma transação — para pagar a sessão, mande os dois ids em "
                     + "itemIds do close. PDV-F034: pagarNoFinal=true leva a sessão direto a PREPARANDO, "
-                    + "a receber na conta (o 2º rosh herda), e exige PDV_SESSION_PAY_LATER.")
+                    + "a receber na conta (o 2º rosh herda), e exige PDV_SESSION_PAY_LATER. PDV-F044: "
+                    + "essenciaRosh/essenciaRoshSku/tierIdRosh são opcionais — sem sabor, o 2º rosh nasce "
+                    + "com essenciaPendente=true, sem baixar estoque, e o sabor vem por PUT …/rosh-sabor.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
-            @ApiResponse(responseCode = "400", description = "Essência vazia, ou DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
+            @ApiResponse(responseCode = "400", description = "Essência vazia (SESSION_ESSENCE_REQUIRED); sem faixa na essência nem tierId (SESSION_TIER_REQUIRED, PDV-F050); mescla com o mesmo sabor (SAME_FLAVOR_MIX) ou 2º sabor sem o 1º (SESSION_ESSENCE_SKU_REQUIRED, PDV-F051)", content = @Content),
             @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia; pagarNoFinal sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED, PDV-F034)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
@@ -116,16 +119,18 @@ public class PdvSessaoController {
             @Valid @RequestBody AddSessionRequest request, Authentication authentication) {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
         requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
-        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), request.getEssenciaRoshSku(),
-                authentication);
+        requireDuploAllowed(request.isDuplo(), authentication);
         Comanda comanda = comandaUseCase.addSession(comandaId, new ComandaUseCase.AddSessionCommand(
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
                 request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh(),
-                request.isPagarNoFinal(), request.getEssenciaSku(), request.getEssenciaRoshSku()),
+                request.isPagarNoFinal(), request.getEssenciaSku(), request.getEssenciaRoshSku(),
+                request.getEssenciaSku2(), request.getEssenciaRoshSku2()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
-        payload.put("tierId", request.getTierId());
+        putIfPresent(payload, "tierId", request.getTierId());
+        putIfPresent(payload, "essenciaSku", request.getEssenciaSku());
+        putIfPresent(payload, "essenciaSku2", request.getEssenciaSku2());
         payload.put("vasoGrande", request.isVasoGrande());
         payload.put("duplo", request.isDuplo());
         payload.put("pagarNoFinal", request.isPagarNoFinal());
@@ -143,7 +148,6 @@ public class PdvSessaoController {
                     + "como no lançamento normal.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
-            @ApiResponse(responseCode = "400", description = "DUPLO sem essenciaRosh (SESSION_ESSENCE_REQUIRED)", content = @Content),
             @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025); pagarNoFinal sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED, PDV-F034)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado ou inativo", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não aberta, a linha não é uma sessão desta comanda (NOT_A_SESSION_LINE), sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT)", content = @Content)
@@ -154,12 +158,11 @@ public class PdvSessaoController {
             @PathVariable("itemId") Long sourceItemId, @Valid @RequestBody RepeatSessionRequest request,
             Authentication authentication) {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
-        requireDuploAllowed(request.isDuplo(), request.getEssenciaRosh(), request.getEssenciaRoshSku(),
-                authentication);
+        requireDuploAllowed(request.isDuplo(), authentication);
         Comanda comanda = comandaUseCase.repeatSession(comandaId, sourceItemId,
                 new ComandaUseCase.RepeatSessionCommand(request.getEssencia(), request.isDuplo(),
                         request.getEssenciaRosh(), request.getTierIdRosh(), request.isPagarNoFinal(),
-                        request.getEssenciaSku(), request.getEssenciaRoshSku()),
+                        request.getEssenciaSku(), request.getEssenciaRoshSku(), request.getEssenciaSku2()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
@@ -197,6 +200,33 @@ public class PdvSessaoController {
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(comanda));
     }
 
+    @Operation(summary = "Converte uma sessão simples em rosh duplo",
+            description = "PDV-F053 — cria o mesmo 2º rosh do modo=DUPLO lançado sem sabor (PDV-F044): R$ 0, "
+                    + "cortesia, ligado à sessão, NA_FILA com essenciaPendente=true, sem baixar estoque e sem "
+                    + "utensílio novo; herda o pagarNoFinal da sessão. O sabor vem por PUT …/rosh-sabor e o "
+                    + "recolhimento da sessão o promove. Vale em qualquer status antes de recolher, inclusive "
+                    + "com a sessão já paga. O preço da sessão não muda.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Convertida, com a comanda atualizada"),
+            @ApiResponse(responseCode = "403", description = "Sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda ou faixa da sessão não encontrada", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); a linha não é uma sessão desta comanda ainda no salão — recolhida ou desistida (NOT_A_SESSION_LINE); a sessão já tem rosh ligado (SESSION_ALREADY_DUPLO)", content = @Content)
+    })
+    @PostMapping("/pdv/comandas/{id}/sessoes/{itemId}/duplo")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> convertToDuplo(@PathVariable("id") Long comandaId,
+            @PathVariable("itemId") Long sessionItemId, Authentication authentication) {
+        requireDuploAllowed(true, authentication);
+        Comanda comanda = comandaUseCase.convertToDuplo(comandaId, sessionItemId, authentication.getName());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("comandaId", comandaId);
+        payload.put("sessionItemId", sessionItemId);
+        payload.put("duplo", true);
+        payload.put("convertido", true);
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ROSH_EXTRA_ADDED, authentication.getName(), payload));
+        return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(comanda));
+    }
+
     @Operation(summary = "Avança o status de uma sessão da mesa",
             description = "PDV-F023 — NA_FILA → PREPARANDO → ENTREGUE → RECOLHIDO (e PREPARANDO → "
                     + "RECOLHIDO). Recolher libera os utensílios quando a sessão e os roshs ligados a "
@@ -206,7 +236,7 @@ public class PdvSessaoController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Atualizada, com a comanda"),
             @ApiResponse(responseCode = "404", description = "Comanda ou linha não encontrada", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026); ou sessão paga no final recolhida antes de paga (SESSION_NOT_PAID_FOR_COLLECT, PDV-F040)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026); ou sessão paga no final recolhida antes de paga (SESSION_NOT_PAID_FOR_COLLECT, PDV-F040). PDV-C046: no duplo pago no final a sessão sai sem pagar enquanto o 2º rosh está no salão, e a cobrança vai para o recolhimento do 2º rosh, que recusa com o mesmo SESSION_NOT_PAID_FOR_COLLECT enquanto a sessão não estiver paga (também na desistência)", content = @Content)
     })
     @PatchMapping("/pdv/comandas/{id}/sessoes/{itemId}/status")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
@@ -217,6 +247,37 @@ public class PdvSessaoController {
                 authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_STATUS_CHANGED, authentication.getName(),
                 Map.of("comandaId", comandaId, "itemId", itemId, "status", request.getStatus().name())));
+        return ResponseEntity.ok(toResponse(comanda));
+    }
+
+    @Operation(summary = "Escolhe o sabor do 2º rosh do duplo",
+            description = "PDV-F044 — {itemId} é o ROSH_EXTRA lançado sem sabor (essenciaPendente=true), não "
+                    + "a sessão. Grava essência e faixa (tierId nulo = a da sessão; o preço continua R$ 0), "
+                    + "consome a lata do sabor como o lançamento faria e, com a sessão já recolhida, põe o "
+                    + "rosh em PREPARANDO. Com a sessão ainda no salão, o rosh fica NA_FILA e o recolhimento "
+                    + "o promove — funciona nas duas ordens.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Sabor gravado, com a comanda atualizada"),
+            @ApiResponse(responseCode = "400", description = "Sem essencia e sem essenciaSku (SESSION_ESSENCE_REQUIRED); SKU que não é sabor de sessão (NOT_A_SESSION_PRODUCT, ESSENCE_MUST_BE_FLAVOR, PARENT_NOT_SELLABLE); mescla com o mesmo sabor (SAME_FLAVOR_MIX, PDV-F051)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda, item ou faixa não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "O rosh já tem sabor (ROSH_FLAVOR_NOT_PENDING) ou comanda não aberta (COMANDA_NOT_OPEN)", content = @Content),
+            @ApiResponse(responseCode = "422", description = "O item não é um 2º rosh (ITEM_NOT_ROSH_EXTRA)", content = @Content)
+    })
+    @PutMapping("/pdv/comandas/{id}/itens/{itemId}/rosh-sabor")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> setRoshFlavor(@PathVariable("id") Long comandaId,
+            @PathVariable("itemId") Long itemId, @Valid @RequestBody SetRoshFlavorRequest request,
+            Authentication authentication) {
+        requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
+        Comanda comanda = comandaUseCase.setRoshFlavor(comandaId, itemId, request.getEssencia(),
+                request.getEssenciaSku(), request.getEssenciaSku2(), request.getTierId(), authentication.getName());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("comandaId", comandaId);
+        payload.put("itemId", itemId);
+        putIfPresent(payload, "essenciaSku", request.getEssenciaSku());
+        putIfPresent(payload, "essenciaSku2", request.getEssenciaSku2());
+        putIfPresent(payload, "tierId", request.getTierId());
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ROSH_FLAVOR_SET, authentication.getName(), payload));
         return ResponseEntity.ok(toResponse(comanda));
     }
 
@@ -393,11 +454,10 @@ public class PdvSessaoController {
     /**
      * PDV-C025 — o 2º rosh do duplo é uma linha de cortesia a R$ 0, em qualquer dia. Cortesia na mesa
      * exige {@code PDV_COMANDA_COURTESY} desde PDV-F010; sem a mesma exigência aqui, qualquer
-     * atendente lançava toda sessão como duplo. Decisão do dono (01/10/2026). O sabor do 2º rosh
-     * vem depois da permissão: quem não pode lançar não precisa saber o que faltou no corpo.
+     * atendente lançava toda sessão como duplo. Decisão do dono (01/10/2026). PDV-F044 — o sabor do
+     * 2º rosh deixou de ser obrigatório no lançamento: sem ele, o rosh nasce aguardando sabor.
      */
-    private void requireDuploAllowed(boolean duplo, String essenciaRosh, String essenciaRoshSku,
-            Authentication authentication) {
+    private void requireDuploAllowed(boolean duplo, Authentication authentication) {
         if (!duplo) {
             return;
         }
@@ -407,13 +467,12 @@ public class PdvSessaoController {
         if (!allowed) {
             throw new CourtesyNotAllowedException(authentication.getName());
         }
-        requireEssence("essenciaRosh", essenciaRosh, essenciaRoshSku);
     }
 
     /**
      * PDV-F042 — a essência vem em texto <b>ou</b> do catálogo; sem as duas é o
-     * {@code SESSION_ESSENCE_REQUIRED} de sempre. Conferido aqui, antes do use case, pela mesma razão
-     * do {@code essenciaRosh} do duplo: o erro de corpo não depende de a comanda existir.
+     * {@code SESSION_ESSENCE_REQUIRED} de sempre. Conferido aqui, antes do use case: o erro de corpo
+     * não depende de a comanda existir.
      */
     private static void requireEssence(String field, String essencia, String essenciaSku) {
         if ((essencia == null || essencia.isBlank()) && (essenciaSku == null || essenciaSku.isBlank())) {

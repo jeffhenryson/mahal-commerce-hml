@@ -69,6 +69,13 @@ public class ComandaItemResponseDTO {
             example = "ZOMO-BLUEBERRY")
     private String essenciaSku;
 
+    @Schema(description = "PDV-F051 — 2º sabor da sessão mesclada; nulo com um sabor só.", example = "ZIGY-MENTA")
+    private String essenciaSku2;
+
+    @Schema(description = "PDV-F044 — true só no 2º rosh (ROSH_EXTRA) do duplo lançado sem sabor e ainda no "
+            + "salão: espera NA_FILA, sem baixar estoque, até PUT …/itens/{itemId}/rosh-sabor. False no resto.")
+    private boolean essenciaPendente;
+
     // PDV-F019 — kit montável. Nulos para linha avulsa; subtotal continua bruto.
     private String kitBundleId;
     private Long kitTemplateId;

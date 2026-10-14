@@ -127,7 +127,8 @@ class ComandaSessaoServiceTest {
                 items.add(i.id() != null ? i : ComandaItem.of(next++, i.sku(), i.quantity(), i.unitPrice(),
                         i.costPrice(), i.productName(), i.addedAt(), i.mode(), i.courtesy(), i.linkedItemId(),
                         i.notes(), i.surchargeAmount(), i.closedInOrderId(), i.packageUses(),
-                        i.packageSessionsPerUnit(), null, null, null, i.session(), i.setup(), i.essenceSku()));
+                        i.packageSessionsPerUnit(), null, null, null, i.session(), i.setup(), i.essenceSku(),
+                        i.essenceSku2(), i.essence2Package()));
             }
             return Comanda.of(c.id(), c.sessionId(), c.warehouseCode(), c.tableOrCustomerLabel(), c.customerId(),
                     c.status(), items, c.orderId(), c.openedBy(), c.openedAt(), c.closedAt());
@@ -911,17 +912,26 @@ class ComandaSessaoServiceTest {
         verify(sessionMenu, never()).isDuploRoshDay(any(), any());
     }
 
+    /** PDV-F044 — sem o sabor do 2º rosh, o duplo é lançado assim mesmo: o rosh nasce aguardando sabor. */
     @Test
-    void addSession_duploWithoutTheRoshFlavor_isRefusedBeforeAnything() {
+    void addSession_duploWithoutTheRoshFlavor_createsThePendingRosh_withoutTouchingStock() {
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
-        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
-        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
 
-        assertThatThrownBy(() -> comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(2L, "Zomo",
-                false, null, List.of(), true, " ", null), "caixa1"))
-                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException.class);
-        verify(sessionMenu, never()).reserveAssetsForSession(any(), anyBoolean());
-        verify(comandaRepository, never()).save(any());
+        Comanda result = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(2L, "Zomo",
+                false, null, List.of(), true, " ", null), "caixa1");
+
+        ComandaItem rosh = result.items().get(1);
+        assertThat(rosh.mode()).isEqualTo(ConsumptionMode.ROSH_EXTRA);
+        assertThat(rosh.courtesy()).isTrue();
+        assertThat(rosh.unitPrice()).isEqualByComparingTo("0");
+        assertThat(rosh.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(rosh.notes()).isNull();
+        assertThat(rosh.essenceSku()).isNull();
+        assertThat(rosh.sku()).isEqualTo(PREMIUM.sku());
+        assertThat(rosh.isEssencePending()).isTrue();
+        verifyNoInteractions(estoqueUseCase);
     }
 
     @Test
@@ -1248,8 +1258,6 @@ class ComandaSessaoServiceTest {
     @Test
     void addSession_comSkuQueNaoEDeSessao_eRecusadoAntesDeGravar() {
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
-        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
-        when(sessionMenu.settings()).thenReturn(SETTINGS);
         when(estoqueUseCase.resolveSaleInfo("ISQ-BIC")).thenReturn(
                 new EstoqueUseCase.CatalogSaleInfo("Isqueiro", PRECO_ESSENCIA, false, false, null, null, false, false));
 
@@ -1267,8 +1275,6 @@ class ComandaSessaoServiceTest {
     @Test
     void addSession_comSkuPaiComVariacoes_eRecusado() {
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
-        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
-        when(sessionMenu.settings()).thenReturn(SETTINGS);
         when(estoqueUseCase.resolveSaleInfo("ZIG")).thenReturn(
                 new EstoqueUseCase.CatalogSaleInfo("Essência Zig", PRECO_ESSENCIA, true, true, null, 5, false, true));
 
@@ -1426,5 +1432,617 @@ class ComandaSessaoServiceTest {
 
         verify(estoqueUseCase).releaseSession("PRED-MENTA", "LOJA-01", BigDecimal.ONE);
         verify(estoqueUseCase, never()).releaseSession(eq("ZOMO-BLUE"), any(), any());
+    }
+
+    // ── PDV-F044 — sabor do 2º rosh escolhido na hora de consumir ────────────────────────────
+
+    /** O 2º rosh do duplo lançado sem sabor: cortesia, na fila, sem nota. */
+    private static ComandaItem roshPendente(Long id, Long parentId) {
+        return ComandaItem.of(id, PREMIUM.sku(), BigDecimal.ONE, BigDecimal.ZERO, null, "2º rosh Premium (duplo rosh)",
+                Instant.now().plusSeconds(1), ConsumptionMode.ROSH_EXTRA, true, parentId, null, null,
+                null, null, null, null, null, null, SessionProgress.queued());
+    }
+
+    @Test
+    void updateSessionStatus_recolherASessao_naoPromoveORoshSemSabor_eMantemOVaso() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(0).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(result.items().get(1).isEssencePending()).isTrue();
+        verify(sessionMenu, never()).release(any());
+    }
+
+    @Test
+    void updateSessionStatus_roshSemSaborAoPreparo_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 2L, SessionStatus.PREPARANDO, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.RoshFlavorPendingException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** Ordem do front: escolhe o sabor ANTES de recolher. O rosh fica pronto na fila, e o recolher o promove. */
+    @Test
+    void setRoshFlavor_comASessaoNoSalao_gravaOSaborEConsomeALata_eORecolherPromove() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-BLUE")).thenReturn(sabor(5));
+        when(estoqueUseCase.consumeSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(com.cernecommerce.core.domain.model.estoque.OpenPackage
+                        .open("ZOMO-BLUE", 1L, 5, "caixa1", Instant.now()).withUses(2));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda comSabor = comandaService.setRoshFlavor(10L, 2L, null, "ZOMO-BLUE", null, "caixa1");
+
+        ComandaItem rosh = comSabor.items().get(1);
+        assertThat(rosh.notes()).isEqualTo("Zomo Blueberry");
+        assertThat(rosh.essenceSku()).isEqualTo("ZOMO-BLUE");
+        assertThat(rosh.packageUses()).isEqualTo(2);
+        assertThat(rosh.isEssencePending()).isFalse();
+        assertThat(rosh.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(rosh.unitPrice()).isEqualByComparingTo("0");
+
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comSabor));
+        Comanda recolhida = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(recolhida.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+    }
+
+    /** Ordem "recolher, sabor depois": com a sessão já recolhida, o sabor põe o rosh no preparo. */
+    @Test
+    void setRoshFlavor_comASessaoJaRecolhida_promoveORoshNaHora_naFaixaEscolhida() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L), roshPendente(2L, 1L))));
+        when(sessionMenu.requireActiveTier(1L)).thenReturn(TRADICIONAL);
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ComandaItem rosh = comandaService.setRoshFlavor(10L, 2L, "Pred Menta", null, 1L, "caixa1").items().get(1);
+
+        assertThat(rosh.sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        assertThat(rosh.session().startedAt()).isNotNull();
+        assertThat(rosh.sku()).isEqualTo(TRADICIONAL.sku());
+        assertThat(rosh.productName()).isEqualTo("2º rosh Tradicional (duplo rosh)");
+        assertThat(rosh.notes()).isEqualTo("Pred Menta");
+        assertThat(rosh.essenceSku()).isNull();
+        verifyNoInteractions(estoqueUseCase);
+        verify(sessionMenu, never()).release(any());
+    }
+
+    @Test
+    void setRoshFlavor_roshQueJaTemSabor_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshEm(2L, 1L, SessionProgress.queued(), null))));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 2L, "Zomo", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.RoshFlavorNotPendingException.class);
+        verifyNoInteractions(estoqueUseCase);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void setRoshFlavor_naSessaoEmVezDoRosh_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 1L, "Zomo", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ItemNotRoshExtraException.class);
+    }
+
+    @Test
+    void setRoshFlavor_itemInexistente_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L))));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 99L, "Zomo", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaItemNotFoundException.class);
+    }
+
+    @Test
+    void setRoshFlavor_semSabor_eRecusadoAntesDeBaixar() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 2L, " ", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredException.class);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    @Test
+    void setRoshFlavor_comSkuQueNaoESabor_eRecusadoAntesDeBaixar() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        when(estoqueUseCase.resolveSaleInfo("ZIG")).thenReturn(
+                new EstoqueUseCase.CatalogSaleInfo("Essência Zig", PRECO_ESSENCIA, true, true, null, 5, false, true));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 2L, null, "ZIG", null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.EssenceMustBeFlavorException.class);
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void setRoshFlavor_comandaFechada_eRecusado() {
+        Comanda fechada = Comanda.of(10L, 1L, "LOJA-01", "Mesa 4", null, ComandaStatus.FECHADA,
+                List.of(sessaoEm(1L, PREMIUM, recolhido(), 400L), roshPendente(2L, 1L)), 400L, "caixa1",
+                Instant.now(), Instant.now());
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(fechada));
+
+        assertThatThrownBy(() -> comandaService.setRoshFlavor(10L, 2L, "Zomo", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException.class);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** Desistiu do 2º rosh antes de escolher: sai pela remoção comum, sem nada a devolver ao estoque. */
+    @Test
+    void removeItem_roshSemSabor_saiSemMexerNoEstoque_eLiberaOVasoDaSessaoRecolhida() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L), roshPendente(2L, 1L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.removeItem(10L, 2L, "caixa1");
+
+        assertThat(result.items()).hasSize(1);
+        verifyNoInteractions(estoqueUseCase);
+        verify(sessionMenu).release(List.of(1L));
+    }
+
+    // ── PDV-F049 — essência só em texto atrás de config ──────────────────────────────────────
+
+    /** Como em produção depois do rollout: {@code pdv.sessao.essencia-livre-permitida=false}. */
+    private ComandaService semTextoLivre() {
+        return new ComandaService(comandaRepository, estoqueUseCase, orderRepository, orderPaymentRepository,
+                cashbackUseCase, pdvService, notificationUseCase, userRepository, BigDecimal.TEN, kitBuilderUseCase,
+                sessionMenu, false, true, false);
+    }
+
+    @Test
+    void addSession_soComTexto_eRecusadaQuandoOTextoLivreEstaDesligado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+
+        assertThatThrownBy(() -> semTextoLivre().addSession(10L, 2L, "Zomo Menta", false, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException.class);
+        verify(comandaRepository, never()).save(any());
+        verify(sessionMenu, never()).allocate(any(), any());
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    @Test
+    void repeatSession_deOrigemSoEmTexto_semSaborNovo_eRecusada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(sessao(1L, PREMIUM))));
+
+        assertThatThrownBy(() -> semTextoLivre().repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null, false, null, null), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void setRoshFlavor_soComTexto_eRecusadoQuandoOTextoLivreEstaDesligado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> semTextoLivre().setRoshFlavor(10L, 2L, "Zomo Uva", null, null, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException.class);
+        verify(comandaRepository, never()).save(any());
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    // ── PDV-F050 — a faixa sai da essência / PDV-F051 — sessão mesclada ───────────────────────
+
+    /** Sabor do catálogo com a faixa gravada na ficha; sem lata configurada (uso da loja) se {@code spu} nulo. */
+    private static EstoqueUseCase.CatalogSaleInfo saborComFaixa(String nome, Long tierId, Integer spu) {
+        return new EstoqueUseCase.CatalogSaleInfo(nome, PRECO_ESSENCIA, true, true, null, spu, false, false, tierId);
+    }
+
+    private static ComandaUseCase.AddSessionCommand mescla(Long tierId, String sku, String sku2) {
+        return new ComandaUseCase.AddSessionCommand(tierId, null, false, null, List.of(), false, null, null,
+                false, sku, null, sku2, null);
+    }
+
+    private static com.cernecommerce.core.domain.model.estoque.OpenPackage lataEmUso(String sku, int uses) {
+        return com.cernecommerce.core.domain.model.estoque.OpenPackage
+                .open(sku, 1L, 5, "caixa1", Instant.now()).withUses(uses);
+    }
+
+    @Test
+    void addSession_faixaDaFichaDaEssencia_venceOTierIdDoPedido() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, sessaoComSabor(null, "ZIGY-BANANA"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.sku()).isEqualTo(TRADICIONAL.sku());
+        assertThat(linha.unitPrice()).isEqualByComparingTo("25.00");
+        verify(sessionMenu, never()).requireActiveTier(any());
+    }
+
+    /** Faixa da ficha inativa (ou essência sem faixa): vale a do pedido, como antes. */
+    @Test
+    void addSession_faixaDaFichaInativa_usaADoPedido() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, sessaoComSabor(null, "ZIGY-BANANA"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.sku()).isEqualTo(PREMIUM.sku());
+    }
+
+    @Test
+    void addSession_semFaixaNaEssenciaNemNoPedido_eRecusadaAntesDeGravar() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", null, null));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, mescla(null, "ZIGY-BANANA", null), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException.class);
+        verify(comandaRepository, never()).save(any());
+        verify(sessionMenu, never()).reserveAssetsForSession(any(), anyBoolean());
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+    }
+
+    /** Mescla: a maior faixa dos dois, 1 uso da lata de cada sabor, os dois carimbados na linha. */
+    @Test
+    void addSession_mescla_cobraAMaiorFaixa_eConsomeUmUsoDeCadaLata() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, 5));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", 2L, 5));
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.findActiveTier(2L)).thenReturn(Optional.of(PREMIUM));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        when(estoqueUseCase.consumeSession("ZIGY-BANANA", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(lataEmUso("ZIGY-BANANA", 3));
+        when(estoqueUseCase.consumeSession("ZOMO-MENTA", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(lataEmUso("ZOMO-MENTA", 1));
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, mescla(null, "ZIGY-BANANA", "ZOMO-MENTA"), "caixa1")
+                .items().get(0);
+
+        assertThat(linha.sku()).isEqualTo(PREMIUM.sku());
+        assertThat(linha.unitPrice()).isEqualByComparingTo("30.00");
+        assertThat(linha.essenceSku()).isEqualTo("ZIGY-BANANA");
+        assertThat(linha.essenceSku2()).isEqualTo("ZOMO-MENTA");
+        assertThat(linha.essence2Package()).isTrue();
+        assertThat(linha.packageUses()).isEqualTo(3);
+        assertThat(linha.notes()).isEqualTo("Zigy Banana + Zomo Menta");
+    }
+
+    @Test
+    void addSession_mesclaComOMesmoSabor_eRecusadaSemTocarEmNada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, mescla(2L, "ZOMO-MENTA", "ZOMO-MENTA"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SameFlavorMixException.class);
+        verifyNoInteractions(estoqueUseCase);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void addSession_segundoSaborSemOPrimeiro_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, mescla(2L, null, "ZOMO-MENTA"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException.class);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** Sem lata do 2º sabor no Salão a exceção sobe — a transação desfaz o uso do 1º. Nada é gravado. */
+    @Test
+    void addSession_mesclaSemLataDoSegundoSabor_propagaENaoGrava() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", null, 5));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", null, 5));
+        givenMenuForSession();
+        when(estoqueUseCase.consumeSession("ZIGY-BANANA", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(lataEmUso("ZIGY-BANANA", 3));
+        when(estoqueUseCase.consumeSession("ZOMO-MENTA", "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenThrow(new com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException("ZOMO-MENTA"));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, mescla(2L, "ZIGY-BANANA", "ZOMO-MENTA"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** Remover a mescla devolve os dois sabores, cada um pelo que consumiu: lata ou unidade. */
+    @Test
+    void removeItem_mescla_devolveOsDoisSabores() {
+        ComandaItem linha = sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null)
+                .withEssence("ZIGY-BANANA").withPackageCounter(3, 5).withSecondEssence("ZOMO-MENTA", false);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(linha)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.removeItem(10L, 1L, "caixa1");
+
+        verify(estoqueUseCase).releaseSession("ZIGY-BANANA", "LOJA-01", BigDecimal.ONE);
+        verify(estoqueUseCase).adjustStock(eq("ZOMO-MENTA"), eq("LOJA-01"),
+                eq(com.cernecommerce.core.domain.model.estoque.MovementType.ENTRADA), eq(BigDecimal.ONE), any(),
+                eq("caixa1"));
+    }
+
+    /** Repetir trocando o sabor: a faixa é a da nova essência, não a da origem. */
+    @Test
+    void repeatSession_comSaborNovo_recalculaAFaixaPelaEssencia() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(sessao(1L, PREMIUM))));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null, false, "ZIGY-BANANA", null), "caixa1");
+
+        assertThat(result.items().get(1).sku()).isEqualTo(TRADICIONAL.sku());
+    }
+
+    /** Repetir sem sabor novo: a faixa e a mescla são as da origem, mesmo que a ficha tenha mudado. */
+    @Test
+    void repeatSession_semSaborNovo_copiaAFaixaEAMesclaDaOrigem() {
+        ComandaItem origem = sessaoEm(1L, PREMIUM, entregue(), 400L)
+                .withEssence("ZIGY-BANANA").withSecondEssence("ZOMO-MENTA", false);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(origem)));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", 1L, null));
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
+
+        ComandaItem nova = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null), "caixa1").items().get(1);
+
+        assertThat(nova.sku()).isEqualTo(PREMIUM.sku());
+        assertThat(nova.essenceSku()).isEqualTo("ZIGY-BANANA");
+        assertThat(nova.essenceSku2()).isEqualTo("ZOMO-MENTA");
+        verify(sessionMenu, never()).findActiveTier(any());
+    }
+
+    @Test
+    void setRoshFlavor_mescla_gravaOsDoisSaboresEConsomeOsDois() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", null, 5));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", null, 5));
+        when(estoqueUseCase.consumeSession(any(), eq("LOJA-01"), eq(BigDecimal.ONE), eq("caixa1")))
+                .thenAnswer(inv -> lataEmUso(inv.getArgument(0), 2));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ComandaItem rosh = comandaService.setRoshFlavor(10L, 2L, null, "ZIGY-BANANA", "ZOMO-MENTA", null, "caixa1")
+                .items().get(1);
+
+        assertThat(rosh.essenceSku()).isEqualTo("ZIGY-BANANA");
+        assertThat(rosh.essenceSku2()).isEqualTo("ZOMO-MENTA");
+        assertThat(rosh.essence2Package()).isTrue();
+        verify(estoqueUseCase).consumeSession("ZIGY-BANANA", "LOJA-01", BigDecimal.ONE, "caixa1");
+        verify(estoqueUseCase).consumeSession("ZOMO-MENTA", "LOJA-01", BigDecimal.ONE, "caixa1");
+    }
+
+    // ── PDV-C046 — duplo pago no final: a cobrança vai para o recolhimento do 2º rosh ───────────
+
+    private static ComandaItem sessaoPagaNoFinalEntregue(Long id, Long closedIn) {
+        Instant t = Instant.now();
+        return sessaoEm(id, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), closedIn);
+    }
+
+    @Test
+    void updateSessionStatus_duploPagoNoFinal_recolheARaizSemPagar_promoveORoshEMantemOVaso() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, null), roshEm(2L, 1L, SessionProgress.queued(true), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(0).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(result.items().get(0).isOpen()).isTrue();
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+        verify(sessionMenu, never()).release(any());
+    }
+
+    @Test
+    void updateSessionStatus_duploPagoNoFinalComRoshSemSabor_recolheARaizSemPagar() {
+        ComandaItem pendente = ComandaItem.of(2L, PREMIUM.sku(), BigDecimal.ONE, BigDecimal.ZERO, null,
+                "2º rosh Premium (duplo rosh)", Instant.now().plusSeconds(1), ConsumptionMode.ROSH_EXTRA, true, 1L,
+                null, null, null, null, null, null, null, null, SessionProgress.queued(true));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, null), pendente)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(0).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        verify(sessionMenu, never()).release(any());
+    }
+
+    @Test
+    void updateSessionStatus_recolherORoshComARaizSemPedido_recusa() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null),
+                roshEm(2L, 1L, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** A desistência do 2º rosh também não tira a cobrança do salão: sai pela remoção da linha. */
+    @Test
+    void updateSessionStatus_desistenciaDoRoshComARaizSemPedido_recusa() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null),
+                roshEm(2L, 1L, SessionProgress.preparingPayLater(t), null))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
+    }
+
+    @Test
+    void updateSessionStatus_recolherORoshComTudoPago_liberaOVaso() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), 400L),
+                roshEm(2L, 1L, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), 400L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        verify(sessionMenu).release(List.of(1L));
+    }
+
+    @Test
+    void updateSessionStatus_roshJaRecolhido_raizSemPagar_recusa() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, null),
+                roshEm(2L, 1L, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
+    }
+
+    @Test
+    void updateSessionStatus_roshDesistido_raizSemPagar_recusa() {
+        Instant t = Instant.now();
+        SessionProgress desistido = new SessionProgress(SessionStatus.RECOLHIDO, t, null, t, true,
+                "Cliente não quis", "caixa1");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, null), roshEm(2L, 1L, desistido, null))));
+
+        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
+                .isInstanceOf(SessionNotPaidForCollectException.class);
+    }
+
+    /** Duplo já pago: o recolhimento das duas linhas segue como antes. */
+    @Test
+    void updateSessionStatus_duploPagoNoFinalJaPago_recolheRaizERosh() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, 400L), roshEm(2L, 1L, SessionProgress.queued(true), 400L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
+    }
+
+    // ── PDV-F053 — converter sessão simples em duplo ──────────────────────────────────────────
+
+    private void givenConversionSucceeds() {
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    private static void assertRoshPendente(ComandaItem rosh, boolean payLater) {
+        assertThat(rosh.mode()).isEqualTo(ConsumptionMode.ROSH_EXTRA);
+        assertThat(rosh.linkedItemId()).isEqualTo(1L);
+        assertThat(rosh.unitPrice()).isEqualByComparingTo("0");
+        assertThat(rosh.courtesy()).isTrue();
+        assertThat(rosh.sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+        assertThat(rosh.isEssencePending()).isTrue();
+        assertThat(rosh.isPayLater()).isEqualTo(payLater);
+        assertThat(rosh.productName()).isEqualTo("2º rosh Premium (duplo rosh)");
+    }
+
+    @Test
+    void convertToDuplo_sessaoAguardandoPagamento_criaORoshPendente() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, SessionProgress.awaitingPayment(), null))));
+        givenConversionSucceeds();
+
+        Comanda result = comandaService.convertToDuplo(10L, 1L, "caixa1");
+
+        assertThat(result.items()).hasSize(2);
+        assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo(PREMIUM.preco());
+        assertRoshPendente(result.items().get(1), false);
+        verifyNoInteractions(estoqueUseCase);
+        verify(sessionMenu, never()).allocate(any(), any());
+    }
+
+    @Test
+    void convertToDuplo_sessaoPreparandoOuEntregue_criaORoshPendente() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, SessionProgress.preparing(Instant.now()), 400L))));
+        givenConversionSucceeds();
+        assertRoshPendente(comandaService.convertToDuplo(10L, 1L, "caixa1").items().get(1), false);
+
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L))));
+        assertRoshPendente(comandaService.convertToDuplo(10L, 1L, "caixa1").items().get(1), false);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    @Test
+    void convertToDuplo_sessaoPagaNoFinal_oRoshHerdaAMarca() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoPagaNoFinalEntregue(1L, null))));
+        givenConversionSucceeds();
+
+        assertRoshPendente(comandaService.convertToDuplo(10L, 1L, "caixa1").items().get(1), true);
+    }
+
+    @Test
+    void convertToDuplo_sessaoRecolhida_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L))));
+
+        assertThatThrownBy(() -> comandaService.convertToDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(NotASessionLineException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void convertToDuplo_sessaoDesistida_recusa() {
+        ComandaItem desistida = servidaPagaNoFinal(1L).withdrawn("Cliente foi embora", "caixa1", Instant.now());
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(desistida)));
+
+        assertThatThrownBy(() -> comandaService.convertToDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(NotASessionLineException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void convertToDuplo_sessaoQueJaTemRosh_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> comandaService.convertToDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionAlreadyDuploException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** Depois de convertida, a sessão segue o fluxo do duplo lançado sem sabor. */
+    @Test
+    void convertToDuplo_depoisSaborERecolhimento_promovemORosh() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L))));
+        when(sessionMenu.requireActiveTier(2L)).thenReturn(PREMIUM);
+        givenSaveAssignsItemIds();
+        Comanda convertida = comandaService.convertToDuplo(10L, 1L, "caixa1");
+        Long roshId = convertida.items().get(1).id();
+
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(convertida));
+        Comanda comSabor = comandaService.setRoshFlavor(10L, roshId, "Pred Menta", null, null, "caixa1");
+        assertThat(comSabor.items().get(1).isEssencePending()).isFalse();
+        assertThat(comSabor.items().get(1).sessionStatus()).isEqualTo(SessionStatus.NA_FILA);
+
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comSabor));
+        Comanda recolhida = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+        assertThat(recolhida.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
     }
 }

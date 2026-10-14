@@ -53,6 +53,20 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** PDV-F045 — abrir embalagem é da permissão de venda: sem ela 403; com ela, sem caixa, 404 NO_OPEN_SESSION. */
+    @Test
+    void cigarros_abrir_requires_pdv_sale_manage() throws Exception {
+        String body = "{\"sku\":\"LM-AZUL-CART\",\"quantidade\":1}";
+        mockMvc.perform(post("/pdv/cigarros/abrir").contentType(MediaType.APPLICATION_JSON).content(body)
+                        .with(user("leitor").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/pdv/cigarros/abrir").contentType(MediaType.APPLICATION_JSON).content(body)
+                        .with(user("atendente-sem-caixa-" + UUID.randomUUID())
+                                .authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("NO_OPEN_SESSION"));
+    }
+
     @Test
     void menu_without_auth_returns_401() throws Exception {
         mockMvc.perform(get("/pdv/sessao/cardapio")).andExpect(status().isUnauthorized());
@@ -108,12 +122,58 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(jsonPath("$.errorCode").value("SESSION_PAY_LATER_NOT_ALLOWED"));
     }
 
-    /** PDV-C031 — duplo sem o sabor do 2º rosh tem código próprio, não o 400 genérico. */
+    /**
+     * PDV-F044 — o sabor do 2º rosh deixou de ser obrigatório no lançamento: o duplo sem ele passa do
+     * corpo e cai no 404 da comanda inexistente (antes, PDV-C031, era 400 SESSION_ESSENCE_REQUIRED).
+     */
     @Test
-    void session_duplo_without_rosh_flavor_returns_session_essence_required() throws Exception {
+    void session_duplo_without_rosh_flavor_is_accepted_by_the_contract() throws Exception {
         mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tierId\":1,\"essencia\":\"Zomo\",\"modo\":\"DUPLO\"}")
                         .with(user("gerente").authorities(COMANDA, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    // ── PDV-F053: converter sessão simples em duplo ──
+
+    /** O 2º rosh criado é cortesia: sem PDV_COMANDA_COURTESY, 403 antes de ler a mesa; com ela, o 404 da comanda. */
+    @Test
+    void convert_to_duplo_requires_courtesy() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("gerente").authorities(COMANDA, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void convert_to_duplo_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("gerente").authorities(SESSAO_MANAGE, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isForbidden());
+    }
+
+    // ── PDV-F044: sabor do 2º rosh ──
+
+    @Test
+    void rosh_flavor_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/987654321/itens/1/rosh-sabor").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"essencia\":\"Zomo Menta\"}")
+                        .with(user("gerente").authorities(SESSAO_MANAGE)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void rosh_flavor_on_unknown_comanda_returns_404_and_without_flavor_400() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/987654321/itens/1/rosh-sabor").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"essencia\":\"Zomo Menta\",\"tierId\":2}")
+                        .with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/pdv/comandas/987654321/itens/1/rosh-sabor").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .with(user("atendente").authorities(COMANDA)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("SESSION_ESSENCE_REQUIRED"));
     }

@@ -448,13 +448,20 @@ public interface ComandaUseCase {
      * @param essenciaSku PDV-F042 — sabor do catálogo da nova sessão. Nulo <b>com</b> {@code essencia}
      *        nula repete o da origem; nulo com {@code essencia} em texto é sessão só em texto.
      * @param essenciaRoshSku PDV-F042 — sabor do catálogo do 2º rosh, no duplo
+     * @param essenciaSku2 PDV-F051 — 2º sabor da mescla. Sem sabor novo, a mescla da origem se repete;
+     *        com {@code essenciaSku} novo e este nulo, a sessão sai com um sabor só
      */
     record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
-            boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku) {
+            boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2) {
+
+        public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
+                boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku) {
+            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, essenciaSku, essenciaRoshSku, null);
+        }
 
         public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
                 boolean pagarNoFinal) {
-            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, null, null);
+            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, null, null, null);
         }
 
         public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh) {
@@ -474,13 +481,24 @@ public interface ComandaUseCase {
      *        consome uso da lata aberta (ou 1 unidade como uso da loja, sem lata configurada); sem
      *        ele, a essência fica só em texto, como antes.
      * @param essenciaRoshSku PDV-F042 — o mesmo para o 2º rosh do duplo
+     * @param essenciaSku2 PDV-F051 — 2º sabor da sessão mesclada (exige {@code essenciaSku})
+     * @param essenciaRoshSku2 PDV-F051 — 2º sabor do 2º rosh do duplo
+     * @param tierId PDV-F050 — faixa do pedido: só vale para sessão em texto e essência sem faixa na
+     *        ficha; com faixa na ficha, é a dela (a maior, na mescla)
      */
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
             List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
-            String essenciaSku, String essenciaRoshSku) {
+            String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+        }
+
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+                String essenciaSku, String essenciaRoshSku) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    essenciaSku, essenciaRoshSku, null, null);
         }
 
         public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
@@ -518,6 +536,18 @@ public interface ComandaUseCase {
             String username);
 
     /**
+     * PDV-F053 — converte em duplo a sessão lançada como simples: cria o mesmo 2º rosh do duplo
+     * lançado sem sabor (PDV-F044) — cortesia a R$ 0, {@code NA_FILA}, sabor pendente, sem baixa de
+     * estoque e sem utensílio novo, herdando o "pagar no final" da sessão. O preço da sessão não muda.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.NotASessionLineException se
+     *         {@code sessionItemId} não for uma sessão desta comanda ainda no salão
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionAlreadyDuploException se a sessão já
+     *         tem rosh extra ligado
+     */
+    Comanda convertToDuplo(Long comandaId, Long sessionItemId, String username);
+
+    /**
      * Encerra a mesa cujas linhas já foram todas cobradas em fechamentos parciais (PDV-F023). Não
      * gera pedido: o cabeçalho aponta o último pedido que cobrou a mesa.
      *
@@ -540,6 +570,26 @@ public interface ComandaUseCase {
      *         transição fora da ordem
      */
     Comanda updateSessionStatus(Long comandaId, Long itemId, SessionStatus status, String username);
+
+    /**
+     * PDV-F044 — escolhe o sabor do 2º rosh do duplo, lançado sem ele. Grava a essência e a faixa
+     * ({@code tierId}, ou a da sessão-pai se nulo; o preço continua R$ 0), consome a lata do sabor
+     * como o lançamento faria e, com a sessão-pai já recolhida, põe o rosh no preparo. Com ela ainda
+     * no salão, o rosh espera na fila e o recolhimento o promove.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.ComandaItemNotFoundException item inexistente
+     * @throws com.cernecommerce.core.domain.exception.pdv.ItemNotRoshExtraException o item não é um 2º rosh
+     * @throws com.cernecommerce.core.domain.exception.pdv.RoshFlavorNotPendingException o rosh já tem sabor
+     */
+    Comanda setRoshFlavor(Long comandaId, Long itemId, String essencia, String essenciaSku, Long tierId,
+            String username);
+
+    /**
+     * PDV-F051 — {@link #setRoshFlavor(Long, Long, String, String, Long, String)} com o 2º sabor da
+     * mescla: 1 uso da lata de cada um. Abstrato pelo mesmo motivo de {@code addRoshExtra} (PLAT-C047).
+     */
+    Comanda setRoshFlavor(Long comandaId, Long itemId, String essencia, String essenciaSku, String essenciaSku2,
+            Long tierId, String username);
 
     /**
      * Junta duas mesas que viraram uma conta só (PDV-F016): as linhas em aberto de

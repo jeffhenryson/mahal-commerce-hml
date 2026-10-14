@@ -186,6 +186,11 @@ public class SessionMenuService implements SessionMenuUseCase {
     // ── Regras usadas pelo lançamento da sessão (ComandaService) ─────────────────────────────
 
     /** Faixa existente e ativa — faixa desativada some do cardápio e não pode mais ser lançada. */
+    /** PDV-F050 — a faixa, se existir e estiver ativa; vazio senão (quem chama decide o que vale). */
+    Optional<SessionTier> findActiveTier(Long tierId) {
+        return tierId == null ? Optional.empty() : repository.findTierById(tierId).filter(SessionTier::ativo);
+    }
+
     SessionTier requireActiveTier(Long tierId) {
         if (tierId == null) {
             throw new SessionTierNotFoundException(null);
