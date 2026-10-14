@@ -13,6 +13,6 @@ public class WarehousePatchRequest {
     @Size(min = 1, max = 255)
     private String name;
 
-    /** {@code LOJA_FISICA} ou {@code ECOMMERCE}. Valor desconhecido é 400. */
+    /** {@code LOJA_FISICA}, {@code ECOMMERCE} ou {@code SALAO}. Valor desconhecido é 400. */
     private String type;
 }

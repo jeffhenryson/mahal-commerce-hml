@@ -1723,6 +1723,32 @@ public class EstoqueControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** EST-F037 — "Acabou" é do atendente (PDV_COMANDA_MANAGE) ou do cadastro; só leitura não fecha lata. */
+    @Test
+    void finish_open_package_permissions() throws Exception {
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/close")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"warehouseCode\":\"LOJA-INEXISTENTE\"}")
+                .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE"))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/close")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"warehouseCode\":\"LOJA-INEXISTENTE\"}")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    /** EST-F037 — o rendimento é leitura: catálogo ou atendente da mesa. */
+    @Test
+    void open_package_yield_permissions() throws Exception {
+        mockMvc.perform(get("/estoque/open-packages/yield").param("warehouseCode", "LOJA-INEXISTENTE")
+                .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE"))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/estoque/open-packages/yield").param("warehouseCode", "LOJA-INEXISTENTE")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void replace_open_package_with_user_role_only_returns_403() throws Exception {
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/replace")

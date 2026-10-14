@@ -36,6 +36,7 @@ import com.cernecommerce.adapter.in.dtos.response.PackagingResponseDTO;
 import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.adapter.in.dtos.request.ReplaceOpenPackageRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockConversionRequest;
+import com.cernecommerce.adapter.in.dtos.request.StockTransferRequest;
 import com.cernecommerce.adapter.in.dtos.request.WarehousePatchRequest;
 import com.cernecommerce.adapter.in.dtos.request.WarehouseRequest;
 import com.cernecommerce.adapter.in.dtos.response.BrandResponseDTO;
@@ -54,7 +55,10 @@ import com.cernecommerce.adapter.in.dtos.response.ReservationIntegrityMismatchRe
 import com.cernecommerce.adapter.in.dtos.response.StockBalanceResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.AbcEntryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OpenPackageResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.OpenPackageYieldResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockConversionResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.StockTransferResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.TransferSummaryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockCountResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockLotResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockMovementResponseDTO;
@@ -440,7 +444,7 @@ public class EstoqueController {
     public ResponseEntity<CategoryResponseDTO> createCategory(@Valid @RequestBody CategoryRequest request,
             Authentication authentication) {
         Category created = estoqueUseCase.createCategory(request.getName(), request.isFeatured(),
-                request.getDisplayOrder());
+                request.getDisplayOrder(), Boolean.TRUE.equals(request.getCigarette()));
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_CREATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(created.id()),
                         "name", created.name())));
@@ -448,7 +452,7 @@ public class EstoqueController {
                 .body(categoryConverter.toResponse(created));
     }
 
-    @Operation(summary = "Altera parcialmente uma categoria (nome, destaque e/ou ordem)",
+    @Operation(summary = "Altera parcialmente uma categoria (nome, destaque, ordem e/ou cigarros)",
             description = "Campo ausente ou nulo é mantido. Renomear propaga o novo nome para "
                     + "todos os produtos vinculados.")
     @ApiResponses({
@@ -462,7 +466,7 @@ public class EstoqueController {
     public ResponseEntity<CategoryResponseDTO> updateCategory(@PathVariable Long id,
             @Valid @RequestBody CategoryPatchRequest request, Authentication authentication) {
         Category updated = estoqueUseCase.updateCategory(id, request.getName(), request.getFeatured(),
-                request.getDisplayOrder());
+                request.getDisplayOrder(), request.getCigarette());
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_UPDATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(id))));
         return ResponseEntity.ok(categoryConverter.toResponse(updated));
@@ -549,7 +553,8 @@ public class EstoqueController {
                 authentication.getName(), converter.toKitComponentCommands(request.getComponents()),
                 request.getStatus(), request.getBrandId(),
                 new EstoqueUseCase.TableSessionCommand(request.getAvailableForTable(),
-                        request.getSessionProduct(), request.getSessionsPerUnit(), request.getOpenRoshPrice()));
+                        request.getSessionProduct(), request.getSessionsPerUnit(), request.getOpenRoshPrice(),
+                        request.getSessionTierId(), false));
         publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_CREATED,
                 authentication.getName(), Map.of("sku", created.sku())));
         return ResponseEntity.created(URI.create("/estoque/products/" + created.sku()))
@@ -586,7 +591,8 @@ public class EstoqueController {
                 request.getKitComponentEligible(), request.getVisibleInPos(), request.getVisibleInMarketplace(),
                 request.getStatus(), request.getBrandId(),
                 new EstoqueUseCase.TableSessionCommand(request.getAvailableForTable(),
-                        request.getSessionProduct(), request.getSessionsPerUnit(), request.getOpenRoshPrice()));
+                        request.getSessionProduct(), request.getSessionsPerUnit(), request.getOpenRoshPrice(),
+                        request.getSessionTierId(), Boolean.TRUE.equals(request.getClearSessionTier())));
         publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_UPDATED,
                 authentication.getName(), Map.of("sku", updated.sku())));
         // Evento próprio para mudança de preço: quem baixou o preço de quê e quando é a pergunta
@@ -1090,6 +1096,52 @@ public class EstoqueController {
         return ResponseEntity.ok(toResponse(replaced, request.getWarehouseCode()));
     }
 
+    @Operation(summary = "\"Acabou\": fecha a lata em uso sem abrir outra (EST-F037)",
+            description = "`sessionsPerUnit` é estimativa: a lata não fecha sozinha. O atendente marca "
+                    + "\"Acabou\" e ela fecha com `FINISHED`, **sem** abrir outra e **sem** baixa. A próxima "
+                    + "sessão do sabor abre uma nova com SAIDA de 1, como quando não há lata aberta.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Fechada — devolve a lata, com closedAt"),
+            @ApiResponse(responseCode = "404", description = "Não há lata aberta do SKU (OPEN_PACKAGE_NOT_FOUND), ou depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/open-packages/{sku}/close")
+    @PreAuthorize("hasAnyAuthority('PDV_COMANDA_MANAGE','ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<OpenPackageResponseDTO> finishOpenPackage(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody ReplaceOpenPackageRequest request, Authentication authentication) {
+        OpenPackage finished = estoqueUseCase.finishOpenPackage(sku, request.getWarehouseCode(),
+                authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.OPEN_PACKAGE_FINISHED, authentication.getName(),
+                Map.of("sku", sku, "warehouseCode", request.getWarehouseCode(), "uses", finished.uses())));
+        return ResponseEntity.ok(toResponse(finished, request.getWarehouseCode()));
+    }
+
+    @Operation(summary = "Rendimento real das essências (EST-F037)",
+            description = "Por sabor (SKU), as latas **fechadas** no período (por `closedAt`; sem `from`/`to`, "
+                    + "tudo) com ao menos um uso — a lata reposta logo depois de aberta, por engano, "
+                    + "distorceria a média. `estimate` é o `sessionsPerUnit` atual do produto.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "400", description = "from depois de to", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/open-packages/yield")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','PDV_COMANDA_MANAGE')")
+    public ResponseEntity<List<OpenPackageYieldResponseDTO>> openPackageYield(
+            @RequestParam @NotBlank @Size(min = 2, max = 50) String warehouseCode,
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("from não pode ser depois de to");
+        }
+        return ResponseEntity.ok(estoqueUseCase.openPackageYield(warehouseCode, from, to).stream()
+                .map(y -> new OpenPackageYieldResponseDTO(y.sku(), y.productName(), y.closedCount(),
+                        y.avgSessions(), y.totalSessions(), y.estimate()))
+                .toList());
+    }
+
     // ── Embalagem (EST-F032) ─────────────────────────────────────────────────────────────────
 
     @Operation(summary = "Liga um SKU à embalagem que o contém (EST-F032)",
@@ -1162,7 +1214,10 @@ public class EstoqueController {
                     + "agora tiraria uma segunda. Daí em diante segue o ciclo normal: quando esgota, "
                     + "a próxima sessão abre outra com `SAIDA` de 1.\n\n"
                     + "Se já houver lata aberta do SKU no depósito, responde `409 "
-                    + "OPEN_PACKAGE_ALREADY_OPEN`: para trocar, use `/replace`.")
+                    + "OPEN_PACKAGE_ALREADY_OPEN`: para trocar, use `/replace`.\n\n"
+                    + "EST-F040 — opcionais: `openedAt` (dia da abertura, padrão hoje) e `withdraw` "
+                    + "(`true` = era uma lata fechada aberta agora: dá `SAIDA` de 1 na mesma transação; "
+                    + "sem saldo responde `400 INSUFFICIENT_STOCK` e não cadastra).")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Cadastrada — devolve o contador"),
             @ApiResponse(responseCode = "400", description = "`usesRemaining` fora da lata (`OPEN_PACKAGE_INVALID_USES`), ou SKU não é vendido por sessão", content = @Content),
@@ -1175,13 +1230,14 @@ public class EstoqueController {
     public ResponseEntity<OpenPackageResponseDTO> registerOpenPackage(
             @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
             @Valid @RequestBody RegisterOpenPackageRequest request, Authentication authentication) {
+        boolean withdraw = Boolean.TRUE.equals(request.getWithdraw());
         OpenPackage registered = estoqueUseCase.registerOpenPackage(sku, request.getWarehouseCode(),
-                request.getUsesRemaining(), authentication.getName());
+                request.getUsesRemaining(), request.getOpenedAt(), withdraw, authentication.getName());
         // Única entrada no contador que não passa por stock_movement: sem este evento, nada diria
         // quem declarou que a lata tinha N sessões.
         publisher.publishEvent(AuditEvent.of(EventType.OPEN_PACKAGE_REGISTERED, authentication.getName(),
                 Map.of("sku", sku, "warehouseCode", request.getWarehouseCode(),
-                        "usesRemaining", request.getUsesRemaining())));
+                        "usesRemaining", request.getUsesRemaining(), "withdraw", withdraw)));
         // A URI é a da leitura: GET /open-packages/{sku}?warehouseCode= devolve esta mesma lata.
         return ResponseEntity.created(URI.create("/estoque/open-packages/" + sku + "?warehouseCode="
                         + request.getWarehouseCode()))
@@ -1208,6 +1264,8 @@ public class EstoqueController {
         dto.setExhausted(open.isExhausted());
         dto.setOpenedAt(open.openedAt());
         dto.setOpenedBy(open.openedBy());
+        dto.setClosedAt(open.closedAt());
+        dto.setCloseReason(open.closeReason() == null ? null : open.closeReason().name());
         return dto;
     }
 
@@ -1251,6 +1309,63 @@ public class EstoqueController {
         return ResponseEntity.created(URI.create("/estoque/stock-balance?sku=" + request.getToSku()
                         + "&warehouseCode=" + request.getWarehouseCode()))
                 .body(response);
+    }
+
+    @Operation(summary = "Transfere um SKU entre depósitos, a preço de custo (EST-F039)",
+            description = "Uma `SAIDA` na origem e uma `ENTRADA` no destino na **mesma transação** — ex.: o "
+                    + "Salão trazendo latas de essência da loja. Não gera venda, pedido, caixa nem fluxo de "
+                    + "caixa. O custo unitário é o custo médio do SKU na origem (sem ele, o `costPrice` do "
+                    + "cadastro) e vai na `ENTRADA`, formando o custo médio do destino. As duas pontas guardam "
+                    + "o depósito do outro lado e o motivo com a seta (`→ SALAO` / `← PRINCIPAL`).\n\n"
+                    + "A saída não abre embalagem pai, e SKU com controle de lote ainda não é aceito.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Transferido — os dois saldos e o custo"),
+            @ApiResponse(responseCode = "400", description = "`SAME_WAREHOUSE_TRANSFER`, `PARENT_NOT_SELLABLE`, "
+                    + "`LOT_TRACKED_TRANSFER_UNSUPPORTED`, `INSUFFICIENT_STOCK` (nada é movimentado) ou payload "
+                    + "inválido", content = @Content),
+            @ApiResponse(responseCode = "404", description = "`WAREHOUSE_NOT_FOUND` / `PRODUCT_NOT_FOUND`", content = @Content),
+            @ApiResponse(responseCode = "409", description = "`WAREHOUSE_INACTIVE` (destino desativado)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/transfers")
+    @PreAuthorize("hasAuthority('ESTOQUE_STOCK_MANAGE')")
+    public ResponseEntity<StockTransferResponseDTO> transferStock(
+            @Valid @RequestBody StockTransferRequest request, Authentication authentication) {
+        EstoqueUseCase.StockTransferResult result = estoqueUseCase.transferStock(request.getSku(),
+                request.getFromWarehouseCode(), request.getToWarehouseCode(), request.getQuantity(),
+                request.getReason(), authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.STOCK_TRANSFERRED, authentication.getName(),
+                Map.of("sku", request.getSku(), "fromWarehouseCode", request.getFromWarehouseCode(),
+                        "toWarehouseCode", request.getToWarehouseCode(), "quantity", request.getQuantity())));
+        return ResponseEntity.ok(new StockTransferResponseDTO(result.sku(), result.from().quantity(),
+                result.to().quantity(), result.unitCost(), result.totalCost()));
+    }
+
+    @Operation(summary = "Resumo das transferências para um depósito, a preço de custo (EST-F039)",
+            description = "Por SKU, o que entrou em `toWarehouseCode` por transferência no período (`from`/`to`, "
+                    + "datas inclusivas no fuso da loja; ausentes = sem limite): quantidade e custo. Com "
+                    + "`toWarehouseCode=SALAO`, é quanto o Salão consumiu de essência.")
+    @GetMapping("/transfers/summary")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','ESTOQUE_STOCK_MANAGE')")
+    public ResponseEntity<TransferSummaryResponseDTO> transferSummary(
+            @RequestParam @NotBlank @Size(min = 2, max = 50) String toWarehouseCode,
+            @RequestParam(required = false) java.time.LocalDate from,
+            @RequestParam(required = false) java.time.LocalDate to) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("from não pode ser depois de to");
+        }
+        java.time.ZoneId zona = java.time.ZoneId.of("America/Sao_Paulo");
+        List<TransferSummaryResponseDTO.Item> items = estoqueUseCase.transferSummary(toWarehouseCode,
+                        from == null ? null : from.atStartOfDay(zona).toInstant(),
+                        to == null ? null : to.plusDays(1).atStartOfDay(zona).toInstant().minusNanos(1))
+                .stream()
+                .map(l -> new TransferSummaryResponseDTO.Item(l.sku(), l.productName(), l.quantity(), l.totalCost()))
+                .toList();
+        BigDecimal totalQuantity = items.stream().map(TransferSummaryResponseDTO.Item::quantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCost = items.stream().map(TransferSummaryResponseDTO.Item::totalCost)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return ResponseEntity.ok(new TransferSummaryResponseDTO(items, totalQuantity, totalCost));
     }
 
     @Operation(summary = "Lista o histórico paginado de movimentações de estoque",

@@ -75,6 +75,7 @@ import static org.assertj.core.api.Assertions.tuple;
 class EstoqueRepositoryIT {
 
     @Autowired ProductRepositoryImpl productRepository;
+    @Autowired ProductJpaRepository productJpaRepository;
     @Autowired WarehouseRepositoryImpl warehouseRepository;
     @Autowired StockBalanceRepositoryImpl stockBalanceRepository;
     @Autowired StockMovementRepositoryImpl stockMovementRepository;
@@ -114,6 +115,33 @@ class EstoqueRepositoryIT {
                     assertThat(v.sku()).isEqualTo("RT-001-M");
                     assertThat(v.attributes()).containsExactly(new ProductAttribute("sabor", "menta"));
                 });
+    }
+
+    /**
+     * EST-C026 — variação com dois atributos (Modelo + Embalagem, o cigarro) vinha em dobro nas três
+     * consultas com JOIN FETCH: a lista de variações recebia uma linha por atributo.
+     */
+    @Test
+    void product_variacoesComDoisAtributos_naoVemRepetidasNasConsultasComFetch() {
+        Product saved = productRepository.save(Product.create("RT-CIG-001", "Marlboro", "cigarros",
+                List.of(ProductVariant.create("RT-CIG-001-GOLD-MACO", List.of(new ProductAttribute("Modelo", "Gold"),
+                                new ProductAttribute("Embalagem", "Maço")), null, "7892222222226"),
+                        ProductVariant.create("RT-CIG-001-GOLD-CART", List.of(new ProductAttribute("Modelo", "Gold"),
+                                new ProductAttribute("Embalagem", "Carteira")), null, null))));
+        flushAndClear();
+
+        assertThat(productRepository.findByAnySku("RT-CIG-001-GOLD-MACO")).isPresent().get()
+                .satisfies(p -> {
+                    assertThat(p.variants()).extracting(ProductVariant::sku)
+                            .containsExactlyInAnyOrder("RT-CIG-001-GOLD-MACO", "RT-CIG-001-GOLD-CART");
+                    assertThat(p.variants()).allSatisfy(v -> assertThat(v.attributes()).hasSize(2));
+                });
+        flushAndClear();
+        assertThat(productRepository.findByBarcode("7892222222226")).isPresent().get()
+                .satisfies(p -> assertThat(p.variants()).hasSize(2));
+        flushAndClear();
+        assertThat(productJpaRepository.findAllByIdsWithVariants(List.of(saved.id()))).singleElement()
+                .satisfies(e -> assertThat(e.getVariants()).hasSize(2));
     }
 
     @Test
@@ -422,6 +450,22 @@ class EstoqueRepositoryIT {
         assertThat(reloaded.featured()).isTrue();
         assertThat(reloaded.displayOrder()).isEqualTo(3);
         assertThat(reloaded.active()).isTrue();
+    }
+
+    /** PDV-F045 — a marcação de cigarros persiste, e findCigarette traz as marcadas, ativas ou não. */
+    @Test
+    void category_cigarette_roundTripEFindCigarette() {
+        Category cig = categoryRepository.save(Category.create("CatCig Cigarros", false, 0, true));
+        Category inativa = categoryRepository.save(Category.create("CatCig Palheiros", false, 0, true)
+                .withActive(false));
+        Category comum = categoryRepository.save(Category.create("CatCig Isqueiros"));
+        flushAndClear();
+
+        assertThat(categoryRepository.findById(cig.id()).orElseThrow().cigarette()).isTrue();
+        assertThat(categoryRepository.findById(comum.id()).orElseThrow().cigarette()).isFalse();
+        assertThat(categoryRepository.findCigarette()).extracting(Category::id)
+                .contains(cig.id(), inativa.id())
+                .doesNotContain(comum.id());
     }
 
     @Test

@@ -241,9 +241,18 @@ public interface EstoqueUseCase {
      * DTO. O próprio comando pode vir nulo — é o caso de quem não mexe em nada disso.</p>
      */
     record TableSessionCommand(Boolean availableForTable, Boolean sessionProduct, Integer sessionsPerUnit,
-            BigDecimal openRoshPrice) {
+            BigDecimal openRoshPrice, Long sessionTierId, boolean clearSessionTier) {
 
         public static final TableSessionCommand EMPTY = new TableSessionCommand(null, null, null, null);
+
+        /**
+         * Sem a faixa da sessão (PDV-F048). {@code sessionTierId} nulo no update é "não mexer";
+         * apagar a faixa é {@code clearSessionTier}, porque nulo não distingue as duas intenções.
+         */
+        public TableSessionCommand(Boolean availableForTable, Boolean sessionProduct, Integer sessionsPerUnit,
+                BigDecimal openRoshPrice) {
+            this(availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, null, false);
+        }
 
         /** Nunca devolve nulo — poupa o chamador de um {@code if} por campo. */
         public static TableSessionCommand orEmpty(TableSessionCommand command) {
@@ -514,9 +523,10 @@ public interface EstoqueUseCase {
     /**
      * Cria uma categoria. Lança {@link com.cernecommerce.core.domain.exception.estoque
      * .DuplicateCategoryNameException} se já existir uma com o mesmo nome — comparação sem
-     * diferenciar maiúsculas, para "Narguilé" e "narguilé" não virarem duas.
+     * diferenciar maiúsculas, para "Narguilé" e "narguilé" não virarem duas. {@code cigarette}
+     * (PDV-F045) marca a categoria de cigarros, vendida pela Central de cigarros do PDV.
      */
-    Category createCategory(String name, boolean featured, int displayOrder);
+    Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette);
 
     /**
      * Alteração parcial: campo nulo é mantido. Renomear <b>propaga</b> o novo nome para a coluna
@@ -526,7 +536,7 @@ public interface EstoqueUseCase {
      * @throws com.cernecommerce.core.domain.exception.estoque.CategoryNotFoundException se o id
      *         não existir.
      */
-    Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder);
+    Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette);
 
     /**
      * Ativa ou desativa uma categoria. Desativada, ela some da vitrine
@@ -707,10 +717,20 @@ public interface EstoqueUseCase {
      *        armadilha do open rosh: a linha da comanda chega com o SKU da variação (para saber
      *        qual essência sair do estoque), mas o valor cobrado é este, e não
      *        {@code pricing.effectivePrice()}. Nulo quando o produto não oferece consumo livre.
+     * @param sessionTierId faixa da sessão gravada na ficha do produto (PDV-F048), do SKU pai. É ela
+     *        que dá o preço da sessão com esta essência (PDV-F050). Nulo sem faixa.
      */
     record CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
             boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
-            boolean parentWithVariants) {
+            boolean parentWithVariants, Long sessionTierId) {
+
+        /** Forma sem {@code sessionTierId} (PDV-F050) — compatibilidade: produto sem faixa. */
+        public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
+                boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
+                boolean parentWithVariants) {
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, sessionsPerUnit, kit,
+                    parentWithVariants, null);
+        }
 
         /**
          * Forma sem {@code parentWithVariants} (PDV-F042) — compatibilidade: SKU tratado como
@@ -726,7 +746,7 @@ public interface EstoqueUseCase {
          * mesmo default da migration — disponível na mesa, não vendido por sessão, sem open rosh.
          */
         public CatalogSaleInfo(String productName, Pricing pricing) {
-            this(productName, pricing, true, false, null, null, false, false);
+            this(productName, pricing, true, false, null, null, false, false, null);
         }
 
         /**
@@ -735,7 +755,7 @@ public interface EstoqueUseCase {
          */
         public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
                 boolean sessionProduct, BigDecimal openRoshPrice) {
-            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, null, false, false);
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, null, false, false, null);
         }
 
         /**
@@ -761,10 +781,16 @@ public interface EstoqueUseCase {
      * <p>Quantidade fracionária é arredondada <b>para cima</b>: não existe meia lata aberta, e meia
      * sessão consome um uso inteiro.</p>
      *
+     * <p><b>EST-F038 — {@code warehouseCode} é só o padrão.</b> Havendo depósito do Salão
+     * ({@link WarehouseType#SALAO}) ativo, a lata é a dele, seja qual for o caixa da comanda; sem
+     * lata fechada lá, a sessão é recusada em vez de cair para o estoque da loja.</p>
+     *
      * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException
      *         se o SKU não for produto de sessão com {@code sessionsPerUnit} declarado.
      * @throws com.cernecommerce.core.domain.exception.estoque.InsufficientStockException se não
-     *         houver saldo para abrir a lata.
+     *         houver saldo para abrir a lata (sem Salão).
+     * @throws com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException se não
+     *         houver lata fechada do sabor no Salão para abrir.
      */
     OpenPackage consumeSession(String sku, String warehouseCode, BigDecimal quantity, String username);
 
@@ -777,6 +803,8 @@ public interface EstoqueUseCase {
      * criaria saldo que fisicamente não existe. Se não houver lata aberta — porque foi reposta
      * entre o lançamento e o cancelamento —, não faz nada: recusar o cancelamento por causa disso
      * deixaria a mesa presa por um detalhe de contabilidade de lata.</p>
+     *
+     * <p>Mesma resolução de depósito de {@link #consumeSession}: com Salão ativo, a lata é a dele.</p>
      */
     void releaseSession(String sku, String warehouseCode, BigDecimal quantity);
 
@@ -796,12 +824,43 @@ public interface EstoqueUseCase {
     OpenPackage replaceOpenPackage(String sku, String warehouseCode, String username);
 
     /**
+     * EST-F037 — "Acabou": fecha a lata em uso com {@code FINISHED}, <b>sem</b> abrir outra e sem
+     * baixa. A próxima sessão do sabor abre uma nova com {@code SAIDA} de 1.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException sem lata aberta
+     */
+    OpenPackage finishOpenPackage(String sku, String warehouseCode, String username);
+
+    /**
+     * EST-F037 — o rendimento real por sabor: as latas <b>fechadas</b> no período (por
+     * {@code closed_at}; limites nulos = sem limite) com ao menos um uso, agrupadas por SKU. A lata
+     * reposta logo depois de aberta, por engano, distorceria a média — por isso {@code uses > 0}.
+     *
+     * <p>EST-F038 — pedido o depósito do Salão, soma as latas de todos os depósitos: as fechadas
+     * antes de ele existir ficaram no caixa, e são elas que dão a média real.</p>
+     */
+    List<OpenPackageYield> openPackageYield(String warehouseCode, java.time.Instant from, java.time.Instant to);
+
+    /**
+     * @param avgSessions média de usos das latas fechadas, com uma casa
+     * @param estimate o {@code sessionsPerUnit} atual do produto; nulo se o cadastro não tem
+     */
+    record OpenPackageYield(String sku, String productName, long closedCount, BigDecimal avgSessions,
+            long totalSessions, Integer estimate) {
+    }
+
+    /**
      * Cadastra uma lata que <b>já estava aberta</b> antes de o sistema saber dela (EST-F033), com
      * as sessões que ela ainda rende — o inventário inicial das essências da mesa.
      *
-     * <p><b>Não baixa estoque</b>, ao contrário de abrir e repor: a lata saiu da prateleira antes,
-     * e baixar agora tiraria do saldo uma segunda lata que continua lacrada. Daqui em diante ela
-     * segue o ciclo normal — quando esgota, a próxima sessão abre outra com {@code SAIDA}.</p>
+     * <p><b>Por padrão não baixa estoque</b>, ao contrário de abrir e repor: a lata saiu da
+     * prateleira antes, e baixar agora tiraria do saldo uma segunda lata que continua lacrada. Daqui
+     * em diante ela segue o ciclo normal — quando esgota, a próxima sessão abre outra com
+     * {@code SAIDA}.</p>
+     *
+     * <p>EST-F040 — {@code withdraw} é a exceção: a lata era uma fechada do saldo, aberta agora sem
+     * passar pelo PDV. A {@code SAIDA} de 1 corre na mesma transação do cadastro; sem saldo, nada é
+     * cadastrado. {@code openedAt} (nulo = agora) é o dia da abertura, no fuso da loja.</p>
      *
      * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException
      *         se o SKU não for produto de sessão com {@code sessionsPerUnit} declarado.
@@ -809,8 +868,11 @@ public interface EstoqueUseCase {
      *         já houver lata aberta do SKU no depósito.
      * @throws com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException se
      *         {@code usesRemaining} não estiver entre 1 e {@code sessionsPerUnit}.
+     * @throws com.cernecommerce.core.domain.exception.estoque.InsufficientStockException com
+     *         {@code withdraw} e sem saldo para a baixa.
      */
-    OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining, String username);
+    OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining,
+            java.time.LocalDate openedAt, boolean withdraw, String username);
 
     /**
      * Liga {@code childSku} a uma embalagem (EST-F032): {@code parentSku} contém
@@ -852,11 +914,31 @@ public interface EstoqueUseCase {
      * A central de cigarros do PDV (PDV-F041): todo produto <b>ativo</b> com alguma embalagem ligada
      * (decisão do dono — não depende da categoria), cada um com as suas cadeias (uma por cor, da
      * carteira ao solto), e em cada nível o preço e o disponível no depósito. A venda continua sendo
-     * a do balcão; a quebra de embalagem é de EST-F032.
+     * a do balcão; a quebra de embalagem é de EST-F032. PDV-F045 — mais todo produto ativo de
+     * categoria de cigarros ({@code Category.cigarette}) sem embalagem: cada SKU vendável dele vira
+     * uma cadeia de um nível só.
      *
      * @throws com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException depósito desconhecido
      */
     List<PackagedFamily> listPackagedFamilies(String warehouseCode);
+
+    /**
+     * PDV-F045 — abre à mão {@code quantity} embalagens fechadas de {@code parentSku} (1 carteira em
+     * maços, 1 maço em soltos), na Central de cigarros: {@code SAIDA} do pai <b>sem</b> quebrar o nível
+     * de cima, {@code ENTRADA} de {@code quantity × unitsPerParent} no filho com o custo médio do pai
+     * dividido pelo fator, e {@code STOCK_PACKAGE_BROKEN} com o autor. Numa transação só.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException o SKU não contém nada
+     * @throws com.cernecommerce.core.domain.exception.estoque.NotEnoughClosedPackagingException não há
+     *         {@code quantity} fechada do pai disponível
+     */
+    OpenedPackaging openPackagingManually(String parentSku, BigDecimal quantity, String warehouseCode,
+            String username);
+
+    /** O saldo disponível dos dois níveis depois de abrir (PDV-F045). */
+    record OpenedPackaging(String parentSku, BigDecimal parentAvailable, String childSku,
+            BigDecimal childAvailable) {
+    }
 
     /** Um produto da central de cigarros (PDV-F041) e as suas cadeias de embalagem. */
     record PackagedFamily(String productSku, String productName, List<PackagedLine> lines) {
@@ -958,9 +1040,14 @@ public interface EstoqueUseCase {
     Warehouse setWarehouseActive(String code, boolean active);
 
     /**
-     * Cria um depósito (loja física ou e-commerce). Lança
+     * Cria um depósito (loja física, e-commerce ou Salão). Lança
      * {@link com.cernecommerce.core.domain.exception.estoque.DuplicateWarehouseCodeException}
      * se o código já existir.
+     *
+     * <p>EST-F038 — criar o depósito do Salão é o que liga o consumo de sessão por ele: só pode
+     * haver um ativo ({@code SalaoWarehouseAlreadyExistsException}), e na mesma transação as latas
+     * em uso de todos os depósitos passam para ele (ver {@code OpenPackageRepository.moveAllOpenTo}).
+     * Reativar um Salão desativado faz o mesmo.</p>
      */
     Warehouse createWarehouse(String code, String name, WarehouseType type);
 
@@ -1065,6 +1152,51 @@ public interface EstoqueUseCase {
      * destino. Devolver os dois evita o {@code GET} extra que a tela faria para mostrar o resultado.
      */
     record StockConversionResult(StockBalance from, StockBalance to) {
+    }
+
+    /**
+     * EST-F039 — transfere {@code quantity} unidades de um SKU entre depósitos, <b>a preço de
+     * custo</b>: uma {@code SAIDA} na origem e uma {@code ENTRADA} no destino na mesma transação. O
+     * caso que a motivou é o Salão "comprando" latas da loja: é só movimento de estoque, sem venda,
+     * pedido, caixa ou fluxo de caixa.
+     *
+     * <p>O custo unitário é o custo médio do SKU na origem; sem ele, o {@code costPrice} do
+     * cadastro. Só a {@code ENTRADA} o carrega (EST-F007: custo só se aplica a entrada), e é ela
+     * que forma o custo médio do destino — o mesmo molde da quebra de embalagem (EST-F032).</p>
+     *
+     * <p>Sem {@code MovementType} novo, como em {@link #convertStock}; as duas pontas guardam o
+     * depósito do outro lado ({@code counterpart_warehouse_id}) e o motivo com a seta para ele.
+     * A saída não abre embalagem pai: transferir o que não está na prateleira é erro de quem pede.</p>
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.SameWarehouseTransferException origem = destino
+     * @throws com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException base de
+     *         produto com variações (não vendável)
+     * @throws com.cernecommerce.core.domain.exception.estoque.LotTrackedTransferUnsupportedException
+     *         produto com controle de lote
+     * @throws com.cernecommerce.core.domain.exception.estoque.InactiveWarehouseException destino desativado
+     * @throws com.cernecommerce.core.domain.exception.estoque.InsufficientStockException saldo da
+     *         origem não cobre — e então nada é movimentado
+     */
+    StockTransferResult transferStock(String sku, String fromWarehouseCode, String toWarehouseCode,
+            int quantity, String reason, String username);
+
+    /**
+     * @param unitCost custo unitário levado ao destino; nulo se o SKU não tem custo nenhum
+     * @param totalCost {@code unitCost × quantidade}; nulo junto com {@code unitCost}
+     */
+    record StockTransferResult(String sku, StockBalance from, StockBalance to, BigDecimal unitCost,
+            BigDecimal totalCost) {
+    }
+
+    /**
+     * EST-F039 — o que entrou em {@code toWarehouseCode} por transferência no período, por SKU, a
+     * preço de custo. É "quanto o Salão consumiu de essência". Limites nulos = sem limite.
+     */
+    List<TransferSummaryLine> transferSummary(String toWarehouseCode, java.time.Instant from,
+            java.time.Instant to);
+
+    /** @param totalCost soma de quantidade × custo; transferências sem custo contam zero */
+    record TransferSummaryLine(String sku, String productName, BigDecimal quantity, BigDecimal totalCost) {
     }
 
     /**

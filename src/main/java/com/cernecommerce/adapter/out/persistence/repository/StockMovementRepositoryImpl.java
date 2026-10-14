@@ -14,6 +14,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +43,7 @@ public class StockMovementRepositoryImpl implements StockMovementRepository {
         entity.setLotCode(movement.lotCode());
         entity.setUnitCost(movement.unitCost());
         entity.setGoodsReceiptId(movement.goodsReceiptId());
+        entity.setCounterpartWarehouseId(movement.counterpartWarehouseId());
         return toDomain(stockMovementJpaRepository.save(entity));
     }
 
@@ -111,9 +113,17 @@ public class StockMovementRepositoryImpl implements StockMovementRepository {
                 .toList();
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<TransferredLine> transferredInto(Long warehouseId, Instant from, Instant to) {
+        return stockMovementJpaRepository.transferredInto(warehouseId, from, to).stream()
+                .map(row -> new TransferredLine((String) row[0], (BigDecimal) row[1], (BigDecimal) row[2]))
+                .toList();
+    }
+
     private StockMovement toDomain(StockMovementEntity e) {
         return StockMovement.of(e.getId(), e.getSku(), e.getWarehouseId(), MovementType.valueOf(e.getType()),
                 e.getQuantity(), e.getReason(), e.getUsername(), e.getCreatedAt(), e.getLotCode(),
-                e.getUnitCost(), e.getGoodsReceiptId());
+                e.getUnitCost(), e.getGoodsReceiptId(), e.getCounterpartWarehouseId());
     }
 }

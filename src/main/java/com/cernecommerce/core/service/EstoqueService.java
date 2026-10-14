@@ -4,6 +4,13 @@ import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException;
+import com.cernecommerce.core.domain.exception.pdv.SessionTierNotFoundException;
+import com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException;
+import com.cernecommerce.core.ports.out.pdv.SessionMenuRepository;
+import com.cernecommerce.core.domain.exception.estoque.LotTrackedTransferUnsupportedException;
+import com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException;
+import com.cernecommerce.core.domain.exception.estoque.SalaoWarehouseAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.estoque.SameWarehouseTransferException;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
 import com.cernecommerce.core.domain.exception.estoque.BrandNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.CategoryHasProductsException;
@@ -48,6 +55,7 @@ import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundExcept
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
 import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.NotEnoughClosedPackagingException;
 import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException;
 import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository;
@@ -167,6 +175,12 @@ public class EstoqueService implements EstoqueUseCase {
     private final AttributeTypeRepository attributeTypeRepository;
     private final ReplenishmentListRepository replenishmentListRepository;
     private final OpenPackageRepository openPackageRepository;
+    private final SessionMenuRepository sessionMenuRepository;
+    /**
+     * PDV-F052 — {@code estoque.produto.faixa-sessao-obrigatoria}: essência de sessão sem faixa é
+     * recusada na ficha. Desligada até os produtos antigos ganharem faixa (a faixa dá o preço, PDV-F050).
+     */
+    private final boolean sessionTierRequired;
     private final ManagerNotificationPort managerNotifications;
 
     private final AuditEventPublisherPort auditEvents;
@@ -184,6 +198,55 @@ public class EstoqueService implements EstoqueUseCase {
             ReplenishmentListRepository replenishmentListRepository,
             OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
             AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository) {
+        this(productRepository, warehouseRepository, stockBalanceRepository, stockMovementRepository,
+                reorderPointRepository, stockIntegrityRepository, stockCountRepository, stockReservationRepository,
+                notificationUseCase, userRepository, afterCommitExecutor, defaultReservationTtl,
+                kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository, brandRepository,
+                attributeTypeRepository, replenishmentListRepository, openPackageRepository, managerNotifications,
+                auditEvents, skuPackagingRepository, null);
+    }
+
+    /**
+     * Com o cardápio de sessão, para validar a faixa sugerida no produto (PDV-F048). Nulo nos testes
+     * que não tocam nela: a FK da V159 continua barrando faixa inexistente.
+     */
+    public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
+            StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
+            ReorderPointRepository reorderPointRepository, StockIntegrityRepository stockIntegrityRepository,
+            StockCountRepository stockCountRepository, StockReservationRepository stockReservationRepository,
+            NotificationUseCase notificationUseCase, UserRepository userRepository,
+            AfterCommitExecutor afterCommitExecutor, Duration defaultReservationTtl,
+            KitComponentRepository kitComponentRepository, StockLotRepository stockLotRepository,
+            SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
+            BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
+            ReplenishmentListRepository replenishmentListRepository,
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
+            AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository,
+            SessionMenuRepository sessionMenuRepository) {
+        this(productRepository, warehouseRepository, stockBalanceRepository, stockMovementRepository,
+                reorderPointRepository, stockIntegrityRepository, stockCountRepository, stockReservationRepository,
+                notificationUseCase, userRepository, afterCommitExecutor, defaultReservationTtl,
+                kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository, brandRepository,
+                attributeTypeRepository, replenishmentListRepository, openPackageRepository, managerNotifications,
+                auditEvents, skuPackagingRepository, sessionMenuRepository, false);
+    }
+
+    /** Com a trava da faixa obrigatória na ficha da essência de sessão (PDV-F052). */
+    public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
+            StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
+            ReorderPointRepository reorderPointRepository, StockIntegrityRepository stockIntegrityRepository,
+            StockCountRepository stockCountRepository, StockReservationRepository stockReservationRepository,
+            NotificationUseCase notificationUseCase, UserRepository userRepository,
+            AfterCommitExecutor afterCommitExecutor, Duration defaultReservationTtl,
+            KitComponentRepository kitComponentRepository, StockLotRepository stockLotRepository,
+            SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
+            BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
+            ReplenishmentListRepository replenishmentListRepository,
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
+            AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository,
+            SessionMenuRepository sessionMenuRepository, boolean sessionTierRequired) {
+        this.sessionMenuRepository = sessionMenuRepository;
+        this.sessionTierRequired = sessionTierRequired;
         this.stockReservationRepository = stockReservationRepository;
         this.defaultReservationTtl = defaultReservationTtl;
         this.productRepository = productRepository;
@@ -296,7 +359,9 @@ public class EstoqueService implements EstoqueUseCase {
                 .withSessionProduct(Boolean.TRUE.equals(mesa.sessionProduct()))
                 .withSessionsPerUnit(mesa.sessionsPerUnit())
                 .withOpenRoshPrice(mesa.openRoshPrice())
+                .withSessionTierId(requireSessionTier(mesa.sessionTierId()))
                 .withStatus(resolvedStatus);
+        requireTierWhenSessionProduct(product);
         Product saved = productRepository.save(product);
         // Mesma transação da criação — se a receita falhar validação em algum item, o rollback
         // desfaz o produto também, fechando a janela de "kit órfão sem receita" do fluxo antigo
@@ -387,10 +452,14 @@ public class EstoqueService implements EstoqueUseCase {
             updated = updated.withPricing(current.pricing().withPatch(pricing.costPrice(), pricing.markupPercent(),
                     pricing.salePrice(), pricing.originalPrice(), pricing.causeAmount()));
         }
-        if (barcode != null && !barcode.equals(current.barcode()) && productRepository.existsByBarcode(barcode)) {
-            throw new DuplicateBarcodeException(barcode);
-        }
-        if (barcode != null) {
+        // PDV-F045 — vazio LIMPA o código: na conversão de um cigarro antigo o código sai do produto
+        // e vai para o maço. Nulo continua "não mexer".
+        if (barcode != null && barcode.isEmpty()) {
+            updated = updated.withBarcode(null);
+        } else if (barcode != null) {
+            if (!barcode.equals(current.barcode()) && productRepository.existsByBarcode(barcode)) {
+                throw new DuplicateBarcodeException(barcode);
+            }
             updated = updated.withBarcode(barcode);
         }
         if (unit != null) {
@@ -421,6 +490,14 @@ public class EstoqueService implements EstoqueUseCase {
         if (mesa.openRoshPrice() != null) {
             updated = updated.withOpenRoshPrice(mesa.openRoshPrice());
         }
+        // PDV-F048 — limpar vence: pedir as duas coisas juntas é contraditório, e apagar é o que
+        // não deixa dado errado para trás.
+        if (mesa.clearSessionTier()) {
+            updated = updated.withSessionTierId(null);
+        } else if (mesa.sessionTierId() != null) {
+            updated = updated.withSessionTierId(requireSessionTier(mesa.sessionTierId()));
+        }
+        requireTierWhenSessionProduct(updated);
         return productRepository.save(updated);
     }
 
@@ -554,16 +631,17 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional
-    public Category createCategory(String name, boolean featured, int displayOrder) {
+    public Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette) {
         categoryRepository.findByName(name).ifPresent(existing -> {
             throw new DuplicateCategoryNameException(name);
         });
-        return categoryRepository.save(Category.create(name, featured, displayOrder));
+        return categoryRepository.save(Category.create(name, featured, displayOrder, cigarette));
     }
 
     @Override
     @Transactional
-    public Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder) {
+    public Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder,
+            Boolean cigarette) {
         Category current = categoryRepository.findById(id)
                 .orElseThrow(() -> new CategoryNotFoundException(id));
         if (name != null) {
@@ -575,7 +653,7 @@ public class EstoqueService implements EstoqueUseCase {
                         throw new DuplicateCategoryNameException(name);
                     });
         }
-        Category updated = categoryRepository.save(current.withDetails(name, featured, displayOrder));
+        Category updated = categoryRepository.save(current.withDetails(name, featured, displayOrder, cigarette));
         if (name != null && !name.equals(current.name())) {
             // Propaga para a coluna denormalizada dos produtos vinculados. Sem isso a vitrine
             // passaria a exibir o nome antigo e a ordenar pelo novo.
@@ -897,7 +975,7 @@ public class EstoqueService implements EstoqueUseCase {
         boolean parentWithVariants = product.sku().equals(sku) && !product.variants().isEmpty();
         return new CatalogSaleInfo(product.name(), pricing, product.availableForTable(),
                 product.sessionProduct(), product.openRoshPrice(), product.sessionsPerUnit(),
-                product.isKit(), parentWithVariants);
+                product.isKit(), parentWithVariants, product.sessionTierId());
     }
 
 
@@ -1014,7 +1092,17 @@ public class EstoqueService implements EstoqueUseCase {
     public Warehouse updateWarehouse(String code, String name, WarehouseType type) {
         Warehouse current = warehouseRepository.findByCode(code)
                 .orElseThrow(() -> new WarehouseNotFoundException(code));
-        return warehouseRepository.save(current.withDetails(name, type));
+        Warehouse updated = current.withDetails(name, type);
+        boolean becameSalao = updated.active() && updated.type() == WarehouseType.SALAO
+                && current.type() != WarehouseType.SALAO;
+        if (becameSalao) {
+            requireNoOtherActiveSalao(code);
+        }
+        Warehouse saved = warehouseRepository.save(updated);
+        if (becameSalao) {
+            moveOpenPackagesToSalao(saved);
+        }
+        return saved;
     }
 
     @Override
@@ -1022,7 +1110,15 @@ public class EstoqueService implements EstoqueUseCase {
     public Warehouse setWarehouseActive(String code, boolean active) {
         Warehouse current = warehouseRepository.findByCode(code)
                 .orElseThrow(() -> new WarehouseNotFoundException(code));
-        return warehouseRepository.save(current.withActive(active));
+        boolean salaoReactivated = active && !current.active() && current.type() == WarehouseType.SALAO;
+        if (salaoReactivated) {
+            requireNoOtherActiveSalao(code);
+        }
+        Warehouse saved = warehouseRepository.save(current.withActive(active));
+        if (salaoReactivated) {
+            moveOpenPackagesToSalao(saved);
+        }
+        return saved;
     }
 
     @Override
@@ -1031,7 +1127,51 @@ public class EstoqueService implements EstoqueUseCase {
         warehouseRepository.findByCode(code).ifPresent(w -> {
             throw new DuplicateWarehouseCodeException(code);
         });
-        return warehouseRepository.save(Warehouse.create(code, name, type));
+        if (type == WarehouseType.SALAO) {
+            requireNoOtherActiveSalao(code);
+        }
+        Warehouse saved = warehouseRepository.save(Warehouse.create(code, name, type));
+        if (type == WarehouseType.SALAO) {
+            moveOpenPackagesToSalao(saved);
+        }
+        return saved;
+    }
+
+    /**
+     * PDV-F052 — com a trava ligada, essência de sessão sem faixa não é gravada: sem faixa, a sessão
+     * com ela não tem preço (PDV-F050). Vale para o estado final do POST/PATCH.
+     */
+    private void requireTierWhenSessionProduct(Product product) {
+        if (sessionTierRequired && product.sessionProduct() && product.sessionTierId() == null) {
+            throw new SessionTierRequiredException(product.sku());
+        }
+    }
+
+    /** PDV-F048 — a faixa sugerida tem de existir; nulo passa (produto sem faixa). */
+    private Long requireSessionTier(Long sessionTierId) {
+        if (sessionTierId != null && sessionMenuRepository != null
+                && sessionMenuRepository.findTierById(sessionTierId).isEmpty()) {
+            throw new SessionTierNotFoundException(sessionTierId);
+        }
+        return sessionTierId;
+    }
+
+    /** EST-F038 — um Salão ativo por vez; a corrida é barrada pelo índice parcial da V157. */
+    private void requireNoOtherActiveSalao(String code) {
+        warehouseRepository.findActiveByType(WarehouseType.SALAO)
+                .filter(existing -> !existing.code().equals(code))
+                .ifPresent(existing -> {
+                    throw new SalaoWarehouseAlreadyExistsException(existing.code());
+                });
+    }
+
+    /**
+     * EST-F038 — ligar o Salão leva para ele as latas em uso: a partir daqui é dele que a sessão
+     * consome, e uma lata deixada no caixa nunca mais receberia uso. Sem movimento de estoque.
+     */
+    private void moveOpenPackagesToSalao(Warehouse salao) {
+        int moved = openPackageRepository.moveAllOpenTo(salao.id(), Instant.now());
+        log.info("Depósito do Salão {} ligado: {} lata(s) aberta(s) movida(s) para ele", salao.code(), moved);
     }
 
     @Override
@@ -1170,6 +1310,66 @@ public class EstoqueService implements EstoqueUseCase {
         return new StockConversionResult(from, to);
     }
 
+    /**
+     * EST-F039 — ver o javadoc de {@link EstoqueUseCase#transferStock}. Mesmo idioma de
+     * {@link #convertStock}: a SAIDA primeiro, porque é o lado que pode faltar, e as duas pontas por
+     * autoinvocação, na transação aberta aqui.
+     */
+    @Override
+    @Transactional
+    public StockTransferResult transferStock(String sku, String fromWarehouseCode, String toWarehouseCode,
+            int quantity, String reason, String username) {
+        if (fromWarehouseCode != null && fromWarehouseCode.equals(toWarehouseCode)) {
+            throw new SameWarehouseTransferException(fromWarehouseCode);
+        }
+        if (quantity < 1) {
+            throw new IllegalArgumentException("quantidade da transferência deve ser maior que zero");
+        }
+        Product product = productRepository.findByAnySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (product.isKit()) {
+            throw new KitDirectAdjustmentException(sku);
+        }
+        if (!product.isSellable(sku)) {
+            throw new ParentNotSellableException(sku);
+        }
+        if (product.lotTracked()) {
+            throw new LotTrackedTransferUnsupportedException(sku);
+        }
+        Warehouse from = requireWarehouse(fromWarehouseCode);
+        Warehouse to = requireWarehouse(toWarehouseCode);
+        // Conferido antes da SAIDA: a ENTRADA também barraria, mas depois de uma escrita desfeita
+        // e com a mensagem apontando para o lado errado.
+        if (!to.active()) {
+            throw new InactiveWarehouseException(to.code());
+        }
+
+        BigDecimal qty = BigDecimal.valueOf(quantity);
+        BigDecimal unitCost = stockBalanceRepository.findBySkuAndWarehouseId(sku, from.id())
+                .map(StockBalance::averageCost)
+                .filter(cost -> cost.signum() > 0)
+                .orElseGet(() -> product.effectivePricingFor(sku).costPrice());
+        StockBalance fromBalance = applyMovement(sku, from.code(), MovementType.SAIDA, qty,
+                reason + " → " + to.code(), username, null, null, null, null, false, to.id());
+        StockBalance toBalance = applyMovement(sku, to.code(), MovementType.ENTRADA, qty,
+                reason + " ← " + from.code(), username, null, null, unitCost, null, true, from.id());
+        return new StockTransferResult(sku, fromBalance, toBalance, unitCost,
+                unitCost == null ? null : unitCost.multiply(qty).setScale(Money.MONEY_SCALE, Money.ROUNDING));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TransferSummaryLine> transferSummary(String toWarehouseCode, Instant from, Instant to) {
+        Warehouse warehouse = requireWarehouse(toWarehouseCode);
+        return stockMovementRepository.transferredInto(warehouse.id(),
+                        from == null ? Instant.EPOCH : from, to == null ? YIELD_UPPER_BOUND : to)
+                .stream()
+                .map(row -> new TransferSummaryLine(row.sku(),
+                        productRepository.findByAnySku(row.sku()).map(Product::name).orElse(row.sku()),
+                        row.quantity(), row.totalCost().setScale(Money.MONEY_SCALE, Money.ROUNDING)))
+                .toList();
+    }
+
     // ── Lata aberta (EST-F027) ───────────────────────────────────────────────
     //
     // A conversão acima (EST-F025) e a lata resolvem o mesmo problema físico por caminhos
@@ -1187,19 +1387,16 @@ public class EstoqueService implements EstoqueUseCase {
         if (!product.sessionProduct() || product.sessionsPerUnit() == null || product.sessionsPerUnit() <= 0) {
             throw new NotAPackagedSessionProductException(sku);
         }
-        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
-                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        Warehouse warehouse = sessionWarehouse(warehouseCode);
         int sessions = sessionsFor(quantity);
 
         OpenPackage current = openPackageRepository.findOpenForUpdate(sku, warehouse.id()).orElse(null);
-        // A lata esgotada continua aberta até a sessão SEGUINTE — é ela que o atendente está
-        // usando até o fim, e é o que permite a tela mostrar "5 de 5". Quem a fecha é este ponto.
-        if (current != null && current.isExhausted()) {
-            openPackageRepository.save(current.closed(OpenPackageCloseReason.EXHAUSTED, Instant.now()));
-            current = null;
-        }
+        // EST-F037 — a lata NÃO fecha mais aqui ao atingir sessionsPerUnit: é estimativa, e a lata
+        // segue recebendo sessões até o atendente marcar "Acabou" ou repor.
         if (current == null) {
-            current = openPackage(sku, warehouse, product.sessionsPerUnit(), username);
+            current = warehouse.type() == WarehouseType.SALAO
+                    ? openSalaoPackage(sku, warehouse, product.sessionsPerUnit(), username)
+                    : openPackage(sku, warehouse, product.sessionsPerUnit(), username);
         }
         return openPackageRepository.save(current.withUses(sessions));
     }
@@ -1207,8 +1404,7 @@ public class EstoqueService implements EstoqueUseCase {
     @Override
     @Transactional
     public void releaseSession(String sku, String warehouseCode, BigDecimal quantity) {
-        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
-                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        Warehouse warehouse = sessionWarehouse(warehouseCode);
         openPackageRepository.findOpenForUpdate(sku, warehouse.id())
                 .ifPresent(open -> openPackageRepository.save(open.withoutUses(sessionsFor(quantity))));
     }
@@ -1234,9 +1430,78 @@ public class EstoqueService implements EstoqueUseCase {
         return openPackageRepository.save(replacement);
     }
 
+    /** EST-F037 — "Acabou". Ver {@link EstoqueUseCase#finishOpenPackage}. */
     @Override
     @Transactional
-    public OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining, String username) {
+    public OpenPackage finishOpenPackage(String sku, String warehouseCode, String username) {
+        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
+                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        // Pela trava, como toda escrita na lata (EST-C025): fechar no meio de um lançamento do mesmo
+        // sabor faria a sessão cair numa lata já fechada.
+        OpenPackage current = openPackageRepository.findOpenForUpdate(sku, warehouse.id())
+                .orElseThrow(() -> new OpenPackageNotFoundException(sku, warehouseCode));
+        return openPackageRepository.save(current.closed(OpenPackageCloseReason.FINISHED, Instant.now()));
+    }
+
+    /**
+     * EST-F038 — de onde a sessão consome: o Salão ativo, se houver; senão o depósito do caixa. Uma
+     * leitura por sessão lançada, e por isso sem cache: desligar o Salão tem de valer na hora.
+     */
+    private Warehouse sessionWarehouse(String fallbackCode) {
+        return warehouseRepository.findActiveByType(WarehouseType.SALAO)
+                .orElseGet(() -> requireWarehouse(fallbackCode));
+    }
+
+    /**
+     * EST-F038 — abre a lata do Salão. Conferido contra o disponível antes da SAIDA, para a falta
+     * ser o {@code SALAO_SEM_ESTOQUE} que o PDV explica ao atendente (e não o genérico), e sem
+     * quebra de embalagem: o Salão só tem o que a loja transferiu.
+     */
+    private OpenPackage openSalaoPackage(String sku, Warehouse salao, int sessionsPerUnit, String username) {
+        BigDecimal closed = stockBalanceRepository.findBySkuAndWarehouseId(sku, salao.id())
+                .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+        if (closed.compareTo(BigDecimal.ONE) < 0) {
+            throw new SalaoSemEstoqueException(sku);
+        }
+        applyMovement(sku, salao.code(), MovementType.SAIDA, BigDecimal.ONE,
+                "Abertura de lata (" + sessionsPerUnit + " sessões)", username, null, null, null, null, false, null);
+        return OpenPackage.open(sku, salao.id(), sessionsPerUnit, username, Instant.now());
+    }
+
+    /** Teto do período aberto no rendimento — o Postgres aceita, e evita parâmetro nulo (EST-C024). */
+    private static final Instant YIELD_UPPER_BOUND = Instant.parse("9999-12-31T23:59:59Z");
+
+    /** Fuso da loja: o dia de abertura informado na lata (EST-F040) começa à meia-noite daqui. */
+    private static final java.time.ZoneId ZONA_LOJA = java.time.ZoneId.of("America/Sao_Paulo");
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EstoqueUseCase.OpenPackageYield> openPackageYield(String warehouseCode, Instant from, Instant to) {
+        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
+                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        Instant lower = from == null ? Instant.EPOCH : from;
+        Instant upper = to == null ? YIELD_UPPER_BOUND : to;
+        // EST-F038 — o Salão herda o histórico: ver o javadoc do port.
+        List<OpenPackageRepository.ClosedYield> rows = warehouse.type() == WarehouseType.SALAO
+                ? openPackageRepository.closedYieldAllWarehouses(lower, upper)
+                : openPackageRepository.closedYield(warehouse.id(), lower, upper);
+        // Uma leitura de produto por sabor — dezenas, não o catálogo; mesmo N+1 assumido das latas.
+        return rows.stream().map(row -> {
+            Optional<Product> product = productRepository.findByAnySku(row.sku());
+            return new EstoqueUseCase.OpenPackageYield(row.sku(),
+                    product.map(Product::name).orElse(row.sku()),
+                    row.closedCount(),
+                    BigDecimal.valueOf(row.totalSessions())
+                            .divide(BigDecimal.valueOf(row.closedCount()), 1, java.math.RoundingMode.HALF_UP),
+                    row.totalSessions(),
+                    product.map(Product::sessionsPerUnit).orElse(null));
+        }).toList();
+    }
+
+    @Override
+    @Transactional
+    public OpenPackage registerOpenPackage(String sku, String warehouseCode, int usesRemaining,
+            LocalDate openedAt, boolean withdraw, String username) {
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
         if (!product.sessionProduct() || product.sessionsPerUnit() == null || product.sessionsPerUnit() <= 0) {
@@ -1249,9 +1514,15 @@ public class EstoqueService implements EstoqueUseCase {
         if (openPackageRepository.findOpenForUpdate(sku, warehouse.id()).isPresent()) {
             throw new OpenPackageAlreadyOpenException(sku, warehouseCode);
         }
-        // Sem adjustStock, de propósito: ver o javadoc do port.
+        // Por padrão sem adjustStock, de propósito: ver o javadoc do port. Com withdraw (EST-F040), a
+        // SAIDA vem antes do save, para a falta de saldo não deixar lata cadastrada.
+        if (withdraw) {
+            adjustStock(sku, warehouse.code(), MovementType.SAIDA, BigDecimal.ONE,
+                    "Abertura de lata (cadastro de lata já em uso)", username);
+        }
+        Instant opened = openedAt == null ? Instant.now() : openedAt.atStartOfDay(ZONA_LOJA).toInstant();
         return openPackageRepository.save(OpenPackage.registered(sku, warehouse.id(), product.sessionsPerUnit(),
-                usesRemaining, username, Instant.now()));
+                usesRemaining, username, opened));
     }
 
     @Override
@@ -1306,6 +1577,25 @@ public class EstoqueService implements EstoqueUseCase {
     public StockBalance adjustStock(String sku, String warehouseCode, MovementType type, BigDecimal quantity,
             String reason, String username, String lotCode, LocalDate expiryDate, BigDecimal unitCost,
             Long goodsReceiptId) {
+        return applyMovement(sku, warehouseCode, type, quantity, reason, username, lotCode, expiryDate, unitCost,
+                goodsReceiptId, true);
+    }
+
+    /**
+     * O corpo de {@link #adjustStock}. {@code breakPackaging} falso só na abertura à mão (PDV-F045):
+     * abrir 1 maço não pode abrir uma carteira para cobrir a falta do próprio maço.
+     */
+    private StockBalance applyMovement(String sku, String warehouseCode, MovementType type, BigDecimal quantity,
+            String reason, String username, String lotCode, LocalDate expiryDate, BigDecimal unitCost,
+            Long goodsReceiptId, boolean breakPackaging) {
+        return applyMovement(sku, warehouseCode, type, quantity, reason, username, lotCode, expiryDate, unitCost,
+                goodsReceiptId, breakPackaging, null);
+    }
+
+    /** {@code counterpartWarehouseId}: o depósito do outro lado, só na transferência (EST-F039). */
+    private StockBalance applyMovement(String sku, String warehouseCode, MovementType type, BigDecimal quantity,
+            String reason, String username, String lotCode, LocalDate expiryDate, BigDecimal unitCost,
+            Long goodsReceiptId, boolean breakPackaging, Long counterpartWarehouseId) {
         requireKnownSku(sku);
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
@@ -1342,7 +1632,8 @@ public class EstoqueService implements EstoqueUseCase {
                 .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
         // EST-F032 — se o filho não cobre a saída, abre embalagens pai até cobrir, e a saída segue
         // sobre o saldo já reposto. Só relê quando houve quebra: o caminho comum não paga nada a mais.
-        if (type == MovementType.SAIDA && breakPackagingIfShort(sku, warehouse, current, quantity, username)) {
+        if (breakPackaging && type == MovementType.SAIDA
+                && breakPackagingIfShort(sku, warehouse, current, quantity, username)) {
             current = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
                     .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
         }
@@ -1355,7 +1646,7 @@ public class EstoqueService implements EstoqueUseCase {
         }
 
         stockMovementRepository.save(StockMovement.create(sku, warehouse.id(), type, quantity, reason, username,
-                movementLotCode, unitCost, goodsReceiptId));
+                movementLotCode, unitCost, goodsReceiptId, counterpartWarehouseId));
         StockBalance saved = stockBalanceRepository.save(updated);
 
         if (lotTracked && type == MovementType.SAIDA) {
@@ -1417,6 +1708,46 @@ public class EstoqueService implements EstoqueUseCase {
                 "parentsOpened", parents,
                 "childUnits", childUnits)));
         return true;
+    }
+
+    /**
+     * PDV-F045 — abrir à mão na Central de cigarros. Ver {@link EstoqueUseCase#openPackagingManually}.
+     *
+     * <p>Mesmo par de movimentos da quebra automática, com duas diferenças: a {@code SAIDA} do pai não
+     * sobe a cadeia (falta de carteira fechada é 409, não abre fardo), e o evento leva o autor e o
+     * motivo, porque aqui a decisão de abrir é humana.</p>
+     */
+    @Override
+    @Transactional
+    public EstoqueUseCase.OpenedPackaging openPackagingManually(String parentSku, BigDecimal quantity,
+            String warehouseCode, String username) {
+        Warehouse warehouse = requireWarehouse(warehouseCode);
+        SkuPackaging packaging = firstChild(parentSku)
+                .orElseThrow(() -> PackagingNotFoundException.containsNothing(parentSku));
+        // Conferido aqui, contra o disponível: a falta é 409 com o código do contrato do PDV, e a
+        // SAIDA abaixo não quebra o nível de cima de qualquer jeito.
+        BigDecimal closed = stockBalanceRepository.findBySkuAndWarehouseId(parentSku, warehouse.id())
+                .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+        if (closed.compareTo(quantity) < 0) {
+            throw new NotEnoughClosedPackagingException(parentSku, closed, quantity);
+        }
+        StockBalance parent = applyMovement(parentSku, warehouse.code(), MovementType.SAIDA, quantity,
+                "Aberto no balcão (PDV) → " + packaging.childSku(), username, null, null, null, null, false);
+        BigDecimal unitCost = parent.averageCost() == null ? null
+                : parent.averageCost().divide(BigDecimal.valueOf(packaging.unitsPerParent()),
+                        Money.INTERMEDIATE_SCALE, Money.ROUNDING);
+        BigDecimal childUnits = packaging.childUnits(quantity);
+        StockBalance child = adjustStock(packaging.childSku(), warehouse.code(), MovementType.ENTRADA, childUnits,
+                "Aberto no balcão (PDV) ← " + parentSku, username, null, null, unitCost, null);
+        auditEvents.publish(AuditEvent.of(AuditEvent.EventType.STOCK_PACKAGE_BROKEN, username, Map.of(
+                "parentSku", parentSku,
+                "childSku", packaging.childSku(),
+                "warehouseCode", warehouse.code(),
+                "parentsOpened", quantity,
+                "childUnits", childUnits,
+                "reason", "aberto no balcão (PDV)")));
+        return new EstoqueUseCase.OpenedPackaging(parentSku, parent.availableQuantity(), packaging.childSku(),
+                child.availableQuantity());
     }
 
     @Override
@@ -1524,6 +1855,30 @@ public class EstoqueService implements EstoqueUseCase {
             }
             products.putIfAbsent(p.sku(), p);
             lines.computeIfAbsent(p.sku(), k -> new ArrayList<>()).add(new EstoqueUseCase.PackagedLine(levels));
+        }
+        // PDV-F045 — produto de categoria de cigarros ainda sem embalagem (o cigarro antigo, antes da
+        // conversão): entra assim mesmo, com cada SKU vendável numa cadeia de um nível só. Quem já
+        // tem embalagem saiu acima, pela cadeia.
+        for (Category categoria : categoryRepository.findCigarette()) {
+            for (Product p : productRepository.findAllByCategoryId(categoria.id())) {
+                if (!p.active() || p.isKit() || products.containsKey(p.sku())) {
+                    continue;
+                }
+                List<String> skus = p.variants().isEmpty() ? List.of(p.sku())
+                        : p.variants().stream().filter(ProductVariant::active).map(ProductVariant::sku).toList();
+                List<EstoqueUseCase.PackagedLine> single = new ArrayList<>();
+                for (String sku : skus) {
+                    BigDecimal available = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
+                            .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+                    single.add(new EstoqueUseCase.PackagedLine(List.of(new EstoqueUseCase.PackagedLevel(sku,
+                            packagedLabel(p, sku), p.effectivePricingFor(sku).effectivePrice(), available, null,
+                            null))));
+                }
+                if (!single.isEmpty()) {
+                    products.put(p.sku(), p);
+                    lines.put(p.sku(), single);
+                }
+            }
         }
         return products.values().stream()
                 .sorted(java.util.Comparator.comparing(Product::name, String.CASE_INSENSITIVE_ORDER))

@@ -896,13 +896,82 @@ public class EstoqueControllerTest {
                 e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.STOCK_CONVERTED));
     }
 
+    // ── "Acabou" e rendimento real (EST-F037) ────────────────────────────────────────────────
+
+    @Test
+    void finishOpenPackage_returns_200_comClosedAt_ePublicaOEvento() throws Exception {
+        when(estoqueUseCase.finishOpenPackage("ESSE-BLUE", "LOJA-01", "admin"))
+                .thenReturn(OpenPackage.open("ESSE-BLUE", 1L, 5, "admin", Instant.now()).withUses(6)
+                        .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.FINISHED,
+                                Instant.now()));
+        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/close")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"LOJA-01\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.uses").value(6))
+                .andExpect(jsonPath("$.exhausted").value(true))
+                .andExpect(jsonPath("$.closeReason").value("FINISHED"))
+                .andExpect(jsonPath("$.closedAt").isNotEmpty());
+
+        verify(publisher, times(1)).publishEvent(argThat((Object e) ->
+                e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.OPEN_PACKAGE_FINISHED));
+    }
+
+    @Test
+    void finishOpenPackage_semLataAberta_returns_404() throws Exception {
+        when(estoqueUseCase.finishOpenPackage(any(), any(), any()))
+                .thenThrow(new com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException(
+                        "ESSE-BLUE", "LOJA-01"));
+
+        mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/close")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"LOJA-01\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_NOT_FOUND"));
+    }
+
+    @Test
+    void openPackageYield_devolveOContrato_ePassaOPeriodo() throws Exception {
+        Instant from = Instant.parse("2026-09-01T00:00:00Z");
+        Instant to = Instant.parse("2026-10-09T23:59:59Z");
+        when(estoqueUseCase.openPackageYield("LOJA-01", from, to)).thenReturn(List.of(
+                new EstoqueUseCase.OpenPackageYield("ZOMO-MENTA", "Zomo Menta", 5, new BigDecimal("4.6"), 23, 5)));
+
+        mockMvc.perform(get("/estoque/open-packages/yield")
+                        .param("warehouseCode", "LOJA-01")
+                        .param("from", "2026-09-01T00:00:00Z")
+                        .param("to", "2026-10-09T23:59:59Z"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].sku").value("ZOMO-MENTA"))
+                .andExpect(jsonPath("$[0].productName").value("Zomo Menta"))
+                .andExpect(jsonPath("$[0].closedCount").value(5))
+                .andExpect(jsonPath("$[0].avgSessions").value(4.6))
+                .andExpect(jsonPath("$[0].totalSessions").value(23))
+                .andExpect(jsonPath("$[0].estimate").value(5));
+    }
+
+    @Test
+    void openPackageYield_periodoInvertido_returns_400() throws Exception {
+        mockMvc.perform(get("/estoque/open-packages/yield")
+                        .param("warehouseCode", "LOJA-01")
+                        .param("from", "2026-10-09T00:00:00Z")
+                        .param("to", "2026-09-01T00:00:00Z"))
+                .andExpect(status().isBadRequest());
+        verify(estoqueUseCase, never()).openPackageYield(any(), any(), any());
+    }
+
     // ── Lata já aberta antes do sistema (EST-F033) ───────────────────────────────────────────
 
     private static final String CADASTRO_DE_LATA = "{\"warehouseCode\":\"LOJA-01\",\"usesRemaining\":2}";
 
     @Test
     void registerOpenPackage_returns_201_withTheCounter() throws Exception {
-        when(estoqueUseCase.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "admin"))
+        when(estoqueUseCase.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, null, false, "admin"))
                 .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
         // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
         when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
@@ -925,7 +994,7 @@ public class EstoqueControllerTest {
      */
     @Test
     void registerOpenPackage_publishesOpenPackageRegistered() throws Exception {
-        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any(), anyBoolean(), any()))
                 .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
         // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
         when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
@@ -943,7 +1012,7 @@ public class EstoqueControllerTest {
 
     @Test
     void registerOpenPackage_withAPackageAlreadyOpen_returns_409() throws Exception {
-        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any(), anyBoolean(), any()))
                 .thenThrow(new OpenPackageAlreadyOpenException("ESSE-BLUE", "LOJA-01"));
 
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
@@ -956,7 +1025,7 @@ public class EstoqueControllerTest {
 
     @Test
     void registerOpenPackage_withMoreRemainingThanThePackageHolds_returns_400() throws Exception {
-        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any()))
+        when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any(), anyBoolean(), any()))
                 .thenThrow(new InvalidOpenPackageUsesException(6, 5));
 
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
@@ -981,7 +1050,7 @@ public class EstoqueControllerTest {
                         .content("{\"warehouseCode\":\"LOJA-01\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(estoqueUseCase, never()).registerOpenPackage(any(), any(), anyInt(), any());
+        verify(estoqueUseCase, never()).registerOpenPackage(any(), any(), anyInt(), any(), anyBoolean(), any());
     }
 
     // ── Produto base com variações (EST-F036) ────────────────────────────────────────────────
@@ -2516,7 +2585,7 @@ public class EstoqueControllerTest {
 
     @Test
     void createCategory_returns_201_comLocationEBody() throws Exception {
-        when(estoqueUseCase.createCategory("Narguilé", true, 3))
+        when(estoqueUseCase.createCategory("Narguilé", true, 3, false))
                 .thenReturn(Category.of(7L, "Narguilé", true, 3, true));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2532,9 +2601,38 @@ public class EstoqueControllerTest {
                 .andExpect(jsonPath("$.active").value(true));
     }
 
+    /** PDV-F045 — a marcação de cigarros vai na criação e volta no corpo. */
+    @Test
+    void createCategory_deCigarros_passaAMarcacao_eDevolveNoCorpo() throws Exception {
+        when(estoqueUseCase.createCategory("Cigarros", false, 0, true))
+                .thenReturn(Category.of(8L, "Cigarros", false, 0, true, true));
+
+        mockMvc.perform(post("/estoque/categories")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Cigarros\",\"cigarette\":true}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cigarette").value(true));
+    }
+
+    @Test
+    void updateCategory_cigarette_chegaExplicito_eAusenteChegaNull() throws Exception {
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any()))
+                .thenReturn(Category.of(7L, "Cigarros", false, 0, true, false));
+
+        mockMvc.perform(patch("/estoque/categories/7")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cigarette\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cigarette").value(false));
+
+        verify(estoqueUseCase).updateCategory(7L, null, null, null, false);
+    }
+
     @Test
     void createCategory_nomeDuplicado_returns_409() throws Exception {
-        when(estoqueUseCase.createCategory(anyString(), anyBoolean(), anyInt()))
+        when(estoqueUseCase.createCategory(anyString(), anyBoolean(), anyInt(), anyBoolean()))
                 .thenThrow(new DuplicateCategoryNameException("Narguilé"));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2569,7 +2667,7 @@ public class EstoqueControllerTest {
 
     @Test
     void updateCategory_camposAusentes_chegamComoNull() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any()))
                 .thenReturn(Category.of(7L, "Narguilé", false, 0, true));
 
         mockMvc.perform(patch("/estoque/categories/7")
@@ -2579,12 +2677,12 @@ public class EstoqueControllerTest {
                 .andExpect(status().isOk());
 
         // name e displayOrder nulos = "não mexer"; featured explícito troca.
-        verify(estoqueUseCase).updateCategory(7L, null, true, null);
+        verify(estoqueUseCase).updateCategory(7L, null, true, null, null);
     }
 
     @Test
     void updateCategory_idInexistente_returns_404() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(99L), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(99L), any(), any(), any(), any()))
                 .thenThrow(new CategoryNotFoundException(99L));
 
         mockMvc.perform(patch("/estoque/categories/99")

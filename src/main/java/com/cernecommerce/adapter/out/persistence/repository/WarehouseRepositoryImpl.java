@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.out.persistence.repository;
 import com.cernecommerce.adapter.out.persistence.entity.WarehouseEntity;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
+import com.cernecommerce.core.domain.model.estoque.WarehouseType;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -50,6 +51,12 @@ public class WarehouseRepositoryImpl implements WarehouseRepository {
         Page<WarehouseEntity> result = warehouseJpaRepository.findAllOrderById(PageRequest.of(page, size));
         return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
                 page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Warehouse> findActiveByType(WarehouseType type) {
+        return warehouseJpaRepository.findFirstByTypeAndActiveTrueOrderByIdAsc(type).map(this::toDomain);
     }
 
     private Warehouse toDomain(WarehouseEntity e) {

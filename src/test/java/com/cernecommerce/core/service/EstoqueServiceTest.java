@@ -378,6 +378,34 @@ class EstoqueServiceTest {
         verify(productRepository, never()).countByStatus(any());
     }
 
+    /** PDV-F045 — barcode vazio apaga o código (o cigarro antigo convertido move o EAN para o maço). */
+    @Test
+    void updateProduct_barcodeVazio_apagaOCodigoSemConferirDuplicidade() {
+        Product comCodigo = Product.of(1L, "CIG-OLD", "Rothmans", "Cigarros", true, List.of())
+                .withBarcode("7893333333336");
+        when(productRepository.findBySku("CIG-OLD")).thenReturn(Optional.of(comCodigo));
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product result = estoqueService.updateProduct("CIG-OLD", null, null, null, null, null, null, null, null,
+                null, null, null, null, "", null, null, null, null, null, null, null, null);
+
+        assertThat(result.barcode()).isNull();
+        verify(productRepository, never()).existsByBarcode(any());
+    }
+
+    @Test
+    void updateProduct_barcodeNulo_mantemOCodigo() {
+        Product comCodigo = Product.of(1L, "CIG-OLD2", "Rothmans", "Cigarros", true, List.of())
+                .withBarcode("7893333333336");
+        when(productRepository.findBySku("CIG-OLD2")).thenReturn(Optional.of(comCodigo));
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product result = estoqueService.updateProduct("CIG-OLD2", "Rothmans Azul", null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        assertThat(result.barcode()).isEqualTo("7893333333336");
+    }
+
     @Test
     void updateProduct_transicaoParaRascunhoNoLimite_lancaDraftLimitReachedException() {
         Product ativo = Product.of(1L, "EST23-006", "Produto", "cat", true, List.of());
@@ -3395,7 +3423,7 @@ class EstoqueServiceTest {
         when(categoryRepository.findByName("Narguilé"))
                 .thenReturn(Optional.of(Category.of(1L, "Narguilé", false, 0, true)));
 
-        assertThatThrownBy(() -> estoqueService.createCategory("Narguilé", false, 0))
+        assertThatThrownBy(() -> estoqueService.createCategory("Narguilé", false, 0, false))
                 .isInstanceOf(DuplicateCategoryNameException.class);
         verify(categoryRepository, never()).save(any());
     }
@@ -3408,7 +3436,7 @@ class EstoqueServiceTest {
         when(categoryRepository.findByName("Narguilés")).thenReturn(Optional.empty());
         when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        estoqueService.updateCategory(1L, "Narguilés", null, null);
+        estoqueService.updateCategory(1L, "Narguilés", null, null, null);
 
         verify(productRepository).renameCategory(1L, "Narguilés");
     }
@@ -3419,7 +3447,7 @@ class EstoqueServiceTest {
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(atual));
         when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        estoqueService.updateCategory(1L, null, true, 5);
+        estoqueService.updateCategory(1L, null, true, 5, null);
 
         verify(productRepository, never()).renameCategory(anyLong(), anyString());
     }
@@ -3432,7 +3460,7 @@ class EstoqueServiceTest {
         when(categoryRepository.findByName("Essência"))
                 .thenReturn(Optional.of(Category.of(2L, "Essência", false, 0, true)));
 
-        assertThatThrownBy(() -> estoqueService.updateCategory(1L, "Essência", null, null))
+        assertThatThrownBy(() -> estoqueService.updateCategory(1L, "Essência", null, null, null))
                 .isInstanceOf(DuplicateCategoryNameException.class);
         verify(categoryRepository, never()).save(any());
     }
@@ -3444,7 +3472,7 @@ class EstoqueServiceTest {
         when(categoryRepository.findByName("Narguilé")).thenReturn(Optional.of(atual));
         when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatCode(() -> estoqueService.updateCategory(1L, "Narguilé", true, null))
+        assertThatCode(() -> estoqueService.updateCategory(1L, "Narguilé", true, null, null))
                 .doesNotThrowAnyException();
     }
 
@@ -3452,7 +3480,7 @@ class EstoqueServiceTest {
     void updateCategory_idInexistente_e404() {
         when(categoryRepository.findById(99L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> estoqueService.updateCategory(99L, "X", null, null))
+        assertThatThrownBy(() -> estoqueService.updateCategory(99L, "X", null, null, null))
                 .isInstanceOf(CategoryNotFoundException.class);
     }
 
@@ -4324,6 +4352,83 @@ class EstoqueServiceTest {
         assertThat(info.openRoshPrice()).isEqualByComparingTo("60.00");
     }
 
+    /** PDV-F050 — a faixa da ficha vai junto: é ela que dá o preço da sessão com esta essência. */
+    @Test
+    void resolveSaleInfo_levaAFaixaDaSessaoDoProduto() {
+        Product pai = Product.of(1L, "ZOMO", "Zomo", "Essências", true, List.of())
+                .withPricing(Pricing.of(new BigDecimal("10.00"), null, new BigDecimal("25.00")))
+                .withSessionProduct(true)
+                .withSessionTierId(3L);
+        when(productRepository.findByAnySku("ZOMO")).thenReturn(Optional.of(pai));
+
+        assertThat(estoqueService.resolveSaleInfo("ZOMO").sessionTierId()).isEqualTo(3L);
+    }
+
+    // ── PDV-F052 — faixa obrigatória na ficha da essência de sessão (atrás de config) ────────
+
+    private EstoqueService comFaixaObrigatoria() {
+        return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
+                stockMovementRepository, reorderPointRepository, stockIntegrityRepository, stockCountRepository,
+                stockReservationRepository, notificationUseCase, userRepository, immediateExecutor,
+                RESERVATION_TTL, kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository,
+                brandRepository, attributeTypeRepository, replenishmentListRepository, openPackageRepository,
+                managerNotificationPort, auditEventPublisherPort, skuPackagingRepository, null, true);
+    }
+
+    @Test
+    void createProduct_essenciaDeSessaoSemFaixa_eRecusadaComATravaLigada() {
+        when(productRepository.existsBySku(any())).thenReturn(false);
+
+        assertThatThrownBy(() -> comFaixaObrigatoria().createProduct("ZOMO", "Zomo", "Essências", List.of(),
+                Pricing.empty(), null, null, false, false, null, null, List.of(), List.of(), null,
+                null, null, false, false, null, null, null, null, null, null, null, null,
+                new TableSessionCommand(null, true, 5, null)))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void createProduct_essenciaDeSessaoComFaixa_passaComATravaLigada() {
+        when(productRepository.existsBySku(any())).thenReturn(false);
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product result = comFaixaObrigatoria().createProduct("ZOMO", "Zomo", "Essências", List.of(),
+                Pricing.empty(), null, null, false, false, null, null, List.of(), List.of(), null,
+                null, null, false, false, null, null, null, null, null, null, null, null,
+                new TableSessionCommand(null, true, 5, null, 3L, false));
+
+        assertThat(result.sessionTierId()).isEqualTo(3L);
+    }
+
+    /** Limpar a faixa de uma essência de sessão com a trava ligada também é recusado. */
+    @Test
+    void updateProduct_limparAFaixaDeEssenciaDeSessao_eRecusadoComATravaLigada() {
+        Product atual = Product.of(1L, "ZOMO", "Zomo", "Essências", true, List.of())
+                .withSessionProduct(true)
+                .withSessionTierId(3L);
+        when(productRepository.findBySku("ZOMO")).thenReturn(Optional.of(atual));
+
+        assertThatThrownBy(() -> comFaixaObrigatoria().updateProduct("ZOMO", null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                new TableSessionCommand(null, null, null, null, null, true)))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    /** Desligada (o padrão), nada muda: essência sem faixa continua sendo gravada. */
+    @Test
+    void createProduct_essenciaDeSessaoSemFaixa_passaComATravaDesligada() {
+        when(productRepository.existsBySku(any())).thenReturn(false);
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product result = estoqueService.createProduct("ZOMO", "Zomo", "Essências", List.of(),
+                Pricing.empty(), null, null, false, false, null, null, List.of(), List.of(), null,
+                null, null, false, false, null, null, null, null, null, null, null, null,
+                new TableSessionCommand(null, true, 5, null));
+
+        assertThat(result.sessionTierId()).isNull();
+    }
+
     // ── Conversão atômica entre SKUs (EST-F025) ──────────────────────────────────────────────
 
     /** 1 lata sai, 5 sessões entram — o caso do lounge, numa transação só. */
@@ -4459,22 +4564,71 @@ class EstoqueServiceTest {
         verify(stockBalanceRepository, never()).save(any());
     }
 
-    /** Lata esgotada é fechada como EXHAUSTED e a sessão seguinte abre outra — aí sim baixa 1. */
+    /**
+     * EST-F037 — a lata que atingiu a estimativa NÃO fecha mais sozinha: a sessão seguinte cai nela
+     * mesmo (6 de 5), sem abrir outra e sem baixa.
+     */
     @Test
-    void consumeSession_comLataEsgotada_fechaAVelhaEAbreOutra() {
+    void consumeSession_comLataNaEstimativa_continuaNaMesmaLata_semBaixa() {
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
         when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(5)));
-        comSaldoDeEssencia("49.000");
-        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        OpenPackage nova = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
+        OpenPackage mesma = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
 
-        assertThat(nova.uses()).isEqualTo(1);
-        verify(openPackageRepository).save(argThat(p ->
-                p.closeReason() == OpenPackageCloseReason.EXHAUSTED && p.uses() == 5));
-        verify(stockMovementRepository).save(argThat(m -> m.type() == MovementType.SAIDA));
+        assertThat(mesma.uses()).isEqualTo(6);
+        assertThat(mesma.isOpen()).isTrue();
+        verify(openPackageRepository, never()).save(argThat(p -> p.closeReason() != null));
+        verifyNoInteractions(stockMovementRepository);
+    }
+
+    /** EST-F037 — "Acabou": fecha com FINISHED, sem abrir outra e sem baixa. */
+    @Test
+    void finishOpenPackage_fechaComFinished_semAbrirOutraNemBaixar() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(4)));
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage fechada = estoqueService.finishOpenPackage("ESSE-BLUE", "LOJA-01", "atendente");
+
+        assertThat(fechada.closeReason()).isEqualTo(OpenPackageCloseReason.FINISHED);
+        assertThat(fechada.closedAt()).isNotNull();
+        assertThat(fechada.uses()).isEqualTo(4);
+        verify(openPackageRepository).save(any());
+        verifyNoInteractions(stockMovementRepository);
+        verify(stockBalanceRepository, never()).save(any());
+    }
+
+    @Test
+    void finishOpenPackage_semLataAberta_404() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> estoqueService.finishOpenPackage("ESSE-BLUE", "LOJA-01", "atendente"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException.class);
+        verify(openPackageRepository, never()).save(any());
+    }
+
+    /** EST-F037 — média com uma casa, nome e estimativa do produto; sem período, limites abertos. */
+    @Test
+    void openPackageYield_montaAMediaComAEstimativaAtual() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(openPackageRepository.closedYield(1L, Instant.EPOCH, Instant.parse("9999-12-31T23:59:59Z")))
+                .thenReturn(List.of(new com.cernecommerce.core.ports.out.estoque.OpenPackageRepository.ClosedYield(
+                        "ESSE-BLUE", 5, 23)));
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+
+        List<EstoqueUseCase.OpenPackageYield> rendimento = estoqueService.openPackageYield("LOJA-01", null, null);
+
+        assertThat(rendimento).singleElement().satisfies(y -> {
+            assertThat(y.sku()).isEqualTo("ESSE-BLUE");
+            assertThat(y.productName()).isEqualTo("Zgy Blueberry");
+            assertThat(y.closedCount()).isEqualTo(5);
+            assertThat(y.totalSessions()).isEqualTo(23);
+            assertThat(y.avgSessions()).isEqualByComparingTo("4.6");
+            assertThat(y.estimate()).isEqualTo(5);
+        });
     }
 
     /**
@@ -4602,7 +4756,7 @@ class EstoqueServiceTest {
         when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        OpenPackage lata = estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente");
+        OpenPackage lata = estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, null, false, "atendente");
 
         assertThat(lata.uses()).isEqualTo(3);
         assertThat(lata.sessionsPerUnit()).isEqualTo(5);
@@ -4622,7 +4776,7 @@ class EstoqueServiceTest {
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
         when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(1)));
 
-        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente"))
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, null, false, "atendente"))
                 .isInstanceOf(OpenPackageAlreadyOpenException.class);
 
         verify(openPackageRepository, never()).save(any());
@@ -4633,7 +4787,7 @@ class EstoqueServiceTest {
     void registerOpenPackage_comProdutoSemSessionsPerUnit_eRecusado() {
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(null)));
 
-        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, "atendente"))
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, null, false, "atendente"))
                 .isInstanceOf(NotAPackagedSessionProductException.class);
 
         verifyNoInteractions(openPackageRepository);
@@ -4646,7 +4800,7 @@ class EstoqueServiceTest {
         when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
         when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 6, "atendente"))
+        assertThatThrownBy(() -> estoqueService.registerOpenPackage("ESSE-BLUE", "LOJA-01", 6, null, false, "atendente"))
                 .isInstanceOf(InvalidOpenPackageUsesException.class);
 
         verify(openPackageRepository, never()).save(any());

@@ -56,4 +56,14 @@ public interface StockMovementRepository {
      * DELETE de variante com histórico (item 8 do pedido do frontend).
      */
     boolean existsBySku(String sku);
+
+    /**
+     * EST-F039 — {@code ENTRADA}s por transferência em {@code warehouseId} no período
+     * {@code [from, to]}, agrupadas por SKU, com a quantidade e o custo (quantidade × custo
+     * unitário; sem custo conta zero). Mais caro primeiro.
+     */
+    List<TransferredLine> transferredInto(Long warehouseId, Instant from, Instant to);
+
+    record TransferredLine(String sku, java.math.BigDecimal quantity, java.math.BigDecimal totalCost) {
+    }
 }

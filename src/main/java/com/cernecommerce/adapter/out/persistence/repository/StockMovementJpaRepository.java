@@ -80,4 +80,20 @@ public interface StockMovementJpaRepository
     }
 
     boolean existsBySku(String sku);
+
+    /** EST-F039 — [sku, quantidade, custo] das entradas por transferência num depósito. */
+    @Query("""
+            SELECT m.sku AS sku, SUM(m.quantity) AS quantity,
+                   COALESCE(SUM(m.quantity * COALESCE(m.unitCost, 0)), 0) AS totalCost
+            FROM StockMovementEntity m
+            WHERE m.type = 'ENTRADA'
+              AND m.counterpartWarehouseId IS NOT NULL
+              AND m.warehouseId = :warehouseId
+              AND m.createdAt >= :from
+              AND m.createdAt <= :to
+            GROUP BY m.sku
+            ORDER BY totalCost DESC, m.sku
+            """)
+    List<Object[]> transferredInto(@Param("warehouseId") Long warehouseId, @Param("from") Instant from,
+            @Param("to") Instant to);
 }

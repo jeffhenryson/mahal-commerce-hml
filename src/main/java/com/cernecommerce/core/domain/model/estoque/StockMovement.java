@@ -21,10 +21,12 @@ import java.time.Instant;
  *        introduziu o vínculo — limitação conhecida, sem backfill retroativo (o dado não existia
  *        antes). Alimenta o histórico de compras por SKU (item 2 do pedido do frontend), que
  *        precisa saber de qual fornecedor veio a entrada.
+ * @param counterpartWarehouseId EST-F039 — depósito do outro lado de uma transferência, nas duas
+ *        pontas. {@code null} em qualquer outro movimento.
  */
 public record StockMovement(Long id, String sku, Long warehouseId, MovementType type, BigDecimal quantity,
         String reason, String username, Instant createdAt, String lotCode, BigDecimal unitCost,
-        Long goodsReceiptId) {
+        Long goodsReceiptId, Long counterpartWarehouseId) {
 
     public StockMovement {
         if (sku == null || sku.isBlank()) {
@@ -77,8 +79,15 @@ public record StockMovement(Long id, String sku, Long warehouseId, MovementType 
      */
     public static StockMovement create(String sku, Long warehouseId, MovementType type, BigDecimal quantity,
             String reason, String username, String lotCode, BigDecimal unitCost, Long goodsReceiptId) {
+        return create(sku, warehouseId, type, quantity, reason, username, lotCode, unitCost, goodsReceiptId, null);
+    }
+
+    /** Igual à forma canônica, com o depósito do outro lado de uma transferência (EST-F039). */
+    public static StockMovement create(String sku, Long warehouseId, MovementType type, BigDecimal quantity,
+            String reason, String username, String lotCode, BigDecimal unitCost, Long goodsReceiptId,
+            Long counterpartWarehouseId) {
         return new StockMovement(null, sku, warehouseId, type, quantity, reason, username, Instant.now(), lotCode,
-                unitCost, goodsReceiptId);
+                unitCost, goodsReceiptId, counterpartWarehouseId);
     }
 
     /** Reconstitui uma movimentação sem lote nem custo a partir de persistência. */
@@ -101,13 +110,21 @@ public record StockMovement(Long id, String sku, Long warehouseId, MovementType 
 
     /**
      * Reconstitui uma movimentação a partir de persistência — forma canônica completa, com lote,
-     * custo e vínculo de recebimento. Único ponto de reconstituição usado por
-     * {@code StockMovementRepositoryImpl}.
+     * custo, vínculo de recebimento e depósito do outro lado da transferência. Único ponto de
+     * reconstituição usado por {@code StockMovementRepositoryImpl}.
      */
     public static StockMovement of(Long id, String sku, Long warehouseId, MovementType type, BigDecimal quantity,
             String reason, String username, Instant createdAt, String lotCode, BigDecimal unitCost,
-            Long goodsReceiptId) {
+            Long goodsReceiptId, Long counterpartWarehouseId) {
         return new StockMovement(id, sku, warehouseId, type, quantity, reason, username, createdAt, lotCode,
-                unitCost, goodsReceiptId);
+                unitCost, goodsReceiptId, counterpartWarehouseId);
+    }
+
+    /** Reconstitui sem o vínculo de transferência. */
+    public static StockMovement of(Long id, String sku, Long warehouseId, MovementType type, BigDecimal quantity,
+            String reason, String username, Instant createdAt, String lotCode, BigDecimal unitCost,
+            Long goodsReceiptId) {
+        return of(id, sku, warehouseId, type, quantity, reason, username, createdAt, lotCode, unitCost,
+                goodsReceiptId, null);
     }
 }

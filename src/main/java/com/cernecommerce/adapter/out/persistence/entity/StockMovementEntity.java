@@ -51,4 +51,8 @@ public class StockMovementEntity {
     /** Vínculo opcional com o recebimento que originou a ENTRADA. NULL em movimentação manual. */
     @Column(name = "goods_receipt_id")
     private Long goodsReceiptId;
+
+    /** EST-F039 — depósito do outro lado de uma transferência. NULL em qualquer outro movimento. */
+    @Column(name = "counterpart_warehouse_id")
+    private Long counterpartWarehouseId;
 }
