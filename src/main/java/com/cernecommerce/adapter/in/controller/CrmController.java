@@ -121,7 +121,7 @@ public class CrmController {
     public ResponseEntity<CustomerResponseDTO> createCustomer(@Valid @RequestBody CustomerRequest request,
             Authentication authentication) {
         Customer created = crmUseCase.createCustomer(request.getNome(), request.getContato(), request.getEmail(),
-                request.getCpf(), request.getOrigem());
+                request.getCpf(), request.getOrigem(), request.getDataNascimento());
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_CREATED,
                 authentication.getName(), Map.of("customerId", String.valueOf(created.id()))));
         return ResponseEntity.created(URI.create("/crm/customers/" + created.id()))
@@ -143,7 +143,7 @@ public class CrmController {
     public ResponseEntity<CustomerResponseDTO> updateCustomer(@PathVariable Long id,
             @Valid @RequestBody CustomerRequest request, Authentication authentication) {
         Customer updated = crmUseCase.updateCustomer(id, request.getNome(), request.getContato(),
-                request.getEmail(), request.getCpf(), request.getOrigem());
+                request.getEmail(), request.getCpf(), request.getOrigem(), request.getDataNascimento());
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED,
                 authentication.getName(), Map.of("customerId", String.valueOf(id))));
         return ResponseEntity.ok(converter.toResponse(updated));
@@ -165,7 +165,7 @@ public class CrmController {
     public ResponseEntity<CustomerResponseDTO> resolveLead(@Valid @RequestBody CustomerRequest request,
             Authentication authentication) {
         LeadResolution resolution = crmUseCase.resolveLead(request.getNome(), request.getContato(),
-                request.getEmail(), request.getCpf(), request.getOrigem());
+                request.getEmail(), request.getCpf(), request.getOrigem(), request.getDataNascimento());
         Customer customer = resolution.customer();
         if (!resolution.created()) {
             return ResponseEntity.ok(converter.toResponse(customer));
@@ -417,10 +417,11 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/tags")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('CRM_CUSTOMER_MANAGE', 'CRM_CUSTOMER_VIP_MANAGE')")
     public ResponseEntity<TagResponseDTO> createTag(@Valid @RequestBody TagRequest request,
             Authentication authentication) {
-        com.cernecommerce.core.domain.model.crm.Tag created = crmUseCase.createTag(request.getNome());
+        com.cernecommerce.core.domain.model.crm.Tag created = crmUseCase.createTag(request.getNome(),
+                onlyVipTag(authentication));
         publisher.publishEvent(AuditEvent.of(EventType.TAG_CREATED,
                 authentication.getName(), Map.of("tagId", String.valueOf(created.id()))));
         return ResponseEntity.created(URI.create("/crm/tags/" + created.id()))
@@ -462,10 +463,10 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/customers/{id}/tags")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('CRM_CUSTOMER_MANAGE', 'CRM_CUSTOMER_VIP_MANAGE')")
     public ResponseEntity<Void> addTagToCustomer(@PathVariable Long id,
             @Valid @RequestBody AssociateTagRequest request, Authentication authentication) {
-        crmUseCase.addTagToCustomer(id, request.getTagId());
+        crmUseCase.addTagToCustomer(id, request.getTagId(), onlyVipTag(authentication));
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_TAG_ADDED,
                 authentication.getName(),
                 Map.of("customerId", String.valueOf(id), "tagId", String.valueOf(request.getTagId()))));
@@ -479,10 +480,10 @@ public class CrmController {
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @DeleteMapping("/customers/{id}/tags/{tagId}")
-    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('CRM_CUSTOMER_MANAGE', 'CRM_CUSTOMER_VIP_MANAGE')")
     public ResponseEntity<Void> removeTagFromCustomer(@PathVariable Long id, @PathVariable Long tagId,
             Authentication authentication) {
-        crmUseCase.removeTagFromCustomer(id, tagId);
+        crmUseCase.removeTagFromCustomer(id, tagId, onlyVipTag(authentication));
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_TAG_REMOVED,
                 authentication.getName(),
                 Map.of("customerId", String.valueOf(id), "tagId", String.valueOf(tagId))));
@@ -655,5 +656,13 @@ public class CrmController {
         List<ChannelStatusResponseDTO> response = crmUseCase.getChannelStatus().stream()
                 .map(channelStatusConverter::toResponse).toList();
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * PDV-F046 — sem {@code CRM_CUSTOMER_MANAGE}, a rota só foi liberada por {@code CRM_CUSTOMER_VIP_MANAGE}:
+     * o vendedor mexe apenas na tag VIP (outra tag → 403 {@code TAG_NOT_ALLOWED}).
+     */
+    private static boolean onlyVipTag(Authentication authentication) {
+        return !AuthUtils.hasAuthority(authentication, "CRM_CUSTOMER_MANAGE");
     }
 }

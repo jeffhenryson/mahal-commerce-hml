@@ -1,10 +1,12 @@
 package com.cernecommerce.adapter.in.controller;
 
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
+import com.cernecommerce.adapter.in.dtos.request.CreditLimitCapRequest;
 import com.cernecommerce.adapter.in.dtos.request.CreditLimitRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivableCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivableDueDateRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivablePaymentRequest;
+import com.cernecommerce.adapter.in.dtos.response.CreditLimitCapResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ReceivableResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
@@ -45,6 +47,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -60,6 +63,8 @@ import java.util.Map;
 @Tag(name = "Marcados", description = "Venda a prazo para cliente VIP: recebíveis, quitação e limite")
 @SecurityRequirement(name = "bearerAuth")
 public class ReceivableController {
+
+    private static final String RECEIVABLE_MANAGE = "RECEIVABLE_MANAGE";
 
     private final ReceivableUseCase receivableUseCase;
     private final OrderDTOConverter orderConverter;
@@ -220,14 +225,18 @@ public class ReceivableController {
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Atualizado"),
             @ApiResponse(responseCode = "400", description = "Valor negativo", content = @Content),
-            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content)
+            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
+            @ApiResponse(responseCode = "422", description = "CREDIT_LIMIT_ABOVE_CAP — vendedor acima do teto "
+                    + "(GET /pdv/config/credit-limit-cap)", content = @Content)
     })
     @PutMapping("/crm/customers/{id}/credit-limit")
-    @PreAuthorize("hasAuthority('RECEIVABLE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('RECEIVABLE_MANAGE', 'RECEIVABLE_LIMIT_SET_CAPPED')")
     public ResponseEntity<Void> setCreditLimit(@PathVariable("id") Long customerId,
             @Valid @RequestBody CreditLimitRequest request, Authentication authentication) {
+        // PDV-F046 — sem RECEIVABLE_MANAGE, a rota só foi liberada por RECEIVABLE_LIMIT_SET_CAPPED.
         ReceivableUseCase.CreditLimitChange change = receivableUseCase.setCreditLimit(customerId,
-                request.getChannel(), request.getCreditLimit(), authentication.getName());
+                request.getChannel(), request.getCreditLimit(), authentication.getName(),
+                !AuthUtils.hasAuthority(authentication, RECEIVABLE_MANAGE));
         Map<String, Object> details = new HashMap<>();
         details.put("customerId", customerId);
         details.put("channel", request.getChannel() == null ? "TOTAL" : request.getChannel().name());
@@ -237,6 +246,35 @@ public class ReceivableController {
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_CREDIT_LIMIT_CHANGED, authentication.getName(),
                 details));
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Teto do limite de \"Marcar\" que o usuário pode definir (PDV-F046)",
+            description = "O vendedor (RECEIVABLE_LIMIT_SET_CAPPED) recebe o teto de "
+                    + "pdv.on-account.attendant-max-credit-limit (padrão R$ 100), que vale por canal e para o total. "
+                    + "O gerente (RECEIVABLE_MANAGE) recebe maxCreditLimit null: sem teto.")
+    @GetMapping("/pdv/config/credit-limit-cap")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE', 'RECEIVABLE_LIMIT_SET_CAPPED', 'RECEIVABLE_MANAGE')")
+    public ResponseEntity<CreditLimitCapResponseDTO> creditLimitCap(Authentication authentication) {
+        BigDecimal cap = AuthUtils.hasAuthority(authentication, RECEIVABLE_MANAGE)
+                ? null : receivableUseCase.attendantCreditLimitCap();
+        return ResponseEntity.ok(new CreditLimitCapResponseDTO(cap));
+    }
+
+    @Operation(summary = "Troca o teto do limite de \"Marcar\" do vendedor (PDV-F046)",
+            description = "Só o gerente (RECEIVABLE_MANAGE). Grava pdv.on-account.attendant-max-credit-limit; "
+                    + "limites já dados acima do novo teto continuam valendo.")
+    @PutMapping("/pdv/config/credit-limit-cap")
+    @PreAuthorize("hasAuthority('RECEIVABLE_MANAGE')")
+    public ResponseEntity<CreditLimitCapResponseDTO> setCreditLimitCap(
+            @Valid @RequestBody CreditLimitCapRequest request, Authentication authentication) {
+        BigDecimal before = receivableUseCase.setAttendantCreditLimitCap(request.getMaxCreditLimit(),
+                authentication.getName());
+        Map<String, Object> details = new HashMap<>();
+        details.put("before", before);
+        details.put("after", request.getMaxCreditLimit());
+        publisher.publishEvent(AuditEvent.of(EventType.ATTENDANT_CREDIT_LIMIT_CAP_CHANGED, authentication.getName(),
+                details));
+        return ResponseEntity.ok(new CreditLimitCapResponseDTO(request.getMaxCreditLimit()));
     }
 
     // ── Mapeamento ───────────────────────────────────────────────────────────────────────────

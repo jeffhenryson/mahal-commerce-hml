@@ -20,7 +20,9 @@ import com.cernecommerce.adapter.in.converter.TagDTOConverter;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.crm.CustomerUnderageException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
+import com.cernecommerce.core.domain.exception.crm.TagNotAllowedException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.cashback.CashbackBalance;
@@ -49,11 +51,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,7 +69,13 @@ public class CrmControllerTest {
     private CashbackUseCase cashbackUseCase;
 
     private static final UsernamePasswordAuthenticationToken AUTH =
-            new UsernamePasswordAuthenticationToken("admin", null, List.of());
+            new UsernamePasswordAuthenticationToken("admin", null,
+                    List.of(new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE")));
+
+    /** PDV-F046 — o vendedor: só a permissão de VIP. */
+    private static final UsernamePasswordAuthenticationToken VENDEDOR =
+            new UsernamePasswordAuthenticationToken("vendedor", null,
+                    List.of(new SimpleGrantedAuthority("CRM_CUSTOMER_VIP_MANAGE")));
 
     @BeforeEach
     void setup() {
@@ -106,7 +116,7 @@ public class CrmControllerTest {
 
     @Test
     void create_returns_201() throws Exception {
-        when(crmUseCase.createCustomer("Maria Silva", "11999998888", "maria@example.com", null, null))
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", "maria@example.com", null, null, null))
                 .thenReturn(customer(1L, "maria@example.com"));
 
         mockMvc.perform(post("/crm/customers")
@@ -142,7 +152,7 @@ public class CrmControllerTest {
 
     @Test
     void create_duplicate_returns_409_withMatchedByAndCustomerId() throws Exception {
-        when(crmUseCase.createCustomer(any(), any(), eq("maria@example.com"), any(), any()))
+        when(crmUseCase.createCustomer(any(), any(), eq("maria@example.com"), any(), any(), any()))
                 .thenThrow(new CustomerAlreadyExistsException(
                         Set.of(CustomerMatchField.PHONE, CustomerMatchField.EMAIL), 7L));
 
@@ -160,7 +170,7 @@ public class CrmControllerTest {
     @Test
     void create_customerLeveWithOnlyContato_returns_201() throws Exception {
         // CRM-C005: sem email nem cpf, só nome + contato — "cliente leve".
-        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null))
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, null))
                 .thenReturn(Customer.of(1L, "Maria Silva", "11999998888", null, null, null, Instant.now(),
                         CustomerStage.NOVO_LEAD));
 
@@ -170,6 +180,45 @@ public class CrmControllerTest {
                         .content("{\"nome\":\"Maria Silva\",\"contato\":\"11999998888\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.email").doesNotExist());
+    }
+
+    // ── CRM-F012: data de nascimento ─────────────────────────────────────────────────────────
+
+    @Test
+    void create_comDataNascimento_repassaEDevolve() throws Exception {
+        LocalDate nascimento = LocalDate.of(1990, 5, 17);
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, nascimento))
+                .thenReturn(Customer.of(1L, "Maria Silva", "11999998888", null, null, null, Instant.now(),
+                        CustomerStage.NOVO_LEAD, nascimento));
+
+        mockMvc.perform(post("/crm/customers")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"Maria Silva\",\"contato\":\"11999998888\",\"dataNascimento\":\"1990-05-17\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.dataNascimento").value("1990-05-17"));
+    }
+
+    @Test
+    void create_menorDeIdade_returns_400_CUSTOMER_UNDERAGE() throws Exception {
+        when(crmUseCase.createCustomer(any(), any(), any(), any(), any(), any()))
+                .thenThrow(new CustomerUnderageException(16));
+
+        mockMvc.perform(post("/crm/customers")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"Maria Silva\",\"contato\":\"11999998888\",\"dataNascimento\":\"2010-01-01\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_UNDERAGE"));
+    }
+
+    @Test
+    void create_dataNascimentoNoFuturo_returns_400() throws Exception {
+        mockMvc.perform(post("/crm/customers")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"Maria Silva\",\"contato\":\"11999998888\",\"dataNascimento\":\"2999-01-01\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     // ── CRM-F002: busca de balcão ─────────────────────────────────────────────────────────────
@@ -482,7 +531,7 @@ public class CrmControllerTest {
 
     @Test
     void createTag_returns_201() throws Exception {
-        when(crmUseCase.createTag("VIP")).thenReturn(Tag.of(1L, "VIP"));
+        when(crmUseCase.createTag("VIP", false)).thenReturn(Tag.of(1L, "VIP"));
 
         mockMvc.perform(post("/crm/tags")
                         .principal(AUTH)
@@ -504,7 +553,7 @@ public class CrmControllerTest {
 
     @Test
     void createTag_duplicateName_returns_409() throws Exception {
-        when(crmUseCase.createTag("VIP")).thenThrow(new DuplicateTagNameException("VIP"));
+        when(crmUseCase.createTag("VIP", false)).thenThrow(new DuplicateTagNameException("VIP"));
 
         mockMvc.perform(post("/crm/tags")
                         .principal(AUTH)
@@ -549,7 +598,7 @@ public class CrmControllerTest {
                         .content("{\"tagId\":1}"))
                 .andExpect(status().isNoContent());
 
-        verify(crmUseCase).addTagToCustomer(1L, 1L);
+        verify(crmUseCase).addTagToCustomer(1L, 1L, false);
     }
 
     @Test
@@ -563,7 +612,7 @@ public class CrmControllerTest {
 
     @Test
     void addTagToCustomer_customerNotFound_returns_404() throws Exception {
-        doThrow(new CustomerNotFoundException(99L)).when(crmUseCase).addTagToCustomer(99L, 1L);
+        doThrow(new CustomerNotFoundException(99L)).when(crmUseCase).addTagToCustomer(99L, 1L, false);
 
         mockMvc.perform(post("/crm/customers/99/tags")
                         .principal(AUTH)
@@ -575,7 +624,7 @@ public class CrmControllerTest {
 
     @Test
     void addTagToCustomer_tagNotFound_returns_404() throws Exception {
-        doThrow(new TagNotFoundException(99L)).when(crmUseCase).addTagToCustomer(1L, 99L);
+        doThrow(new TagNotFoundException(99L)).when(crmUseCase).addTagToCustomer(1L, 99L, false);
 
         mockMvc.perform(post("/crm/customers/1/tags")
                         .principal(AUTH)
@@ -590,7 +639,51 @@ public class CrmControllerTest {
         mockMvc.perform(delete("/crm/customers/1/tags/1").principal(AUTH))
                 .andExpect(status().isNoContent());
 
-        verify(crmUseCase).removeTagFromCustomer(1L, 1L);
+        verify(crmUseCase).removeTagFromCustomer(1L, 1L, false);
+    }
+
+    // ── PDV-F046: vendedor só mexe na tag VIP ────────────────────────────────────────────────
+
+    @Test
+    void addTagToCustomer_vendedor_repassaOnlyVip() throws Exception {
+        mockMvc.perform(post("/crm/customers/1/tags")
+                        .principal(VENDEDOR)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagId\":1}"))
+                .andExpect(status().isNoContent());
+
+        verify(crmUseCase).addTagToCustomer(1L, 1L, true);
+    }
+
+    @Test
+    void addTagToCustomer_vendedorComOutraTag_returns_403_TAG_NOT_ALLOWED() throws Exception {
+        doThrow(new TagNotAllowedException("Atacado")).when(crmUseCase).addTagToCustomer(1L, 2L, true);
+
+        mockMvc.perform(post("/crm/customers/1/tags")
+                        .principal(VENDEDOR)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagId\":2}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("TAG_NOT_ALLOWED"));
+    }
+
+    @Test
+    void createTag_vendedor_repassaOnlyVip() throws Exception {
+        when(crmUseCase.createTag("VIP", true)).thenReturn(Tag.of(1L, "VIP"));
+
+        mockMvc.perform(post("/crm/tags")
+                        .principal(VENDEDOR)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"VIP\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void removeTagFromCustomer_vendedor_repassaOnlyVip() throws Exception {
+        mockMvc.perform(delete("/crm/customers/1/tags/1").principal(VENDEDOR))
+                .andExpect(status().isNoContent());
+
+        verify(crmUseCase).removeTagFromCustomer(1L, 1L, true);
     }
 
     @Test

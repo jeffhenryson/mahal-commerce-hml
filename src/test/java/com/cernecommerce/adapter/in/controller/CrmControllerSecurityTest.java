@@ -956,4 +956,38 @@ public class CrmControllerSecurityTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_AUTOMATION"));
     }
+
+    // ── PDV-F046: vendedor com CRM_CUSTOMER_VIP_MANAGE ───────────────────────────────────────
+
+    @Test
+    void vendedor_associarTagQueNaoEVip_returns_403_TAG_NOT_ALLOWED() throws Exception {
+        Long customerId = givenCustomer();
+        Long tagId = givenTag();
+
+        mockMvc.perform(post("/crm/customers/" + customerId + "/tags")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagId\":" + tagId + "}")
+                        .with(user("vendedor").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_VIP_MANAGE"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("TAG_NOT_ALLOWED"));
+    }
+
+    @Test
+    void vendedor_criarTagQueNaoEVip_returns_403_TAG_NOT_ALLOWED() throws Exception {
+        mockMvc.perform(post("/crm/tags")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nome\":\"Atacado " + System.nanoTime() + "\"}")
+                        .with(user("vendedor").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_VIP_MANAGE"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("TAG_NOT_ALLOWED"));
+    }
+
+    @Test
+    void semNenhumaPermissaoDeTag_returns_403() throws Exception {
+        mockMvc.perform(post("/crm/customers/1/tags")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tagId\":1}")
+                        .with(user("ana").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isForbidden());
+    }
 }

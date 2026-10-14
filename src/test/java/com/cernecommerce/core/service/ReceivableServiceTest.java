@@ -1,5 +1,6 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.recebivel.CreditLimitAboveCapException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
@@ -8,6 +9,7 @@ import com.cernecommerce.core.domain.exception.recebivel.DuplicateOnAccountPayme
 import com.cernecommerce.core.domain.exception.recebivel.InvalidDueDateException;
 import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
+import com.cernecommerce.core.domain.model.config.SystemConfig;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import com.cernecommerce.core.domain.model.crm.Tag;
@@ -530,6 +532,78 @@ class ReceivableServiceTest {
         verify(creditLimitRepository).delete(CUSTOMER, null);
         assertThat(change.before()).isEqualByComparingTo("300.00");
         assertThat(change.after()).isNull();
+    }
+
+    // ── PDV-F046: teto do vendedor ───────────────────────────────────────────────────────────
+
+    @Test
+    void setCreditLimit_capped_dentroDoTeto_grava() {
+        givenCustomer(true);
+        when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(CreditLimits.none());
+        givenDefaults("0", null, null);
+        stubConfig(ReceivableService.ATTENDANT_MAX_CREDIT_LIMIT_KEY, null);
+
+        service.setCreditLimit(CUSTOMER, BALCAO, new BigDecimal("80.00"), "vendedor", true);
+
+        verify(creditLimitRepository).save(eq(CUSTOMER), eq(BALCAO), eq(new BigDecimal("80.00")), eq("vendedor"),
+                any());
+    }
+
+    @Test
+    void setCreditLimit_capped_acimaDoTeto_recusaSemGravar() {
+        givenCustomer(true);
+        stubConfig(ReceivableService.ATTENDANT_MAX_CREDIT_LIMIT_KEY, null);
+
+        assertThatThrownBy(() -> service.setCreditLimit(CUSTOMER, MESA, new BigDecimal("150.00"), "vendedor", true))
+                .isInstanceOf(CreditLimitAboveCapException.class)
+                .hasMessageContaining("R$ 100,00");
+        verify(creditLimitRepository, never()).save(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void setCreditLimit_capped_valeTambemParaOTotal() {
+        givenCustomer(true);
+        stubConfig(ReceivableService.ATTENDANT_MAX_CREDIT_LIMIT_KEY, "120.00");
+
+        assertThatThrownBy(() -> service.setCreditLimit(CUSTOMER, null, new BigDecimal("120.01"), "vendedor", true))
+                .isInstanceOf(CreditLimitAboveCapException.class);
+    }
+
+    @Test
+    void setCreditLimit_capped_nuloVoltaAoPadraoSempre() {
+        givenCustomer(true);
+        when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(CreditLimits.none());
+        givenDefaults("0", null, null);
+
+        service.setCreditLimit(CUSTOMER, BALCAO, null, "vendedor", true);
+
+        verify(creditLimitRepository).delete(CUSTOMER, BALCAO);
+    }
+
+    @Test
+    void setCreditLimit_gerente_semTeto() {
+        givenCustomer(true);
+        when(creditLimitRepository.findByCustomerId(CUSTOMER)).thenReturn(CreditLimits.none());
+        givenDefaults("0", null, null);
+
+        service.setCreditLimit(CUSTOMER, BALCAO, new BigDecimal("150.00"), "gerente", false);
+
+        verify(creditLimitRepository).save(eq(CUSTOMER), eq(BALCAO), eq(new BigDecimal("150.00")), eq("gerente"),
+                any());
+    }
+
+    @Test
+    void setAttendantCreditLimitCap_gravaNoSystemConfig() {
+        stubConfig(ReceivableService.ATTENDANT_MAX_CREDIT_LIMIT_KEY, null);
+
+        BigDecimal before = service.setAttendantCreditLimitCap(new BigDecimal("150.00"), "gerente");
+
+        assertThat(before).isEqualByComparingTo("100.00");
+        ArgumentCaptor<SystemConfig> saved = ArgumentCaptor.forClass(SystemConfig.class);
+        verify(systemConfigPort).save(saved.capture());
+        assertThat(saved.getValue().key()).isEqualTo(ReceivableService.ATTENDANT_MAX_CREDIT_LIMIT_KEY);
+        assertThat(saved.getValue().value()).isEqualTo("150.00");
+        assertThat(saved.getValue().updatedBy()).isEqualTo("gerente");
     }
 
     @Test

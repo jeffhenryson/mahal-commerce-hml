@@ -22,6 +22,7 @@ import com.cernecommerce.core.domain.model.crm.TagSummary;
 import com.cernecommerce.core.domain.model.crm.WebhookTestResult;
 
 import java.util.Collection;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -38,7 +39,18 @@ public interface CrmUseCase {
      * @throws com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException
      *         se telefone, email ou cpf já estiverem cadastrados (CRM-C007)
      */
-    Customer createCustomer(String nome, String contato, String email, String cpf, String origem);
+    default Customer createCustomer(String nome, String contato, String email, String cpf, String origem) {
+        return createCustomer(nome, contato, email, cpf, origem, null);
+    }
+
+    /**
+     * Como {@link #createCustomer(String, String, String, String, String)}, com a data de nascimento
+     * (CRM-F012), opcional.
+     *
+     * @throws com.cernecommerce.core.domain.exception.crm.CustomerUnderageException se tiver menos de 18 anos
+     */
+    Customer createCustomer(String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento);
 
     /**
      * Atualiza os dados cadastrais de um cliente (CRM-C006) — é por aqui que um cliente cadastrado
@@ -49,7 +61,19 @@ public interface CrmUseCase {
      * @throws com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException
      *         se telefone, email ou cpf pertencerem a outro cliente (CRM-C007)
      */
-    Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem);
+    default Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem) {
+        return updateCustomer(id, nome, contato, email, cpf, origem, null);
+    }
+
+    /**
+     * Como {@link #updateCustomer(Long, String, String, String, String, String)}, com a data de
+     * nascimento (CRM-F012). {@code dataNascimento} nula mantém a gravada: um client que ainda não
+     * conhece o campo não apaga o aniversário ao salvar o cadastro.
+     *
+     * @throws com.cernecommerce.core.domain.exception.crm.CustomerUnderageException se tiver menos de 18 anos
+     */
+    Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento);
 
     /**
      * Find-or-create do lead do balcão e da mesa (PDV-F020): procura por CPF e depois por
@@ -61,7 +85,17 @@ public interface CrmUseCase {
      *         se achou pelo telefone um cliente com CPF diferente do informado e o CPF informado já
      *         pertence a um terceiro
      */
-    LeadResolution resolveLead(String nome, String contato, String email, String cpf, String origem);
+    default LeadResolution resolveLead(String nome, String contato, String email, String cpf, String origem) {
+        return resolveLead(nome, contato, email, cpf, origem, null);
+    }
+
+    /**
+     * Como {@link #resolveLead(String, String, String, String, String)}, com a data de nascimento
+     * (CRM-F012): no cliente reaproveitado, só completa quando ele ainda não tem data — nunca
+     * sobrescreve.
+     */
+    LeadResolution resolveLead(String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento);
 
     /**
      * Busca um cliente por id. Lança
@@ -149,7 +183,15 @@ public interface CrmUseCase {
      * {@link com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException}
      * se o nome já existir.
      */
-    Tag createTag(String nome);
+    default Tag createTag(String nome) {
+        return createTag(nome, false);
+    }
+
+    /**
+     * PDV-F046 — com {@code onlyVip}, só cria a tag VIP (o vendedor criando-a na primeira vez); outra
+     * lança {@link com.cernecommerce.core.domain.exception.crm.TagNotAllowedException}.
+     */
+    Tag createTag(String nome, boolean onlyVip);
 
     /** Lista todas as tags com a contagem de clientes associados a cada uma. */
     List<TagSummary> listTags();
@@ -168,7 +210,15 @@ public interface CrmUseCase {
      * {@link com.cernecommerce.core.domain.exception.crm.TagNotFoundException}
      * se a tag não existir.
      */
-    void addTagToCustomer(Long customerId, Long tagId);
+    default void addTagToCustomer(Long customerId, Long tagId) {
+        addTagToCustomer(customerId, tagId, false);
+    }
+
+    /**
+     * PDV-F046 — com {@code onlyVip}, só associa a tag VIP; outra lança
+     * {@link com.cernecommerce.core.domain.exception.crm.TagNotAllowedException}.
+     */
+    void addTagToCustomer(Long customerId, Long tagId, boolean onlyVip);
 
     /**
      * Remove a associação entre um cliente e uma tag. Lança
@@ -177,7 +227,12 @@ public interface CrmUseCase {
      * {@link com.cernecommerce.core.domain.exception.crm.TagNotFoundException}
      * se a tag não existir.
      */
-    void removeTagFromCustomer(Long customerId, Long tagId);
+    default void removeTagFromCustomer(Long customerId, Long tagId) {
+        removeTagFromCustomer(customerId, tagId, false);
+    }
+
+    /** PDV-F046 — com {@code onlyVip}, só desassocia a tag VIP. */
+    void removeTagFromCustomer(Long customerId, Long tagId, boolean onlyVip);
 
     /**
      * Lista as tags associadas a um cliente. Lança

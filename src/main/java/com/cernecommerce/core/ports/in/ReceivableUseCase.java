@@ -80,6 +80,13 @@ public interface ReceivableUseCase {
     /** Reembolso/cancelamento do pedido de origem cancela o recebível em aberto. */
     void cancelOpenForOrder(Long orderId, String reason, String username);
 
+    /**
+     * PED-F004 — estorno parcial de um pedido marcado: abate até {@code value} do saldo em aberto do
+     * recebível do pedido. Devolve quanto de fato abateu (zero sem recebível em aberto). O que o
+     * cliente já pagou do marcado não volta por aqui — a mesma regra de {@link #cancelOpenForOrder}.
+     */
+    java.math.BigDecimal reduceOpenForOrder(Long orderId, java.math.BigDecimal value, String reason, String username);
+
     /** Job diário: ABERTO/PARCIAL vencidos passam a VENCIDO. */
     int markOverdue();
 
@@ -88,8 +95,25 @@ public interface ReceivableUseCase {
      * linha: o canal volta ao padrão; o total deixa de ter teto. Devolve o limite antes e depois
      * (no canal, o efetivo; no total, o teto, que pode ser nulo).
      */
+    default CreditLimitChange setCreditLimit(Long customerId, OnAccountChannel channel, BigDecimal creditLimit,
+            String username) {
+        return setCreditLimit(customerId, channel, creditLimit, username, false);
+    }
+
+    /**
+     * PDV-F046 — com {@code capped} (o vendedor, sem {@code RECEIVABLE_MANAGE}), {@code creditLimit}
+     * acima de {@link #attendantCreditLimitCap()} lança
+     * {@link com.cernecommerce.core.domain.exception.recebivel.CreditLimitAboveCapException}. O teto
+     * vale igual para cada canal e para o total; {@code null} (voltar ao padrão) é sempre permitido.
+     */
     CreditLimitChange setCreditLimit(Long customerId, OnAccountChannel channel, BigDecimal creditLimit,
-            String username);
+            String username, boolean capped);
+
+    /** PDV-F046 — teto do limite que o vendedor pode dar ({@code pdv.on-account.attendant-max-credit-limit}). */
+    BigDecimal attendantCreditLimitCap();
+
+    /** PDV-F046 — troca o teto do vendedor. Só o gerente ({@code RECEIVABLE_MANAGE}) chega aqui. */
+    BigDecimal setAttendantCreditLimitCap(BigDecimal cap, String username);
 
     // ── Caixa ────────────────────────────────────────────────────────────────────────────────
 

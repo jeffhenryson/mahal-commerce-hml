@@ -4,6 +4,7 @@ import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
+import com.cernecommerce.core.domain.exception.recebivel.CreditLimitAboveCapException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException;
@@ -15,6 +16,8 @@ import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceEx
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotFoundException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.config.SystemConfig;
+import com.cernecommerce.core.domain.model.crm.Tag;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
@@ -76,11 +79,13 @@ import java.util.stream.Collectors;
  */
 public class ReceivableService implements ReceivableUseCase {
 
-    static final String VIP_TAG = "VIP";
     static final String DEFAULT_DUE_DAYS_KEY = "pdv.on-account.default-due-days";
     static final String DEFAULT_CREDIT_LIMIT_KEY = "pdv.on-account.default-credit-limit";
     static final String DEFAULT_CREDIT_LIMIT_BALCAO_KEY = DEFAULT_CREDIT_LIMIT_KEY + ".balcao";
     static final String DEFAULT_CREDIT_LIMIT_MESA_KEY = DEFAULT_CREDIT_LIMIT_KEY + ".mesa";
+    /** PDV-F046 — teto do limite que o vendedor dá sozinho; acima dele, só o gerente. */
+    static final String ATTENDANT_MAX_CREDIT_LIMIT_KEY = "pdv.on-account.attendant-max-credit-limit";
+    static final BigDecimal DEFAULT_ATTENDANT_MAX_CREDIT_LIMIT = new BigDecimal("100.00");
     private static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
 
     private final CustomerReceivableRepository receivableRepository;
@@ -394,6 +399,24 @@ public class ReceivableService implements ReceivableUseCase {
 
     @Override
     @Transactional
+    public BigDecimal reduceOpenForOrder(Long orderId, BigDecimal value, String reason, String username) {
+        if (value == null || value.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return receivableRepository.findByOrderId(orderId)
+                .filter(r -> r.status().isOpen())
+                .map(r -> {
+                    BigDecimal reduced = value.min(r.amountOpen());
+                    receivableRepository.save(r.reducedBy(reduced,
+                            reason == null || reason.isBlank() ? "Estorno parcial do pedido de origem" : reason,
+                            username, clock.instant()));
+                    return reduced;
+                })
+                .orElse(BigDecimal.ZERO);
+    }
+
+    @Override
+    @Transactional
     public int markOverdue() {
         return receivableRepository.markOverdue(today());
     }
@@ -401,10 +424,16 @@ public class ReceivableService implements ReceivableUseCase {
     @Override
     @Transactional
     public CreditLimitChange setCreditLimit(Long customerId, OnAccountChannel channel, BigDecimal creditLimit,
-            String username) {
+            String username, boolean capped) {
         requireCustomer(customerId);
         if (creditLimit != null && creditLimit.signum() < 0) {
             throw new IllegalArgumentException("creditLimit não pode ser negativo");
+        }
+        if (capped && creditLimit != null) {
+            BigDecimal cap = attendantCreditLimitCap();
+            if (creditLimit.compareTo(cap) > 0) {
+                throw new CreditLimitAboveCapException(cap);
+            }
         }
         BigDecimal before = limitOf(customerId, channel);
         if (creditLimit == null) {
@@ -413,6 +442,24 @@ public class ReceivableService implements ReceivableUseCase {
             creditLimitRepository.save(customerId, channel, creditLimit, username, Instant.now());
         }
         return new CreditLimitChange(before, limitOf(customerId, channel));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BigDecimal attendantCreditLimitCap() {
+        return systemConfigPort.getDecimal(ATTENDANT_MAX_CREDIT_LIMIT_KEY, DEFAULT_ATTENDANT_MAX_CREDIT_LIMIT);
+    }
+
+    @Override
+    @Transactional
+    public BigDecimal setAttendantCreditLimitCap(BigDecimal cap, String username) {
+        if (cap == null || cap.signum() < 0) {
+            throw new IllegalArgumentException("maxCreditLimit não pode ser negativo");
+        }
+        BigDecimal before = attendantCreditLimitCap();
+        systemConfigPort.save(new SystemConfig(ATTENDANT_MAX_CREDIT_LIMIT_KEY, cap.toPlainString(), clock.instant(),
+                username));
+        return before;
     }
 
     /** No canal, o limite efetivo; no total ({@code channel} nulo), o teto — nulo se não houver. */
@@ -446,7 +493,7 @@ public class ReceivableService implements ReceivableUseCase {
     /** Enquanto não houver o campo oficial {@code vip}, VIP é a tag do CRM. */
     private boolean isVip(Long customerId) {
         return customerTagRepository.findTagsByCustomerId(customerId).stream()
-                .anyMatch(tag -> tag.nome() != null && VIP_TAG.equalsIgnoreCase(tag.nome().trim()));
+                .anyMatch(Tag::isVip);
     }
 
     /** O padrão de cada canal: a chave do canal ou, sem ela, o padrão geral. */

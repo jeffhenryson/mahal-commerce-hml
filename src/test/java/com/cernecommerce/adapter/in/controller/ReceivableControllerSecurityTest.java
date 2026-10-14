@@ -108,4 +108,42 @@ class ReceivableControllerSecurityTest {
                         .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
                 .andExpect(status().isNotFound());
     }
+
+    // ── PDV-F046: teto do vendedor ───────────────────────────────────────────────────────────
+
+    @Test
+    void credit_limit_capped_passaNaRota() throws Exception {
+        // Liberado pela permissão com teto: chega ao serviço (cliente inexistente → 404, não 403).
+        mockMvc.perform(put("/crm/customers/999999/credit-limit")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"creditLimit\":80}")
+                        .with(user("vendedor").authorities(new SimpleGrantedAuthority("RECEIVABLE_LIMIT_SET_CAPPED"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void credit_limit_cap_vendedorRecebeOTeto_gerenteRecebeNulo() throws Exception {
+        mockMvc.perform(get("/pdv/config/credit-limit-cap")
+                        .with(user("vendedor").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCreditLimit").isNumber());
+        mockMvc.perform(get("/pdv/config/credit-limit-cap")
+                        .with(user("gerente").authorities(new SimpleGrantedAuthority("RECEIVABLE_MANAGE"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxCreditLimit").doesNotExist());
+    }
+
+    @Test
+    void credit_limit_cap_semPermissao_returns_403() throws Exception {
+        mockMvc.perform(get("/pdv/config/credit-limit-cap")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void trocar_credit_limit_cap_exigeReceivableManage() throws Exception {
+        mockMvc.perform(put("/pdv/config/credit-limit-cap")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"maxCreditLimit\":150}")
+                        .with(user("vendedor").authorities(new SimpleGrantedAuthority("RECEIVABLE_LIMIT_SET_CAPPED"))))
+                .andExpect(status().isForbidden());
+    }
 }

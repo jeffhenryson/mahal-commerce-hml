@@ -3,8 +3,10 @@ package com.cernecommerce.core.service;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.crm.CustomerUnderageException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
 import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
+import com.cernecommerce.core.domain.exception.crm.TagNotAllowedException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.config.WhatsappConnectionStatus;
@@ -44,6 +46,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.Period;
+import java.time.ZoneId;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -56,6 +61,10 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 public class CrmService implements CrmUseCase {
+
+    private static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
+    private static final int IDADE_MINIMA = 18;
+    private static final int IDADE_MAXIMA = 120;
 
     // Placeholder até os domínios de pedidos/cashback e de campanhas existirem —
     // ver crm/listagem-clientes-rfm e crm/automacoes-campanhas.
@@ -96,7 +105,9 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional
-    public Customer createCustomer(String nome, String contato, String email, String cpf, String origem) {
+    public Customer createCustomer(String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento) {
+        validateDataNascimento(dataNascimento);
         // CRM-C005: email e cpf são opcionais agora — só checa duplicidade do que veio preenchido.
         // CRM-C006: normaliza antes (CPF só dígitos, "" vira null) — sem isso "" passava e o 2º
         // cliente leve batia na unique de email.
@@ -105,13 +116,15 @@ public class CrmService implements CrmUseCase {
         String normalizedCpf = CustomerIdentifiers.normalizeCpf(cpf);
         ensureIdentifiersFree(null, normalizedContato, normalizedEmail, normalizedCpf);
         Customer customer = Customer.create(nome.trim(), normalizedContato, normalizedEmail, normalizedCpf,
-                CustomerIdentifiers.normalizeContato(origem));
+                CustomerIdentifiers.normalizeContato(origem)).withDataNascimento(dataNascimento);
         return customerRepository.save(customer);
     }
 
     @Override
     @Transactional
-    public Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem) {
+    public Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento) {
+        validateDataNascimento(dataNascimento);
         Customer current = requireCustomer(id);
         String normalizedContato = CustomerIdentifiers.normalizeContato(contato);
         String normalizedEmail = CustomerIdentifiers.normalizeEmail(email);
@@ -119,12 +132,17 @@ public class CrmService implements CrmUseCase {
         ensureIdentifiersFree(id, normalizedContato, normalizedEmail, normalizedCpf);
         Customer updated = current.withProfile(nome.trim(), normalizedContato,
                 normalizedEmail, normalizedCpf, CustomerIdentifiers.normalizeContato(origem));
+        if (dataNascimento != null) {
+            updated = updated.withDataNascimento(dataNascimento);
+        }
         return customerRepository.save(updated);
     }
 
     @Override
     @Transactional
-    public LeadResolution resolveLead(String nome, String contato, String email, String cpf, String origem) {
+    public LeadResolution resolveLead(String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento) {
+        validateDataNascimento(dataNascimento);
         String normalizedCpf = CustomerIdentifiers.normalizeCpf(cpf);
         String normalizedEmail = CustomerIdentifiers.normalizeEmail(email);
         Optional<Customer> existing = Optional.empty();
@@ -138,10 +156,35 @@ public class CrmService implements CrmUseCase {
             existing = customerRepository.findByEmail(normalizedEmail);
         }
         if (existing.isEmpty()) {
-            return new LeadResolution(createCustomer(nome, contato, email, cpf, origem), true);
+            return new LeadResolution(createCustomer(nome, contato, email, cpf, origem, dataNascimento), true);
         }
-        return new LeadResolution(completeMissingIdentifiers(existing.get(), contato, normalizedEmail,
-                normalizedCpf), false);
+        Customer completed = completeMissingIdentifiers(existing.get(), contato, normalizedEmail, normalizedCpf);
+        // CRM-F012 — mesma regra dos identificadores: completa o que faltava, nunca sobrescreve.
+        if (dataNascimento != null && completed.dataNascimento() == null) {
+            completed = customerRepository.save(completed.withDataNascimento(dataNascimento));
+        }
+        return new LeadResolution(completed, false);
+    }
+
+    /**
+     * CRM-F012 — 18 a 120 anos, contados no fuso da loja. Fica aqui, e não no record: a regra é do
+     * cadastro, e um cliente lido do banco não pode virar inválido só porque o tempo passou.
+     */
+    private static void validateDataNascimento(LocalDate dataNascimento) {
+        if (dataNascimento == null) {
+            return;
+        }
+        LocalDate hoje = LocalDate.now(ZONA_LOJA);
+        if (!dataNascimento.isBefore(hoje)) {
+            throw new IllegalArgumentException("dataNascimento precisa estar no passado");
+        }
+        int idade = Period.between(dataNascimento, hoje).getYears();
+        if (idade < IDADE_MINIMA) {
+            throw new CustomerUnderageException(idade);
+        }
+        if (idade > IDADE_MAXIMA) {
+            throw new IllegalArgumentException("dataNascimento implica mais de " + IDADE_MAXIMA + " anos");
+        }
     }
 
     /**
@@ -316,7 +359,10 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional
-    public Tag createTag(String nome) {
+    public Tag createTag(String nome, boolean onlyVip) {
+        if (onlyVip && !Tag.isVipName(nome)) {
+            throw new TagNotAllowedException(nome);
+        }
         tagRepository.findByNome(nome).ifPresent(t -> {
             throw new DuplicateTagNameException(nome);
         });
@@ -338,17 +384,17 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional
-    public void addTagToCustomer(Long customerId, Long tagId) {
+    public void addTagToCustomer(Long customerId, Long tagId, boolean onlyVip) {
         requireCustomer(customerId);
-        requireTag(tagId);
+        requireAllowedTag(tagId, onlyVip);
         customerTagRepository.associate(customerId, tagId);
     }
 
     @Override
     @Transactional
-    public void removeTagFromCustomer(Long customerId, Long tagId) {
+    public void removeTagFromCustomer(Long customerId, Long tagId, boolean onlyVip) {
         requireCustomer(customerId);
-        requireTag(tagId);
+        requireAllowedTag(tagId, onlyVip);
         customerTagRepository.disassociate(customerId, tagId);
     }
 
@@ -480,6 +526,15 @@ public class CrmService implements CrmUseCase {
     private Customer requireCustomer(Long customerId) {
         return customerRepository.findById(customerId)
                 .orElseThrow(() -> new CustomerNotFoundException(customerId));
+    }
+
+    /** PDV-F046 — a tag existe e, para quem só gerencia VIP, é a VIP. */
+    private Tag requireAllowedTag(Long tagId, boolean onlyVip) {
+        Tag tag = requireTag(tagId);
+        if (onlyVip && !tag.isVip()) {
+            throw new TagNotAllowedException(tag.nome());
+        }
+        return tag;
     }
 
     private Tag requireTag(Long tagId) {
