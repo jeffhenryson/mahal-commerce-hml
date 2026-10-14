@@ -1,6 +1,8 @@
 package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.estoque.InsufficientStockException;
+import com.cernecommerce.core.domain.exception.estoque.NotEnoughClosedPackagingException;
+import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
 import com.cernecommerce.core.domain.model.estoque.ProductAttribute;
@@ -56,8 +58,10 @@ class PackagingBreakIT {
                 Pricing.of(new BigDecimal("8.00"), null, new BigDecimal("12.00")));
         estoqueUseCase.definePackaging(lm.un(), lm.maco(), 20);
         estoqueUseCase.definePackaging(lm.maco(), lm.cart(), 10);
-        estoqueUseCase.adjustStock(lm.cart(), lm.warehouse(), MovementType.ENTRADA, new BigDecimal(carteiras),
-                "Compra de carteiras", lm.operator());
+        if (new BigDecimal(carteiras).signum() > 0) {
+            estoqueUseCase.adjustStock(lm.cart(), lm.warehouse(), MovementType.ENTRADA, new BigDecimal(carteiras),
+                    "Compra de carteiras", lm.operator());
+        }
         return lm;
     }
 
@@ -140,5 +144,78 @@ class PackagingBreakIT {
         assertThat(niveis.get(0).available()).isEqualByComparingTo("2");
         assertThat(niveis.get(1).price()).isEqualByComparingTo("12.00");
         assertThat(niveis.get(2).label()).isEqualTo("unidade");
+    }
+
+    // ── PDV-F045 — abrir à mão no balcão e cigarro sem embalagem na central ──
+
+    /** Abrir 1 carteira: −1 carteira, +10 maços, com o custo médio da carteira ÷ 10. */
+    @Test
+    void abrirAMao_umaCarteira_viraDezMacosComOCustoDividido() {
+        Lm lm = givenLmAzul("0");
+        estoqueUseCase.adjustStock(lm.cart(), lm.warehouse(), MovementType.ENTRADA, new BigDecimal("2"),
+                "Compra com custo", lm.operator(), null, null, new BigDecimal("80.00"), null);
+
+        EstoqueUseCase.OpenedPackaging aberta = estoqueUseCase.openPackagingManually(lm.cart(), BigDecimal.ONE,
+                lm.warehouse(), lm.operator());
+
+        assertThat(aberta.parentSku()).isEqualTo(lm.cart());
+        assertThat(aberta.parentAvailable()).isEqualByComparingTo("1");
+        assertThat(aberta.childSku()).isEqualTo(lm.maco());
+        assertThat(aberta.childAvailable()).isEqualByComparingTo("10");
+        assertThat(estoqueUseCase.getStockBalance(lm.maco(), lm.warehouse()).averageCost())
+                .isEqualByComparingTo("8.00");
+        assertThat(saldo(lm, lm.un())).isEqualByComparingTo("0");
+    }
+
+    /**
+     * Abrir 1 maço sem maço fechado: recusado, e a carteira NÃO é aberta para cobrir — diferente da
+     * venda, que abriria.
+     */
+    @Test
+    void abrirAMao_semFechado_recusaSemAbrirONivelDeCima() {
+        Lm lm = givenLmAzul("1");
+
+        assertThatThrownBy(() -> estoqueUseCase.openPackagingManually(lm.maco(), BigDecimal.ONE, lm.warehouse(),
+                lm.operator())).isInstanceOf(NotEnoughClosedPackagingException.class);
+        assertThat(saldo(lm, lm.cart())).isEqualByComparingTo("1");
+        assertThat(saldo(lm, lm.maco())).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void abrirAMao_oNivelMaisInterno_naoContemNada() {
+        Lm lm = givenLmAzul("1");
+
+        assertThatThrownBy(() -> estoqueUseCase.openPackagingManually(lm.un(), BigDecimal.ONE, lm.warehouse(),
+                lm.operator())).isInstanceOf(PackagingNotFoundException.class);
+    }
+
+    /** Produto de categoria de cigarros sem embalagem (o cigarro antigo) entra na central com um nível só. */
+    @Test
+    void central_incluiCigarroDaCategoriaSemEmbalagem_comUmNivel() {
+        String s = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String warehouse = "LOJA-" + s;
+        String categoria = "Cigarros " + s;
+        estoqueUseCase.createWarehouse(warehouse, "Loja " + s, WarehouseType.LOJA_FISICA);
+        estoqueUseCase.createCategory(categoria, false, 0, true);
+        estoqueUseCase.createProduct("ROTH-" + s, "Rothmans " + s, categoria, List.of(),
+                Pricing.of(new BigDecimal("9.00"), null, new BigDecimal("13.00")));
+        estoqueUseCase.adjustStock("ROTH-" + s, warehouse, MovementType.ENTRADA, new BigDecimal("4"),
+                "carga", "caixa-" + s);
+        // Produto de categoria comum, sem embalagem: continua fora.
+        estoqueUseCase.createProduct("ISQ-" + s, "Isqueiro " + s, "Acessórios " + s, List.of(),
+                Pricing.of(new BigDecimal("2.00"), null, new BigDecimal("5.00")));
+
+        List<EstoqueUseCase.PackagedFamily> familias = estoqueUseCase.listPackagedFamilies(warehouse);
+
+        assertThat(familias).noneMatch(f -> f.productSku().equals("ISQ-" + s));
+        EstoqueUseCase.PackagedFamily roth = familias.stream().filter(f -> f.productSku().equals("ROTH-" + s))
+                .findFirst().orElseThrow();
+        assertThat(roth.lines()).singleElement().satisfies(l -> assertThat(l.levels()).singleElement()
+                .satisfies(n -> {
+                    assertThat(n.sku()).isEqualTo("ROTH-" + s);
+                    assertThat(n.price()).isEqualByComparingTo("13.00");
+                    assertThat(n.available()).isEqualByComparingTo("4");
+                    assertThat(n.containsSku()).isNull();
+                }));
     }
 }

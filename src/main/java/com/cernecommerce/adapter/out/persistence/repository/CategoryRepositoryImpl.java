@@ -30,6 +30,7 @@ public class CategoryRepositoryImpl implements CategoryRepository {
         entity.setFeatured(category.featured());
         entity.setDisplayOrder(category.displayOrder());
         entity.setActive(category.active());
+        entity.setCigarette(category.cigarette());
         return toDomain(jpaRepository.save(entity));
     }
 
@@ -63,11 +64,18 @@ public class CategoryRepositoryImpl implements CategoryRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<Category> findCigarette() {
+        return jpaRepository.findByCigaretteTrue().stream().map(this::toDomain).toList();
+    }
+
+    @Override
     public void deleteById(Long id) {
         jpaRepository.deleteById(id);
     }
 
     private Category toDomain(ProductCategoryEntity e) {
-        return Category.of(e.getId(), e.getName(), e.isFeatured(), e.getDisplayOrder(), e.isActive());
+        return Category.of(e.getId(), e.getName(), e.isFeatured(), e.getDisplayOrder(), e.isActive(),
+                e.isCigarette());
     }
 }

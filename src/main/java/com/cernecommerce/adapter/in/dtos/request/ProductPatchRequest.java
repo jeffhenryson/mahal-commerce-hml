@@ -92,8 +92,8 @@ public class ProductPatchRequest {
     @Valid
     private PricingRequest pricing;
 
-    /** Código de barras/EAN. Nulo mantém o atual. */
-    @Pattern(regexp = "^[0-9]{8,14}$", message = "barcode deve ter entre 8 e 14 dígitos numéricos")
+    /** Código de barras/EAN. Nulo mantém o atual; vazio ({@code ""}) apaga (PDV-F045). */
+    @Pattern(regexp = "^$|^[0-9]{8,14}$", message = "barcode deve ter entre 8 e 14 dígitos numéricos, ou vazio para apagar")
     private String barcode;
 
     /** Unidade de medida. Nulo mantém a atual. */
@@ -130,6 +130,12 @@ public class ProductPatchRequest {
     /** Preço do consumo livre (open rosh). Nulo mantém — mesma limitação de {@code sessionsPerUnit}. */
     @PositiveOrZero(message = "openRoshPrice não pode ser negativo")
     private BigDecimal openRoshPrice;
+
+    /** PDV-F048 — faixa da sessão sugerida no PDV. Nulo mantém; para apagar, {@code clearSessionTier}. */
+    private Long sessionTierId;
+
+    /** PDV-F048 — {@code true} apaga a faixa da sessão (vence {@code sessionTierId}). */
+    private Boolean clearSessionTier;
 
     /**
      * Status de publicação (EST-F023). Nulo mantém o atual. Promover {@code RASCUNHO → ATIVO} não

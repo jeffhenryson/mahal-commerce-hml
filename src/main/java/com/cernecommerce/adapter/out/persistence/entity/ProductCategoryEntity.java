@@ -31,4 +31,8 @@ public class ProductCategoryEntity {
 
     @Column(nullable = false)
     private boolean active;
+
+    // PDV-F045 — V151. Produtos desta categoria são vendidos pela Central de cigarros, não pela grade.
+    @Column(nullable = false)
+    private boolean cigarette;
 }

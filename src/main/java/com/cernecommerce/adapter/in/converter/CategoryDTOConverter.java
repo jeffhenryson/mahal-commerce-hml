@@ -22,6 +22,7 @@ public class CategoryDTOConverter {
         dto.setFeatured(category.featured());
         dto.setDisplayOrder(category.displayOrder());
         dto.setActive(category.active());
+        dto.setCigarette(category.cigarette());
         dto.setProductCount(productCount);
         dto.setAverageMarginPercent(averageMarginPercent);
         return dto;

@@ -32,4 +32,10 @@ public interface CategoryRepository {
      * garantiu que não há produto vinculado — esta camada não repete a checagem.
      */
     void deleteById(Long id);
+
+    /**
+     * PDV-F045 — as categorias de cigarros, ativas ou não: categoria inativa some da vitrine, mas os
+     * produtos dela continuam à venda (e no balcão, pela Central de cigarros).
+     */
+    java.util.List<Category> findCigarette();
 }

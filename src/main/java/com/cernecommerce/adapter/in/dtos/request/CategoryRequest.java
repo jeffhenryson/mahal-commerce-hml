@@ -22,4 +22,8 @@ public class CategoryRequest {
     @Schema(description = "Posição relativa dentro do grupo (destacadas e não destacadas são "
             + "ordenadas separadamente). Empate desempata por nome.", example = "0")
     private int displayOrder;
+
+    @Schema(description = "PDV-F045 — categoria de cigarros: os produtos saem da grade do PDV e são "
+            + "vendidos pela Central de cigarros. Omitido, nasce false.")
+    private Boolean cigarette;
 }

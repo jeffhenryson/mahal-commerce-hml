@@ -16,8 +16,13 @@ package com.cernecommerce.core.domain.model.estoque;
  * <p>{@code featured} e {@code displayOrder} são coisas diferentes de propósito: destaque é
  * booleano e responde "aparece na primeira linha?"; ordem é a posição relativa <b>dentro</b> de
  * cada grupo. Ordenar só por um número faria "destacar" virar "editar a ordem de todo mundo".</p>
+ *
+ * <p>{@code cigarette} (PDV-F045) marca a categoria de cigarros: os produtos dela saem da grade do
+ * PDV e são vendidos pela Central de cigarros, por carteira › maço › solto. Antes o front decidia
+ * pelo nome ("cigarr"), o que quebrava com qualquer grafia nova.</p>
  */
-public record Category(Long id, String name, boolean featured, int displayOrder, boolean active) {
+public record Category(Long id, String name, boolean featured, int displayOrder, boolean active,
+        boolean cigarette) {
 
     public Category {
         if (name == null || name.isBlank()) {
@@ -36,12 +41,23 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
 
     /** Cria uma categoria nova (sem id, ativa) com destaque e ordem explícitos. */
     public static Category create(String name, boolean featured, int displayOrder) {
-        return new Category(null, name, featured, displayOrder, true);
+        return create(name, featured, displayOrder, false);
+    }
+
+    /** PDV-F045 — cria uma categoria nova (sem id, ativa), marcando se é de cigarros. */
+    public static Category create(String name, boolean featured, int displayOrder, boolean cigarette) {
+        return new Category(null, name, featured, displayOrder, true, cigarette);
+    }
+
+    /** Reconstitui a partir de persistência, sem a marcação de cigarros. */
+    public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active) {
+        return of(id, name, featured, displayOrder, active, false);
     }
 
     /** Reconstitui a partir de persistência. */
-    public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active) {
-        return new Category(id, name, featured, displayOrder, active);
+    public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active,
+            boolean cigarette) {
+        return new Category(id, name, featured, displayOrder, active, cigarette);
     }
 
     /**
@@ -51,15 +67,21 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
      * não se confundir com uma correção de nome.
      */
     public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder) {
+        return withDetails(newName, newFeatured, newDisplayOrder, null);
+    }
+
+    /** {@link #withDetails(String, Boolean, Integer)} com a marcação de cigarros (PDV-F045); nulo não mexe. */
+    public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder, Boolean newCigarette) {
         return new Category(id,
                 newName == null ? name : newName,
                 newFeatured == null ? featured : newFeatured,
                 newDisplayOrder == null ? displayOrder : newDisplayOrder,
-                active);
+                active,
+                newCigarette == null ? cigarette : newCigarette);
     }
 
     /** Ativa ou desativa a categoria, preservando o resto. */
     public Category withActive(boolean newActive) {
-        return new Category(id, name, featured, displayOrder, newActive);
+        return new Category(id, name, featured, displayOrder, newActive, cigarette);
     }
 }

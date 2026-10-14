@@ -17,6 +17,9 @@ public class CategoryResponseDTO {
 
     private boolean active;
 
+    /** PDV-F045 — categoria de cigarros: vendida pela Central de cigarros, fora da grade do PDV. */
+    private boolean cigarette;
+
     /** Produtos vinculados a esta categoria (Bloco 2.1) — evita a varredura de catálogo no admin. */
     private long productCount;
 

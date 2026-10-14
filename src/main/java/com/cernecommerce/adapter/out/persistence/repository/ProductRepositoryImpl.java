@@ -61,6 +61,8 @@ public class ProductRepositoryImpl implements ProductRepository {
             "comanda_item.sku",
             // PDV-F042 — o sabor que a sessão do cardápio queimou (V147).
             "comanda_item.essence_sku",
+            // PDV-F051 — o 2º sabor da sessão mesclada (V160).
+            "comanda_item.essence_sku2",
             "order_item.sku",
             "goods_receipt_item.sku",
             "replenishment_list_item.sku",
@@ -101,6 +103,7 @@ public class ProductRepositoryImpl implements ProductRepository {
         entity.setStatus(product.status().name());
         entity.setLotTracked(product.lotTracked());
         entity.setParentSellable(product.parentSellable());
+        entity.setSessionTierId(product.sessionTierId());
         entity.setBarcode(product.barcode());
         entity.setUnit(product.unit().name());
         entity.setSampleProduct(product.sampleProduct());
@@ -383,7 +386,7 @@ public class ProductRepositoryImpl implements ProductRepository {
                 e.getVideoUrl(), List.copyOf(e.getImages()), attributes, e.getCategoryId(), e.getBarcode(), unit,
                 e.isSampleProduct(), e.isKitComponentEligible(), e.isVisibleInPos(), e.isVisibleInMarketplace(),
                 status, e.getBrandId(), e.isAvailableForTable(), e.isSessionProduct(), e.getSessionsPerUnit(),
-                e.getOpenRoshPrice(), e.isParentSellable());
+                e.getOpenRoshPrice(), e.isParentSellable(), e.getSessionTierId());
     }
 
     private ProductVariant toDomain(ProductVariantEntity e) {

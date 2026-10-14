@@ -24,8 +24,11 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
     // EST-F019: resolve o produto pai a partir de QUALQUER sku do catálogo — o próprio pai ou o
     // de uma variação. É o caminho de consulta de preço do PDV, que lê o código de barras da
     // variação (o sabor específico na prateleira) mas precisa do preço, que mora no pai.
-    // O JOIN FETCH evita o N+1 de carregar as variações depois.
-    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v LEFT JOIN FETCH v.attributes "
+    // O JOIN FETCH evita o N+1 de carregar as variações depois. EST-C026 — sem o JOIN FETCH dos
+    // atributos: com variants em List, o fetch de duas coleções aninhadas repetia a variação uma vez
+    // por atributo (o cigarro com Modelo + Embalagem vinha em dobro). Os atributos chegam em lote,
+    // pelo @BatchSize de ProductVariantEntity.attributes.
+    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
             + "WHERE p.sku = :sku OR p.id IN (SELECT v2.product.id FROM ProductVariantEntity v2 WHERE v2.sku = :sku)")
     Optional<ProductEntity> findByAnySku(String sku);
 
@@ -37,7 +40,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
 
     // Resolve o produto pai a partir do código de barras do próprio pai ou de qualquer variação —
     // caminho de leitura por scanner do PDV, mesmo formato de findByAnySku.
-    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v LEFT JOIN FETCH v.attributes "
+    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
             + "WHERE p.barcode = :barcode OR p.id IN "
             + "(SELECT v2.product.id FROM ProductVariantEntity v2 WHERE v2.barcode = :barcode)")
     Optional<ProductEntity> findByAnyBarcode(String barcode);
@@ -183,7 +186,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
     Page<Long> findActivePricedIds(Pageable pageable, @Param("onSale") Boolean onSale,
             @Param("categoryId") Long categoryId, @Param("search") String search);
 
-    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v LEFT JOIN FETCH v.attributes "
+    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
             + "WHERE p.id IN :ids ORDER BY p.id")
     List<ProductEntity> findAllByIdsWithVariants(List<Long> ids);
 

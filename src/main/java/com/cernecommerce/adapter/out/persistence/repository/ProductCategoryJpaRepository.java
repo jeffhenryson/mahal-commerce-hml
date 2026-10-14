@@ -21,4 +21,6 @@ public interface ProductCategoryJpaRepository extends JpaRepository<ProductCateg
     Page<ProductCategoryEntity> findAllByOrderByFeaturedDescDisplayOrderAscNameAsc(Pageable pageable);
 
     List<ProductCategoryEntity> findByActiveTrueOrderByFeaturedDescDisplayOrderAscNameAsc();
+
+    List<ProductCategoryEntity> findByCigaretteTrue();
 }

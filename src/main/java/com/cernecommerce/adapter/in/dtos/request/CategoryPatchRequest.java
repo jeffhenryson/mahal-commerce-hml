@@ -22,4 +22,7 @@ public class CategoryPatchRequest {
 
     @PositiveOrZero
     private Integer displayOrder;
+
+    /** PDV-F045 — categoria de cigarros. Omitido não muda. */
+    private Boolean cigarette;
 }

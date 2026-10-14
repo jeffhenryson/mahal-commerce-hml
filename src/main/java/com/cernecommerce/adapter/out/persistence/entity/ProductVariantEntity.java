@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.out.persistence.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashSet;
@@ -32,7 +33,10 @@ public class ProductVariantEntity {
     @Column(nullable = false)
     private boolean active;
 
+    // Carregados em lote (um SELECT … IN por até 100 variações), não por JOIN FETCH: buscar junto
+    // com p.variants, que é List, duplicava a variação para cada atributo dela.
     @ElementCollection
+    @BatchSize(size = 100)
     @CollectionTable(name = "product_attribute", joinColumns = @JoinColumn(name = "variant_id",
             foreignKey = @ForeignKey(name = "fk_product_attribute_variant")))
     private Set<ProductAttributeEmbeddable> attributes = new LinkedHashSet<>();
