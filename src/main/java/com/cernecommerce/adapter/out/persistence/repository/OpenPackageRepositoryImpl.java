@@ -44,6 +44,35 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<ClosedYield> closedYield(Long warehouseId, java.time.Instant from, java.time.Instant to) {
+        return jpaRepository.closedYield(warehouseId, from, to).stream()
+                .map(row -> new ClosedYield((String) row[0], ((Number) row[1]).longValue(),
+                        ((Number) row[2]).longValue()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ClosedYield> closedYieldAllWarehouses(java.time.Instant from, java.time.Instant to) {
+        return jpaRepository.closedYieldAllWarehouses(from, to).stream()
+                .map(row -> new ClosedYield((String) row[0], ((Number) row[1]).longValue(),
+                        ((Number) row[2]).longValue()))
+                .toList();
+    }
+
+    /**
+     * Duas atualizações em lote, nesta ordem: fechar as duplicadas primeiro é o que permite à
+     * segunda não colidir no índice parcial da V124. Em lote, e não lata a lata pelo {@code save},
+     * porque a ordem dos UPDATEs no flush do Hibernate não é a ordem das chamadas.
+     */
+    @Override
+    public int moveAllOpenTo(Long targetWarehouseId, java.time.Instant closedAt) {
+        jpaRepository.closeOlderDuplicatesOpen(closedAt);
+        return jpaRepository.moveAllOpenTo(targetWarehouseId);
+    }
+
+    @Override
     public OpenPackage save(OpenPackage openPackage) {
         OpenPackageEntity entity = openPackage.id() == null
                 ? new OpenPackageEntity()

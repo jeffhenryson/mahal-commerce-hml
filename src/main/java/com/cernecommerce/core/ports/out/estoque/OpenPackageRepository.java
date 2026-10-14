@@ -36,4 +36,32 @@ public interface OpenPackageRepository {
     List<OpenPackage> findAllOpen(Long warehouseId);
 
     OpenPackage save(OpenPackage openPackage);
+
+    /**
+     * EST-F037 — latas fechadas de um depósito com {@code closed_at} em {@code [from, to]} e ao menos
+     * um uso, agrupadas por SKU: quantas e a soma dos usos.
+     */
+    List<ClosedYield> closedYield(Long warehouseId, java.time.Instant from, java.time.Instant to);
+
+    /**
+     * EST-F038 — igual a {@link #closedYield}, mas de todos os depósitos. É o rendimento do Salão:
+     * as latas fechadas antes de ele existir ficaram no depósito do caixa, e sem elas a média real
+     * recomeçaria do zero.
+     */
+    List<ClosedYield> closedYieldAllWarehouses(java.time.Instant from, java.time.Instant to);
+
+    /**
+     * EST-F038 — leva todas as latas em uso para {@code targetWarehouseId}, mantendo usos, abertura e
+     * quem abriu, e sem movimento de estoque: a unidade já saiu do saldo quando a lata foi aberta.
+     *
+     * <p>Antes de mover, onde houver mais de uma lata em uso do mesmo SKU (uma por caixa), fecha as
+     * mais antigas com {@code REPLACED} em {@code closedAt}: o destino só comporta uma por SKU
+     * (índice parcial da V124), e a mais nova é a que está na mão do atendente.</p>
+     *
+     * @return quantas latas mudaram de depósito
+     */
+    int moveAllOpenTo(Long targetWarehouseId, java.time.Instant closedAt);
+
+    record ClosedYield(String sku, long closedCount, long totalSessions) {
+    }
 }

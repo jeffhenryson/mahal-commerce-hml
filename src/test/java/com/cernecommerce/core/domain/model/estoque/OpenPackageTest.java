@@ -60,20 +60,28 @@ class OpenPackageTest {
         assertThat(lata.uses()).isEqualTo(5);
         assertThat(lata.remaining()).isZero();
         assertThat(lata.isExhausted()).isTrue();
-        // Continua ABERTA: é a lata que o atendente está terminando. Quem a fecha é a sessão
-        // seguinte, ao abrir a próxima.
+        // Continua ABERTA: quem fecha a lata é o atendente ("Acabou" ou repor), não a estimativa.
+        assertThat(lata.isOpen()).isTrue();
+    }
+
+    /** EST-F037 — sessionsPerUnit é estimativa: a lata recebe sessões além dela, sem teto. */
+    @Test
+    void withUses_passaDaEstimativa_semTeto() {
+        OpenPackage lata = lata(5).withUses(4).withUses(3);
+
+        assertThat(lata.uses()).isEqualTo(7);
+        assertThat(lata.remaining()).isZero();
+        assertThat(lata.isExhausted()).isTrue();
         assertThat(lata.isOpen()).isTrue();
     }
 
     @Test
-    void withUses_naoPassaDoTeto_emVezDeEstourar() {
-        // Uma sessão que pede mais usos do que ainda cabe é a lata acabando no meio do lançamento.
-        // O que sobra é cobrado da próxima pelo caminho normal; recusar aqui negaria um lançamento
-        // que o salão já fez.
-        OpenPackage lata = lata(5).withUses(4).withUses(3);
+    void closed_finished_eOAcabouAMao() {
+        OpenPackage fechada = lata(5).withUses(6).closed(OpenPackageCloseReason.FINISHED, T0.plusSeconds(60));
 
-        assertThat(lata.uses()).isEqualTo(5);
-        assertThat(lata.isExhausted()).isTrue();
+        assertThat(fechada.isOpen()).isFalse();
+        assertThat(fechada.closeReason()).isEqualTo(OpenPackageCloseReason.FINISHED);
+        assertThat(fechada.uses()).isEqualTo(6);
     }
 
     @Test
@@ -116,7 +124,9 @@ class OpenPackageTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("uses");
 
-        assertThatThrownBy(() -> new OpenPackage(null, "ESSE-BLUE", 1L, 6, 5, T0, "atendente", null, null))
+        // EST-F037 — acima da estimativa é válido (a lata rendeu mais que o cadastro previa).
+        assertThat(new OpenPackage(null, "ESSE-BLUE", 1L, 6, 5, T0, "atendente", null, null).uses()).isEqualTo(6);
+        assertThatThrownBy(() -> new OpenPackage(null, "ESSE-BLUE", 1L, 0, -1, T0, "atendente", null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sessionsPerUnit");
 

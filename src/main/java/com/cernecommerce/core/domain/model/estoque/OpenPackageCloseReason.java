@@ -3,7 +3,10 @@ package com.cernecommerce.core.domain.model.estoque;
 /** Por que uma lata aberta deixou de ser a lata em uso (EST-F027). */
 public enum OpenPackageCloseReason {
 
-    /** Rendeu todas as sessões declaradas em {@code sessionsPerUnit} e a próxima abriu outra. */
+    /**
+     * Rendeu todas as sessões declaradas em {@code sessionsPerUnit} e a próxima abriu outra. Só em
+     * latas fechadas até EST-F037: desde então a lata não fecha mais sozinha pela estimativa.
+     */
     EXHAUSTED,
 
     /**
@@ -13,5 +16,11 @@ public enum OpenPackageCloseReason {
      * saldo quando foi aberta, e transformar o resto em perda criaria movimento que ninguém pediu
      * para medir uma quantidade que ninguém mediu.
      */
-    REPLACED
+    REPLACED,
+
+    /**
+     * EST-F037 — o atendente marcou "Acabou": a lata fecha sem abrir outra e sem baixa. A próxima
+     * sessão do sabor abre uma nova, com {@code SAIDA} de 1, como quando não há lata aberta.
+     */
+    FINISHED
 }

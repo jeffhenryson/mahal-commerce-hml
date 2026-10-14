@@ -4,8 +4,11 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+
+import java.time.LocalDate;
 
 /** Cadastro de uma lata que já estava aberta antes do sistema (EST-F033). */
 @Data
@@ -22,4 +25,13 @@ public class RegisterOpenPackageRequest {
     @Schema(description = "Sessões que a lata ainda rende — entre 1 e o sessionsPerUnit do produto",
             example = "2", requiredMode = Schema.RequiredMode.REQUIRED)
     private Integer usesRemaining;
+
+    // EST-F040 — os dois opcionais; ausentes, o cadastro é o de antes (hoje, sem baixa).
+    @PastOrPresent
+    @Schema(description = "Dia em que a lata foi aberta (padrão: hoje)", example = "2026-10-13")
+    private LocalDate openedAt;
+
+    @Schema(description = "Dar baixa de 1 lata no depósito: era uma fechada que foi aberta agora",
+            example = "false")
+    private Boolean withdraw;
 }

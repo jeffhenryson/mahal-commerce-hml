@@ -59,7 +59,7 @@ class OpenPackageConcurrencyIT {
                 "carga inicial", operator);
         // Lata cheia já aberta (EST-F033): com folga para as 8 sessões, nenhuma thread precisa
         // abrir outra — o teste isola a corrida sobre o CONTADOR, não sobre a abertura.
-        estoqueUseCase.registerOpenPackage(sku, warehouseCode, SESSIONS_PER_UNIT, operator);
+        estoqueUseCase.registerOpenPackage(sku, warehouseCode, SESSIONS_PER_UNIT, null, false, operator);
 
         CountDownLatch ready = new CountDownLatch(THREADS);
         CountDownLatch start = new CountDownLatch(1);

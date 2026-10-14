@@ -31,8 +31,8 @@ public class OpenPackageResponseDTO {
     @Schema(description = "Sessões que ainda cabem nesta lata", example = "2")
     private int remaining;
 
-    @Schema(description = "A lata rendeu tudo o que tinha. Continua aberta neste estado — é a que "
-            + "o atendente está terminando —, e a próxima sessão abre outra.", example = "false")
+    @Schema(description = "EST-F037 — a lata atingiu ou passou a estimativa de sessionsPerUnit (selo "
+            + "\"acima da estimativa\"). Não é fim: ela só fecha com \"Acabou\" ou repondo.", example = "false")
     private boolean exhausted;
 
     @Schema(description = "Quando a lata foi aberta")
@@ -40,4 +40,11 @@ public class OpenPackageResponseDTO {
 
     @Schema(description = "Quem abriu", example = "atendente")
     private String openedBy;
+
+    @Schema(description = "EST-F037 — quando a lata foi fechada; nulo enquanto em uso")
+    private Instant closedAt;
+
+    @Schema(description = "EST-F037 — por que fechou: FINISHED (\"Acabou\"), REPLACED (reposta) ou EXHAUSTED "
+            + "(fechamento automático, só em latas antigas); nulo enquanto em uso", example = "FINISHED")
+    private String closeReason;
 }

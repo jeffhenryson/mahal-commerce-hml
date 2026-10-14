@@ -27,6 +27,11 @@ import java.time.Instant;
  * <p>{@code sessionsPerUnit} é <b>copiado</b> do catálogo na abertura, não lido dele a cada uso: o
  * admin pode editar o produto no meio da noite, e uma lata pela metade não pode mudar de tamanho
  * porque alguém corrigiu o cadastro.</p>
+ *
+ * <p><b>EST-F037 — {@code sessionsPerUnit} é estimativa, não limite.</b> Ninguém sabe ao certo
+ * quantas sessões um pacote rende. A lata não fecha mais sozinha ao atingir o número: continua
+ * recebendo sessões além dele ({@code uses > sessionsPerUnit} é válido) até alguém marcar "Acabou"
+ * ({@link OpenPackageCloseReason#FINISHED}) ou repor. O rendimento real sai das latas fechadas.</p>
  */
 public record OpenPackage(
         Long id,
@@ -51,10 +56,6 @@ public record OpenPackage(
         }
         if (uses < 0) {
             throw new IllegalArgumentException("uses não pode ser negativo: " + uses);
-        }
-        if (uses > sessionsPerUnit) {
-            throw new IllegalArgumentException(
-                    "uses não pode passar de sessionsPerUnit: " + uses + " > " + sessionsPerUnit);
         }
         if (openedAt == null) {
             throw new IllegalArgumentException("openedAt é obrigatório");
@@ -99,9 +100,9 @@ public record OpenPackage(
     }
 
     /**
-     * Rendeu tudo o que tinha para render. A lata <b>continua aberta</b> nesse estado, de
-     * propósito: é ela que o atendente está usando até o fim, e a tela precisa poder mostrar
-     * "5 de 5". Quem a fecha é a próxima sessão, ao abrir a seguinte.
+     * Atingiu (ou passou) a estimativa de {@code sessionsPerUnit}. Desde EST-F037 é só informação —
+     * o selo "acima da estimativa" na tela —, não fim: a lata continua recebendo sessões até alguém
+     * marcar "Acabou" ou repor.
      */
     public boolean isExhausted() {
         return uses >= sessionsPerUnit;
@@ -116,11 +117,9 @@ public record OpenPackage(
         if (count <= 0) {
             throw new IllegalArgumentException("count deve ser maior que zero: " + count);
         }
-        // Teto no sessionsPerUnit em vez de estourar: uma sessão que pede mais usos do que a lata
-        // ainda tem é a lata acabando no meio do lançamento, e o que sobra é cobrado da próxima
-        // pelo caminho normal (esta fecha como EXHAUSTED e outra é aberta). Estourar aqui
-        // recusaria um lançamento que o salão já fez.
-        return new OpenPackage(id, sku, warehouseId, Math.min(sessionsPerUnit, uses + count),
+        // EST-F037 — sem teto: sessionsPerUnit é estimativa, e passar dela é a lata rendendo mais
+        // do que o cadastro previa. Quem fecha a lata é o atendente ("Acabou" ou repor).
+        return new OpenPackage(id, sku, warehouseId, uses + count,
                 sessionsPerUnit, openedAt, openedBy, closedAt, closeReason);
     }
 
