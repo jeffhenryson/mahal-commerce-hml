@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 @Getter
 @Setter
@@ -51,4 +52,8 @@ public class CustomerEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private CustomerStage estagio;
+
+    /** CRM-F012 — opcional; base da automação de aniversário. */
+    @Column(name = "data_nascimento")
+    private LocalDate dataNascimento;
 }

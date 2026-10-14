@@ -14,6 +14,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -78,5 +79,15 @@ class CustomerSearchPostgresIT {
         List<Customer> all = customerRepository.findAllForExport("exporta nome");
 
         assertThat(all).extracting(Customer::id).contains(bia.id());
+    }
+
+    /** CRM-F012 — V153: a coluna data_nascimento grava e volta pelo mapeamento. */
+    @Test
+    void dataNascimento_gravaELe() {
+        LocalDate nascimento = LocalDate.of(1990, 5, 17);
+        Customer salvo = customerRepository.save(novo("Ana Aniversario", null).withDataNascimento(nascimento));
+
+        assertThat(customerRepository.findById(salvo.id()))
+                .hasValueSatisfying(c -> assertThat(c.dataNascimento()).isEqualTo(nascimento));
     }
 }

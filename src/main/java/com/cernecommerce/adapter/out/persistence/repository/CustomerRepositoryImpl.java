@@ -91,6 +91,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         entity.setOrigem(customer.origem());
         entity.setCadastradoEm(customer.cadastradoEm());
         entity.setEstagio(customer.estagio());
+        entity.setDataNascimento(customer.dataNascimento());
         CustomerEntity saved = customerJpaRepository.save(entity);
         return toDomain(saved);
     }
@@ -170,6 +171,6 @@ public class CustomerRepositoryImpl implements CustomerRepository {
 
     private Customer toDomain(CustomerEntity e) {
         return Customer.of(e.getId(), e.getNome(), e.getContato(), e.getEmail(), e.getCpf(), e.getOrigem(),
-                e.getCadastradoEm(), e.getEstagio());
+                e.getCadastradoEm(), e.getEstagio(), e.getDataNascimento());
     }
 }

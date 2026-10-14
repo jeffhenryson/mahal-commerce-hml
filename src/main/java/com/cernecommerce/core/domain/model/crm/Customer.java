@@ -1,6 +1,7 @@
 package com.cernecommerce.core.domain.model.crm;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.regex.Pattern;
 
 /**
@@ -16,6 +17,10 @@ import java.util.regex.Pattern;
  *
  * <p>Pelo menos um entre {@code cpf}, {@code email} e {@code contato} é obrigatório: um cliente
  * sem nenhum identificador não é encontrável de novo, e deixaria de existir na prática.</p>
+ *
+ * <p>{@code dataNascimento} (CRM-F012) é opcional e base da automação de aniversário. A regra de
+ * idade (18 a 120 anos) é do cadastro, no serviço — não daqui: um registro lido do banco não pode
+ * deixar de ser válido só porque o tempo passou.</p>
  */
 public record Customer(
     Long id,
@@ -25,7 +30,8 @@ public record Customer(
     String cpf,
     String origem,
     Instant cadastradoEm,
-    CustomerStage estagio
+    CustomerStage estagio,
+    LocalDate dataNascimento
 ) {
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
@@ -49,6 +55,12 @@ public record Customer(
         }
     }
 
+    /** Cliente sem data de nascimento — a forma anterior a CRM-F012. */
+    public Customer(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio) {
+        this(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, null);
+    }
+
     /** Cria um novo cliente (sem id, cadastradoEm no momento atual, estágio inicial NOVO_LEAD). */
     public static Customer create(String nome, String contato, String email, String cpf, String origem) {
         return new Customer(null, nome, contato, email, cpf, origem, Instant.now(), CustomerStage.NOVO_LEAD);
@@ -57,7 +69,13 @@ public record Customer(
     /** Reconstitui um cliente a partir de persistência. */
     public static Customer of(Long id, String nome, String contato, String email, String cpf, String origem,
             Instant cadastradoEm, CustomerStage estagio) {
-        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio);
+        return of(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, null);
+    }
+
+    /** Reconstitui um cliente a partir de persistência, com a data de nascimento (CRM-F012). */
+    public static Customer of(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento) {
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento);
     }
 
     /**
@@ -66,12 +84,18 @@ public record Customer(
      */
     public Customer withProfile(String novoNome, String novoContato, String novoEmail, String novoCpf,
             String novaOrigem) {
-        return new Customer(id, novoNome, novoContato, novoEmail, novoCpf, novaOrigem, cadastradoEm, estagio);
+        return new Customer(id, novoNome, novoContato, novoEmail, novoCpf, novaOrigem, cadastradoEm, estagio,
+                dataNascimento);
+    }
+
+    /** Retorna uma cópia com a data de nascimento trocada (CRM-F012). */
+    public Customer withDataNascimento(LocalDate novaDataNascimento) {
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, novaDataNascimento);
     }
 
     /** Retorna uma cópia deste cliente com o estágio atualizado. */
     public Customer withEstagio(CustomerStage novoEstagio) {
-        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, novoEstagio);
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, novoEstagio, dataNascimento);
     }
 
     /**

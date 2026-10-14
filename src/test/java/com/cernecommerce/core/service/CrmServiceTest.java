@@ -3,7 +3,9 @@ package com.cernecommerce.core.service;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
+import com.cernecommerce.core.domain.exception.crm.CustomerUnderageException;
 import com.cernecommerce.core.domain.exception.crm.DuplicateTagNameException;
+import com.cernecommerce.core.domain.exception.crm.TagNotAllowedException;
 import com.cernecommerce.core.domain.exception.crm.TagNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.exception.crm.InvalidAutomationException;
@@ -56,6 +58,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -293,6 +296,75 @@ class CrmServiceTest {
         assertThat(resolution.created()).isFalse();
         assertThat(resolution.customer()).isSameAs(existing);
         verify(customerRepository, never()).findByContato(any());
+        verify(customerRepository, never()).save(any());
+    }
+
+    // ── CRM-F012: data de nascimento ─────────────────────────────────────────────────────────
+
+    @Test
+    void createCustomer_gravaDataNascimento() {
+        when(customerRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        LocalDate nascimento = LocalDate.now().minusYears(30);
+
+        Customer result = crmService.createCustomer("Maria", "11999998888", null, null, "PDV", nascimento);
+
+        assertThat(result.dataNascimento()).isEqualTo(nascimento);
+    }
+
+    @Test
+    void createCustomer_menorDeIdade_recusaComCustomerUnderage() {
+        LocalDate nascimento = LocalDate.now().minusYears(17);
+
+        assertThatThrownBy(() -> crmService.createCustomer("Maria", "11999998888", null, null, "PDV", nascimento))
+                .isInstanceOf(CustomerUnderageException.class);
+        verify(customerRepository, never()).save(any());
+    }
+
+    @Test
+    void createCustomer_maisDe120Anos_recusa() {
+        LocalDate nascimento = LocalDate.now().minusYears(121);
+
+        assertThatThrownBy(() -> crmService.createCustomer("Maria", "11999998888", null, null, "PDV", nascimento))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateCustomer_semDataNascimento_mantemAGravada() {
+        LocalDate nascimento = LocalDate.of(1990, 5, 17);
+        Customer current = Customer.of(1L, "Maria", "11999998888", null, null, "PDV", Instant.now(),
+                CustomerStage.NOVO_LEAD, nascimento);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(current));
+        when(customerRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Customer result = crmService.updateCustomer(1L, "Maria Souza", "11999998888", null, null, "PDV");
+
+        assertThat(result.dataNascimento()).isEqualTo(nascimento);
+    }
+
+    @Test
+    void resolveLead_clienteExistenteSemData_completaComADataRecebida() {
+        Customer existing = Customer.of(5L, "Jeff", "83999990000", null, "12345678900", "PDV", Instant.now(),
+                CustomerStage.NOVO_LEAD);
+        when(customerRepository.findByCpf("12345678900")).thenReturn(Optional.of(existing));
+        when(customerRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        LocalDate nascimento = LocalDate.of(1990, 5, 17);
+
+        var resolution = crmService.resolveLead("Jeff", null, null, "12345678900", "PDV", nascimento);
+
+        assertThat(resolution.created()).isFalse();
+        assertThat(resolution.customer().dataNascimento()).isEqualTo(nascimento);
+    }
+
+    @Test
+    void resolveLead_clienteExistenteComData_naoSobrescreve() {
+        LocalDate gravada = LocalDate.of(1985, 1, 2);
+        Customer existing = Customer.of(5L, "Jeff", "83999990000", null, "12345678900", "PDV", Instant.now(),
+                CustomerStage.NOVO_LEAD, gravada);
+        when(customerRepository.findByCpf("12345678900")).thenReturn(Optional.of(existing));
+
+        var resolution = crmService.resolveLead("Jeff", null, null, "12345678900", "PDV", LocalDate.of(1990, 5, 17));
+
+        assertThat(resolution.customer().dataNascimento()).isEqualTo(gravada);
         verify(customerRepository, never()).save(any());
     }
 
@@ -610,6 +682,49 @@ class CrmServiceTest {
         crmService.addTagToCustomer(1L, 1L);
 
         verify(customerTagRepository).associate(1L, 1L);
+    }
+
+    // ── PDV-F046: vendedor só mexe na tag VIP ────────────────────────────────────────────────
+
+    @Test
+    void addTagToCustomer_onlyVip_aceitaAVipSemDiferenciarMaiusculas() {
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(customer(1L, "maria@example.com")));
+        when(tagRepository.findById(1L)).thenReturn(Optional.of(Tag.of(1L, " vip ")));
+
+        crmService.addTagToCustomer(1L, 1L, true);
+
+        verify(customerTagRepository).associate(1L, 1L);
+    }
+
+    @Test
+    void addTagToCustomer_onlyVip_recusaOutraTag() {
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(customer(1L, "maria@example.com")));
+        when(tagRepository.findById(2L)).thenReturn(Optional.of(Tag.of(2L, "Atacado")));
+
+        assertThatThrownBy(() -> crmService.addTagToCustomer(1L, 2L, true))
+                .isInstanceOf(TagNotAllowedException.class);
+        verify(customerTagRepository, never()).associate(any(), any());
+    }
+
+    @Test
+    void removeTagFromCustomer_onlyVip_recusaOutraTag() {
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(customer(1L, "maria@example.com")));
+        when(tagRepository.findById(2L)).thenReturn(Optional.of(Tag.of(2L, "Atacado")));
+
+        assertThatThrownBy(() -> crmService.removeTagFromCustomer(1L, 2L, true))
+                .isInstanceOf(TagNotAllowedException.class);
+        verify(customerTagRepository, never()).disassociate(any(), any());
+    }
+
+    @Test
+    void createTag_onlyVip_soCriaAVip() {
+        assertThatThrownBy(() -> crmService.createTag("Atacado", true))
+                .isInstanceOf(TagNotAllowedException.class);
+        verify(tagRepository, never()).save(any());
+
+        when(tagRepository.findByNome("VIP")).thenReturn(Optional.empty());
+        when(tagRepository.save(any())).thenReturn(Tag.of(1L, "VIP"));
+        assertThat(crmService.createTag("VIP", true).id()).isEqualTo(1L);
     }
 
     @Test

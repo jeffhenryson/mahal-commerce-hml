@@ -6,6 +6,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 
 @Data
@@ -20,6 +21,9 @@ public class CustomerResponseDTO {
 
     // Estágio manual do Kanban de atendimento (crm/kanban-segmentacao) — valor real, persistido.
     private CustomerStage estagio;
+
+    @Schema(description = "CRM-F012 — data de nascimento (yyyy-MM-dd), se informada.", example = "1990-05-17")
+    private LocalDate dataNascimento;
 
     // Placeholder até os domínios de pedidos e cashback existirem (ver crm/listagem-clientes-rfm) —
     // sempre 0/"NOVO" por enquanto, não refletem dados reais de compra.

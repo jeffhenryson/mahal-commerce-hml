@@ -3,8 +3,11 @@ package com.cernecommerce.adapter.in.dtos.request;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+
+import java.time.LocalDate;
 
 /**
  * {@code contato} e {@code email} são opcionais desde CRM-C005 — só {@code nome} e ao menos um
@@ -36,4 +39,11 @@ public class CustomerRequest {
 
     @Size(max = 100)
     private String origem;
+
+    // CRM-F012 — a regra de idade (18 a 120 anos) é do serviço: 400 CUSTOMER_UNDERAGE.
+    @Past
+    @Schema(description = "CRM-F012 — data de nascimento (yyyy-MM-dd). Opcional; menor de 18 anos responde "
+            + "400 CUSTOMER_UNDERAGE. No PUT, omitida mantém a gravada. No lead, só completa um cliente que "
+            + "ainda não tem data — nunca sobrescreve.", example = "1990-05-17")
+    private LocalDate dataNascimento;
 }

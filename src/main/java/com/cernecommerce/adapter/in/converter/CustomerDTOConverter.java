@@ -44,6 +44,7 @@ public class CustomerDTOConverter {
         dto.setOrigem(customer.origem());
         dto.setCadastradoEm(customer.cadastradoEm());
         dto.setEstagio(customer.estagio());
+        dto.setDataNascimento(customer.dataNascimento());
         dto.setLtv(LTV_PLACEHOLDER);
         dto.setCashback(CASHBACK_PLACEHOLDER);
         dto.setSegmento(SEGMENTO_PLACEHOLDER);
