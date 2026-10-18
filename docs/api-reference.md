@@ -642,6 +642,31 @@ Query params:
 // Response 200 → UserResponse / 404 USER_NOT_FOUND
 ```
 
+PLAT-F005: `UserResponse` (aqui, em `GET /users` e em `PATCH /users/{id}`) traz `customerId` e
+`customerName` — o cadastro de cliente do CRM ligado à conta, nulos sem vínculo.
+
+---
+
+### PUT /users/{id}/customer — Permissão: USER_UPDATE
+
+PLAT-F005 — liga a conta de operador ao cadastro de cliente de quem opera o PDV e também compra na loja.
+
+```json
+{ "customerId": 50 }   // obrigatório
+// 200 → UserResponse com customerId e customerName
+// 404 USER_NOT_FOUND / CUSTOMER_NOT_FOUND
+// 409 CUSTOMER_ALREADY_LINKED (o cliente já está ligado a outra conta)
+// 409 CUSTOMER_ACCOUNT_LINK_IMMUTABLE (conta de cliente da loja: nasce ligada e não troca)
+```
+
+Um cliente fica ligado a no máximo um usuário (checagem + índice `uk_users_customer_id`). Religar o mesmo
+cliente é idempotente. Auditoria `USER_UPDATED` com `customerId`.
+
+### DELETE /users/{id}/customer — Permissão: USER_UPDATE
+
+PLAT-F005 — desfaz o vínculo. Idempotente. `200` com o usuário; `409 CUSTOMER_ACCOUNT_LINK_IMMUTABLE` em
+conta de cliente da loja. Excluir o operador também solta o cliente.
+
 ---
 
 ### PATCH /users/{id} — Permissão: USER_UPDATE
@@ -2152,13 +2177,32 @@ PDV-F037: a sessão (`GET /pdv/sessions/current`, `GET /pdv/sessions/{id}`) traz
 `fechamentoSugerido` (aberta há 12h ou mais). É só aviso: desde então não há corte de meia-noite, e o
 caixa aberto ontem continua vendendo até o dono fechar.
 
+### GET /pdv/sessions/operators/{username}/stats — Permissão: PDV_READ
+
+PDV-F056 — o desempenho do operador nos últimos caixas fechados, numa chamada só (a abertura do caixa
+montava com a lista mais um `/summary` por sessão).
+
+```json
+// ?limit=5 (1..50, padrão 5)
+{ "operator": "joana", "sessionCount": 5, "totalSold": 3120.00, "averageSold": 624.00,
+  "divergenceCount": 1, "totalDifference": -2.50, "lastLeftInDrawerAmount": 100.00 }
+```
+
+`totalSold` é a soma do `totalReceived` do resumo de cada caixa. `lastLeftInDrawerAmount` é o troco
+deixado no fechamento mais recente (nulo se não informado). Sem `PDV_SESSION_READ_ANY`, só o próprio
+operador: outro → `403 SESSION_NOT_OWNED`.
+
 ### POST /pdv/sessions/{id}/close — Permissão: PDV_SESSION_CLOSE
 
 ```json
-{ "countedAmount": 495.00 }
-// 200 → CashRegisterSessionResponseDTO com expectedAmount, countedAmount, differenceAmount, diverges
-// 404 CASH_REGISTER_SESSION_NOT_FOUND / 409 CASH_REGISTER_SESSION_CLOSED
+{ "countedAmount": 495.00, "notes": "opcional", "leftInDrawerAmount": 100.00 }
+// 200 → CashRegisterSessionResponseDTO com expectedAmount, countedAmount, differenceAmount, diverges,
+//       leftInDrawerAmount
+// 400 LEFT_IN_DRAWER_EXCEEDS_COUNTED / 404 CASH_REGISTER_SESSION_NOT_FOUND / 409 CASH_REGISTER_SESSION_CLOSED
 ```
+
+PDV-F056: `leftInDrawerAmount` (opcional) é a parte do contado que fica na gaveta como troco do próximo
+turno. Não mexe no esperado nem na diferença, e não pode passar do contado.
 
 `expectedAmount = openingAmount + vendas concluídas − sangrias + suprimentos`.
 
@@ -2671,6 +2715,24 @@ os dois ids, como no duplo de sempre. **201** com o `ComandaResponseDTO`. Evento
 | `{itemId}` não é `SESSAO` desta comanda ainda no salão (recolhida ou desistida) | 409 | `NOT_A_SESSION_LINE` |
 | A sessão já tem `ROSH_EXTRA` ligado | 409 | `SESSION_ALREADY_DUPLO` |
 
+### DELETE /pdv/comandas/{id}/sessoes/{itemId}/duplo — Permissão: PDV_COMANDA_MANAGE + PDV_COMANDA_COURTESY
+
+PDV-F055 — desfaz o "Tornar duplo" clicado por engano. **Sem corpo.** Remove o 2º rosh cortesia ligado
+à sessão enquanto ele ainda está `NA_FILA` (convertido ou lançado sem sabor). Nada foi consumido além,
+talvez, do uso da lata do sabor já escolhido, que volta. Depois do preparo o caminho é a desistência.
+Depois de desfazer, o `POST …/duplo` volta a funcionar. **200** com o `ComandaResponseDTO`. Evento
+`COMANDA_ROSH_EXTRA_REMOVED` com `{comandaId, sessionItemId, roshItemId, desfeito: true}`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem `PDV_COMANDA_COURTESY` | 403 | `COURTESY_NOT_ALLOWED` |
+| Comanda inexistente | 404 | `COMANDA_NOT_FOUND` |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| `{itemId}` não é `SESSAO` desta comanda | 409 | `NOT_A_SESSION_LINE` |
+| Sessão sem `ROSH_EXTRA` ligado | 409 | `SESSION_NOT_DUPLO` |
+| 2º rosh fora de `NA_FILA` (preparando, entregue ou recolhido) | 409 | `ROSH_ALREADY_STARTED` |
+| 2º rosh cobrado (não cortesia) ou já fechado num pedido | 409 | `ROSH_ALREADY_CHARGED` |
+
 > **Duplo pago no final cobra no 2º rosh (PDV-C046), em `PATCH …/sessoes/{itemId}/status`.** Recolher
 > a sessão `pagarNoFinal` ainda a cobrar continua `409 SESSION_NOT_PAID_FOR_COLLECT` (PDV-F040), **exceto**
 > quando ela tem um `ROSH_EXTRA` ligado ainda no salão (na fila, sabor pendente incluído; o recolhido e o
@@ -2847,6 +2909,45 @@ Reembolso **depois** do pagamento confirmado (PDV-F007), total ou por item (PED-
 - **Cashback**: o ganho do item é revertido quando a última unidade dele é estornada; no total, todos.
 - **`ORDER_REFUND_OWN_SESSION`** (vendedor): só pedido da própria sessão de caixa **aberta**.
 - Publica `ORDER_REFUNDED` com `statusBefore`, `statusAfter`, `partial`, `restock` e os itens.
+
+### POST /orders/{id}/items/exchange — Permissão: ORDER_REFUND
+
+PED-F006 — troca unidades de um item do pedido por outro produto, no mesmo pedido e com histórico.
+
+```json
+{
+  "sku": "ZOMO-50-UVA",          // item do pedido
+  "quantity": 1,                 // até vendida − já estornada
+  "destination": "RESTOCK",      // RESTOCK ou DISCARD
+  "newSku": "ZOMO-50-MENTA",     // SKU vendável (variação ou base com parentSellable)
+  "newQuantity": 1,
+  "reason": "sabor errado",      // 3..255
+  "settlementMethod": "PIX"      // PIX | DINHEIRO | DEBITO | CREDITO; obrigatório só com diferença
+}
+// 200 → OrderAdminResponseDTO com o item novo e items[].refundedQuantity
+```
+
+- **Devolvido**: líquido do item ÷ vendida × `quantity` (o unitário do estorno por item). Vira uma linha
+  de `order_item_refund` marcada com a troca: conta no `refundedQuantity`, mas não volta em dinheiro.
+  `RESTOCK` dá `ENTRADA` no depósito do pedido; `DISCARD` é perda, sem mexer no saldo.
+- **Novo**: preço efetivo atual do `newSku` × `newQuantity`, sem desconto, com `SAIDA` no depósito do
+  pedido. Entra como item novo do pedido, que segue no mesmo status.
+- **Diferença = novo − devolvido**: `> 0` cria linha `CAPTURED` na forma informada, contada no caixa
+  aberto de quem trocou (`capture_session_id`), não no do pedido; `< 0` cria linha `REFUNDED` no caixa
+  de quem trocou (em dinheiro, sai da gaveta); `= 0` não move dinheiro.
+- Publica `ORDER_ITEM_EXCHANGED` com `orderId`, `sku`, `quantity`, `destination`, `newSku`, `newQuantity`,
+  `difference`, `settlementMethod` e `reason`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Corpo inválido, `settlementMethod` fora das quatro formas | 400 | `VALIDATION_ERROR` |
+| Diferença ≠ 0 sem `settlementMethod` | 400 | `SETTLEMENT_METHOD_REQUIRED` |
+| Sem saldo do `newSku` no depósito | 400 | `INSUFFICIENT_STOCK` (mapeamento existente) |
+| `newSku` base não vendável | 400 | `PARENT_NOT_SELLABLE` (mapeamento existente) |
+| Pedido ou `newSku` inexistente | 404 | `ORDER_NOT_FOUND` / `PRODUCT_NOT_FOUND` |
+| Diferença a pagar, ou a devolver em dinheiro, sem caixa aberto de quem troca | 404 | `NO_OPEN_SESSION` (mapeamento existente) |
+| Pedido não pago, cancelado, totalmente reembolsado ou de mesa | 409 | `ORDER_NOT_EXCHANGEABLE` |
+| `sku` fora do pedido, `quantity` acima do que resta, linha que não é de catálogo, `newSku` vendido por sessão | 422 | `EXCHANGE_ITEM_INVALID` |
 
 ---
 

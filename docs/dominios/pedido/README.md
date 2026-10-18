@@ -3,7 +3,10 @@
 **Status:** 🟢 Operacional — visão do administrador entregue; o pedido nasce em **três** origens: `vendas-balcao` (canal `BALCAO`, venda pontual, e canal `MESA`, fechamento de comanda) e `ecommerce` (canal `MARKETPLACE`, checkout + webhook InfinitePay, Fatia 10, entregue em 2026-08-03)
 **Pacote Java:** `com.cernecommerce.core.domain.model.pedido`
 **Rota HTTP base:** `/orders`
-**Última atualização deste doc:** 2026-08-30 — **PED-C002 + C003 + C001**. O N+1 de `GET /orders`
+**Última atualização deste doc:** 2026-10-17 — `/1-analise` do caixa (domínio `vendas-balcao`) achou dois
+pontos do estorno. **PED-C013** é novo: estorno sem trava no caixa de destino. **PED-C009** ganhou a decisão
+do dono: estorno em dinheiro exige caixa aberto. Também foi sinalizada a colisão do ID **PED-F004**. Antes,
+em 2026-08-30 — **PED-C002 + C003 + C001**. O N+1 de `GET /orders`
 foi corrigido (ID-first + `JOIN FETCH`), e este doc, que estava congelado antes do canal `MESA`,
 absorveu tudo que quatro entregas do PDV mudaram aqui sem passar por esta página: `MESA`,
 `comandaId`/`tableLabel`, `serviceFeeAmount`, os quatro campos novos de `OrderItem` e oito
@@ -161,6 +164,7 @@ Dois caminhos levam a `PAGO`, e nenhum dos dois é o cliente afirmando "eu pague
 | `PATCH` | `/orders/{id}/delivery` | `ORDER_FULFILL` | PDV-F022 — edita a entrega depois da venda (códigos da 99, rastreio, entregador, endereço); `type`/`fee` congelados |
 | `POST` | `/orders/{id}/cancel` | `ORDER_CANCEL` | Cancela (só pré-pagamento) e **devolve a mercadoria ao estoque** |
 | `POST` | `/orders/{id}/refund` | `ORDER_REFUND` | Reembolsa (só pós-pagamento): devolve estoque (com suporte a lote via `itemLots`), estorna cada pagamento `CAPTURED` com uma linha `REFUNDED` nova e reverte o cashback ganho — tudo em uma transação |
+| `POST` | `/orders/{id}/items/exchange` | `ORDER_REFUND` | PED-F006 — troca unidades de um item por outro produto no mesmo pedido: a perna devolvida é um estorno por item (RESTOCK/DISCARD), o novo SKU entra pelo preço atual com SAIDA, e só a diferença move dinheiro (CAPTURED no caixa de quem trocou, ou REFUNDED) |
 | `POST` | `/orders/bulk-status` | `ORDER_FULFILL` | `{orderIds (≤200), status}` — o "Liberar selecionados/todos". Cada pedido na própria transação; recusados em `failed` com `code` |
 | `POST` | `/orders/{id}/payments/correction` | `ORDER_PAYMENT_CORRECT` ou `ORDER_PAYMENT_CORRECT_CLOSED` | PDV-F030 — corrige a forma de pagamento: `CAPTURED` → `CORRECTED` (lastro) + linhas novas `CAPTURED`; soma exata, sem troco; caixa fechado exige a segunda permissão e grava o delta em `cash_session_adjustment` |
 | `GET` | `/orders/{id}/payment-history` | `ORDER_READ` | PDV-F030 — correções do pedido (`correctionId`, `at`, `by`, `reason`, `before`, `after`); `[]` sem correção |
@@ -301,6 +305,7 @@ não ter número.
 | **V136** | PDV-F030 — `order_payment_correction`, `cash_session_adjustment`, colunas de correção em `order_payment`, status `CORRECTED`, permissões `ORDER_PAYMENT_CORRECT`/`_CLOSED`. O comentário da migration diz "PDV-F027", número trocado depois para não colidir com as sessões paralelas |
 | **V137** | CRM-F010 — `order_payment.due_date`, método `MARCADO`, status `ON_ACCOUNT`; o recebível em si está no README do [CRM](../crm/README.md) |
 | **V156** | PED-F004 — `order_item_refund` (unidades estornadas por item, destino, valor, custo, sessão) e `order_payment.refund_session_id` com `CHECK` só em `REFUNDED`; a permissão `ORDER_REFUND_OWN_SESSION` veio na V154 |
+| **V164** | PED-F006 — `order_item_exchange` (histórico da troca), `order_item_refund.exchange_id` e `order_payment.capture_session_id` (`CHECK` só em `CAPTURED`/`CORRECTED`, índice parcial): a diferença paga numa troca conta no caixa de quem trocou |
 
 > As migrations de permissão do fechamento de mesa (V115 `PDV_COMANDA_COURTESY`, V117
 > `PDV_COMANDA_SURCHARGE`, V119 `PDV_COMANDA_DISCOUNT`) pertencem a
@@ -336,10 +341,17 @@ ao menos um pedido.
 | PED-C006 | 🔴 Alta | Correção | mudanca-de-status-generica-pula-pagamento | `OrderStatus` permite `AGUARDANDO_PAGAMENTO → PAGO/CONCLUIDO`, e `OrderService.changeStatus` usa o `withStatus` genérico: `POST /orders/{id}/status` e `/orders/bulk-status` marcam pedido do app como pago ou concluído **sem pagamento, sem número, sem `concludedAt` e sem consumir a reserva** — que depois expira e devolve o saldo de mercadoria contada como vendida. Os caminhos reais (webhook, `settleOnlineOrder`) fazem tudo isso. Correção: o caminho genérico aceita só a esteira (SEPARADO/ENVIADO/ENTREGUE, CONCLUIDO a partir de RESERVADO). Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — ver Histórico |
 | PED-C007 | 🟡 Importante | Correção | reembolso-de-mesa-devolve-estoque | `refundOrder` faz `adjustStock(ENTRADA, quantity)` em toda linha de catálogo. No pedido `MESA` isso devolve unidade inteira de essência que consumiu **uso de lata** (o `OrderItem` não carrega `packageUses`), e devolve cortesia e `TROCA` — contradiz `ComandaService.undoStock`, que recusa exatamente essa `ENTRADA`. Decisão do dono (2026-10-01): reembolso de MESA é só financeiro, não toca estoque. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — reembolso de MESA não chama `adjustStock` |
 | PED-C008 | 🟡 Importante | Correção | bulk-status-para-no-meio | `OrdersController.bulkStatus` captura só `OrderNotFoundException`, `InvalidOrderStatusTransitionException` e `ObjectOptimisticLockingFailureException`. Alvo REEMBOLSADO/CANCELADO passa a tabela de transição e estoura `IllegalArgumentException` no construtor de `Order`: o laço para, os pedidos anteriores já foram gravados e auditados, e o cliente recebe 400 "Requisição inválida" sem `ok`/`failed`. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — `INVALID_ORDER_STATE` em `failed[]` |
-| PED-C009 | 🟡 Importante | Correção | estorno-contado-na-sessao-de-origem | `sumRefundedAmountBySessionIdAndMethod` agrupa pelo `sessionId` do pedido — a sessão que vendeu —, e `refundOrder` não exige nem registra a sessão que paga. Estornar hoje, em dinheiro, a venda de uma sessão já fechada: a cédula sai da gaveta de B, o esperado de B não sabe, e o `/payment-totals` da sessão A muda depois de fechada. Análise de 2026-10-01. | Pendente |
+| PED-C009 | 🟡 Importante | Correção | estorno-contado-na-sessao-de-origem | `sumRefundedAmountBySessionIdAndMethod` agrupa pelo `sessionId` do pedido — a sessão que vendeu —, e `refundOrder` não exige nem registra a sessão que paga. Estornar hoje, em dinheiro, a venda de uma sessão já fechada: a cédula sai da gaveta de B, o esperado de B não sabe, e o `/payment-totals` da sessão A muda depois de fechada. Análise de 2026-10-01. **Atualização de 2026-10-17:** PED-F004 (estorno por item, V156) resolveu a metade em que **há** caixa aberto: o `REFUNDED` grava `refund_session_id`, o caixa de quem estorna, e a soma conta ali. Continua aberto o caminho **sem** caixa aberto. `OrderService` (`:213-216`) deixa `refundSessionId` nulo, e o `COALESCE` da soma devolve o estorno ao caixa do pedido, que pode estar fechado. **Decisão do dono (2026-10-17):** estorno com linha `DINHEIRO` exige caixa aberto de quem estorna (409 próprio, ex.: `CASH_REFUND_REQUIRES_OPEN_SESSION`). Cartão e PIX continuam sem exigir, porque não saem da gaveta. | Pendente |
 | PED-C010 | 🟡 Importante | Correção | reembolso-de-marcado-ignora-o-quitado | `refundOrder` só estorna linhas `CAPTURED`, e `ReceivableService.cancelOpenForOrder` cancela o recebível aberto. O que o cliente já pagou do marcado (quitação parcial, ou recebível QUITADO) nunca volta. Análise de 2026-10-01. | Pendente |
 | PED-C011 | 🟡 Importante | Correção | correcao-de-pagamento-sem-trava | `correctPayments` não trava o pedido e só salva o cabeçalho quando há troco, então o `@Version` normalmente não sobe. Correção e reembolso concorrentes: o reembolso estorna P1, a correção aposenta P1 e cria P2 CAPTURED — o pedido fica REEMBOLSADO com P2 nunca estornado. Análise de 2026-10-01. | ✅ Fechado (2026-10-01) — `SELECT … FOR UPDATE` nativo em `sales_order` |
 | PED-C012 | 🟢 Melhoria | Correção | validacoes-e-pontas-do-pedido | (1) `OrderRefundRequest.itemLots` sem `@Valid`/`@Size`; listas de `SaleRequest`, `SettleOnlineOrderRequest`, `OrderPaymentCorrectionRequest` e `CloseComandaRequest.itemIds` sem `@Size`. (2) `?orderNumber=` compara exato com o número de 9 dígitos com zeros — `123` não acha. (3) `cancelOrder` deixa a cobrança PIX `PENDING` aberta. (4) `operatorName` não vem nas respostas de correção, status, cancelamento, reembolso e entrega. Análise de 2026-10-01. | Pendente |
+| PED-C013 | 🟡 Importante | Correção | estorno-sem-trava-no-caixa-de-destino | O estorno (PED-F004) escolhe o caixa de destino com `cashRegisterRepository.findOpenByOperator(username)` (`OrderService.java:215`) **sem** `lockForShare`, ao contrário de toda outra escrita que soma no esperado (venda, mesa, movimento, diário e `correctPayments` em `:525`, que seguem o PDV-C035). Corrida: `closeSession` daquele caixa trava `FOR UPDATE`, calcula o esperado e grava `CLOSED`. O estorno, que já tinha lido "aberto", grava o `REFUNDED` com `refund_session_id` apontando para um caixa fechado. A cédula sai, o esperado gravado não a conta, e o `/payment-totals` do caixa fechado muda depois. Correção: `lockForShare(refundSessionId)` e releitura `isOpen()` antes de estornar, no molde de `requireOpenSession`. Junto com PED-C009 (mesmo trecho). Análise de 2026-10-17 (`/1-analise` do caixa em `vendas-balcao`). | Pendente |
+
+> ⚠️ **Colisão de ID — PED-F004** (achada em 2026-10-17): a linha acima `paginacao-server-side-por-cliente`
+> (pendente) e a entrega `estorno-por-item-com-destino` (2026-10-13, V156, em `docs/feature-registry.md`,
+> `api-reference.md` e no commit `c14ed47`) usam o mesmo ID. Pela regra de nunca renumerar, não foi mexido
+> aqui. Decidir qual dos dois recebe o próximo ID livre (**PED-F005**) e corrigir as referências
+> (o Histórico abaixo e os docs citados usam PED-F004 para o estorno).
 
 `PDV-F007` (status `REEMBOLSADO`, distinto de `CANCELADO`) foi entregue em 2026-07-29 — ver
 [Histórico de Implementações](#histórico-de-implementações) abaixo e o registro em
@@ -347,6 +359,18 @@ ao menos um pedido.
 
 ## Histórico de Implementações
 
+- **2026-10-18** — `troca-de-item` (PED-F006, **V164**). Pedido do `frontend-admin` em
+  `PROMPT_BACKEND_TROCA_ITEM.md`. `POST /orders/{id}/items/exchange` (`ORDER_REFUND`). **Modelo:** a troca é
+  um estorno por item mais uma venda no mesmo pedido. A perna devolvida reaproveita `requestedLines`/`amountOf`
+  do PED-F004 e grava `order_item_refund` com `exchange_id` (conta no `refundedQuantity`, não volta em dinheiro);
+  o item novo entra por `Order.withAddedItem`, e `OrderRepositoryImpl.save` passou a inserir item sem id em
+  pedido já gravado (as linhas existentes seguem intocadas, PED-C005). Só a diferença vira pagamento:
+  `CAPTURED` com `capture_session_id` (decisão do dono: conta no caixa de quem trocou, não no do pedido; as
+  somas do caixa ganharam a segunda metade, como o estorno no PDV-C049) ou `REFUNDED` avulsa
+  (`OrderPayment.refundedInSession`). **Escolhas de implementação:** pedido de MESA recusa (409
+  `ORDER_NOT_EXCHANGEABLE`, mesma razão do PED-C007); DISCARD segue o estorno (sem movimento, perda pelo
+  custo); o item novo não ganha cashback (não houve EARNED); `NO_OPEN_SESSION` e `INSUFFICIENT_STOCK` mantêm
+  os status já mapeados (404/400), não o 409 do contrato. PED-F005 ficou reservado para a colisão do PED-F004.
 - **2026-10-13** — `estorno-por-item-com-destino` (PED-F004, **V156**). Pedido do `frontend-admin` em
   `PROMPT_BACKEND_PDV_SESSAO_VIP_LIMITE.md` §3 (e o `restock` do `BACKEND_TODO.md`). `POST /orders/{id}/refund`
   aceita `items [{sku, quantity, destination}]` e `restock`; o contrato antigo (`reason` + `itemLots`)

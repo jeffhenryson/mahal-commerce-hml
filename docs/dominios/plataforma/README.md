@@ -96,6 +96,7 @@ Authorities que **não** existem na tabela `permissions`:
 | `DELETE` | `/users/{id}` | `USER_DELETE` | `UserController` |
 | `POST`/`DELETE` | `/users/{username}/roles/{roleName}` | `USER_ROLE_ASSIGN` | `UserController:78` |
 | `PUT` | `/users/{id}/disable`, `/users/{id}/enable` | `USER_STATUS` | `UserController:216` |
+| `PUT`/`DELETE` | `/users/{id}/customer` | `USER_UPDATE` | `UserController` — PLAT-F005, vínculo do operador com o cliente do CRM |
 | `GET` | `/roles`, `/roles/{name}` | `ROLE_READ` | `RoleController:61,89` |
 | `POST`/`DELETE` | `/roles`, `/roles/{name}` | `DEV_ROLE_MANAGE` | `RoleController:102,120` |
 | `POST`/`DELETE` | `/roles/{r}/permissions/{p}` | `ROLE_MANAGE_PERMISSIONS` | `RoleController:136,161` |
@@ -360,6 +361,17 @@ Roteiro completo, com prompt pronto para colar numa sessão nova, em
 - [ ] **PLAT-C025** e **PLAT-C027** — não se resolvem escrevendo código.
 
 ## Histórico de Implementações
+
+### 2026-10-18 — vínculo usuário↔cliente (PLAT-F005, V165)
+
+Pedido do `frontend-admin` (`BACKEND_TODO.md`, P2 de 18/10, item 3): quem opera o PDV também compra na loja.
+`PUT /users/{id}/customer` `{customerId}` e `DELETE /users/{id}/customer` (`USER_UPDATE`). A V165 afrouxa o
+`ck_users_customer_link` da V76 para `user_type <> 'CUSTOMER' OR customer_id IS NOT NULL`: a conta de cliente
+continua sempre ligada, e o operador pode ter vínculo. O índice `uk_users_customer_id` segue garantindo um
+usuário por cliente (409 `CUSTOMER_ALREADY_LINKED`, também na corrida, pelo handler de integridade). A conta
+de cliente da loja não troca de cliente (409 `CUSTOMER_ACCOUNT_LINK_IMMUTABLE`). `UserResponseDto` ganha
+`customerId`/`customerName`, com os nomes resolvidos em lote na lista. O soft delete do operador limpa o
+`customer_id`, para o índice não prender o cliente a uma conta apagada.
 
 ### Sprint 1 — 2026-07-20
 
