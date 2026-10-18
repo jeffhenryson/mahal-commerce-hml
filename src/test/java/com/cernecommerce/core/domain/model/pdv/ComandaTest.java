@@ -389,4 +389,24 @@ class ComandaTest {
         assertThatThrownBy(() -> comanda.cancelled(Instant.now()).withLabel("Mesa 7"))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    /** PDV-F054 — a passagem de turno muda só o caixa: depósito, rótulo e linhas ficam como estavam. */
+    @Test
+    void withSession_movesOnlyTheCashSession() {
+        Comanda mesa = open();
+
+        Comanda transferida = mesa.withSession(99L);
+
+        assertThat(transferida.sessionId()).isEqualTo(99L);
+        assertThat(transferida.warehouseCode()).isEqualTo(mesa.warehouseCode());
+        assertThat(transferida.tableOrCustomerLabel()).isEqualTo(mesa.tableOrCustomerLabel());
+        assertThat(transferida.items()).isEqualTo(mesa.items());
+    }
+
+    /** PDV-F054 — mesa encerrada não muda de caixa. */
+    @Test
+    void withSession_refusesAClosedComanda() {
+        assertThatThrownBy(() -> open().cancelled(java.time.Instant.now()).withSession(99L))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

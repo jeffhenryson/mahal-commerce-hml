@@ -548,6 +548,27 @@ public interface ComandaUseCase {
     Comanda convertToDuplo(Long comandaId, Long sessionItemId, String username);
 
     /**
+     * PDV-F055 — desfaz o "Tornar duplo" (pedido do front em 2026-10-18): remove o 2º rosh cortesia
+     * ligado à sessão enquanto ele ainda está {@code NA_FILA}. Nada foi consumido além, talvez, do uso
+     * da lata do sabor já escolhido — esse volta, como na remoção de item. Vale também para o duplo
+     * lançado sem sabor (PDV-F044).
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.NotASessionLineException se
+     *         {@code sessionItemId} não for uma sessão desta comanda
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionNotDuploException sessão sem rosh
+     *         extra ligado
+     * @throws com.cernecommerce.core.domain.exception.pdv.RoshAlreadyChargedException 2º rosh cobrado
+     *         (não cortesia) ou já fechado num pedido
+     * @throws com.cernecommerce.core.domain.exception.pdv.RoshAlreadyStartedException 2º rosh fora
+     *         da fila — o caminho é a desistência
+     */
+    DuploUndone undoDuplo(Long comandaId, Long sessionItemId, String username);
+
+    /** Resultado de {@link #undoDuplo}: a comanda salva e a linha de rosh removida (para a auditoria). */
+    record DuploUndone(Comanda comanda, Long roshItemId) {
+    }
+
+    /**
      * Encerra a mesa cujas linhas já foram todas cobradas em fechamentos parciais (PDV-F023). Não
      * gera pedido: o cabeçalho aponta o último pedido que cobrou a mesa.
      *
@@ -617,6 +638,30 @@ public interface ComandaUseCase {
     Comanda mergeComanda(Long fromComandaId, Long toComandaId, String username);
 
     /**
+     * PDV-F054 — passagem de turno: as mesas abertas do caixa {@code fromSessionId} passam para o caixa
+     * aberto {@code toSessionId}. Sem isso o caixa de quem sai ficava preso às mesas que abriu
+     * ({@code closeSession} recusa caixa com mesa aberta, PDV-C005) até a última fechar.
+     *
+     * <p><b>Nenhum estoque se move</b> e nenhuma linha muda: só o caixa de origem da mesa, que é o que
+     * o fechamento de caixa confere. O pedido de cada fechamento já ia para o caixa de quem fecha.</p>
+     *
+     * <p>Pode transferir o dono de qualquer um dos dois caixas — quem sai entrega, quem assume puxa —
+     * ou quem tem {@code PDV_SESSION_CLOSE_ANY} ({@code canTransferAny}). As comandas são travadas
+     * em ordem de id e antes das sessões, a mesma ordem de {@code addItem}, sem ciclo de trava.</p>
+     *
+     * @param comandaIds as mesas a transferir; nulo ou vazio transfere todas as abertas da origem
+     * @return as comandas transferidas, na ordem de id
+     * @throws com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException mesmo
+     *         caixa, mesa de outro caixa ou depósito diferente
+     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException sem
+     *         ser dono de nenhum dos dois caixas nem ter a permissão
+     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException caixa
+     *         fechado num dos lados
+     */
+    List<Comanda> transferComandas(Long fromSessionId, Long toSessionId, List<Long> comandaIds, String username,
+            boolean canTransferAny);
+
+    /**
      * Varre as comandas esquecidas abertas (PDV-F013) — as que passaram de {@code staleHours} sem
      * serem fechadas nem canceladas.
      *
@@ -638,11 +683,36 @@ public interface ComandaUseCase {
      * existia antes de PDV-C005), e exigir sessão aberta faria a varredura recusar exatamente o caso
      * que ela existe para resolver.</p>
      *
+     * <p><b>PDV-C054 — três passos, cada um na sua transação</b>, orquestrados pelo scheduler
+     * ({@code StaleComandaSweepService}). Era uma transação só: as travas de todas as mesas
+     * resolvidas ficavam presas até o fim, enquanto as alertadas eram lidas uma a uma e as
+     * notificações saíam. Agora cada mesa é travada, resolvida e liberada sozinha
+     * ({@link #resolveStaleComanda}), e o alerta roda sem trava nenhuma.</p>
+     *
      * @param staleHours horas desde a abertura a partir das quais a mesa conta como esquecida
      * @param batchSize teto de comandas por consulta (as resolvidas e as alertadas, cada uma)
-     * @return quantas foram canceladas, encerradas e só sinalizadas
+     * @return ids das que não devem nada, candidatas a {@link #resolveStaleComanda}
      */
-    StaleComandaSweepResult sweepStaleComandas(int staleHours, int batchSize);
+    List<Long> findStaleResolvableComandaIds(int staleHours, int batchSize);
+
+    /**
+     * PDV-C054 — trava UMA mesa candidata da varredura, reconfere sobre o estado travado e a cancela
+     * (vazia) ou encerra (toda paga). Ver {@link #findStaleResolvableComandaIds} para a regra.
+     *
+     * @return o que foi feito; {@code SKIPPED} quando a mesa mudou entre a consulta e a trava
+     */
+    StaleComandaOutcome resolveStaleComanda(Long comandaId);
+
+    /**
+     * PDV-C054 — a parte só de aviso da varredura: lê sem trava as mesas esquecidas que ainda devem
+     * algo e manda uma notificação agregada por destinatário. Ver {@link #findStaleResolvableComandaIds}.
+     *
+     * @return quantas mesas entraram no alerta
+     */
+    int alertStaleComandasWithConsumption(int staleHours, int batchSize);
+
+    /** PDV-C054 — o desfecho de {@link #resolveStaleComanda} para uma mesa. */
+    enum StaleComandaOutcome { CANCELLED, FINISHED, SKIPPED }
 
     /**
      * Resultado de uma passada da varredura: {@code cancelled} são as vazias que foram canceladas,

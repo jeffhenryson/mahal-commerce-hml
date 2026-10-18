@@ -141,10 +141,19 @@ public class ComandaRepositoryImpl implements ComandaRepository {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ClosedComanda> findClosedBetween(Instant from, Instant to, String warehouseCode) {
-        Specification<ComandaEntity> spec = historySpec(new ComandaHistoryFilter(from, to, ComandaStatus.FECHADA,
-                null, null, null, null, warehouseCode));
-        return withItemsInOrder(comandaJpaRepository.findAll(spec, Sort.by(Sort.Order.asc("closedAt"))));
+    public List<Long> findClosedIdsBetween(Instant from, Instant to, String warehouseCode) {
+        return comandaJpaRepository.findClosedIdsBetween(ComandaStatus.FECHADA.name(), from, to, warehouseCode);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ClosedComanda> findClosedByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, ComandaEntity> loaded = InClauseBatches.fetch(ids, comandaJpaRepository::findAllByIdsWithItems)
+                .stream().collect(Collectors.toMap(ComandaEntity::getId, Function.identity(), (a, b) -> a));
+        return ids.stream().map(loaded::get).filter(java.util.Objects::nonNull).map(this::toClosed).toList();
     }
 
     private static Specification<ComandaEntity> historySpec(ComandaHistoryFilter filter) {
@@ -193,6 +202,17 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             return 0;
         }
         return comandaJpaRepository.moveItems(fromComandaId, toComandaId, itemIds);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Comanda> findAllByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, ComandaEntity> loaded = InClauseBatches.fetch(ids, comandaJpaRepository::findAllByIdsWithItems)
+                .stream().collect(Collectors.toMap(ComandaEntity::getId, Function.identity(), (a, b) -> a));
+        return ids.stream().map(loaded::get).filter(java.util.Objects::nonNull).map(this::toDomain).toList();
     }
 
     @Override

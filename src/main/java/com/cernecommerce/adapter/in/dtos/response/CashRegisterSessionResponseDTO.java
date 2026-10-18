@@ -44,6 +44,10 @@ public class CashRegisterSessionResponseDTO {
             + "divergência não impede o fechamento, apenas fica registrada.")
     private BigDecimal differenceAmount;
 
+    @Schema(description = "PDV-F056 — parte do contado deixada na gaveta como troco do próximo turno. "
+            + "Nulo quando não informada no fechamento.")
+    private BigDecimal leftInDrawerAmount;
+
     @Schema(description = "Indica se o fechamento encontrou diferença.")
     private boolean diverges;
 

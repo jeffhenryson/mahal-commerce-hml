@@ -18,4 +18,12 @@ public interface ReceivablePaymentJpaRepository extends JpaRepository<Receivable
             WHERE p.cashSessionId = :sessionId AND p.method = :method
             """)
     BigDecimal sumBySessionAndMethod(@Param("sessionId") Long sessionId, @Param("method") String method);
+
+    /** PDV-C051 — pares {@code [method, soma]} das quitações recebidas na sessão. */
+    @Query("""
+            SELECT p.method, SUM(p.amount) FROM ReceivablePaymentEntity p
+            WHERE p.cashSessionId = :sessionId
+            GROUP BY p.method
+            """)
+    List<Object[]> sumBySessionGroupByMethod(@Param("sessionId") Long sessionId);
 }

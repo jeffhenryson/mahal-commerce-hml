@@ -118,13 +118,19 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_SESSION_WITHDRAWN,
         // PDV-F044 — o sabor do 2º rosh do duplo, escolhido quando a 1ª sessão acaba.
         COMANDA_ROSH_FLAVOR_SET,
+        // PDV-F055 — o "Tornar duplo" desfeito enquanto o 2º rosh ainda estava na fila.
+        COMANDA_ROSH_EXTRA_REMOVED,
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,
+        // PDV-F054 — passagem de turno: as mesas abertas mudam de caixa, sem tocar em linha nem estoque.
+        COMANDA_TRANSFERRED,
         // PDV-F036 — resposta a "o cliente comprou algo na loja?".
         COMANDA_STORE_PURCHASE_RECORDED,
         // Pedido
         ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
+        // PED-F006 — troca de item: devolve um item e entrega outro no mesmo pedido.
+        ORDER_ITEM_EXCHANGED,
         RECEIVABLE_CREATED, RECEIVABLE_PAID, RECEIVABLE_DUE_DATE_CHANGED, RECEIVABLE_CANCELLED,
         CUSTOMER_CREDIT_LIMIT_CHANGED,
         // PDV-F046 — o gerente trocou o teto do limite que o vendedor pode dar.

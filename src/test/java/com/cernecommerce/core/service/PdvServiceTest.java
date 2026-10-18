@@ -13,6 +13,7 @@ import com.cernecommerce.core.domain.exception.pagamento.InsufficientPaymentExce
 import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTotalException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
+import com.cernecommerce.core.domain.exception.pdv.CashWithdrawalExceedsDrawerException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
@@ -61,6 +62,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -279,6 +281,67 @@ class PdvServiceTest {
         when(cashRegisterRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
+    // ── PDV-F056 — troco deixado na gaveta e desempenho do operador ──
+
+    @Test
+    void closeSession_registraOTrocoDeixadoNaGaveta() {
+        givenClosableSession();
+
+        CashRegisterSession closed = pdvService.closeSession(1L, BigDecimal.TEN, null, "caixa1", false,
+                new BigDecimal("4.00"));
+
+        assertThat(closed.leftInDrawerAmount()).isEqualByComparingTo("4.00");
+        assertThat(closed.differenceAmount()).isEqualByComparingTo(closed.countedAmount().subtract(closed.expectedAmount()));
+    }
+
+    @Test
+    void closeSession_trocoDeixadoAcimaDoContado_recusaSemTravar() {
+        assertThatThrownBy(() -> pdvService.closeSession(1L, BigDecimal.TEN, null, "caixa1", false,
+                new BigDecimal("10.01")))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException.class);
+        verify(cashRegisterRepository, never()).lockForUpdate(any());
+        verify(cashRegisterRepository, never()).save(any());
+    }
+
+    @Test
+    void getOperatorStats_somaOsResumosDosUltimosCaixas() {
+        CashRegisterSession recente = CashRegisterSession.of(2L, "caixa1", Instant.now(), BigDecimal.TEN, "W1",
+                Instant.now(), "caixa1", new BigDecimal("50.00"), new BigDecimal("48.00"), new BigDecimal("-2.00"),
+                CashRegisterSession.Status.CLOSED, null, new BigDecimal("20.00"));
+        CashRegisterSession antiga = CashRegisterSession.of(1L, "caixa1", Instant.now(), BigDecimal.TEN, "W1",
+                Instant.now(), "caixa1", new BigDecimal("30.00"), new BigDecimal("30.00"), BigDecimal.ZERO,
+                CashRegisterSession.Status.CLOSED, null);
+        when(cashRegisterRepository.findAll(eq(new com.cernecommerce.core.domain.model.pdv.CashRegisterSessionFilter(
+                CashRegisterSession.Status.CLOSED, null, null, "caixa1")), eq(0), eq(5)))
+                .thenReturn(new PageResult<>(List.of(recente, antiga), 0, 5, 2, 1));
+        PdvService spied = spy(pdvService);
+        doReturn(new PdvUseCase.SessionSummary(List.of(), new BigDecimal("200.00"), BigDecimal.ZERO))
+                .when(spied).getSessionSummary(2L);
+        doReturn(new PdvUseCase.SessionSummary(List.of(), new BigDecimal("101.00"), BigDecimal.ZERO))
+                .when(spied).getSessionSummary(1L);
+
+        PdvUseCase.OperatorSessionStats stats = spied.getOperatorStats("caixa1", 5);
+
+        assertThat(stats.sessionCount()).isEqualTo(2);
+        assertThat(stats.totalSold()).isEqualByComparingTo("301.00");
+        assertThat(stats.averageSold()).isEqualByComparingTo("150.50");
+        assertThat(stats.divergenceCount()).isEqualTo(1);
+        assertThat(stats.totalDifference()).isEqualByComparingTo("-2.00");
+        assertThat(stats.lastLeftInDrawerAmount()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void getOperatorStats_semCaixas_zerado() {
+        when(cashRegisterRepository.findAll(any(com.cernecommerce.core.domain.model.pdv.CashRegisterSessionFilter.class),
+                eq(0), eq(5))).thenReturn(new PageResult<>(List.of(), 0, 5, 0, 0));
+
+        PdvUseCase.OperatorSessionStats stats = pdvService.getOperatorStats("caixa1", 5);
+
+        assertThat(stats.sessionCount()).isZero();
+        assertThat(stats.averageSold()).isEqualByComparingTo("0");
+        assertThat(stats.lastLeftInDrawerAmount()).isNull();
+    }
+
     @Test
     void closeSession_adminClosesAnotherOperatorsSessionWithNotes() {
         givenClosableSession();
@@ -418,15 +481,9 @@ class PdvServiceTest {
     @Test
     void getSessionPaymentTotals_returnsAllFourMethodsEvenWhenUnused() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
-                .thenReturn(new BigDecimal("120.00"));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DEBITO))
-                .thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.CREDITO))
-                .thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
-                .thenReturn(new BigDecimal("45.00"));
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        // PDV-C051 — método sem pagamento não vem do GROUP BY; DEBITO e CREDITO ausentes ainda aparecem.
+        when(orderPaymentRepository.sumCapturedBySessionIdGroupedByMethod(1L)).thenReturn(Map.of(
+                PaymentMethod.DINHEIRO, new BigDecimal("120.00"), PaymentMethod.PIX, new BigDecimal("45.00")));
         when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
 
         List<PaymentTotal> totals = pdvService.getSessionPaymentTotals(1L);
@@ -446,14 +503,10 @@ class PdvServiceTest {
     @Test
     void getSessionPaymentTotals_netsRefundsAndCashChange() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
-                .thenReturn(new BigDecimal("150.00"));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
-                .thenReturn(new BigDecimal("80.00"));
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
-                .thenReturn(new BigDecimal("30.00"));
+        when(orderPaymentRepository.sumCapturedBySessionIdGroupedByMethod(1L)).thenReturn(Map.of(
+                PaymentMethod.DINHEIRO, new BigDecimal("150.00"), PaymentMethod.PIX, new BigDecimal("80.00")));
+        when(orderPaymentRepository.sumRefundedBySessionIdGroupedByMethod(1L))
+                .thenReturn(Map.of(PaymentMethod.PIX, new BigDecimal("30.00")));
         when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(new BigDecimal("20.00"));
 
         List<PaymentTotal> totals = pdvService.getSessionPaymentTotals(1L);
@@ -471,16 +524,11 @@ class PdvServiceTest {
     @Test
     void getSessionSummary_sumsNetOfAllMethodsAndKeepsOnAccountApart() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
-                .thenReturn(new BigDecimal("150.00"));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
-                .thenReturn(new BigDecimal("80.00"));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.CREDITO))
-                .thenReturn(new BigDecimal("45.00"));
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(1L, PaymentMethod.PIX))
-                .thenReturn(new BigDecimal("30.00"));
+        when(orderPaymentRepository.sumCapturedBySessionIdGroupedByMethod(1L)).thenReturn(Map.of(
+                PaymentMethod.DINHEIRO, new BigDecimal("150.00"), PaymentMethod.PIX, new BigDecimal("80.00"),
+                PaymentMethod.CREDITO, new BigDecimal("45.00")));
+        when(orderPaymentRepository.sumRefundedBySessionIdGroupedByMethod(1L))
+                .thenReturn(Map.of(PaymentMethod.PIX, new BigDecimal("30.00")));
         when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(new BigDecimal("20.00"));
         when(orderPaymentRepository.sumOnAccountAmountBySessionId(1L)).thenReturn(new BigDecimal("60.00"));
 
@@ -548,12 +596,11 @@ class PdvServiceTest {
     @Test
     void getSessionPaymentTotals_neverListsMarcado_andAddsReceivablesReceivedHere() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
-        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
-                .thenReturn(new BigDecimal("100.00"));
-        when(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(eq(1L), any())).thenReturn(BigDecimal.ZERO);
+        when(orderPaymentRepository.sumCapturedBySessionIdGroupedByMethod(1L))
+                .thenReturn(Map.of(PaymentMethod.DINHEIRO, new BigDecimal("100.00")));
         when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(new BigDecimal("10.00"));
-        when(receivableUseCase.receivedInSession(1L, PaymentMethod.DINHEIRO)).thenReturn(new BigDecimal("28.00"));
+        when(receivableUseCase.receivedInSessionByMethod(1L))
+                .thenReturn(Map.of(PaymentMethod.DINHEIRO, new BigDecimal("28.00")));
 
         List<PaymentTotal> totals = pdvService.getSessionPaymentTotals(1L);
 
@@ -588,10 +635,19 @@ class PdvServiceTest {
         verify(cashMovementRepository, never()).save(any());
     }
 
+    /** PDV-C048 — 50 de sangria numa gaveta que deveria ter 10 (fundo) + 100 (vendas em dinheiro). */
+    private void givenDrawerWithCash(String cashSales) {
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(new BigDecimal(cashSales));
+        givenNoCashOutflows();
+        when(cashMovementRepository.sumSignedAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
+    }
+
     @Test
     void registerCashMovement_persistsWhenTheSessionIsOwnAndOpen() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
         when(cashMovementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        givenDrawerWithCash("100.00");
 
         CashMovement movement = pdvService.registerCashMovement(1L, CashMovementType.SANGRIA,
                 new BigDecimal("50.00"), "depósito no cofre", "caixa1");
@@ -601,6 +657,61 @@ class PdvServiceTest {
         assertThat(movement.signedAmount()).isEqualByComparingTo("-50.00");
     }
 
+    /** PDV-C048 — sangria acima do esperado na gaveta: 409, nada gravado. */
+    @Test
+    void registerCashMovement_refusesAWithdrawalAboveTheExpectedCash() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        givenDrawerWithCash("30.00");
+
+        // 10 de fundo + 30 em dinheiro = 40; pedir 50 é erro de digitação ou de conferência.
+        assertThatThrownBy(() -> pdvService.registerCashMovement(1L, CashMovementType.SANGRIA,
+                new BigDecimal("50.00"), "cofre", "caixa1"))
+                .isInstanceOf(CashWithdrawalExceedsDrawerException.class)
+                .satisfies(e -> assertThat(((CashWithdrawalExceedsDrawerException) e).available())
+                        .isEqualByComparingTo("40.00"));
+        verify(cashMovementRepository, never()).save(any());
+    }
+
+    /** PDV-C048 — sacar exatamente o que há na gaveta é permitido. */
+    @Test
+    void registerCashMovement_allowsWithdrawingExactlyTheExpectedCash() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(cashMovementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        givenDrawerWithCash("30.00");
+
+        assertThat(pdvService.registerCashMovement(1L, CashMovementType.SANGRIA, new BigDecimal("40.00"),
+                "cofre", "caixa1").amount()).isEqualByComparingTo("40.00");
+    }
+
+    /**
+     * PDV-C048 — a sangria trava a sessão EXCLUSIVA antes de ler o disponível: com a compartilhada,
+     * duas sangrias simultâneas leriam o mesmo saldo e passariam as duas.
+     */
+    @Test
+    void registerCashMovement_withdrawalLocksTheSessionForUpdateBeforeReadingIt() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(cashMovementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        givenDrawerWithCash("100.00");
+
+        pdvService.registerCashMovement(1L, CashMovementType.SANGRIA, new BigDecimal("50.00"), "cofre", "caixa1");
+
+        org.mockito.InOrder order = inOrder(cashRegisterRepository);
+        order.verify(cashRegisterRepository).lockForUpdate(1L);
+        order.verify(cashRegisterRepository).findById(1L);
+    }
+
+    /** PDV-C048 — suprimento não tem teto: não lê a gaveta nem trava exclusiva. */
+    @Test
+    void registerCashMovement_supplyIsNeverCappedNorLockedExclusively() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(cashMovementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        pdvService.registerCashMovement(1L, CashMovementType.SUPRIMENTO, new BigDecimal("5000.00"), "troco", "caixa1");
+
+        verify(cashRegisterRepository, never()).lockForUpdate(any());
+        verify(orderPaymentRepository, never()).sumCapturedAmountBySessionIdAndMethod(any(), any());
+    }
+
     @Test
     void registerCashMovement_refusesOnClosedSession() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(closedSession()));
@@ -608,6 +719,20 @@ class PdvServiceTest {
         assertThatThrownBy(() -> pdvService.registerCashMovement(1L, CashMovementType.SUPRIMENTO,
                 BigDecimal.TEN, "troco", "caixa1"))
                 .isInstanceOf(CashRegisterSessionClosedException.class);
+    }
+
+    // ── PDV-C052: a taxa de cashback usa a categoria já resolvida ────────────────────────────
+
+    @Test
+    void registerSale_resolvesTheCashbackRateWithTheCategoryFromTheCatalog_withoutReadingTheProductAgain() {
+        givenOpenSessionAndPersistence();
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo(
+                "Carvao Coco", CARVAO, true, false, null, null, false, false, null, "Carvões"));
+
+        pdvService.registerSale(1L, null, List.of(twoCharcoals(null)), cash("44.00"), "caixa1");
+
+        verify(cashbackUseCase).resolveApplicableRate("CARV-001", "Carvões");
+        verify(cashbackUseCase, never()).resolveApplicableRate("CARV-001");
     }
 
     // ── PDV-C004: a venda herda o depósito e exige posse ─────────────────────────────────────

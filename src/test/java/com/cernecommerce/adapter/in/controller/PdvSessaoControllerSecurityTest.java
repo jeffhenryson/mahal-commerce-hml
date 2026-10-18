@@ -155,6 +155,26 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ── PDV-F055: desfazer o duplo ──
+
+    @Test
+    void undo_duplo_requires_courtesy() throws Exception {
+        mockMvc.perform(delete("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+        mockMvc.perform(delete("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("gerente").authorities(COMANDA, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void undo_duplo_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(delete("/pdv/comandas/987654321/sessoes/1/duplo")
+                        .with(user("gerente").authorities(SESSAO_MANAGE, new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isForbidden());
+    }
+
     // ── PDV-F044: sabor do 2º rosh ──
 
     @Test

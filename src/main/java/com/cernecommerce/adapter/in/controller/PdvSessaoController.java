@@ -46,6 +46,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -225,6 +226,32 @@ public class PdvSessaoController {
         payload.put("convertido", true);
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ROSH_EXTRA_ADDED, authentication.getName(), payload));
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(comanda));
+    }
+
+    @Operation(summary = "Desfaz o rosh duplo de uma sessão",
+            description = "PDV-F055 — volta a sessão a simples removendo o 2º rosh cortesia ligado a ela, enquanto "
+                    + "ele ainda está NA_FILA (convertido ou lançado sem sabor). Se o sabor já tinha sido "
+                    + "escolhido, o uso da lata volta. Do preparo em diante o caminho é a desistência.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Desfeito, com a comanda atualizada"),
+            @ApiResponse(responseCode = "403", description = "Sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); a linha não é uma sessão desta comanda (NOT_A_SESSION_LINE); sessão sem rosh ligado (SESSION_NOT_DUPLO); 2º rosh fora da fila (ROSH_ALREADY_STARTED); 2º rosh cobrado (ROSH_ALREADY_CHARGED)", content = @Content)
+    })
+    @DeleteMapping("/pdv/comandas/{id}/sessoes/{itemId}/duplo")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> undoDuplo(@PathVariable("id") Long comandaId,
+            @PathVariable("itemId") Long sessionItemId, Authentication authentication) {
+        requireDuploAllowed(true, authentication);
+        ComandaUseCase.DuploUndone result = comandaUseCase.undoDuplo(comandaId, sessionItemId,
+                authentication.getName());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("comandaId", comandaId);
+        payload.put("sessionItemId", sessionItemId);
+        payload.put("roshItemId", result.roshItemId());
+        payload.put("desfeito", true);
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_ROSH_EXTRA_REMOVED, authentication.getName(), payload));
+        return ResponseEntity.ok(toResponse(result.comanda()));
     }
 
     @Operation(summary = "Avança o status de uma sessão da mesa",

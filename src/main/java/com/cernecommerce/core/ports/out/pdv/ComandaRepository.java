@@ -79,6 +79,12 @@ public interface ComandaRepository {
     List<Long> findStaleIdsWithNothingOwed(java.time.Instant cutoff, int limit);
 
     /**
+     * PDV-C054 — as comandas dos ids, com os itens, numa consulta (em lotes), sem trava. Ids
+     * inexistentes ficam de fora; a ordem é a dos ids.
+     */
+    List<Comanda> findAllByIds(List<Long> ids);
+
+    /**
      * Reatribui as linhas {@code itemIds} de uma comanda para outra (PDV-F016, juntar mesas),
      * devolvendo quantas moveram. Quais linhas vão é decisão do domínio
      * ({@code Comanda.itemIdsToMoveOnMerge}, PDV-F031); id que não seja da origem não se move.
@@ -113,6 +119,13 @@ public interface ComandaRepository {
     /** PDV-F029 — a comanda com o registro do encerramento (qualquer status). */
     Optional<ClosedComanda> findWithClosing(Long id);
 
-    /** PDV-F029 — FECHADAS no período, para os indicadores. */
-    List<ClosedComanda> findClosedBetween(java.time.Instant from, java.time.Instant to, String warehouseCode);
+    /**
+     * PDV-C050 — ids das FECHADAS no período (por encerramento), para os indicadores. Só os ids: o
+     * analytics carrega as comandas em blocos com {@link #findClosedByIds}, e a memória deixa de
+     * crescer com o período inteiro.
+     */
+    List<Long> findClosedIdsBetween(java.time.Instant from, java.time.Instant to, String warehouseCode);
+
+    /** PDV-C050 — as comandas dos ids, com itens e dados de encerramento, na ordem dos ids. */
+    List<ClosedComanda> findClosedByIds(List<Long> ids);
 }

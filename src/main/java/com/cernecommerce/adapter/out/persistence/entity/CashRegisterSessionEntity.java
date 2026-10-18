@@ -57,4 +57,8 @@ public class CashRegisterSessionEntity {
 
     @Column(name = "closing_notes", length = 500)
     private String closingNotes;
+
+    /** PDV-F056 — troco que fica na gaveta para o próximo turno. */
+    @Column(name = "left_in_drawer_amount", precision = 14, scale = 2)
+    private BigDecimal leftInDrawerAmount;
 }

@@ -722,7 +722,18 @@ public interface EstoqueUseCase {
      */
     record CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
             boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
-            boolean parentWithVariants, Long sessionTierId) {
+            boolean parentWithVariants, Long sessionTierId, String category) {
+
+        /**
+         * Forma sem {@code category} (PDV-C052) — compatibilidade. Sem a categoria, quem resolve a taxa
+         * de cashback volta a ler o produto.
+         */
+        public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
+                boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
+                boolean parentWithVariants, Long sessionTierId) {
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, sessionsPerUnit, kit,
+                    parentWithVariants, sessionTierId, null);
+        }
 
         /** Forma sem {@code sessionTierId} (PDV-F050) — compatibilidade: produto sem faixa. */
         public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,

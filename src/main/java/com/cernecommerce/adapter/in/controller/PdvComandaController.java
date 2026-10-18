@@ -17,6 +17,7 @@ import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.AddComandaItemRequest;
 import com.cernecommerce.adapter.in.dtos.request.CloseComandaRequest;
 import com.cernecommerce.adapter.in.dtos.request.RenameComandaRequest;
+import com.cernecommerce.adapter.in.dtos.request.TransferComandasRequest;
 import com.cernecommerce.adapter.in.dtos.request.OpenComandaRequest;
 import com.cernecommerce.adapter.in.dtos.response.ComandaResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
@@ -413,7 +414,9 @@ public class PdvComandaController {
                     + "pelo encerramento; tableLabel compara sem caixa e sem espaços nas pontas. Cada item traz "
                     + "closedBy, durationMinutes, cancelReason, orderIds (inclusive pedidos parciais), totalPaid, "
                     + "serviceFeeTotal, discountTotal, courtesyTotal, sessionsCount e boughtInStore. "
-                    + "boughtInStore=true|false filtra pela resposta a \"comprou na loja?\" (PDV-F036).")
+                    + "boughtInStore=true|false filtra pela resposta a \"comprou na loja?\" (PDV-F036). "
+                    + "PDV-C030: sem PDV_SESSION_READ_ANY, só as mesas que o próprio usuário encerrou "
+                    + "(closedBy é substituído por ele).")
     @GetMapping("/history")
     @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
     public ResponseEntity<PageResult<ComandaResponseDTO>> listHistory(
@@ -427,13 +430,18 @@ public class PdvComandaController {
             @RequestParam(required = false) String warehouseCode,
             @RequestParam(required = false) Boolean boughtInStore,
             @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size) {
+            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size,
+            Authentication authentication) {
         if (status == ComandaStatus.ABERTA) {
             throw new IllegalArgumentException("o histórico é de mesas encerradas: status FECHADA ou CANCELADA");
         }
+        // PDV-C030 — o atendente tem PDV_READ e ORDER_READ (V86) e via a receita de cada mesa da loja.
+        // Sem PDV_SESSION_READ_ANY, o histórico é o das mesas que ele mesmo encerrou.
+        String effectiveClosedBy = PdvController.canReadAnySession(authentication)
+                ? closedBy : authentication.getName();
         PageResult<ComandaUseCase.ComandaHistoryEntry> result = comandaUseCase.listHistory(
-                new ComandaHistoryFilter(from, to, status, customerId, openedBy, closedBy, tableLabel, warehouseCode,
-                        boughtInStore),
+                new ComandaHistoryFilter(from, to, status, customerId, openedBy, effectiveClosedBy, tableLabel,
+                        warehouseCode, boughtInStore),
                 page, size);
         List<ComandaResponseDTO> content = enrichCustomerNames(
                 result.content().stream().map(this::toHistoryResponse).toList());
@@ -450,10 +458,11 @@ public class PdvComandaController {
                     + "sobre as respondidas.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
-            @ApiResponse(responseCode = "400", description = "Período ausente, invertido ou acima de 366 dias", content = @Content)
+            @ApiResponse(responseCode = "400", description = "Período ausente, invertido ou acima de 366 dias", content = @Content),
+            @ApiResponse(responseCode = "403", description = "PDV-C030: indicadores da loja exigem PDV_SESSION_READ_ANY", content = @Content)
     })
     @GetMapping("/analytics")
-    @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
+    @PreAuthorize("hasAuthority('PDV_SESSION_READ_ANY')")
     public ResponseEntity<ComandaUseCase.ComandaAnalytics> analytics(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
@@ -692,6 +701,35 @@ public class PdvComandaController {
         ComandaResponseDTO dto = comandaConverter.toResponse(destino);
         enrichCustomerNames(List.of(dto));
         return ResponseEntity.ok(dto);
+    }
+
+    @Operation(summary = "Passa as mesas abertas de um caixa para outro — passagem de turno (PDV-F054)",
+            description = "O caixa de quem sai não fecha enquanto houver mesa aberta nele (PDV-C005). Esta rota "
+                    + "move as mesas abertas (todas, ou as de comandaIds) para o caixa ABERTO de quem assume. "
+                    + "Nenhum estoque se move e nenhuma linha muda: só o caixa da mesa. Pode transferir o dono "
+                    + "de qualquer um dos dois caixas, ou quem tem PDV_SESSION_CLOSE_ANY. As mesas precisam ser "
+                    + "do caixa de origem e do mesmo depósito do caixa de destino.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Transferidas — devolve as mesas, já no caixa de destino"),
+            @ApiResponse(responseCode = "400", description = "Corpo inválido (VALIDATION_ERROR)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Não é dono de nenhum dos dois caixas e não tem PDV_SESSION_CLOSE_ANY (SESSION_NOT_OWNED)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Caixa ou comanda não encontrada", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Mesmo caixa, mesa de outro caixa ou de outro depósito (COMANDA_TRANSFER_NOT_ALLOWED); caixa fechado (CASH_REGISTER_SESSION_CLOSED); mesa não aberta (COMANDA_NOT_OPEN)", content = @Content)
+    })
+    @PostMapping("/transfer")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<List<ComandaResponseDTO>> transferComandas(
+            @Valid @RequestBody TransferComandasRequest request, Authentication authentication) {
+        boolean canTransferAny = authentication.getAuthorities().stream()
+                .anyMatch(a -> "PDV_SESSION_CLOSE_ANY".equals(a.getAuthority()));
+        List<Comanda> transferidas = comandaUseCase.transferComandas(request.getFromSessionId(),
+                request.getToSessionId(), request.getComandaIds(), authentication.getName(), canTransferAny);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fromSessionId", request.getFromSessionId());
+        payload.put("toSessionId", request.getToSessionId());
+        payload.put("comandaIds", transferidas.stream().map(Comanda::id).toList());
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_TRANSFERRED, authentication.getName(), payload));
+        return ResponseEntity.ok(enrichCustomerNames(comandaConverter.toResponse(transferidas)));
     }
 
     @Operation(summary = "Abandona a comanda sem cobrança, devolvendo ao estoque cada item já lançado")

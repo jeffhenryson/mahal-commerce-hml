@@ -9,6 +9,7 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 
+import java.util.Map;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collection;
@@ -59,6 +60,9 @@ public interface CustomerReceivableRepository {
 
     /** Abatido por quitações recebidas na sessão, no método — já líquido do troco. */
     BigDecimal sumReceivedBySessionAndMethod(Long sessionId, PaymentMethod method);
+
+    /** PDV-C051 — {@link #sumReceivedBySessionAndMethod} de todos os métodos; ausente é zero. */
+    Map<PaymentMethod, BigDecimal> sumReceivedBySessionGroupedByMethod(Long sessionId);
 
     record CustomerBalanceRow(Long customerId, BigDecimal openBalance, BigDecimal overdueBalance,
             LocalDate nextDueDate, long count, BigDecimal openBalanceBalcao, BigDecimal openBalanceMesa) {

@@ -1,11 +1,14 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.ports.in.ComandaUseCase.DuploUndone;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorHora;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorMesa;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorAtendente;
 import com.cernecommerce.core.ports.in.ComandaUseCase.SessoesNarguile;
 import com.cernecommerce.core.ports.in.ComandaUseCase.CompraNaLoja;
 import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
+import com.cernecommerce.core.domain.model.pdv.AnalyticsGroup;
+import com.cernecommerce.core.domain.model.pdv.MinutesAverage;
 import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaAnalytics;
 import com.cernecommerce.core.ports.in.ComandaUseCase.ComandaHistoryEntry;
 import java.util.TreeMap;
@@ -41,6 +44,8 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaEmptyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaItemNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaMergeNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaPartiallyClosedException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
@@ -61,6 +66,9 @@ import com.cernecommerce.core.domain.exception.pdv.SessionEssenceRequiredExcepti
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceSkuRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAlreadyDuploException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotDuploException;
+import com.cernecommerce.core.domain.exception.pdv.RoshAlreadyChargedException;
+import com.cernecommerce.core.domain.exception.pdv.RoshAlreadyStartedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.MenuSessionNotAllowedOnItemsException;
 import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
@@ -660,6 +668,42 @@ public class ComandaService implements ComandaUseCase {
     }
 
     /**
+     * PDV-F055 — desfaz o "Tornar duplo". Ver {@link ComandaUseCase#undoDuplo}.
+     */
+    @Override
+    @Transactional
+    public DuploUndone undoDuplo(Long comandaId, Long sessionItemId, String username) {
+        Comanda comanda = getComandaForUpdate(comandaId);
+        pdvService.requireOpenSession(comanda.sessionId());
+        requireOpen(comanda);
+        comanda.items().stream()
+                .filter(i -> i.id() != null && i.id().equals(sessionItemId) && i.mode() == ConsumptionMode.SESSAO)
+                .findFirst()
+                .orElseThrow(() -> new NotASessionLineException(sessionItemId, comandaId));
+        List<ComandaItem> roshs = comanda.items().stream()
+                .filter(i -> i.mode() == ConsumptionMode.ROSH_EXTRA && sessionItemId.equals(i.linkedItemId()))
+                .toList();
+        if (roshs.isEmpty()) {
+            throw new SessionNotDuploException(sessionItemId);
+        }
+        // O 2º rosh do duplo é o cortesia; um rosh extra cobrado (PDV-F021) não é duplo a desfazer.
+        ComandaItem rosh = roshs.stream()
+                .filter(ComandaItem::courtesy)
+                .findFirst()
+                .orElseThrow(() -> new RoshAlreadyChargedException(roshs.getFirst().id()));
+        if (!rosh.isOpen()) {
+            throw new RoshAlreadyChargedException(rosh.id());
+        }
+        // Na fila nada queimou: o pendente não baixou nada e o com sabor devolve o uso da lata no
+        // withoutLine. Do preparo em diante a essência queimou — é desistência.
+        if (rosh.sessionStatus() != SessionStatus.NA_FILA) {
+            throw new RoshAlreadyStartedException(rosh.id());
+        }
+        Comanda semRosh = withoutLine(comanda, rosh, "Desfeito o duplo da comanda #" + comandaId, username);
+        return new DuploUndone(comandaRepository.save(semRosh), rosh.id());
+    }
+
+    /**
      * PDV-F027 — nova sessão com a configuração de uma anterior da mesa. Monta o mesmo pedido que o
      * operador faria e delega a {@link #addSession(Long, AddSessionCommand, String)}: faixa e
      * adicionais são revalidados (inativos recusam) e o preço é o de agora, não o da origem.
@@ -980,6 +1024,18 @@ public class ComandaService implements ComandaUseCase {
                     cobradasPenduradas.stream().map(ComandaItem::id).toList());
         }
 
+        // Sem checagem de "última linha": comanda vazia é estado legítimo — é como ela nasce, e o
+        // COMANDA_EMPTY do fechamento já barra fechá-la assim.
+        return comandaRepository.save(withoutLine(comanda, alvo,
+                "Remoção de item da comanda #" + comandaId, username));
+    }
+
+    /**
+     * Tira a linha (e o que sai junto com ela) da comanda, devolvendo estoque e utensílios e acertando
+     * o grupo do rosh. Não salva. Comum à remoção de item e ao desfazer do duplo (PDV-F055).
+     */
+    private Comanda withoutLine(Comanda comanda, ComandaItem alvo, String motivo, String username) {
+        Long itemId = alvo.id();
         // Captura ANTES de remover: depois da remoção a comanda não sabe mais quais linhas saíram,
         // e são elas que precisam ter o estoque devolvido.
         List<ComandaItem> removidas = comanda.itemsRemovedWith(itemId);
@@ -988,7 +1044,7 @@ public class ComandaService implements ComandaUseCase {
         // Devolve o que cada linha removida havia debitado — mesma ENTRADA de cancelComanda. A
         // cortesia também volta: ela não foi cobrada, mas a essência tinha saído do estoque.
         for (ComandaItem removida : removidas) {
-            undoStock(removida, comanda.warehouseCode(), "Remoção de item da comanda #" + comandaId, username);
+            undoStock(removida, comanda.warehouseCode(), motivo, username);
         }
         // PDV-F021 — sessão removida devolve os utensílios à casa.
         releaseSessionAssets(removidas);
@@ -998,9 +1054,7 @@ public class ComandaService implements ComandaUseCase {
         if (raizDoRosh != null && semItem.items().stream().anyMatch(i -> raizDoRosh.equals(i.id()))) {
             semItem = settleSessionGroup(semItem, raizDoRosh, Instant.now());
         }
-        // Sem checagem de "última linha": comanda vazia é estado legítimo — é como ela nasce, e o
-        // COMANDA_EMPTY do fechamento já barra fechá-la assim.
-        return comandaRepository.save(semItem);
+        return semItem;
     }
 
     /**
@@ -1127,6 +1181,9 @@ public class ComandaService implements ComandaUseCase {
         // comanda ficou aberta. Com o open rosh isso ficou ainda mais crítico: fromCatalog
         // resolveria pelo SKU da variação e cobraria o preço do sabor no lugar do valor fixo.
         List<OrderItem> orderItems = new ArrayList<>(escopo.size());
+        // PDV-C052 — uma consulta de taxa por SKU distinto, não por linha: toda linha de sessão pedia
+        // a mesma taxa da categoria "Sessão" de novo.
+        Map<String, Optional<CashbackRate>> rates = new HashMap<>();
         for (int i = 0; i < escopo.size(); i++) {
             ComandaItem item = escopo.get(i);
             // CRM-F003, mesma regra do balcão (PdvService.registerSale): a taxa vigente é resolvida
@@ -1137,9 +1194,11 @@ public class ComandaService implements ComandaUseCase {
             // é zero por construção.
             // PDV-F021 — sessão do cardápio não tem produto: a taxa sai da categoria "Sessão" (ou da
             // global), sem ir ao catálogo, que não conhece o SKU sintético.
-            CashbackRate rate = item.mode().isCatalogLine()
-                    ? cashbackUseCase.resolveApplicableRate(item.sku())
-                    : cashbackUseCase.resolveApplicableRate(item.sku(), SESSION_CASHBACK_CATEGORY);
+            CashbackRate rate = rates.computeIfAbsent(item.mode().isCatalogLine() + "|" + item.sku(),
+                    k -> Optional.ofNullable(item.mode().isCatalogLine()
+                            ? cashbackUseCase.resolveApplicableRate(item.sku())
+                            : cashbackUseCase.resolveApplicableRate(item.sku(), SESSION_CASHBACK_CATEGORY)))
+                    .orElse(null);
             // PDV-F011: notes e surchargeAmount atravessam junto com mode/courtesy. A nota porque
             // "qual pinça saiu com aquela mesa" é pergunta feita DEPOIS do fechamento; o acréscimo
             // porque não dá para reconstruí-lo do unitPrice, que já é a soma.
@@ -1599,65 +1658,119 @@ public class ComandaService implements ComandaUseCase {
         return getComanda(toComandaId);
     }
 
-    /**
-     * PDV-F013 — a varredura de mesa esquecida. Ver o javadoc de
-     * {@link ComandaUseCase#sweepStaleComandas} para o porquê de só a mesa que não deve nada ser
-     * encerrada, e de esta ser a única operação de comanda que não exige caixa aberto.
-     */
+    /** PDV-F054 — passagem de turno. Ver {@link ComandaUseCase#transferComandas}. */
     @Override
     @Transactional
-    public StaleComandaSweepResult sweepStaleComandas(int staleHours, int batchSize) {
-        Instant cutoff = Instant.now().minus(staleHours, ChronoUnit.HOURS);
-
-        // 1. As que não devem nada — vazias e todas pagas sem sessão no salão. Só nelas a varredura
-        //    age, e por isso vêm de consulta própria: misturadas às com consumo (que a varredura só
-        //    alerta), 200 mesas esquecidas com consumo esgotavam o lote e estas nunca eram vistas.
-        int cancelled = 0;
-        int finished = 0;
-        for (Long id : comandaRepository.findStaleIdsWithNothingOwed(cutoff, batchSize)) {
-            // Mesma trava de addItem/close/cancel (PDV-C008). Sem ela a varredura poderia encerrar
-            // uma mesa no instante em que um atendente lança o primeiro item nela — e o item cairia
-            // numa comanda já encerrada, com o estoque debitado e ninguém para cobrar. Com a trava o
-            // addItem espera e depois falha com ComandaNotOpenException: o operador VÊ o erro.
-            Comanda comanda = comandaRepository.findByIdForUpdate(id).orElse(null);
-            // Entre a consulta e a trava a mesa pode ter mudado: reconfere tudo sobre o estado travado.
-            // PDV-C042 — "não deve nada" ignora a cortesia em aberto, como o finish.
-            if (comanda == null || !comanda.isOpen() || !comanda.owedItems().isEmpty()
-                    || comanda.hasActiveSession()) {
-                continue;
-            }
-            // Só cortesia, sem linha cobrada: não há pedido para encerrar — fica para o alerta.
-            if (!comanda.items().isEmpty() && !comanda.hasNothingOwed()) {
-                continue;
-            }
-            if (comanda.items().isEmpty()) {
-                // Sem adjustStock: não há item, logo não há nada que tenha saído do estoque.
-                comandaRepository.save(comanda.cancelled(Instant.now()));
-                comandaRepository.recordClosing(id, "system", "Mesa vazia esquecida (varredura automática)");
-                cancelled++;
-            } else {
-                // PDV-F032 — toda paga e nada no salão: é o finish que ninguém apertou. Encerrar não
-                // cobra nem devolve nada, e tira a mesa do caminho do fechamento do caixa (PDV-C005).
-                releaseSessionAssets(comanda.items());
-                comandaRepository.save(comanda.closed(comanda.lastChargedOrderId().orElseThrow(), Instant.now()));
-                comandaRepository.recordClosing(id, "system", "Mesa paga encerrada (varredura automática)");
-                finished++;
-            }
+    public List<Comanda> transferComandas(Long fromSessionId, Long toSessionId, List<Long> comandaIds,
+            String username, boolean canTransferAny) {
+        if (fromSessionId == null || fromSessionId.equals(toSessionId)) {
+            throw new ComandaTransferNotAllowedException("Origem e destino precisam ser caixas distintos.");
         }
-
-        // 2. As que devem algo: só alerta. Lidas SEM trava — a varredura não decide nada sobre elas,
-        //    e segurar a linha de cada mesa enquanto as notificações saem travaria o salão à toa.
-        List<Comanda> withConsumption = new ArrayList<>();
-        for (Long id : comandaRepository.findOpenIdsOlderThan(cutoff, batchSize)) {
-            comandaRepository.findById(id)
-                    .filter(c -> c.isOpen() && (!c.owedItems().isEmpty() || c.hasActiveSession()
-                            || (!c.items().isEmpty() && !c.hasNothingOwed())))
-                    .ifPresent(withConsumption::add);
+        // Posse primeiro, sem trava: quem não pode transferir não chega a segurar mesa nenhuma.
+        CashRegisterSession origem = pdvService.getSession(fromSessionId);
+        CashRegisterSession destino = pdvService.getSession(toSessionId);
+        if (!canTransferAny && !origem.belongsTo(username) && !destino.belongsTo(username)) {
+            throw new CashRegisterSessionNotOwnedException(fromSessionId, username);
         }
+        List<Long> ids = (comandaIds == null || comandaIds.isEmpty()
+                ? comandaRepository.findOpenIdsBySessionId(fromSessionId)
+                : comandaIds).stream().distinct().sorted().toList();
+        // Comandas ANTES das sessões e em ordem de id: é a ordem de addItem/close (comanda, depois
+        // sessão), então duas operações nunca se esperam em ciclo.
+        List<Comanda> mesas = new ArrayList<>(ids.size());
+        for (Long id : ids) {
+            mesas.add(getComandaForUpdate(id));
+        }
+        // Trava compartilhada nos dois caixas (PDV-C035): um fechamento simultâneo do destino espera,
+        // e quem chega depois dele relê CLOSED.
+        pdvService.requireOpenSession(fromSessionId);
+        destino = pdvService.requireOpenSession(toSessionId);
+        List<Comanda> transferidas = new ArrayList<>(mesas.size());
+        for (Comanda mesa : mesas) {
+            requireOpen(mesa);
+            if (!fromSessionId.equals(mesa.sessionId())) {
+                throw new ComandaTransferNotAllowedException("A comanda #" + mesa.id() + " não é do caixa #"
+                        + fromSessionId + ".");
+            }
+            if (!mesa.warehouseCode().equals(destino.warehouseCode())) {
+                throw new ComandaTransferNotAllowedException("A comanda #" + mesa.id() + " é do depósito "
+                        + mesa.warehouseCode() + " e o caixa #" + toSessionId + " é do " + destino.warehouseCode()
+                        + ": o estoque das linhas saiu do depósito da mesa.");
+            }
+            transferidas.add(comandaRepository.save(mesa.withSession(toSessionId)));
+        }
+        return transferidas;
+    }
+
+    /**
+     * PDV-F013 — a varredura de mesa esquecida. Ver o javadoc de
+     * {@link ComandaUseCase#findStaleResolvableComandaIds} para o porquê de só a mesa que não deve nada
+     * ser encerrada, e de esta ser a única operação de comanda que não exige caixa aberto.
+     *
+     * <p>As que não devem nada — vazias e todas pagas sem sessão no salão — vêm de consulta própria:
+     * misturadas às com consumo (que a varredura só alerta), 200 mesas esquecidas com consumo
+     * esgotavam o lote e estas nunca eram vistas (PDV-C024).</p>
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<Long> findStaleResolvableComandaIds(int staleHours, int batchSize) {
+        return comandaRepository.findStaleIdsWithNothingOwed(staleCutoff(staleHours), batchSize);
+    }
+
+    /** PDV-C054 — uma mesa por transação: a trava dura só a decisão sobre ela. */
+    @Override
+    @Transactional
+    public StaleComandaOutcome resolveStaleComanda(Long id) {
+        // Mesma trava de addItem/close/cancel (PDV-C008). Sem ela a varredura poderia encerrar
+        // uma mesa no instante em que um atendente lança o primeiro item nela — e o item cairia
+        // numa comanda já encerrada, com o estoque debitado e ninguém para cobrar. Com a trava o
+        // addItem espera e depois falha com ComandaNotOpenException: o operador VÊ o erro.
+        Comanda comanda = comandaRepository.findByIdForUpdate(id).orElse(null);
+        // Entre a consulta e a trava a mesa pode ter mudado: reconfere tudo sobre o estado travado.
+        // PDV-C042 — "não deve nada" ignora a cortesia em aberto, como o finish.
+        if (comanda == null || !comanda.isOpen() || !comanda.owedItems().isEmpty()
+                || comanda.hasActiveSession()) {
+            return StaleComandaOutcome.SKIPPED;
+        }
+        // Só cortesia, sem linha cobrada: não há pedido para encerrar — fica para o alerta.
+        if (!comanda.items().isEmpty() && !comanda.hasNothingOwed()) {
+            return StaleComandaOutcome.SKIPPED;
+        }
+        if (comanda.items().isEmpty()) {
+            // Sem adjustStock: não há item, logo não há nada que tenha saído do estoque.
+            comandaRepository.save(comanda.cancelled(Instant.now()));
+            comandaRepository.recordClosing(id, "system", "Mesa vazia esquecida (varredura automática)");
+            return StaleComandaOutcome.CANCELLED;
+        }
+        // PDV-F032 — toda paga e nada no salão: é o finish que ninguém apertou. Encerrar não
+        // cobra nem devolve nada, e tira a mesa do caminho do fechamento do caixa (PDV-C005).
+        releaseSessionAssets(comanda.items());
+        comandaRepository.save(comanda.closed(comanda.lastChargedOrderId().orElseThrow(), Instant.now()));
+        comandaRepository.recordClosing(id, "system", "Mesa paga encerrada (varredura automática)");
+        return StaleComandaOutcome.FINISHED;
+    }
+
+    /**
+     * As que devem algo: só alerta. Lidas SEM trava — a varredura não decide nada sobre elas, e
+     * segurar a linha de cada mesa enquanto as notificações saem travaria o salão à toa. PDV-C054 —
+     * numa consulta (em lotes), não uma por mesa.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public int alertStaleComandasWithConsumption(int staleHours, int batchSize) {
+        List<Comanda> withConsumption = comandaRepository.findAllByIds(
+                        comandaRepository.findOpenIdsOlderThan(staleCutoff(staleHours), batchSize)).stream()
+                .filter(c -> c.isOpen() && (!c.owedItems().isEmpty() || c.hasActiveSession()
+                        || (!c.items().isEmpty() && !c.hasNothingOwed())))
+                .toList();
         if (!withConsumption.isEmpty()) {
             dispatchStaleComandaAlerts(withConsumption, staleHours);
         }
-        return new StaleComandaSweepResult(cancelled, finished, withConsumption.size());
+        return withConsumption.size();
+    }
+
+    private static Instant staleCutoff(int staleHours) {
+        return Instant.now().minus(staleHours, ChronoUnit.HOURS);
     }
 
     /**
@@ -1712,9 +1825,13 @@ public class ComandaService implements ComandaUseCase {
         ClosedComanda closed = comandaRepository.findWithClosing(comandaId)
                 .orElseThrow(() -> new ComandaNotFoundException(comandaId));
         List<Order> orders = ordersByComanda(List.of(closed)).getOrDefault(comandaId, List.of());
+        // PDV-C054 — uma consulta para os pagamentos de todos os pedidos da mesa, não uma por pedido:
+        // com a sessão paga no lançamento, a mesa tem um pedido por sessão.
+        Map<Long, List<OrderPayment>> found = orderPaymentRepository.findByOrderIds(
+                orders.stream().map(Order::id).toList());
         Map<Long, List<OrderPayment>> payments = new LinkedHashMap<>();
         for (Order order : orders) {
-            payments.put(order.id(), orderPaymentRepository.findByOrderId(order.id()));
+            payments.put(order.id(), found.getOrDefault(order.id(), List.of()));
         }
         return withTimeline(historyEntry(closed, orders, payments));
     }
@@ -1767,97 +1884,114 @@ public class ComandaService implements ComandaUseCase {
         if (Duration.between(from, to).toDays() > MAX_ANALYTICS_DAYS) {
             throw new InvalidReportPeriodException("Intervalo máximo permitido: " + MAX_ANALYTICS_DAYS + " dias");
         }
-        List<ClosedComanda> closed = comandaRepository.findClosedBetween(from, to, warehouseCode);
-        Map<Long, List<Order>> ordersByComanda = ordersByComanda(closed);
-        List<ComandaHistoryEntry> entries = closed.stream()
-                .map(c -> historyEntry(c, ordersByComanda.getOrDefault(c.comanda().id(), List.of()), Map.of()))
-                .toList();
-
-        BigDecimal receita = sum(entries, ComandaHistoryEntry::totalPaid);
+        // PDV-C050 — em blocos de ANALYTICS_CHUNK mesas: carrega, soma e descarta. Antes as mesas do
+        // período inteiro (até 366 dias), com itens, pedidos e itens dos pedidos, ficavam na memória ao
+        // mesmo tempo só para virar uma dúzia de números. A aritmética é a mesma: médias como soma e
+        // contagem (MinutesAverage), arredondadas no fim.
+        int mesas = 0;
+        BigDecimal receita = BigDecimal.ZERO;
+        BigDecimal taxaServico = BigDecimal.ZERO;
+        BigDecimal desconto = BigDecimal.ZERO;
+        MinutesAverage permanencia = new MinutesAverage();
         int sessoes = 0;
         BigDecimal receitaSessoes = BigDecimal.ZERO;
-        for (ComandaHistoryEntry e : entries) {
-            for (Order order : e.orders()) {
-                if (order.status() == OrderStatus.REEMBOLSADO) {
-                    continue;
+        MinutesAverage espera = new MinutesAverage();
+        MinutesAverage preparo = new MinutesAverage();
+        MinutesAverage naMesa = new MinutesAverage();
+        int pagasNoFinal = 0;
+        int desistidas = 0;
+        int mesasComSessao = 0;
+        int respondidas = 0;
+        int compraram = 0;
+        Map<String, AnalyticsGroup> byAttendant = new TreeMap<>();
+        Map<String, AnalyticsGroup> byTable = new TreeMap<>();
+        Map<String, String> tableDisplay = new HashMap<>();
+        Map<Integer, AnalyticsGroup> byHour = new TreeMap<>();
+
+        List<Long> ids = comandaRepository.findClosedIdsBetween(from, to, warehouseCode);
+        for (int i = 0; i < ids.size(); i += ANALYTICS_CHUNK) {
+            List<ClosedComanda> chunk = comandaRepository.findClosedByIds(
+                    ids.subList(i, Math.min(i + ANALYTICS_CHUNK, ids.size())));
+            Map<Long, List<Order>> ordersByComanda = ordersByComanda(chunk);
+            for (ClosedComanda c : chunk) {
+                ComandaHistoryEntry e = historyEntry(c, ordersByComanda.getOrDefault(c.comanda().id(), List.of()),
+                        Map.of());
+                mesas++;
+                receita = receita.add(e.totalPaid());
+                taxaServico = taxaServico.add(e.serviceFeeTotal());
+                desconto = desconto.add(e.discountTotal());
+                permanencia.add(e.durationMinutes());
+                for (Order order : e.orders()) {
+                    if (order.status() == OrderStatus.REEMBOLSADO) {
+                        continue;
+                    }
+                    for (OrderItem item : order.items()) {
+                        if (item.mode() == ConsumptionMode.SESSAO) {
+                            sessoes++;
+                            receitaSessoes = receitaSessoes.add(item.netAmount());
+                        }
+                    }
                 }
-                for (OrderItem item : order.items()) {
-                    if (item.mode() == ConsumptionMode.SESSAO) {
-                        sessoes++;
-                        receitaSessoes = receitaSessoes.add(item.netAmount());
+                byAttendant.computeIfAbsent(e.comanda().openedBy(), k -> new AnalyticsGroup())
+                        .add(e.totalPaid(), e.durationMinutes());
+                String label = e.comanda().tableOrCustomerLabel().trim();
+                String key = label.toLowerCase(java.util.Locale.ROOT);
+                tableDisplay.putIfAbsent(key, label);
+                byTable.computeIfAbsent(key, k -> new AnalyticsGroup()).add(e.totalPaid(), e.durationMinutes());
+                byHour.computeIfAbsent(e.comanda().openedAt().atZone(ZONA_LOJA).getHour(), k -> new AnalyticsGroup())
+                        .add(e.totalPaid(), e.durationMinutes());
+                // PDV-F035 — médias de fase sobre as linhas SESSAO (o rosh extra divide o narguilé com ela).
+                for (ComandaItem item : e.comanda().items()) {
+                    SessionTimeline t = item.mode() == ConsumptionMode.SESSAO ? SessionTimeline.of(item, null) : null;
+                    if (t == null) {
+                        continue;
+                    }
+                    if (!t.pagarNoFinal()) {
+                        espera.add(t.esperaMin());
+                    }
+                    preparo.add(t.preparoMin());
+                    naMesa.add(t.naMesaMin());
+                    pagasNoFinal += t.pagarNoFinal() ? 1 : 0;
+                    desistidas += t.desistida() ? 1 : 0;
+                }
+                // PDV-F036 — conversão de quem fez sessão em compra na loja: só mesas com sessão, e a
+                // taxa só sobre as respondidas — "não respondido" não é "não comprou".
+                if (e.sessionsCount() > 0) {
+                    mesasComSessao++;
+                    if (e.storePurchase() != null) {
+                        respondidas++;
+                        compraram += e.storePurchase().bought() ? 1 : 0;
                     }
                 }
             }
         }
 
-        Map<String, List<ComandaHistoryEntry>> byAttendant = new TreeMap<>();
-        Map<String, List<ComandaHistoryEntry>> byTable = new TreeMap<>();
-        Map<String, String> tableDisplay = new HashMap<>();
-        Map<Integer, List<ComandaHistoryEntry>> byHour = new TreeMap<>();
-        for (ComandaHistoryEntry e : entries) {
-            byAttendant.computeIfAbsent(e.comanda().openedBy(), k -> new ArrayList<>()).add(e);
-            String label = e.comanda().tableOrCustomerLabel().trim();
-            String key = label.toLowerCase(java.util.Locale.ROOT);
-            tableDisplay.putIfAbsent(key, label);
-            byTable.computeIfAbsent(key, k -> new ArrayList<>()).add(e);
-            int hour = e.comanda().openedAt().atZone(ZONA_LOJA).getHour();
-            byHour.computeIfAbsent(hour, k -> new ArrayList<>()).add(e);
-        }
-
         List<PorAtendente> porAtendente = byAttendant.entrySet().stream()
-                .map(en -> new PorAtendente(en.getKey(), en.getValue().size(),
-                        sum(en.getValue(), ComandaHistoryEntry::totalPaid)))
+                .map(en -> new PorAtendente(en.getKey(), en.getValue().mesas(), en.getValue().receita()))
                 .sorted(Comparator.comparing(PorAtendente::receita).reversed())
                 .toList();
         List<PorMesa> porMesa = byTable.entrySet().stream()
-                .map(en -> new PorMesa(tableDisplay.get(en.getKey()), en.getValue().size(),
-                        sum(en.getValue(), ComandaHistoryEntry::totalPaid), averageMinutes(en.getValue())))
+                .map(en -> new PorMesa(tableDisplay.get(en.getKey()), en.getValue().mesas(), en.getValue().receita(),
+                        en.getValue().permanenciaMediaMin()))
                 .sorted(Comparator.comparing(PorMesa::receita).reversed())
                 .toList();
         List<PorHora> porHora = byHour.entrySet().stream()
-                .map(en -> new PorHora(en.getKey(), en.getValue().size(),
-                        sum(en.getValue(), ComandaHistoryEntry::totalPaid)))
+                .map(en -> new PorHora(en.getKey(), en.getValue().mesas(), en.getValue().receita()))
                 .toList();
-
-        // PDV-F035 — médias de fase sobre as linhas SESSAO (o rosh extra divide o narguilé com ela).
-        List<SessionTimeline> timelines = entries.stream()
-                .flatMap(e -> e.comanda().items().stream())
-                .filter(i -> i.mode() == ConsumptionMode.SESSAO)
-                .map(i -> SessionTimeline.of(i, null))
-                .filter(Objects::nonNull)
-                .toList();
-        SessoesNarguile sessoesNarguile = new SessoesNarguile(sessoes, receitaSessoes,
-                averageOf(timelines.stream().filter(t -> !t.pagarNoFinal()).map(SessionTimeline::esperaMin)),
-                averageOf(timelines.stream().map(SessionTimeline::preparoMin)),
-                averageOf(timelines.stream().map(SessionTimeline::naMesaMin)),
-                (int) timelines.stream().filter(SessionTimeline::pagarNoFinal).count(),
-                (int) timelines.stream().filter(SessionTimeline::desistida).count());
-
-        BigDecimal ticket = entries.isEmpty() ? BigDecimal.ZERO
-                : receita.divide(BigDecimal.valueOf(entries.size()), 2, java.math.RoundingMode.HALF_UP);
-        return new ComandaAnalytics(entries.size(), ticket, averageMinutes(entries), receita,
-                sum(entries, ComandaHistoryEntry::serviceFeeTotal), sum(entries, ComandaHistoryEntry::discountTotal),
-                sessoesNarguile, porAtendente, porMesa, porHora, compraNaLoja(entries));
-    }
-
-    /**
-     * PDV-F036 — conversão de quem fez sessão em compra na loja. Só mesas com sessão, e a taxa só
-     * sobre as respondidas: "não respondido" não é "não comprou".
-     */
-    private static CompraNaLoja compraNaLoja(List<ComandaHistoryEntry> entries) {
-        List<ComandaHistoryEntry> comSessao = entries.stream().filter(e -> e.sessionsCount() > 0).toList();
-        List<ComandaHistoryEntry> respondidas = comSessao.stream().filter(e -> e.storePurchase() != null).toList();
-        int compraram = (int) respondidas.stream().filter(e -> e.storePurchase().bought()).count();
-        BigDecimal taxa = respondidas.isEmpty() ? null
+        SessoesNarguile sessoesNarguile = new SessoesNarguile(sessoes, receitaSessoes, espera.roundedOrNull(),
+                preparo.roundedOrNull(), naMesa.roundedOrNull(), pagasNoFinal, desistidas);
+        BigDecimal taxa = respondidas == 0 ? null
                 : BigDecimal.valueOf(compraram * 100L)
-                        .divide(BigDecimal.valueOf(respondidas.size()), 2, java.math.RoundingMode.HALF_UP);
-        return new CompraNaLoja(comSessao.size(), respondidas.size(), compraram, taxa);
+                        .divide(BigDecimal.valueOf(respondidas), 2, java.math.RoundingMode.HALF_UP);
+        BigDecimal ticket = mesas == 0 ? BigDecimal.ZERO
+                : receita.divide(BigDecimal.valueOf(mesas), 2, java.math.RoundingMode.HALF_UP);
+        return new ComandaAnalytics(mesas, ticket, permanencia.roundedOrZero(), receita, taxaServico, desconto,
+                sessoesNarguile, porAtendente, porMesa, porHora,
+                new CompraNaLoja(mesasComSessao, respondidas, compraram, taxa));
     }
 
-    private static Long averageOf(java.util.stream.Stream<Long> minutes) {
-        java.util.OptionalDouble avg = minutes.filter(Objects::nonNull).mapToLong(Long::longValue).average();
-        return avg.isPresent() ? Math.round(avg.getAsDouble()) : null;
-    }
+    /** PDV-C050 — mesas por bloco no analytics: limita a memória sem multiplicar as consultas. */
+    static final int ANALYTICS_CHUNK = 500;
 
     private Map<Long, List<Order>> ordersByComanda(List<ClosedComanda> comandas) {
         if (comandas.isEmpty()) {
@@ -1892,13 +2026,4 @@ public class ComandaService implements ComandaUseCase {
                 courtesy, sessions, closed.storePurchase(), List.of(), null, null);
     }
 
-    private static BigDecimal sum(List<ComandaHistoryEntry> entries,
-            java.util.function.Function<ComandaHistoryEntry, BigDecimal> field) {
-        return entries.stream().map(field).reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    private static long averageMinutes(List<ComandaHistoryEntry> entries) {
-        return Math.round(entries.stream().map(ComandaHistoryEntry::durationMinutes)
-                .filter(java.util.Objects::nonNull).mapToLong(Long::longValue).average().orElse(0));
-    }
 }

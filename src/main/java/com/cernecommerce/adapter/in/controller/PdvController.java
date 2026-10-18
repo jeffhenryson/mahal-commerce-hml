@@ -9,6 +9,7 @@ import com.cernecommerce.adapter.in.dtos.request.SaleRequest;
 import com.cernecommerce.adapter.in.dtos.request.SettleOnlineOrderRequest;
 import com.cernecommerce.adapter.in.dtos.response.CashMovementResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashRegisterSessionResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.OperatorSessionStatsResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PaymentTotalResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ReceiptEmailResponseDTO;
@@ -24,6 +25,7 @@ import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSessionFilter;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
@@ -77,6 +79,8 @@ public class PdvController {
 
     private static final String DISCOUNT_AUTHORITY = "PDV_SALE_DISCOUNT";
     private static final String CLOSE_ANY_AUTHORITY = "PDV_SESSION_CLOSE_ANY";
+    /** PDV-C047 — ler o caixa de outro operador (V163). */
+    static final String READ_ANY_AUTHORITY = "PDV_SESSION_READ_ANY";
 
     private final PdvUseCase pdvUseCase;
     private final OrderDTOConverter orderConverter;
@@ -107,9 +111,41 @@ public class PdvController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(required = false) String operator,
             @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            Authentication authentication) {
+        // PDV-C047 — sem PDV_SESSION_READ_ANY a lista é só dos caixas de quem pergunta: o filtro
+        // operator é substituído, não recusado, para a tela do atendente continuar funcionando.
+        String effectiveOperator = canReadAnySession(authentication) ? operator : authentication.getName();
         return ResponseEntity.ok(cashRegisterConverter.toResponse(pdvUseCase.listSessions(
-                new CashRegisterSessionFilter(status, from, to, operator), page, size)));
+                new CashRegisterSessionFilter(status, from, to, effectiveOperator), page, size)));
+    }
+
+    @Operation(summary = "Desempenho do operador nos últimos caixas fechados",
+            description = "PDV-F056 — quantos caixas, o total vendido (soma do totalReceived do resumo de cada um), "
+                    + "a média por caixa, as divergências e o troco deixado no último fechamento. `limit` caixas "
+                    + "mais recentes (padrão 5, até 50). Sem PDV_SESSION_READ_ANY, só o próprio operador.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = OperatorSessionStatsResponseDTO.class))),
+            @ApiResponse(responseCode = "403", description = "Outro operador, sem PDV_SESSION_READ_ANY (SESSION_NOT_OWNED)", content = @Content)
+    })
+    @GetMapping("/sessions/operators/{username}/stats")
+    @PreAuthorize("hasAuthority('PDV_READ')")
+    public ResponseEntity<OperatorSessionStatsResponseDTO> operatorStats(@PathVariable("username") String username,
+            @RequestParam(defaultValue = "5") @Min(1) @Max(50) int limit, Authentication authentication) {
+        // PDV-C047 — mesma regra da lista e do resumo: o caixa dos colegas é do gerente.
+        if (!canReadAnySession(authentication) && !username.equals(authentication.getName())) {
+            throw CashRegisterSessionNotOwnedException.ofOperator(username, authentication.getName());
+        }
+        PdvUseCase.OperatorSessionStats stats = pdvUseCase.getOperatorStats(username, limit);
+        OperatorSessionStatsResponseDTO dto = new OperatorSessionStatsResponseDTO();
+        dto.setOperator(stats.operator());
+        dto.setSessionCount(stats.sessionCount());
+        dto.setTotalSold(stats.totalSold());
+        dto.setAverageSold(stats.averageSold());
+        dto.setDivergenceCount(stats.divergenceCount());
+        dto.setTotalDifference(stats.totalDifference());
+        dto.setLastLeftInDrawerAmount(stats.lastLeftInDrawerAmount());
+        return ResponseEntity.ok(dto);
     }
 
     @Operation(summary = "Abre um caixa para o operador autenticado",
@@ -146,11 +182,13 @@ public class PdvController {
                 cashRegisterConverter.toResponse(pdvUseCase.getCurrentSession(authentication.getName())));
     }
 
-    @Operation(summary = "Consulta uma sessão de caixa")
+    @Operation(summary = "Consulta uma sessão de caixa",
+            description = "PDV-C047 — a de outro operador exige PDV_SESSION_READ_ANY (403 SESSION_NOT_OWNED).")
     @GetMapping("/sessions/{id}")
     @PreAuthorize("hasAuthority('PDV_READ')")
-    public ResponseEntity<CashRegisterSessionResponseDTO> getSession(@PathVariable("id") Long sessionId) {
-        return ResponseEntity.ok(cashRegisterConverter.toResponse(pdvUseCase.getSession(sessionId)));
+    public ResponseEntity<CashRegisterSessionResponseDTO> getSession(@PathVariable("id") Long sessionId,
+            Authentication authentication) {
+        return ResponseEntity.ok(cashRegisterConverter.toResponse(requireReadable(sessionId, authentication)));
     }
 
     @Operation(summary = "Registra sangria ou suprimento na sessão",
@@ -183,7 +221,9 @@ public class PdvController {
     public ResponseEntity<PageResult<CashMovementResponseDTO>> listCashMovements(
             @PathVariable("id") Long sessionId,
             @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size) {
+            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size,
+            Authentication authentication) {
+        requireReadable(sessionId, authentication);
         PageResult<CashMovement> result = pdvUseCase.listCashMovements(sessionId, page, size);
         return ResponseEntity.ok(new PageResult<>(
                 cashRegisterConverter.toMovementResponses(result.content()),
@@ -206,7 +246,8 @@ public class PdvController {
     public ResponseEntity<CashRegisterSessionResponseDTO> closeSession(@PathVariable("id") Long sessionId,
             @Valid @RequestBody CloseCashRegisterSessionRequest request, Authentication authentication) {
         CashRegisterSession session = pdvUseCase.closeSession(sessionId, request.getCountedAmount(),
-                request.getNotes(), authentication.getName(), canCloseAnySession(authentication));
+                request.getNotes(), authentication.getName(), canCloseAnySession(authentication),
+                request.getLeftInDrawerAmount());
         Map<String, Object> details = new HashMap<>();
         details.put("sessionId", sessionId);
         details.put("expectedAmount", session.expectedAmount());
@@ -216,6 +257,9 @@ public class PdvController {
         details.put("operator", session.operator());
         if (session.closingNotes() != null) {
             details.put("notes", session.closingNotes());
+        }
+        if (session.leftInDrawerAmount() != null) {
+            details.put("leftInDrawerAmount", session.leftInDrawerAmount());
         }
         publisher.publishEvent(
                 AuditEvent.of(EventType.CASH_SESSION_CLOSED, authentication.getName(), details));
@@ -357,7 +401,8 @@ public class PdvController {
     @GetMapping("/sessions/{id}/payment-totals")
     @PreAuthorize("hasAuthority('PDV_READ')")
     public ResponseEntity<List<PaymentTotalResponseDTO>> getSessionPaymentTotals(
-            @PathVariable("id") Long sessionId) {
+            @PathVariable("id") Long sessionId, Authentication authentication) {
+        requireReadable(sessionId, authentication);
         return ResponseEntity.ok(
                 orderConverter.toPaymentTotalResponse(pdvUseCase.getSessionPaymentTotals(sessionId)));
     }
@@ -372,7 +417,9 @@ public class PdvController {
     })
     @GetMapping("/sessions/{id}/summary")
     @PreAuthorize("hasAuthority('PDV_READ')")
-    public ResponseEntity<SessionSummaryResponseDTO> getSessionSummary(@PathVariable("id") Long sessionId) {
+    public ResponseEntity<SessionSummaryResponseDTO> getSessionSummary(@PathVariable("id") Long sessionId,
+            Authentication authentication) {
+        requireReadable(sessionId, authentication);
         return ResponseEntity.ok(orderConverter.toSessionSummaryResponse(pdvUseCase.getSessionSummary(sessionId)));
     }
 
@@ -382,7 +429,9 @@ public class PdvController {
     public ResponseEntity<PageResult<OrderResponseDTO>> listSessionOrders(
             @PathVariable("id") Long sessionId,
             @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            Authentication authentication) {
+        requireReadable(sessionId, authentication);
         return ResponseEntity.ok(orderConverter.toResponse(pdvUseCase.listSessionOrders(sessionId, page, size)));
     }
 
@@ -471,6 +520,21 @@ public class PdvController {
      * módulo que não era permissão: um gerente não podia receber a conferência sem virar admin. A
      * V145 concede a permissão às duas roles, então o comportamento delas não mudou.
      */
+    /**
+     * PDV-C047 — quem tem {@code PDV_SESSION_READ_ANY} lê o caixa de qualquer operador; os demais,
+     * só o próprio. Antes bastava {@code PDV_READ}, que o atendente tem (V86).
+     */
+    static boolean canReadAnySession(Authentication authentication) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(a -> READ_ANY_AUTHORITY.equals(a.getAuthority()));
+    }
+
+    /** PDV-C047 — 404 se a sessão não existe; 403 {@code SESSION_NOT_OWNED} se é de outro sem a permissão. */
+    private CashRegisterSession requireReadable(Long sessionId, Authentication authentication) {
+        return pdvUseCase.getReadableSession(sessionId, authentication.getName(),
+                canReadAnySession(authentication));
+    }
+
     private static boolean canCloseAnySession(Authentication authentication) {
         return authentication.getAuthorities().stream()
                 .anyMatch(a -> CLOSE_ANY_AUTHORITY.equals(a.getAuthority()));

@@ -88,6 +88,18 @@ public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long>
     List<Long> findStaleIdsWithNothingOwed(@Param("status") String status, @Param("cutoff") Instant cutoff,
             @Param("recolhido") String recolhido, Pageable pageable);
 
+    /**
+     * PDV-C050 — ids das FECHADAS no período, para o analytics carregar em blocos. Os dois instantes
+     * são sempre informados (o service recusa período aberto), então o {@code IS NULL} é só do
+     * depósito, que é {@code String} — seguro no Postgres, ver {@link #findOpenIds}.
+     */
+    @Query("SELECT c.id FROM ComandaEntity c WHERE c.status = :status "
+            + "AND c.closedAt >= :from AND c.closedAt <= :to "
+            + "AND (:warehouseCode IS NULL OR c.warehouseCode = :warehouseCode) "
+            + "ORDER BY c.closedAt ASC, c.id ASC")
+    List<Long> findClosedIdsBetween(@Param("status") String status, @Param("from") Instant from,
+            @Param("to") Instant to, @Param("warehouseCode") String warehouseCode);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM ComandaEntity c WHERE c.id = :id")
     Optional<ComandaEntity> findByIdForUpdate(@Param("id") Long id);

@@ -16,4 +16,14 @@ public class CashRegisterSessionNotOwnedException extends RuntimeException {
     public CashRegisterSessionNotOwnedException(Long sessionId, String operator) {
         super("A sessão de caixa " + sessionId + " não pertence a " + operator + ".");
     }
+
+    private CashRegisterSessionNotOwnedException(String message) {
+        super(message);
+    }
+
+    /** PDV-F056 — os caixas de outro operador, lidos em conjunto (desempenho), sem a permissão. */
+    public static CashRegisterSessionNotOwnedException ofOperator(String operator, String requester) {
+        return new CashRegisterSessionNotOwnedException(
+                "Os caixas de " + operator + " não podem ser lidos por " + requester + ".");
+    }
 }

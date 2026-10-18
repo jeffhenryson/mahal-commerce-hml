@@ -476,6 +476,12 @@ public class ReceivableService implements ReceivableUseCase {
         return receivableRepository.sumReceivedBySessionAndMethod(sessionId, method);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PaymentMethod, BigDecimal> receivedInSessionByMethod(Long sessionId) {
+        return receivableRepository.sumReceivedBySessionGroupedByMethod(sessionId);
+    }
+
     // ── Apoio ────────────────────────────────────────────────────────────────────────────────
 
     private LocalDate today() {

@@ -6,10 +6,12 @@ import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTota
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenComandasException;
+import com.cernecommerce.core.domain.exception.pdv.CashWithdrawalExceedsDrawerException;
 import com.cernecommerce.core.domain.exception.pdv.SessionHasPendingOfflineSalesException;
 import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
+import com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException;
 import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
 import com.cernecommerce.core.domain.exception.pedido.DiscountLimitExceededException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
@@ -171,6 +173,16 @@ public class PdvService implements PdvUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public CashRegisterSession getReadableSession(Long sessionId, String username, boolean canReadAny) {
+        CashRegisterSession session = getSession(sessionId);
+        if (!canReadAny && !session.belongsTo(username)) {
+            throw new CashRegisterSessionNotOwnedException(sessionId, username);
+        }
+        return session;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Map<Long, String> getSessionOperators(Collection<Long> sessionIds) {
         return cashRegisterRepository.findOperatorsByIds(sessionIds);
     }
@@ -179,9 +191,22 @@ public class PdvService implements PdvUseCase {
     @Transactional
     public CashMovement registerCashMovement(Long sessionId, CashMovementType type, BigDecimal amount,
             String reason, String username) {
-        requireOwnOpenSession(sessionId, username);
-        return cashMovementRepository.save(
-                CashMovement.register(sessionId, type, amount, reason, username));
+        CashMovement movement = CashMovement.register(sessionId, type, amount, reason, username);
+        if (type == CashMovementType.SANGRIA) {
+            // PDV-C048 — trava EXCLUSIVA, não a compartilhada: duas sangrias simultâneas leriam o
+            // mesmo disponível e passariam as duas. Sangria é rara; a venda espera milissegundos.
+            cashRegisterRepository.lockForUpdate(sessionId);
+        }
+        CashRegisterSession session = requireOwnOpenSession(sessionId, username);
+        if (type == CashMovementType.SANGRIA) {
+            // PDV-C048 — sangria acima do dinheiro esperado na gaveta é erro de digitação ou de
+            // conferência, e até aqui só aparecia no fechamento, como falta sem dono.
+            BigDecimal available = expectedCash(session);
+            if (movement.amount().compareTo(available) > 0) {
+                throw new CashWithdrawalExceedsDrawerException(sessionId, movement.amount(), available);
+            }
+        }
+        return cashMovementRepository.save(movement);
     }
 
     @Override
@@ -195,6 +220,17 @@ public class PdvService implements PdvUseCase {
     @Transactional
     public CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes,
             String username, boolean canCloseAny) {
+        return closeSession(sessionId, countedAmount, notes, username, canCloseAny, null);
+    }
+
+    @Override
+    @Transactional
+    public CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes,
+            String username, boolean canCloseAny, BigDecimal leftInDrawerAmount) {
+        // PDV-F056 — o troco deixado sai do contado. Antes da trava: é erro do pedido, não do caixa.
+        if (leftInDrawerAmount != null && countedAmount != null && leftInDrawerAmount.compareTo(countedAmount) > 0) {
+            throw new LeftInDrawerExceedsCountedException(leftInDrawerAmount, countedAmount);
+        }
         // PDV-C035 — trava exclusiva ANTES de ler. Sem ela o fechamento lia "OPEN", calculava o
         // esperado e gravava enquanto uma venda, um movimento ou uma mesa entravam na mesma sessão
         // (o pagamento ficava num caixa já fechado, fora do esperado), e dois fechamentos
@@ -254,7 +290,47 @@ public class PdvService implements PdvUseCase {
         //     linha REFUNDED nova e deixa a CAPTURED original de pé, que é o desenho certo para o
         //     histórico. A consequência é que a soma dos capturados descreve tudo que entrou e
         //     nada do que voltou; a cédula devolvida ao cliente continuava contada na gaveta.
-        BigDecimal expected = session.openingAmount()
+        BigDecimal expected = expectedCash(session);
+
+        // Divergência não bloqueia — é o achado do fechamento, como no balanço de inventário.
+        return cashRegisterRepository.save(
+                session.closedWith(expected, countedAmount, username, notes, leftInDrawerAmount));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OperatorSessionStats getOperatorStats(String operator, int limit) {
+        List<CashRegisterSession> closed = cashRegisterRepository.findAll(
+                new CashRegisterSessionFilter(CashRegisterSession.Status.CLOSED, null, null, operator), 0, limit)
+                .content();
+        BigDecimal totalSold = BigDecimal.ZERO;
+        BigDecimal totalDifference = BigDecimal.ZERO;
+        int divergences = 0;
+        for (CashRegisterSession session : closed) {
+            totalSold = totalSold.add(getSessionSummary(session.id()).totalReceived());
+            if (session.differenceAmount() != null) {
+                totalDifference = totalDifference.add(session.differenceAmount());
+            }
+            if (session.diverges()) {
+                divergences++;
+            }
+        }
+        BigDecimal average = closed.isEmpty() ? BigDecimal.ZERO
+                : totalSold.divide(BigDecimal.valueOf(closed.size()), Money.MONEY_SCALE, Money.ROUNDING);
+        // A lista vem do mais recente para o mais antigo (openedAt DESC).
+        BigDecimal lastLeftInDrawer = closed.isEmpty() ? null : closed.getFirst().leftInDrawerAmount();
+        return new OperatorSessionStats(operator, closed.size(), totalSold, average, divergences,
+                totalDifference, lastLeftInDrawer);
+    }
+
+    /**
+     * O dinheiro que a gaveta deveria ter agora: fundo + dinheiro capturado − estornado − troco ±
+     * sangrias/suprimentos + quitações de marcado em dinheiro. É o esperado do fechamento e, desde
+     * PDV-C048, o teto da sangria — as duas leituras não podem divergir, por isso o método é um só.
+     */
+    private BigDecimal expectedCash(CashRegisterSession session) {
+        Long sessionId = session.id();
+        return session.openingAmount()
                 .add(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, PaymentMethod.DINHEIRO))
                 .subtract(orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(sessionId, PaymentMethod.DINHEIRO))
                 .subtract(orderRepository.sumChangeAmountBySessionId(sessionId))
@@ -262,15 +338,16 @@ public class PdvService implements PdvUseCase {
                 // CRM-F010 — quitação de marcado em dinheiro recebida neste caixa. receivable_payment
                 // guarda o abatido, já líquido do troco devolvido.
                 .add(receivableUseCase.receivedInSession(sessionId, PaymentMethod.DINHEIRO));
-
-        // Divergência não bloqueia — é o achado do fechamento, como no balanço de inventário.
-        return cashRegisterRepository.save(session.closedWith(expected, countedAmount, username, notes));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<PaymentTotal> getSessionPaymentTotals(Long sessionId) {
         getSession(sessionId);
+        // PDV-C051 — três consultas agrupadas por método, no lugar de três por método (≈13 por chamada).
+        Map<PaymentMethod, BigDecimal> capturedByMethod = orderPaymentRepository.sumCapturedBySessionIdGroupedByMethod(sessionId);
+        Map<PaymentMethod, BigDecimal> refundedByMethod = orderPaymentRepository.sumRefundedBySessionIdGroupedByMethod(sessionId);
+        Map<PaymentMethod, BigDecimal> receivedByMethod = receivableUseCase.receivedInSessionByMethod(sessionId);
         List<PaymentTotal> totals = new ArrayList<>();
         for (PaymentMethod method : PaymentMethod.values()) {
             // GATEWAY_PIX (ECM-F004) nunca é lançado pelo operador nem amarrado a uma sessão de
@@ -286,11 +363,11 @@ public class PdvService implements PdvUseCase {
             }
             // PDV-F026 — além do bruto, o estorno e (em dinheiro) o troco, para a aba Caixas mostrar o
             // líquido sem abrir recibo nenhum. Mesmas somas do esperado de closeSession.
-            BigDecimal captured = orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, method);
-            BigDecimal refunded = orderPaymentRepository.sumRefundedAmountBySessionIdAndMethod(sessionId, method);
+            BigDecimal captured = capturedByMethod.getOrDefault(method, BigDecimal.ZERO);
+            BigDecimal refunded = refundedByMethod.getOrDefault(method, BigDecimal.ZERO);
             // CRM-F010 — quitação de marcado recebida NESTA sessão (o caixa de quem recebe). Já é o
             // valor abatido, líquido do troco: o troco da quitação não entra de novo na conta.
-            BigDecimal receivable = receivableUseCase.receivedInSession(sessionId, method);
+            BigDecimal receivable = receivedByMethod.getOrDefault(method, BigDecimal.ZERO);
             BigDecimal change = method == PaymentMethod.DINHEIRO
                     ? orderRepository.sumChangeAmountBySessionId(sessionId)
                     : BigDecimal.ZERO;
@@ -351,7 +428,10 @@ public class PdvService implements PdvUseCase {
                     .withNotes(command.note());
             // CRM-F003: a taxa é resolvida e carimbada aqui — mudar a taxa amanhã não pode
             // reescrever o cashback gerado por pedidos de ontem.
-            CashbackRate resolvedRate = cashbackUseCase.resolveApplicableRate(command.sku());
+            // PDV-C052 — a categoria já veio com o produto: sem ela a taxa relia o produto inteiro.
+            CashbackRate resolvedRate = saleInfo.category() != null
+                    ? cashbackUseCase.resolveApplicableRate(command.sku(), saleInfo.category())
+                    : cashbackUseCase.resolveApplicableRate(command.sku());
             if (resolvedRate != null) {
                 item = item.withCashbackPercent(resolvedRate.percent());
             }

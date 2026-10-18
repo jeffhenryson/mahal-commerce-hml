@@ -2045,4 +2045,84 @@ class ComandaSessaoServiceTest {
         Comanda recolhida = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
         assertThat(recolhida.items().get(1).sessionStatus()).isEqualTo(SessionStatus.PREPARANDO);
     }
+
+    // ── PDV-F055 — desfazer o duplo ───────────────────────────────────────────────────────────
+
+    @Test
+    void undoDuplo_duploConvertidoNaFila_removeORoshSemMexerNoEstoque() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ComandaUseCase.DuploUndone result = comandaService.undoDuplo(10L, 1L, "caixa1");
+
+        assertThat(result.roshItemId()).isEqualTo(2L);
+        assertThat(result.comanda().items()).extracting(ComandaItem::id).containsExactly(1L);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** Duplo lançado com o sabor já escolhido: na fila, o uso da lata volta. */
+    @Test
+    void undoDuplo_roshComSaborNaFila_devolveOUsoDaLata() {
+        ComandaItem rosh = roshEm(2L, 1L, SessionProgress.queued(), null)
+                .withEssence("ZOMO-BLUE").withPackageCounter(3, 5);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), rosh)));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.undoDuplo(10L, 1L, "caixa1");
+
+        verify(estoqueUseCase).releaseSession("ZOMO-BLUE", "LOJA-01", BigDecimal.ONE);
+    }
+
+    @Test
+    void undoDuplo_roshJaPreparando_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L),
+                roshEm(2L, 1L, SessionProgress.preparing(Instant.now()), null))));
+
+        assertThatThrownBy(() -> comandaService.undoDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.RoshAlreadyStartedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void undoDuplo_sessaoSemRosh_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L))));
+
+        assertThatThrownBy(() -> comandaService.undoDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.SessionNotDuploException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void undoDuplo_roshJaFechadoNumPedido_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshEm(2L, 1L, SessionProgress.queued(), 400L))));
+
+        assertThatThrownBy(() -> comandaService.undoDuplo(10L, 1L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.RoshAlreadyChargedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void undoDuplo_linhaQueNaoESessao_recusa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+
+        assertThatThrownBy(() -> comandaService.undoDuplo(10L, 2L, "caixa1"))
+                .isInstanceOf(NotASessionLineException.class);
+    }
+
+    @Test
+    void undoDuplo_depoisDeDesfazer_converterVoltaAFuncionar() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, entregue(), 400L), roshPendente(2L, 1L))));
+        givenConversionSucceeds();
+        Comanda desfeita = comandaService.undoDuplo(10L, 1L, "caixa1").comanda();
+
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(desfeita));
+        assertRoshPendente(comandaService.convertToDuplo(10L, 1L, "caixa1").items().get(1), false);
+    }
 }

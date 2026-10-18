@@ -1220,6 +1220,24 @@ class ComandaServiceTest {
 
     // ── Varredura de mesa esquecida (PDV-F013) ───────────────────────────────────────────────
 
+    /**
+     * Uma passada como o scheduler a faz (PDV-C054: cada mesa na sua transação, o alerta depois). O
+     * scheduler em si é testado em {@code StaleComandaSweepServiceTest}.
+     */
+    private ComandaUseCase.StaleComandaSweepResult sweep() {
+        int cancelled = 0;
+        int finished = 0;
+        for (Long id : comandaService.findStaleResolvableComandaIds(12, 200)) {
+            switch (comandaService.resolveStaleComanda(id)) {
+                case CANCELLED -> cancelled++;
+                case FINISHED -> finished++;
+                case SKIPPED -> { }
+            }
+        }
+        return new ComandaUseCase.StaleComandaSweepResult(cancelled, finished,
+                comandaService.alertStaleComandasWithConsumption(12, 200));
+    }
+
     /** Comanda velha e sem item nenhum: nada saiu do estoque, então cancelar é seguro. */
     @Test
     void sweepStaleComandas_cancelsTheEmptyOnes() {
@@ -1227,7 +1245,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(vazia));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.cancelled()).isEqualTo(1);
         assertThat(result.finished()).isZero();
@@ -1254,7 +1272,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(paga));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.finished()).isEqualTo(1);
         assertThat(result.cancelled()).isZero();
@@ -1279,7 +1297,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mesa));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.finished()).isEqualTo(1);
         ArgumentCaptor<Comanda> saved = ArgumentCaptor.forClass(Comanda.class);
@@ -1295,7 +1313,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(soCortesia));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.finished()).isZero();
         assertThat(result.cancelled()).isZero();
@@ -1311,10 +1329,10 @@ class ComandaServiceTest {
     void sweepStaleComandas_neverTouchesStockOfAComandaWithConsumption() {
         Comanda comConsumo = staleComanda(essenciaItem());
         when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200))).thenReturn(List.of(10L));
-        when(comandaRepository.findById(10L)).thenReturn(Optional.of(comConsumo));
+        when(comandaRepository.findAllByIds(List.of(10L))).thenReturn(List.of(comConsumo));
         when(userRepository.findUsernamesByPermission("PDV_COMANDA_MANAGE")).thenReturn(Set.of("gerente"));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.flagged()).isEqualTo(1);
         assertThat(result.cancelled()).isZero();
@@ -1331,11 +1349,11 @@ class ComandaServiceTest {
     void sweepStaleComandas_sendsOneAggregatedAlertPerRecipient() {
         when(comandaRepository.findOpenIdsOlderThan(any(Instant.class), eq(200)))
                 .thenReturn(List.of(10L, 11L));
-        when(comandaRepository.findById(10L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
-        when(comandaRepository.findById(11L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
+        when(comandaRepository.findAllByIds(List.of(10L, 11L)))
+                .thenReturn(List.of(staleComanda(essenciaItem()), staleComanda(essenciaItem())));
         when(userRepository.findUsernamesByPermission("PDV_COMANDA_MANAGE")).thenReturn(Set.of("gerente"));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.flagged()).isEqualTo(2);
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -1353,7 +1371,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(jaCancelada));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.cancelled()).isZero();
         assertThat(result.flagged()).isZero();
@@ -1366,7 +1384,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(staleComanda(essenciaItem())));
 
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.cancelled()).isZero();
         assertThat(result.finished()).isZero();
@@ -1383,7 +1401,7 @@ class ComandaServiceTest {
         when(comandaRepository.findStaleIdsWithNothingOwed(any(Instant.class), eq(200))).thenReturn(List.of(10L));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(staleComanda()));
 
-        comandaService.sweepStaleComandas(12, 200);
+        sweep();
 
         verifyNoInteractions(pdvService);
     }
@@ -1391,19 +1409,24 @@ class ComandaServiceTest {
     /** O corte vira o {@code cutoff} passado ao repositório: 12h atrás, não "agora". */
     @Test
     void sweepStaleComandas_cutsByTheConfiguredWindow() {
-        comandaService.sweepStaleComandas(12, 50);
+        comandaService.findStaleResolvableComandaIds(12, 50);
+        comandaService.alertStaleComandasWithConsumption(12, 50);
 
-        ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
-        verify(comandaRepository).findStaleIdsWithNothingOwed(cutoff.capture(), eq(50));
-        verify(comandaRepository).findOpenIdsOlderThan(cutoff.getValue(), 50);
-        assertThat(cutoff.getValue()).isBefore(Instant.now().minus(11, ChronoUnit.HOURS));
-        assertThat(cutoff.getValue()).isAfter(Instant.now().minus(13, ChronoUnit.HOURS));
+        // PDV-C054 — os dois passos rodam em transações separadas, cada um com o seu "agora".
+        ArgumentCaptor<Instant> resolvable = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> alerted = ArgumentCaptor.forClass(Instant.class);
+        verify(comandaRepository).findStaleIdsWithNothingOwed(resolvable.capture(), eq(50));
+        verify(comandaRepository).findOpenIdsOlderThan(alerted.capture(), eq(50));
+        for (Instant cutoff : List.of(resolvable.getValue(), alerted.getValue())) {
+            assertThat(cutoff).isBefore(Instant.now().minus(11, ChronoUnit.HOURS));
+            assertThat(cutoff).isAfter(Instant.now().minus(13, ChronoUnit.HOURS));
+        }
     }
 
     /** Nada esquecido: nem alerta, nem escrita. */
     @Test
     void sweepStaleComandas_withNothingStaleDoesNothing() {
-        ComandaUseCase.StaleComandaSweepResult result = comandaService.sweepStaleComandas(12, 200);
+        ComandaUseCase.StaleComandaSweepResult result = sweep();
 
         assertThat(result.cancelled()).isZero();
         assertThat(result.finished()).isZero();
@@ -2000,7 +2023,8 @@ class ComandaServiceTest {
         when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of(
                 pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "0.00", "0.00",
                         itemPedido("BEB-COLA", "30.00", "2.50", 1, ConsumptionMode.NORMAL, false))));
-        when(orderPaymentRepository.findByOrderId(500L)).thenReturn(List.of());
+        // PDV-C054 — os pagamentos dos pedidos da mesa vêm numa consulta só.
+        when(orderPaymentRepository.findByOrderIds(List.of(500L))).thenReturn(Map.of());
 
         ComandaUseCase.ComandaHistoryEntry entry = comandaService.getHistoryEntry(10L);
 
@@ -2030,6 +2054,18 @@ class ComandaServiceTest {
     }
 
     /**
+     * PDV-C050 — o analytics lê os ids do período e carrega as mesas em blocos: o stub entrega os ids
+     * e, numa chamada só (o bloco é maior que qualquer cenário daqui), as próprias mesas.
+     */
+    private void givenClosed(Instant from, Instant to, String warehouseCode, List<ClosedComanda> closed) {
+        List<Long> ids = closed.stream().map(c -> c.comanda().id()).toList();
+        when(comandaRepository.findClosedIdsBetween(from, to, warehouseCode)).thenReturn(ids);
+        if (!ids.isEmpty()) {
+            when(comandaRepository.findClosedByIds(ids)).thenReturn(closed);
+        }
+    }
+
+    /**
      * <b>O caso que define os indicadores.</b> Sem cadastro de mesa, "Mesa 4" e " mesa 4 " são a
      * mesma; a hora é a da abertura no relógio da loja (23:30Z é 20:30 em São Paulo), não em UTC.
      */
@@ -2043,7 +2079,7 @@ class ComandaServiceTest {
                 linha(2L, "BEB-COLA", "50.00", ConsumptionMode.NORMAL, false, null));
         Comanda c = fechadaEm(12L, "Mesa 9", "ana", Instant.parse("2026-10-01T00:40:00Z"), 30,
                 linha(3L, "BEB-COLA", "40.00", ConsumptionMode.NORMAL, false, null));
-        when(comandaRepository.findClosedBetween(from, to, "LOJA-01")).thenReturn(List.of(
+        givenClosed(from, to, "LOJA-01", List.of(
                 new ClosedComanda(a, "ana", null), new ClosedComanda(b, "bia", null),
                 new ClosedComanda(c, "ana", null)));
         when(orderRepository.findByComandaIds(List.of(10L, 11L, 12L))).thenReturn(List.of(
@@ -2086,7 +2122,7 @@ class ComandaServiceTest {
     void analytics_withoutAnyTable_returnsZeros() {
         Instant from = Instant.parse("2026-01-01T00:00:00Z");
         Instant to = from.plus(366, ChronoUnit.DAYS);
-        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of());
+        givenClosed(from, to, null, List.of());
 
         ComandaUseCase.ComandaAnalytics result = comandaService.analytics(from, to, null);
 
@@ -2141,7 +2177,8 @@ class ComandaServiceTest {
         Order pedido = pedidoMesa(500L, 10L, OrderStatus.CONCLUIDO, "0.00", "0.00",
                 itemPedido("SESS-2", "30.00", "0.00", 1, ConsumptionMode.SESSAO, false));
         when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of(pedido));
-        when(orderPaymentRepository.findByOrderId(500L)).thenReturn(List.of());
+        // PDV-C054 — os pagamentos dos pedidos da mesa vêm numa consulta só.
+        when(orderPaymentRepository.findByOrderIds(List.of(500L))).thenReturn(Map.of());
 
         ComandaUseCase.ComandaHistoryEntry entry = comandaService.getHistoryEntry(10L);
 
@@ -2202,7 +2239,7 @@ class ComandaServiceTest {
         Comanda semResposta = fechadaEm(12L, "Mesa 3", "ana", abre, 90, sessaoComHorarios(3L, abre, antes, 502L));
         Comanda semSessao = fechadaEm(13L, "Mesa 4", "ana", abre, 30,
                 linha(4L, "BEB-COLA", "12.00", ConsumptionMode.NORMAL, false, null));
-        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of(
+        givenClosed(from, to, null, List.of(
                 new ClosedComanda(comprou, "ana", null, new StorePurchase(true, "ana", abre)),
                 new ClosedComanda(naoComprou, "ana", null, new StorePurchase(false, "ana", abre)),
                 new ClosedComanda(semResposta, "ana", null),
@@ -2230,7 +2267,7 @@ class ComandaServiceTest {
         Instant to = Instant.parse("2026-10-03T00:00:00Z");
         Comanda mesa = fechadaEm(10L, "Mesa 1", "ana", Instant.parse("2026-10-02T22:00:00Z"), 60,
                 linha(1L, "SESS-2", "30.00", ConsumptionMode.SESSAO, false, null));
-        when(comandaRepository.findClosedBetween(from, to, null)).thenReturn(List.of(new ClosedComanda(mesa, "ana", null)));
+        givenClosed(from, to, null, List.of(new ClosedComanda(mesa, "ana", null)));
         when(orderRepository.findByComandaIds(List.of(10L))).thenReturn(List.of());
 
         ComandaUseCase.CompraNaLoja loja = comandaService.analytics(from, to, null).compraNaLoja();
@@ -2255,5 +2292,111 @@ class ComandaServiceTest {
 
         assertThatThrownBy(() -> comandaService.recordStorePurchase(999L, false, "caixa1"))
                 .isInstanceOf(ComandaNotFoundException.class);
+    }
+
+    // ── PDV-F054: passagem de turno ──────────────────────────────────────────────────────────
+
+    private static CashRegisterSession caixa(Long id, String operator, String warehouseCode) {
+        return CashRegisterSession.of(id, operator, Instant.now(), BigDecimal.TEN, warehouseCode,
+                null, null, null, null, null, CashRegisterSession.Status.OPEN);
+    }
+
+    /**
+     * Os dois caixas da transferência, como o service os lê: sem trava (posse) e com a trava
+     * compartilhada (PDV-C035). A origem é sempre de "ana" no LOJA-01; o destino, de "bia".
+     */
+    private void givenCaixas(Long fromId, Long toId, String toWarehouse) {
+        when(pdvService.getSession(fromId)).thenReturn(caixa(fromId, "ana", "LOJA-01"));
+        when(pdvService.getSession(toId)).thenReturn(caixa(toId, "bia", toWarehouse));
+        when(pdvService.requireOpenSession(fromId)).thenReturn(caixa(fromId, "ana", "LOJA-01"));
+        when(pdvService.requireOpenSession(toId)).thenReturn(caixa(toId, "bia", toWarehouse));
+    }
+
+    /** Sem comandaIds vão todas as abertas da origem, já no caixa de destino, sem tocar em estoque. */
+    @Test
+    void transferComandas_movesEveryOpenComandaOfTheSourceToTheTarget() {
+        givenCaixas(1L, 2L, "LOJA-01");
+        when(comandaRepository.findOpenIdsBySessionId(1L)).thenReturn(List.of(10L));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda(essenciaItem())));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        List<Comanda> transferidas = comandaService.transferComandas(1L, 2L, null, "ana", false);
+
+        assertThat(transferidas).singleElement().satisfies(c -> {
+            assertThat(c.sessionId()).isEqualTo(2L);
+            assertThat(c.items()).hasSize(1);
+        });
+        verify(pdvService).requireOpenSession(1L);
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    /** Quem assume pode puxar as mesas: o dono do caixa de DESTINO também transfere. */
+    @Test
+    void transferComandas_theTargetOwnerMayPullTheComandas() {
+        givenCaixas(1L, 2L, "LOJA-01");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda()));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(comandaService.transferComandas(1L, 2L, List.of(10L), "bia", false)).hasSize(1);
+    }
+
+    /** Um terceiro sem PDV_SESSION_CLOSE_ANY não transfere — e não chega a travar mesa nenhuma. */
+    @Test
+    void transferComandas_refusesAThirdPartyWithoutTheAnyPermission() {
+        when(pdvService.getSession(1L)).thenReturn(caixa(1L, "ana", "LOJA-01"));
+        when(pdvService.getSession(2L)).thenReturn(caixa(2L, "bia", "LOJA-01"));
+
+        assertThatThrownBy(() -> comandaService.transferComandas(1L, 2L, null, "caio", false))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException.class);
+        verify(comandaRepository, never()).findByIdForUpdate(any());
+    }
+
+    /** Mesa de outro caixa vinda por engano em comandaIds: recusa, nada gravado. */
+    @Test
+    void transferComandas_refusesAComandaFromAnotherSession() {
+        givenCaixas(5L, 2L, "LOJA-01");
+        // abertaComanda() é do caixa 1.
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda()));
+
+        assertThatThrownBy(() -> comandaService.transferComandas(5L, 2L, List.of(10L), "ana", false))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    /** O estoque das linhas saiu do depósito da mesa: caixa de outro depósito não a recebe. */
+    @Test
+    void transferComandas_refusesATargetInAnotherWarehouse() {
+        givenCaixas(1L, 2L, "SALAO");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(abertaComanda()));
+
+        assertThatThrownBy(() -> comandaService.transferComandas(1L, 2L, List.of(10L), "ana", true))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void transferComandas_refusesTheSameSessionOnBothSides() {
+        assertThatThrownBy(() -> comandaService.transferComandas(1L, 1L, null, "ana", true))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException.class);
+        verifyNoInteractions(comandaRepository);
+    }
+
+    /**
+     * As comandas são travadas antes das sessões e em ordem de id — a ordem de addItem (comanda,
+     * depois sessão). Travar a sessão primeiro deixaria transferência e lançamento se esperando em ciclo.
+     */
+    @Test
+    void transferComandas_locksComandasInIdOrderBeforeTheSessions() {
+        givenCaixas(1L, 2L, "LOJA-01");
+        when(comandaRepository.findByIdForUpdate(any())).thenReturn(Optional.of(abertaComanda()));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        comandaService.transferComandas(1L, 2L, List.of(30L, 10L, 30L), "ana", false);
+
+        org.mockito.InOrder ordem = inOrder(comandaRepository, pdvService);
+        ordem.verify(comandaRepository).findByIdForUpdate(10L);
+        ordem.verify(comandaRepository).findByIdForUpdate(30L);
+        ordem.verify(pdvService).requireOpenSession(1L);
+        ordem.verify(pdvService).requireOpenSession(2L);
     }
 }

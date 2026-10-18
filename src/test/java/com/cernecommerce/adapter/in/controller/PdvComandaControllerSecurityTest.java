@@ -386,13 +386,23 @@ class PdvComandaControllerSecurityTest {
                 .andExpect(status().isBadRequest());
     }
 
+    /** PDV-C030 — indicadores da loja são do gerente: PDV_SESSION_READ_ANY (V163). */
     @Test
-    void analytics_with_order_read_returns_200() throws Exception {
+    void analytics_with_read_any_returns_200() throws Exception {
         mockMvc.perform(get("/pdv/comandas/analytics?" + PERIODO)
-                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("PDV_SESSION_READ_ANY"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.mesas").isNumber())
                 .andExpect(jsonPath("$.porMesa").isArray());
+    }
+
+    /** PDV-C030 — o atendente (PDV_READ + ORDER_READ, V86) não vê mais a receita da loja. */
+    @Test
+    void analytics_for_attendant_returns_403() throws Exception {
+        mockMvc.perform(get("/pdv/comandas/analytics?" + PERIODO)
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_READ"),
+                                new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -405,14 +415,14 @@ class PdvComandaControllerSecurityTest {
     @Test
     void analytics_without_period_returns_400() throws Exception {
         mockMvc.perform(get("/pdv/comandas/analytics")
-                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("PDV_SESSION_READ_ANY"))))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void analytics_with_inverted_period_returns_400() throws Exception {
         mockMvc.perform(get("/pdv/comandas/analytics?from=2026-09-30T00:00:00Z&to=2026-09-01T00:00:00Z")
-                        .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                        .with(user("dono").authorities(new SimpleGrantedAuthority("PDV_SESSION_READ_ANY"))))
                 .andExpect(status().isBadRequest());
     }
 
@@ -457,5 +467,34 @@ class PdvComandaControllerSecurityTest {
         mockMvc.perform(get("/pdv/comandas/history?boughtInStore=true")
                         .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
                 .andExpect(status().isOk());
+    }
+
+    // ── PDV-F054: passagem de turno ──────────────────────────────────────────────────────────
+
+    @Test
+    void transfer_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/transfer")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("PDV_READ")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromSessionId\":1,\"toSessionId\":2}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void transfer_without_target_session_returns_400() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/transfer")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromSessionId\":1}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void transfer_from_unknown_session_returns_404() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/transfer")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromSessionId\":999998,\"toSessionId\":999999}"))
+                .andExpect(status().isNotFound());
     }
 }

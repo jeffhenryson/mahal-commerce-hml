@@ -324,6 +324,19 @@ public record Comanda(
                 orderId, openedBy, openedAt, closedAt);
     }
 
+    /**
+     * PDV-F054 — a mesa passa para o caixa de quem assume o salão (passagem de turno). Só a sessão
+     * muda: o depósito é o da comanda, de onde o estoque de cada linha já saiu.
+     */
+    public Comanda withSession(Long newSessionId) {
+        requireOpen();
+        if (newSessionId == null) {
+            throw new IllegalArgumentException("sessionId é obrigatório");
+        }
+        return new Comanda(id, newSessionId, warehouseCode, tableOrCustomerLabel, customerId, status, items,
+                orderId, openedBy, openedAt, closedAt);
+    }
+
     public Comanda withLabel(String newLabel) {
         requireOpen();
         if (newLabel == null || newLabel.isBlank()) {

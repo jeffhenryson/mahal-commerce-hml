@@ -371,10 +371,46 @@ public class PdvControllerSecurityTest {
         mockMvc.perform(get("/pdv/sessions/" + sessionId)
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("PDV_READ"))))
+                        new SimpleGrantedAuthority("PDV_READ"),
+                        new SimpleGrantedAuthority("PDV_SESSION_READ_ANY"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("OPEN"))
                 .andExpect(jsonPath("$.warehouseCode").value(warehouseCode));
+    }
+
+    /**
+     * PDV-C047 — o atendente tem PDV_READ (V86) e lia o caixa de cada colega: esperado, contado,
+     * diferença e totais. Agora só o próprio; o do colega é 403 SESSION_NOT_OWNED, nas cinco leituras.
+     */
+    @Test
+    void attendant_reads_own_session_but_not_a_colleagues() throws Exception {
+        String warehouseCode = givenWarehouse();
+        Long own = givenOpenSession("atendente-c047", warehouseCode);
+        Long colleague = givenOpenSession("colega-c047", warehouseCode);
+        var atendente = user("atendente-c047").authorities(new SimpleGrantedAuthority("PDV_READ"));
+
+        mockMvc.perform(get("/pdv/sessions/" + own).with(atendente)).andExpect(status().isOk());
+        mockMvc.perform(get("/pdv/sessions/" + own + "/summary").with(atendente)).andExpect(status().isOk());
+        for (String path : new String[]{"", "/payment-totals", "/summary", "/movements", "/sales"}) {
+            mockMvc.perform(get("/pdv/sessions/" + colleague + path).with(atendente))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.errorCode").value("SESSION_NOT_OWNED"));
+        }
+    }
+
+    /** PDV-C047 — na lista, o atendente só vê os próprios caixas, mesmo pedindo os de outro operador. */
+    @Test
+    void attendant_session_list_only_shows_own_sessions() throws Exception {
+        String warehouseCode = givenWarehouse();
+        givenOpenSession("atendente-lista-c047", warehouseCode);
+        givenOpenSession("colega-lista-c047", warehouseCode);
+
+        mockMvc.perform(get("/pdv/sessions").param("operator", "colega-lista-c047")
+                        .with(user("atendente-lista-c047").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].operator").value(
+                        org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is("atendente-lista-c047"))))
+                .andExpect(jsonPath("$.content.length()").value(1));
     }
 
     @Test
@@ -399,7 +435,8 @@ public class PdvControllerSecurityTest {
         mockMvc.perform(get("/pdv/sessions/" + sessionId + "/movements")
                 .with(user("gerente").authorities(
                         new SimpleGrantedAuthority("ROLE_ADMIN"),
-                        new SimpleGrantedAuthority("PDV_READ"))))
+                        new SimpleGrantedAuthority("PDV_READ"),
+                        new SimpleGrantedAuthority("PDV_SESSION_READ_ANY"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.page").value(0))

@@ -66,6 +66,18 @@ public interface PdvUseCase {
     CashRegisterSession getSession(Long sessionId);
 
     /**
+     * PDV-C047 — a sessão, se quem lê pode vê-la: a própria sempre; a de outro operador só com
+     * {@code canReadAny} ({@code PDV_SESSION_READ_ANY}). O atendente via o esperado, o contado e a
+     * diferença do caixa de cada colega só por ter {@code PDV_READ}.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException
+     *         se não existir (antes da posse: 404 continua 404)
+     * @throws com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException
+     *         se for de outro operador e {@code canReadAny} for falso
+     */
+    CashRegisterSession getReadableSession(Long sessionId, String username, boolean canReadAny);
+
+    /**
      * PED-F003 — quem operava cada caixa, em lote: é o funcionário que fez a venda na lista de
      * pedidos. Sessões inexistentes ficam fora do mapa.
      */
@@ -108,6 +120,24 @@ public interface PdvUseCase {
      */
     CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes, String username,
             boolean canCloseAny);
+
+    /**
+     * Como {@link #closeSession(Long, BigDecimal, String, String, boolean)}, registrando o troco que
+     * fica na gaveta para o próximo turno (PDV-F056). Nulo quando não informado. Abstrato, e não
+     * {@code default}: default da interface perde a transação (PLAT-C047).
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException troco
+     *         deixado maior que o contado
+     */
+    CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes, String username,
+            boolean canCloseAny, BigDecimal leftInDrawerAmount);
+
+    /**
+     * PDV-F056 — desempenho do operador nos últimos {@code limit} caixas fechados: quantos, o total
+     * vendido (soma do {@code totalReceived} do resumo de cada um), a média por caixa e quantos
+     * divergiram. Substitui a lista + um resumo por sessão que a abertura do caixa montava.
+     */
+    OperatorSessionStats getOperatorStats(String operator, int limit);
 
     /**
      * Totais recebidos na sessão, agrupados por forma de pagamento — só pagamento {@code CAPTURED}
@@ -338,6 +368,15 @@ public interface PdvUseCase {
      * @param totalOnAccount o marcado vendido na sessão; fora de {@code totalReceived}
      */
     record SessionSummary(List<PaymentTotal> totals, BigDecimal totalReceived, BigDecimal totalOnAccount) { }
+
+    /**
+     * PDV-F056 — ver {@link #getOperatorStats}.
+     *
+     * @param totalDifference soma das diferenças (contado − esperado); negativa é falta acumulada
+     * @param lastLeftInDrawerAmount o troco deixado no caixa fechado mais recente, quando informado
+     */
+    record OperatorSessionStats(String operator, int sessionCount, BigDecimal totalSold, BigDecimal averageSold,
+            int divergenceCount, BigDecimal totalDifference, BigDecimal lastLeftInDrawerAmount) { }
 
     record PaymentTotal(PaymentMethod method, BigDecimal amount, BigDecimal refundedAmount,
             BigDecimal changeAmount, BigDecimal netAmount, BigDecimal receivableReceived) {

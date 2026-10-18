@@ -79,9 +79,78 @@ public class PdvControllerTest {
         when(pdvUseCase.listSessions(any(CashRegisterSessionFilter.class), eq(0), eq(20)))
                 .thenReturn(new PageResult<>(List.of(), 0, 20, 0, 0));
 
-        mockMvc.perform(get("/pdv/sessions"))
+        mockMvc.perform(get("/pdv/sessions").principal(AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray());
+    }
+
+    private static final UsernamePasswordAuthenticationToken GERENTE = new UsernamePasswordAuthenticationToken(
+            "gerente", null, List.of(new SimpleGrantedAuthority("PDV_SESSION_READ_ANY")));
+
+    /** PDV-F056 — o desempenho do próprio operador sai numa chamada só. */
+    @Test
+    void operatorStats_doProprioOperador_returns200() throws Exception {
+        when(pdvUseCase.getOperatorStats("operador", 5)).thenReturn(new PdvUseCase.OperatorSessionStats(
+                "operador", 2, new BigDecimal("300.00"), new BigDecimal("150.00"), 1, new BigDecimal("-2.00"),
+                new BigDecimal("50.00")));
+
+        mockMvc.perform(get("/pdv/sessions/operators/operador/stats").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionCount").value(2))
+                .andExpect(jsonPath("$.totalSold").value(300.00))
+                .andExpect(jsonPath("$.divergenceCount").value(1))
+                .andExpect(jsonPath("$.lastLeftInDrawerAmount").value(50.00));
+    }
+
+    /** PDV-F056 / PDV-C047 — sem PDV_SESSION_READ_ANY, os caixas do colega ficam fechados. */
+    @Test
+    void operatorStats_deOutroOperadorSemReadAny_returns403() throws Exception {
+        mockMvc.perform(get("/pdv/sessions/operators/outro/stats").principal(AUTH))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_NOT_OWNED"));
+        verify(pdvUseCase, never()).getOperatorStats(any(), anyInt());
+
+        when(pdvUseCase.getOperatorStats("outro", 5)).thenReturn(new PdvUseCase.OperatorSessionStats(
+                "outro", 0, BigDecimal.ZERO, BigDecimal.ZERO, 0, BigDecimal.ZERO, null));
+        mockMvc.perform(get("/pdv/sessions/operators/outro/stats").principal(GERENTE))
+                .andExpect(status().isOk());
+    }
+
+    /** PDV-C047 — sem PDV_SESSION_READ_ANY a lista é só dos caixas de quem pergunta, qualquer que seja o filtro. */
+    @Test
+    void listSessions_withoutReadAny_forcesTheOperatorToTheCaller() throws Exception {
+        when(pdvUseCase.listSessions(any(CashRegisterSessionFilter.class), eq(0), eq(20)))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0, 0));
+
+        mockMvc.perform(get("/pdv/sessions").param("operator", "colega").principal(AUTH))
+                .andExpect(status().isOk());
+
+        verify(pdvUseCase).listSessions(argThat((CashRegisterSessionFilter f) -> "operador".equals(f.operator())),
+                eq(0), eq(20));
+    }
+
+    /** PDV-C047 — a sessão de outro operador sem PDV_SESSION_READ_ANY é 403 SESSION_NOT_OWNED. */
+    @Test
+    void getSession_ofAnotherOperator_withoutReadAny_returns403() throws Exception {
+        when(pdvUseCase.getReadableSession(7L, "operador", false))
+                .thenThrow(new com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException(
+                        7L, "operador"));
+
+        mockMvc.perform(get("/pdv/sessions/7").principal(AUTH))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_NOT_OWNED"));
+    }
+
+    /** PDV-C047 — totais, resumo, movimentos e vendas passam pela mesma conferência antes de ler. */
+    @Test
+    void sessionReads_checkOwnershipWithTheCallersPermission() throws Exception {
+        when(pdvUseCase.getReadableSession(7L, "gerente", true)).thenReturn(closedByAdmin());
+        when(pdvUseCase.getSessionPaymentTotals(7L)).thenReturn(List.of());
+
+        mockMvc.perform(get("/pdv/sessions/7/payment-totals").principal(GERENTE))
+                .andExpect(status().isOk());
+
+        verify(pdvUseCase).getReadableSession(7L, "gerente", true);
     }
 
     /** PDV-F026 — status, operador e período de abertura chegam ao filtro. */
@@ -91,7 +160,7 @@ public class PdvControllerTest {
                 .thenReturn(new PageResult<>(List.of(), 0, 20, 0, 0));
 
         mockMvc.perform(get("/pdv/sessions").param("status", "OPEN").param("operator", "caixa1")
-                        .param("from", "2026-09-01T00:00:00Z"))
+                        .param("from", "2026-09-01T00:00:00Z").principal(GERENTE))
                 .andExpect(status().isOk());
 
         verify(pdvUseCase).listSessions(argThat((CashRegisterSessionFilter f) ->
@@ -110,7 +179,7 @@ public class PdvControllerTest {
     void closeSession_withCloseAnyPermission_closesAnySessionAndReturnsNotes() throws Exception {
         UsernamePasswordAuthenticationToken admin = new UsernamePasswordAuthenticationToken("admin", null,
                 List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("PDV_SESSION_CLOSE_ANY")));
-        when(pdvUseCase.closeSession(eq(1L), any(), eq("saiu sem fechar"), eq("admin"), eq(true)))
+        when(pdvUseCase.closeSession(eq(1L), any(), eq("saiu sem fechar"), eq("admin"), eq(true), isNull()))
                 .thenReturn(closedByAdmin());
 
         mockMvc.perform(post("/pdv/sessions/1/close")
@@ -130,7 +199,7 @@ public class PdvControllerTest {
     void closeSession_closeAnyPermissionWithoutAdminRole_closesAnySession() throws Exception {
         UsernamePasswordAuthenticationToken gerente = new UsernamePasswordAuthenticationToken("gerente", null,
                 List.of(new SimpleGrantedAuthority("ROLE_GERENTE"), new SimpleGrantedAuthority("PDV_SESSION_CLOSE_ANY")));
-        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("gerente"), eq(true))).thenReturn(closedByAdmin());
+        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("gerente"), eq(true), isNull())).thenReturn(closedByAdmin());
 
         mockMvc.perform(post("/pdv/sessions/1/close")
                         .principal(gerente)
@@ -144,7 +213,7 @@ public class PdvControllerTest {
     void closeSession_adminRoleWithoutCloseAnyPermission_cannotCloseAnotherOperatorsSession() throws Exception {
         UsernamePasswordAuthenticationToken admin = new UsernamePasswordAuthenticationToken("admin", null,
                 List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("ROLE_DEV")));
-        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("admin"), eq(false)))
+        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("admin"), eq(false), isNull()))
                 .thenThrow(new CashRegisterSessionNotOwnedException(1L, "admin"));
 
         mockMvc.perform(post("/pdv/sessions/1/close")
@@ -158,7 +227,7 @@ public class PdvControllerTest {
     void closeSession_atendenteOnAnotherOperatorsSession_returns403() throws Exception {
         UsernamePasswordAuthenticationToken atendente = new UsernamePasswordAuthenticationToken("operador", null,
                 List.of(new SimpleGrantedAuthority("ROLE_ATENDENTE")));
-        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("operador"), eq(false)))
+        when(pdvUseCase.closeSession(eq(1L), any(), isNull(), eq("operador"), eq(false), isNull()))
                 .thenThrow(new CashRegisterSessionNotOwnedException(1L, "operador"));
 
         mockMvc.perform(post("/pdv/sessions/1/close")

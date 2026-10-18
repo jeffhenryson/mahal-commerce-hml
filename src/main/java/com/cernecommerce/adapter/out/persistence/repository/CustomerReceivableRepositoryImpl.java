@@ -230,6 +230,12 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
         return orZero(paymentJpa.sumBySessionAndMethod(sessionId, method.name()));
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PaymentMethod, BigDecimal> sumReceivedBySessionGroupedByMethod(Long sessionId) {
+        return OrderPaymentRepositoryImpl.byMethod(paymentJpa.sumBySessionGroupByMethod(sessionId));
+    }
+
     // ── Mapeamento ───────────────────────────────────────────────────────────────────────────
 
     /** Itens de todos os recebíveis da lista numa consulta só. */

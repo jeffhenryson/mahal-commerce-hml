@@ -125,6 +125,7 @@ public class CashRegisterRepositoryImpl implements CashRegisterRepository {
         entity.setDifferenceAmount(session.differenceAmount());
         entity.setStatus(session.status().name());
         entity.setClosingNotes(session.closingNotes());
+        entity.setLeftInDrawerAmount(session.leftInDrawerAmount());
         return toDomain(cashRegisterSessionJpaRepository.save(entity));
     }
 
@@ -158,6 +159,7 @@ public class CashRegisterRepositoryImpl implements CashRegisterRepository {
         return CashRegisterSession.of(e.getId(), e.getOperator(), e.getOpenedAt(), e.getOpeningAmount(),
                 e.getWarehouseCode(), e.getClosedAt(), e.getClosedBy(), e.getExpectedAmount(),
                 e.getCountedAmount(), e.getDifferenceAmount(),
-                CashRegisterSession.Status.valueOf(e.getStatus()), e.getClosingNotes());
+                CashRegisterSession.Status.valueOf(e.getStatus()), e.getClosingNotes(),
+                e.getLeftInDrawerAmount());
     }
 }

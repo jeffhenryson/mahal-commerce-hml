@@ -26,6 +26,7 @@ public class CashRegisterDTOConverter {
         dto.setDiverges(session.diverges());
         dto.setStatus(session.status().name());
         dto.setClosingNotes(session.closingNotes());
+        dto.setLeftInDrawerAmount(session.leftInDrawerAmount());
         Instant now = Instant.now();
         dto.setHorasAberto(session.openHours(now));
         dto.setFechamentoSugerido(session.closeSuggested(now));

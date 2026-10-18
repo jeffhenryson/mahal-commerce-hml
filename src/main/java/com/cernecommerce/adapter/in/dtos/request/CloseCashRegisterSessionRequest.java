@@ -22,4 +22,9 @@ public class CloseCashRegisterSessionRequest {
     @Schema(description = "Motivo/observação do fechamento, opcional. Usado quando admin ou dev encerra "
             + "o caixa de outro operador.", example = "Operador saiu sem fechar o caixa")
     private String notes;
+
+    @DecimalMin(value = "0.0")
+    @Schema(description = "PDV-F056 — parte do contado que fica na gaveta como troco do próximo turno, "
+            + "opcional. Não pode passar do contado. Não altera esperado nem diferença.", example = "100.00")
+    private BigDecimal leftInDrawerAmount;
 }

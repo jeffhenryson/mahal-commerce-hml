@@ -12,6 +12,7 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 
+import java.util.Map;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -119,6 +120,9 @@ public interface ReceivableUseCase {
 
     /** Abatido por quitações recebidas na sessão, no método — já líquido do troco. */
     BigDecimal receivedInSession(Long sessionId, PaymentMethod method);
+
+    /** PDV-C051 — {@link #receivedInSession} de todos os métodos numa consulta; ausente é zero. */
+    Map<PaymentMethod, BigDecimal> receivedInSessionByMethod(Long sessionId);
 
     // ── Tipos ────────────────────────────────────────────────────────────────────────────────
 

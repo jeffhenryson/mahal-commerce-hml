@@ -28,6 +28,9 @@ import java.time.Instant;
  *        é um número legítimo — não uma violação.
  * @param closingNotes motivo/observação do fechamento, opcional. Usado sobretudo quando admin ou
  *        dev encerra o caixa de outro operador pelo módulo de Vendas.
+ * @param leftInDrawerAmount PDV-F056 — parte do contado que fica na gaveta como troco do próximo
+ *        turno, opcional. Não muda esperado nem diferença: é a sugestão do "Usar troco anterior" da
+ *        abertura seguinte, que antes só tinha a gaveta inteira ({@code countedAmount}).
  */
 public record CashRegisterSession(
         Long id,
@@ -41,7 +44,8 @@ public record CashRegisterSession(
         BigDecimal countedAmount,
         BigDecimal differenceAmount,
         Status status,
-        String closingNotes) {
+        String closingNotes,
+        BigDecimal leftInDrawerAmount) {
 
     public enum Status { OPEN, CLOSED }
 
@@ -96,6 +100,23 @@ public record CashRegisterSession(
             throw new IllegalArgumentException("differenceAmount deve ser countedAmount - expectedAmount: "
                     + "esperado " + countedAmount.subtract(expectedAmount) + ", recebido " + differenceAmount);
         }
+        // O troco deixado sai do contado: só existe no fechamento e nunca passa do que havia na gaveta.
+        if (leftInDrawerAmount != null) {
+            if (!closed) {
+                throw new IllegalArgumentException("sessão aberta não tem troco deixado");
+            }
+            if (leftInDrawerAmount.signum() < 0 || leftInDrawerAmount.compareTo(countedAmount) > 0) {
+                throw new IllegalArgumentException("leftInDrawerAmount deve estar entre 0 e countedAmount");
+            }
+        }
+    }
+
+    /** Forma anterior ao PDV-F056, sem o troco deixado na gaveta. */
+    public CashRegisterSession(Long id, String operator, Instant openedAt, BigDecimal openingAmount,
+            String warehouseCode, Instant closedAt, String closedBy, BigDecimal expectedAmount,
+            BigDecimal countedAmount, BigDecimal differenceAmount, Status status, String closingNotes) {
+        this(id, operator, openedAt, openingAmount, warehouseCode, closedAt, closedBy, expectedAmount,
+                countedAmount, differenceAmount, status, closingNotes, null);
     }
 
     /** Abre um caixa para o operador, com o fundo de troco informado. */
@@ -118,8 +139,18 @@ public record CashRegisterSession(
             BigDecimal openingAmount, String warehouseCode, Instant closedAt, String closedBy,
             BigDecimal expectedAmount, BigDecimal countedAmount, BigDecimal differenceAmount,
             Status status, String closingNotes) {
+        return of(id, operator, openedAt, openingAmount, warehouseCode, closedAt, closedBy,
+                expectedAmount, countedAmount, differenceAmount, status, closingNotes, null);
+    }
+
+    /** Reconstitui a partir de persistência, com o troco deixado na gaveta (PDV-F056). */
+    public static CashRegisterSession of(Long id, String operator, Instant openedAt,
+            BigDecimal openingAmount, String warehouseCode, Instant closedAt, String closedBy,
+            BigDecimal expectedAmount, BigDecimal countedAmount, BigDecimal differenceAmount,
+            Status status, String closingNotes, BigDecimal leftInDrawerAmount) {
         return new CashRegisterSession(id, operator, openedAt, openingAmount, warehouseCode, closedAt,
-                closedBy, expectedAmount, countedAmount, differenceAmount, status, closingNotes);
+                closedBy, expectedAmount, countedAmount, differenceAmount, status, closingNotes,
+                leftInDrawerAmount);
     }
 
     /**
@@ -138,6 +169,15 @@ public record CashRegisterSession(
     /** Como {@link #closedWith(BigDecimal, BigDecimal, String)}, registrando o motivo do fechamento. */
     public CashRegisterSession closedWith(BigDecimal expected, BigDecimal counted, String closedBy,
             String closingNotes) {
+        return closedWith(expected, counted, closedBy, closingNotes, null);
+    }
+
+    /**
+     * Como {@link #closedWith(BigDecimal, BigDecimal, String, String)}, registrando também o troco que
+     * fica na gaveta para o próximo turno (PDV-F056). Nulo quando não informado.
+     */
+    public CashRegisterSession closedWith(BigDecimal expected, BigDecimal counted, String closedBy,
+            String closingNotes, BigDecimal leftInDrawer) {
         if (status == Status.CLOSED) {
             throw new IllegalStateException("sessão de caixa " + id + " já está fechada");
         }
@@ -152,7 +192,7 @@ public record CashRegisterSession(
         }
         return new CashRegisterSession(id, operator, openedAt, openingAmount, warehouseCode,
                 Instant.now(), closedBy, expected, counted, counted.subtract(expected), Status.CLOSED,
-                closingNotes);
+                closingNotes, leftInDrawer);
     }
 
     public boolean isOpen() {
