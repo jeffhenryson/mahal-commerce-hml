@@ -56,6 +56,8 @@ public class DevRoleBootstrapConfig {
         "PDV_SESSION_MANAGE", "PDV_SESSION_CLOSE", "PDV_COMANDA_MANAGE", "PDV_COMANDA_COURTESY",
         // PDV-F034 — sessão que vai ao preparo antes de paga: risco de calote, decisão da casa (V139).
         "PDV_SESSION_PAY_LATER",
+        // PDV-C047 — ler o caixa dos colegas e os indicadores de mesas (V163); o atendente não tem.
+        "PDV_SESSION_READ_ANY",
         // PDV-F011 — como a COURTESY, só no admin: acréscimo manual é decisão da casa (V117).
         "PDV_COMANDA_SURCHARGE",
         // PDV-F021 — cadastro do cardápio de sessão (faixas, utensílios, duplo rosh), V128.

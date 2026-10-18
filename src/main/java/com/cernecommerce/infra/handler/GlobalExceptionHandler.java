@@ -85,6 +85,12 @@ import com.cernecommerce.core.domain.exception.estoque.KitDirectAdjustmentExcept
 import com.cernecommerce.core.domain.exception.estoque.KitTemplateNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateKitTemplateNameException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidKitSelectionException;
+import com.cernecommerce.core.domain.exception.pdv.CashWithdrawalExceedsDrawerException;
+import com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException;
+import com.cernecommerce.core.domain.exception.pedido.CashRefundRequiresOpenSessionException;
+import com.cernecommerce.core.domain.exception.pedido.ExchangeItemInvalidException;
+import com.cernecommerce.core.domain.exception.pedido.OrderNotExchangeableException;
+import com.cernecommerce.core.domain.exception.pedido.SettlementMethodRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.KitItemRemovalNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.InvalidSessionTransitionException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotCollectedException;
@@ -152,6 +158,7 @@ import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTota
 import com.cernecommerce.core.domain.exception.pagamento.PaymentGatewayException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
+import com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException;
 import com.cernecommerce.core.domain.exception.compras.DuplicateSupplierTaxIdException;
 import com.cernecommerce.core.domain.exception.compras.MalformedNfeXmlException;
 import com.cernecommerce.core.domain.exception.compras.NfeImportAlreadyProcessedException;
@@ -188,6 +195,9 @@ import com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.SameFlavorMixException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAlreadyDuploException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotDuploException;
+import com.cernecommerce.core.domain.exception.pdv.RoshAlreadyStartedException;
+import com.cernecommerce.core.domain.exception.pdv.RoshAlreadyChargedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionNotPaidForCollectException;
 import com.cernecommerce.core.domain.exception.pdv.ItemNotRoshExtraException;
 import com.cernecommerce.core.domain.exception.pdv.RoshFlavorNotPendingException;
@@ -216,6 +226,8 @@ import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.exception.pedido.ProductNotPricedException;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
+import com.cernecommerce.core.domain.exception.user.CustomerAccountLinkImmutableException;
+import com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
@@ -779,6 +791,29 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "REFUND_QUANTITY_EXCEEDED", req);
     }
 
+    /** PED-C009 — estorno em dinheiro sem caixa aberto de quem estorna. */
+    @ExceptionHandler(CashRefundRequiresOpenSessionException.class)
+    public ResponseEntity<ApiError> handleCashRefundRequiresOpenSession(CashRefundRequiresOpenSessionException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CASH_REFUND_REQUIRES_OPEN_SESSION", req);
+    }
+
+    @ExceptionHandler(OrderNotExchangeableException.class)
+    public ResponseEntity<ApiError> handleOrderNotExchangeable(OrderNotExchangeableException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_NOT_EXCHANGEABLE", req);
+    }
+
+    @ExceptionHandler(ExchangeItemInvalidException.class)
+    public ResponseEntity<ApiError> handleExchangeItemInvalid(ExchangeItemInvalidException ex, HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "EXCHANGE_ITEM_INVALID", req);
+    }
+
+    @ExceptionHandler(SettlementMethodRequiredException.class)
+    public ResponseEntity<ApiError> handleSettlementMethodRequired(SettlementMethodRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SETTLEMENT_METHOD_REQUIRED", req);
+    }
+
     @ExceptionHandler(RefundNotOwnSessionException.class)
     public ResponseEntity<ApiError> handleRefundNotOwnSession(RefundNotOwnSessionException ex, HttpServletRequest req) {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "REFUND_NOT_OWN_SESSION", req);
@@ -1278,6 +1313,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "SESSION_NOT_OWNED", req);
     }
 
+    @ExceptionHandler(LeftInDrawerExceedsCountedException.class)
+    public ResponseEntity<ApiError> handleLeftInDrawerExceedsCounted(LeftInDrawerExceedsCountedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "LEFT_IN_DRAWER_EXCEEDS_COUNTED", req);
+    }
+
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<ApiError> handleOrderNotFound(OrderNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "ORDER_NOT_FOUND", req);
@@ -1402,6 +1443,21 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ALREADY_DUPLO", req);
     }
 
+    @ExceptionHandler(SessionNotDuploException.class)
+    public ResponseEntity<ApiError> handleSessionNotDuplo(SessionNotDuploException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_DUPLO", req);
+    }
+
+    @ExceptionHandler(RoshAlreadyStartedException.class)
+    public ResponseEntity<ApiError> handleRoshAlreadyStarted(RoshAlreadyStartedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ROSH_ALREADY_STARTED", req);
+    }
+
+    @ExceptionHandler(RoshAlreadyChargedException.class)
+    public ResponseEntity<ApiError> handleRoshAlreadyCharged(RoshAlreadyChargedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ROSH_ALREADY_CHARGED", req);
+    }
+
     // ── PDV-F023 — status da sessão e encerramento da mesa ──────────────────────────────────
 
     @ExceptionHandler(InvalidSessionTransitionException.class)
@@ -1508,6 +1564,14 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "OFFLINE_REJECTION_ALREADY_RESOLVED", req);
     }
 
+    /** PDV-C048 — sangria acima do dinheiro esperado na gaveta. */
+    @ExceptionHandler(CashWithdrawalExceedsDrawerException.class)
+    public ResponseEntity<ApiError> handleCashWithdrawalExceedsDrawer(
+            CashWithdrawalExceedsDrawerException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CASH_WITHDRAWAL_EXCEEDS_DRAWER", req);
+    }
+
     @ExceptionHandler(CashRegisterSessionHasOpenComandasException.class)
     public ResponseEntity<ApiError> handleSessionHasOpenComandas(
             CashRegisterSessionHasOpenComandasException ex, HttpServletRequest req) {
@@ -1552,6 +1616,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleComandaPartiallyClosed(ComandaPartiallyClosedException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "COMANDA_PARTIALLY_CLOSED", req);
+    }
+
+    /** PDV-F054 — transferência de mesas entre caixas recusada. */
+    @ExceptionHandler(ComandaTransferNotAllowedException.class)
+    public ResponseEntity<ApiError> handleComandaTransferNotAllowed(ComandaTransferNotAllowedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "COMANDA_TRANSFER_NOT_ALLOWED", req);
     }
 
     @ExceptionHandler(ComandaMergeNotAllowedException.class)
@@ -1793,6 +1864,11 @@ public class GlobalExceptionHandler {
         if (constraint.contains("uk_user_email")) {
             return error(HttpStatus.CONFLICT, "Email já existe", "EMAIL_ALREADY_EXISTS", req);
         }
+        // PLAT-F005: dois vínculos simultâneos do mesmo cliente passam juntos pelo findByCustomerId.
+        if (constraint.contains("uk_users_customer_id")) {
+            return error(HttpStatus.CONFLICT, "Este cliente já está vinculado a outro usuário",
+                    "CUSTOMER_ALREADY_LINKED", req);
+        }
         // EST-F033: dois cadastros simultâneos da mesma lata passam juntos pelo findOpen e o
         // segundo colide no índice parcial da V124 — é o mesmo "já existe lata aberta".
         // PDV-F043: dois envios simultâneos da mesma venda — o segundo colide na chave do caixa. O
@@ -1821,6 +1897,19 @@ public class GlobalExceptionHandler {
             }
         }
         return "";
+    }
+
+    @ExceptionHandler(CustomerAlreadyLinkedException.class)
+    public ResponseEntity<ApiError> handleCustomerAlreadyLinked(CustomerAlreadyLinkedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CUSTOMER_ALREADY_LINKED", req);
+    }
+
+    @ExceptionHandler(CustomerAccountLinkImmutableException.class)
+    public ResponseEntity<ApiError> handleCustomerAccountLinkImmutable(CustomerAccountLinkImmutableException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, "Conta de cliente da loja não troca de cliente",
+                "CUSTOMER_ACCOUNT_LINK_IMMUTABLE", req);
     }
 
     @ExceptionHandler(CustomerAccountRolesImmutableException.class)

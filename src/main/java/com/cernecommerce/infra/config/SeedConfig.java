@@ -50,6 +50,8 @@ public class SeedConfig {
         "PDV_SESSION_MANAGE", "PDV_SESSION_CLOSE", "PDV_COMANDA_MANAGE", "PDV_COMANDA_COURTESY",
         // PDV-C037 — fechar o caixa de outro operador (V145): era ROLE_ADMIN/ROLE_DEV fixo no código.
         "PDV_SESSION_CLOSE_ANY",
+        // PDV-C047 — ler o caixa dos colegas e os indicadores de mesas (V163).
+        "PDV_SESSION_READ_ANY",
         // PDV-F043 — revisar venda offline recusada: reenviar ou descartar (V150).
         "PDV_OFFLINE_REVIEW",
         // PLAT-C059 — marcar (V137) e corrigir forma de pagamento (V136): sem elas o admin de dev,

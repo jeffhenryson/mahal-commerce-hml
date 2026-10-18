@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Cancela as comandas abertas há mais de {@code pdv.comanda.stale.hours} que estão <b>vazias</b>,
  * e avisa sobre as que têm consumo. A assimetria mora no service — ver
- * {@link ComandaUseCase#sweepStaleComandas} — e o resumo é que devolver estoque de consumo real
+ * {@link ComandaUseCase#findStaleResolvableComandaIds} — e o resumo é que devolver estoque de consumo real
  * criaria saldo que não existe na prateleira.</p>
  *
  * <p><b>Cadência diária, não a de 5 minutos do varredor de reserva.</b> Lá o TTL é de 30 minutos e
@@ -47,8 +47,31 @@ public class StaleComandaSweepService {
     @SchedulerLock(name = "staleComandaSweep", lockAtMostFor = "PT55M", lockAtLeastFor = "PT5M")
     public void sweep() {
         log.info("scheduler.pdv.comanda.stale.start staleHours={} batchSize={}", staleHours, batchSize);
-        ComandaUseCase.StaleComandaSweepResult result = comandaUseCase.sweepStaleComandas(staleHours, batchSize);
+        ComandaUseCase.StaleComandaSweepResult result = runOnce();
         log.info("scheduler.pdv.comanda.stale.done cancelled={} finished={} flagged={}",
                 result.cancelled(), result.finished(), result.flagged());
+    }
+
+    /**
+     * Uma passada. PDV-C054 — a orquestração mora aqui, e não num método só do use case, para cada
+     * chamada atravessar o proxy transacional: cada mesa é travada e liberada na sua própria
+     * transação, e o alerta roda depois, sem trava. Uma mesa que falhe não desfaz as já resolvidas.
+     */
+    public ComandaUseCase.StaleComandaSweepResult runOnce() {
+        int cancelled = 0;
+        int finished = 0;
+        for (Long id : comandaUseCase.findStaleResolvableComandaIds(staleHours, batchSize)) {
+            try {
+                switch (comandaUseCase.resolveStaleComanda(id)) {
+                    case CANCELLED -> cancelled++;
+                    case FINISHED -> finished++;
+                    case SKIPPED -> { }
+                }
+            } catch (RuntimeException e) {
+                log.warn("scheduler.pdv.comanda.stale.failed comandaId={}", id, e);
+            }
+        }
+        int flagged = comandaUseCase.alertStaleComandasWithConsumption(staleHours, batchSize);
+        return new ComandaUseCase.StaleComandaSweepResult(cancelled, finished, flagged);
     }
 }

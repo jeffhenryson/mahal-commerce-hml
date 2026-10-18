@@ -1,6 +1,7 @@
 package com.cernecommerce.infra.config;
 
 import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
+import com.cernecommerce.core.ports.out.pedido.OrderItemExchangeRepository;
 import com.cernecommerce.core.service.CashSessionActivityService;
 import com.cernecommerce.core.ports.out.pdv.CashSessionActivityRepository;
 import com.cernecommerce.core.ports.in.CashSessionActivityUseCase;
@@ -211,6 +212,7 @@ class CoreBeanConfig {
             TotpChallengeTokenRepository totpChallengeTokenRepository,
             TwoFactorAuthPort twoFactorAuthPort,
             AvatarStoragePort avatarStoragePort,
+            CustomerRepository customerRepository,
             @Value("${email.verification.ttl-minutes:15}") long verificationCodeTtlMinutes,
             @Value("${email.verification.resend-cooldown-seconds:60}") long resendCooldownSeconds,
             @Value("${password-reset.ttl-minutes:15}") long passwordResetTtlMinutes,
@@ -220,8 +222,8 @@ class CoreBeanConfig {
                 refreshTokenPort, tokenBlocklistPort, emailPort,
                 verificationCodeRepository, passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
-                twoFactorAuthPort, avatarStoragePort, verificationCodeTtlMinutes, resendCooldownSeconds,
-                passwordResetTtlMinutes, passwordResetFrontendUrl, inviteTtlHours);
+                twoFactorAuthPort, avatarStoragePort, customerRepository, verificationCodeTtlMinutes,
+                resendCooldownSeconds, passwordResetTtlMinutes, passwordResetFrontendUrl, inviteTtlHours);
     }
 
     @Bean
@@ -288,10 +290,12 @@ class CoreBeanConfig {
             OrderPaymentCorrectionRepository orderPaymentCorrectionRepository,
             ReceivableUseCase receivableUseCase,
             // PED-F004 — as unidades já estornadas, que limitam o próximo estorno.
-            OrderItemRefundRepository orderItemRefundRepository) {
+            OrderItemRefundRepository orderItemRefundRepository,
+            // PED-F006 — histórico das trocas de item.
+            OrderItemExchangeRepository orderItemExchangeRepository) {
         return new OrderService(orderRepository, estoqueUseCase, orderPaymentRepository, cashbackUseCase,
                 cashRegisterRepository, orderPaymentCorrectionRepository, receivableUseCase,
-                orderItemRefundRepository);
+                orderItemRefundRepository, orderItemExchangeRepository);
     }
 
     @Bean
