@@ -1892,6 +1892,23 @@ class EstoqueRepositoryIT {
         assertThat(depois.atencao()).isEqualTo(antes.atencao() + 1);
     }
 
+    /** EST-F053 — a base de produto com variações não tem saldo: o mínimo nela não é alerta. */
+    @Test
+    void countAlerts_ignoraProdutoBaseComVariacoes() {
+        Warehouse deposito = givenWarehouse("SUM-ALERT-PAI-" + System.nanoTime());
+        productRepository.save(Product.create("SUM-ALERT-PAI", "Rosh", "acessorio",
+                List.of(ProductVariant.create("SUM-ALERT-PAI-AZ", List.of(new ProductAttribute("Cor", "Azul"))))));
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-PAI", deposito.id(), new BigDecimal("3")));
+        flushAndClear();
+        ReorderAlertCounts semAVariacao = reorderPointRepository.countAlerts();
+
+        // A variação, com mínimo e sem saldo, conta como crítico normalmente.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-PAI-AZ", deposito.id(), new BigDecimal("3")));
+        flushAndClear();
+
+        assertThat(reorderPointRepository.countAlerts().criticos()).isEqualTo(semAVariacao.criticos() + 1);
+    }
+
     // ── Marcas do catálogo (item 3) ───────────────────────────────────────────
 
     @Autowired BrandRepositoryImpl brandRepository;

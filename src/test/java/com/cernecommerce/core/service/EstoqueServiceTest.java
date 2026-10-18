@@ -107,6 +107,7 @@ import com.cernecommerce.core.ports.out.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -1587,6 +1588,19 @@ class EstoqueServiceTest {
         verify(reorderPointRepository).save(argThat(rp -> rp.id() == null
                 && rp.sku().equals("NARG-001") && rp.warehouseId().equals(1L)
                 && rp.minQuantity().compareTo(new BigDecimal("10.000")) == 0));
+    }
+
+    /** EST-F053 — o mínimo do produto com variações vai em cada variação, não na base. */
+    @Test
+    void setReorderPoint_refusesParentWithVariantsThatIsNotSellable() {
+        Product pai = Product.create("ROSH", "Rosh", "acessorio",
+                List.of(ProductVariant.create("ROSH-AZ", List.of(new ProductAttribute("Cor", "Azul")))));
+        when(productRepository.existsBySku("ROSH")).thenReturn(true);
+        when(productRepository.findByAnySku("ROSH")).thenReturn(Optional.of(pai));
+
+        assertThatThrownBy(() -> estoqueService.setReorderPoint("ROSH", "LOJA-01", BigDecimal.TEN))
+                .isInstanceOf(ParentNotSellableException.class);
+        verify(reorderPointRepository, never()).save(any());
     }
 
     @Test
@@ -4675,12 +4689,16 @@ class EstoqueServiceTest {
         comSaldoDeEssencia("49.000");
         when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(openPackageRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         OpenPackage nova = estoqueService.replaceOpenPackage("ESSE-BLUE", "LOJA-01", "atendente");
 
         assertThat(nova.uses()).isZero();
-        verify(openPackageRepository).save(argThat(p ->
+        // Gravada já (saveAndFlush): o INSERT da nova não pode chegar antes do UPDATE da velha.
+        InOrder ordem = inOrder(openPackageRepository);
+        ordem.verify(openPackageRepository).saveAndFlush(argThat(p ->
                 p.closeReason() == OpenPackageCloseReason.REPLACED && p.uses() == 2));
+        ordem.verify(openPackageRepository).save(argThat(OpenPackage::isOpen));
         // Um único movimento sai daqui, o da lata nova: a sobra não gera ajuste.
         verify(stockMovementRepository, times(1)).save(argThat(m -> m.type() == MovementType.SAIDA
                 && m.quantity().compareTo(BigDecimal.ONE) == 0));
@@ -4702,6 +4720,7 @@ class EstoqueServiceTest {
                 .isInstanceOf(InsufficientStockException.class);
 
         verify(openPackageRepository, never()).save(any());
+        verify(openPackageRepository, never()).saveAndFlush(any());
     }
 
     /**

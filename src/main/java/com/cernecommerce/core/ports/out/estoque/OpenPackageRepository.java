@@ -38,6 +38,13 @@ public interface OpenPackageRepository {
     OpenPackage save(OpenPackage openPackage);
 
     /**
+     * Como {@link #save}, mas grava já. Necessário ao fechar uma lata antes de abrir a seguinte do
+     * mesmo par: o INSERT da nova (id IDENTITY) sai na hora, e o UPDATE da velha só no flush —
+     * sem isto a nova colide no índice parcial da V124.
+     */
+    OpenPackage saveAndFlush(OpenPackage openPackage);
+
+    /**
      * EST-F037 — latas fechadas de um depósito com {@code closed_at} em {@code [from, to]} e ao menos
      * um uso, agrupadas por SKU: quantas e a soma dos usos.
      */

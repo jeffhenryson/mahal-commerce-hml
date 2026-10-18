@@ -30,6 +30,9 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
     // descartados das duas contagens, e o resumo dizia "nenhum produto crítico" enquanto a tela de
     // Alertas (que resolve saldo ausente como zero, em EstoqueService) os listava corretamente.
     //
+    // EST-F053 — produto base com variações (e sem parentSellable) fica fora: não vende nem recebe
+    // entrada, então o saldo dele é sempre zero e o alerta seria sempre um falso "Crítico".
+    //
     // O 0.5 literal duplica ReorderPoint.CRITICAL_THRESHOLD_FACTOR de propósito — JPQL não lê
     // constante de domínio. Mudar o fator lá exige mudar aqui; o teste de EST-C019 cobre os dois.
     @Query("""
@@ -40,6 +43,9 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
                             AND COALESCE(sb.quantity, 0) > (rp.minQuantity * 0.5) THEN 1L ELSE 0L END)
             FROM ReorderPointEntity rp
             LEFT JOIN StockBalanceEntity sb ON sb.sku = rp.sku AND sb.warehouseId = rp.warehouseId
+            WHERE NOT EXISTS (
+              SELECT 1 FROM ProductVariantEntity v
+              WHERE v.product.sku = rp.sku AND v.product.parentSellable = false)
             """)
     List<Object[]> countAlertsRaw();
 }

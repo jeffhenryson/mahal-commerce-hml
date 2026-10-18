@@ -74,6 +74,15 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
 
     @Override
     public OpenPackage save(OpenPackage openPackage) {
+        return toDomain(jpaRepository.save(toEntity(openPackage)));
+    }
+
+    @Override
+    public OpenPackage saveAndFlush(OpenPackage openPackage) {
+        return toDomain(jpaRepository.saveAndFlush(toEntity(openPackage)));
+    }
+
+    private OpenPackageEntity toEntity(OpenPackage openPackage) {
         OpenPackageEntity entity = openPackage.id() == null
                 ? new OpenPackageEntity()
                 : jpaRepository.findById(openPackage.id()).orElseGet(OpenPackageEntity::new);
@@ -86,7 +95,7 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
         entity.setOpenedBy(openPackage.openedBy());
         entity.setClosedAt(openPackage.closedAt());
         entity.setCloseReason(openPackage.closeReason() == null ? null : openPackage.closeReason().name());
-        return toDomain(jpaRepository.save(entity));
+        return entity;
     }
 
     private OpenPackage toDomain(OpenPackageEntity e) {

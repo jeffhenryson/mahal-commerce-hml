@@ -975,7 +975,7 @@ public class EstoqueService implements EstoqueUseCase {
         boolean parentWithVariants = product.sku().equals(sku) && !product.variants().isEmpty();
         return new CatalogSaleInfo(product.name(), pricing, product.availableForTable(),
                 product.sessionProduct(), product.openRoshPrice(), product.sessionsPerUnit(),
-                product.isKit(), parentWithVariants, product.sessionTierId());
+                product.isKit(), parentWithVariants, product.sessionTierId(), product.category());
     }
 
 
@@ -1424,9 +1424,14 @@ public class EstoqueService implements EstoqueUseCase {
         // A nova é aberta ANTES de fechar a velha, e a ordem importa: abrir baixa estoque e pode
         // faltar saldo. Falhar depois de fechar deixaria o atendente sem lata nenhuma no sistema,
         // com uma na mão. Mesma razão pela qual convertStock faz a SAIDA primeiro.
-        OpenPackage replacement = openPackage(sku, warehouse, product.sessionsPerUnit(), username);
+        // No Salão, o mesmo caminho da sessão: SALAO_SEM_ESTOQUE claro e sem quebra de embalagem.
+        OpenPackage replacement = warehouse.type() == WarehouseType.SALAO
+                ? openSalaoPackage(sku, warehouse, product.sessionsPerUnit(), username)
+                : openPackage(sku, warehouse, product.sessionsPerUnit(), username);
+        // Fechada e gravada já: o INSERT da nova sai na hora (IDENTITY) e colidiria no índice
+        // parcial da V124 com a velha ainda aberta, à espera do flush.
         current.ifPresent(open ->
-                openPackageRepository.save(open.closed(OpenPackageCloseReason.REPLACED, Instant.now())));
+                openPackageRepository.saveAndFlush(open.closed(OpenPackageCloseReason.REPLACED, Instant.now())));
         return openPackageRepository.save(replacement);
     }
 
@@ -2053,6 +2058,10 @@ public class EstoqueService implements EstoqueUseCase {
     @Transactional
     public void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity) {
         requireKnownSku(sku);
+        // EST-F053 — o mínimo de produto com variações vai em cada variação: a base não tem saldo.
+        if (productRepository.findByAnySku(sku).filter(p -> !p.isSellable(sku)).isPresent()) {
+            throw new ParentNotSellableException(sku);
+        }
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
         Long existingId = reorderPointRepository.findBySkuAndWarehouseId(sku, warehouse.id())
