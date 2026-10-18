@@ -4,7 +4,9 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.UpdateProfileResult;
 import com.cernecommerce.core.domain.model.auth.User;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -34,6 +36,23 @@ public interface UserUseCase {
     User createCustomerAccount(String email, String rawPassword, Long customerId);
 
     User getUserById(Long id);
+
+    /**
+     * PLAT-F005 — liga a conta de operador a um cadastro de cliente do CRM.
+     *
+     * @throws com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException cliente inexistente
+     * @throws com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException o cliente já
+     *         está ligado a outra conta
+     * @throws com.cernecommerce.core.domain.exception.user.CustomerAccountLinkImmutableException conta
+     *         de cliente da loja
+     */
+    User linkCustomer(Long userId, Long customerId);
+
+    /** PLAT-F005 — desfaz o vínculo da conta de operador com o cliente do CRM. Idempotente. */
+    User unlinkCustomer(Long userId);
+
+    /** PLAT-F005 — nome ({@code nome}) de cada cliente vinculado, em lote, por id do cliente. */
+    Map<Long, String> getCustomerNames(Collection<Long> customerIds);
 
     Optional<User> findByUsername(String username);
 

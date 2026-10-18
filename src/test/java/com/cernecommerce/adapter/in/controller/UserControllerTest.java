@@ -247,4 +247,38 @@ public class UserControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
     }
+
+    // ── PLAT-F005 — vínculo usuário↔cliente ──
+
+    @Test
+    void link_customer_returns_200_with_customer_name() throws Exception {
+        User linked = User.fromPersisted(1L, "alice", "hashed", true, null, false, null, null, null, new HashSet<>(),
+                null, null, com.cernecommerce.core.domain.model.auth.UserType.OPERATOR, 50L);
+        when(useCase.linkCustomer(1L, 50L)).thenReturn(linked);
+        when(useCase.getCustomerNames(java.util.List.of(50L))).thenReturn(java.util.Map.of(50L, "Alice Cliente"));
+
+        mockMvc.perform(put("/users/1/customer").contentType(MediaType.APPLICATION_JSON).content("{\"customerId\":50}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value(50))
+                .andExpect(jsonPath("$.customerName").value("Alice Cliente"));
+    }
+
+    @Test
+    void link_customer_already_linked_returns_409() throws Exception {
+        when(useCase.linkCustomer(1L, 50L)).thenThrow(
+                new com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException(50L, "bob"));
+
+        mockMvc.perform(put("/users/1/customer").contentType(MediaType.APPLICATION_JSON).content("{\"customerId\":50}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_ALREADY_LINKED"));
+    }
+
+    @Test
+    void unlink_customer_returns_200_without_customer() throws Exception {
+        when(useCase.unlinkCustomer(1L)).thenReturn(user(1L, "alice"));
+
+        mockMvc.perform(delete("/users/1/customer"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").doesNotExist());
+    }
 }

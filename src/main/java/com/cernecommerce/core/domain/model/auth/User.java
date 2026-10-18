@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.auth;
 
+import com.cernecommerce.core.domain.exception.user.CustomerAccountLinkImmutableException;
 import com.cernecommerce.core.domain.model.rbac.Role;
 
 import java.time.Instant;
@@ -169,6 +170,22 @@ public class User {
 
     public void removeRole(Role role) {
         this.roles.removeIf(r -> r.getName().equals(role.getName()));
+    }
+
+    /**
+     * PLAT-F005 — liga a conta de operador ao seu cadastro de cliente do CRM (quem opera o PDV também
+     * compra na loja). A conta de cliente da loja nasce ligada e não troca de cliente.
+     */
+    public void linkCustomer(Long customerId) {
+        Objects.requireNonNull(customerId, "customerId is required");
+        if (isCustomer()) throw new CustomerAccountLinkImmutableException(username);
+        this.customerId = customerId;
+    }
+
+    /** PLAT-F005 — desfaz o vínculo da conta de operador. */
+    public void unlinkCustomer() {
+        if (isCustomer()) throw new CustomerAccountLinkImmutableException(username);
+        this.customerId = null;
     }
 
     public void linkGoogle(String googleId) {

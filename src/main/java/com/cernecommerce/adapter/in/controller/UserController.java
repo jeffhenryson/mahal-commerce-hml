@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.in.controller;
 import com.cernecommerce.adapter.in.converter.UserDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.ChangePasswordRequest;
 import com.cernecommerce.adapter.in.dtos.request.CreateUserRequest;
+import com.cernecommerce.adapter.in.dtos.request.UserCustomerLinkRequest;
 import com.cernecommerce.adapter.in.dtos.request.UserUpdateRequest;
 import com.cernecommerce.adapter.in.dtos.response.UserProfileDTO;
 import com.cernecommerce.adapter.in.dtos.response.UserResponseDTO;
@@ -184,7 +185,7 @@ public class UserController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_READ')")
     public ResponseEntity<UserResponseDTO> get(@PathVariable Long id) {
-        return ResponseEntity.ok(converter.toResponse(useCase.getUserById(id)));
+        return ResponseEntity.ok(withCustomerName(useCase.getUserById(id)));
     }
 
     @Operation(summary = "Lista operadores paginado com filtros opcionais (contas de cliente da loja não entram)")
@@ -206,8 +207,13 @@ public class UserController {
             Authentication auth) {
         Set<String> excludeRoles = AuthUtils.isDevAccess(auth) ? Set.of() : Set.of("ROLE_DEV");
         PageResult<User> result = useCase.findFiltered(search, enabled, sortBy, sortDir, page, Math.min(size, 100), excludeRoles);
+        // PLAT-F005 — nomes dos clientes vinculados numa consulta só por página.
+        Map<Long, String> customerNames = useCase.getCustomerNames(
+                result.content().stream().map(User::getCustomerId).toList());
         PageResult<UserResponseDTO> response = new PageResult<>(
-                result.content().stream().map(converter::toResponse).toList(),
+                result.content().stream()
+                        .map(u -> converter.toResponse(u, customerNames.get(u.getCustomerId())))
+                        .toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
     }
@@ -288,6 +294,47 @@ public class UserController {
         } else {
             publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, result.user().getUsername()));
         }
-        return ResponseEntity.ok(converter.toResponse(result.user()));
+        return ResponseEntity.ok(withCustomerName(result.user()));
+    }
+
+    @Operation(summary = "Vincula o usuário a um cadastro de cliente do CRM",
+            description = "PLAT-F005 — quem opera o PDV também compra na loja. Um cliente fica ligado a no máximo "
+                    + "um usuário. Conta de cliente da loja já nasce ligada e não troca de cliente.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Vinculado", content = @Content(schema = @Schema(implementation = UserResponseDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Usuário (USER_NOT_FOUND) ou cliente (CUSTOMER_NOT_FOUND) não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Cliente já vinculado a outro usuário (CUSTOMER_ALREADY_LINKED); conta de cliente da loja (CUSTOMER_ACCOUNT_LINK_IMMUTABLE)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PutMapping("/{id}/customer")
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    public ResponseEntity<UserResponseDTO> linkCustomer(@PathVariable Long id,
+            @Valid @RequestBody UserCustomerLinkRequest request) {
+        User user = useCase.linkCustomer(id, request.getCustomerId());
+        publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, user.getUsername(),
+                Map.of("customerId", user.getCustomerId())));
+        return ResponseEntity.ok(withCustomerName(user));
+    }
+
+    @Operation(summary = "Desfaz o vínculo do usuário com o cliente do CRM", description = "PLAT-F005. Idempotente.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Desvinculado", content = @Content(schema = @Schema(implementation = UserResponseDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Usuário não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Conta de cliente da loja (CUSTOMER_ACCOUNT_LINK_IMMUTABLE)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @DeleteMapping("/{id}/customer")
+    @PreAuthorize("hasAuthority('USER_UPDATE')")
+    public ResponseEntity<UserResponseDTO> unlinkCustomer(@PathVariable Long id) {
+        User user = useCase.unlinkCustomer(id);
+        publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, user.getUsername(),
+                Map.of("customerId", "removido")));
+        return ResponseEntity.ok(withCustomerName(user));
+    }
+
+    private UserResponseDTO withCustomerName(User user) {
+        if (user.getCustomerId() == null) return converter.toResponse(user);
+        return converter.toResponse(user,
+                useCase.getCustomerNames(java.util.List.of(user.getCustomerId())).get(user.getCustomerId()));
     }
 }

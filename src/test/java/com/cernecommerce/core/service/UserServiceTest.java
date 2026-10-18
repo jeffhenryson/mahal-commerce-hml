@@ -26,6 +26,13 @@ import com.cernecommerce.core.ports.out.twofa.TwoFactorAuthPort;
 import com.cernecommerce.core.ports.out.storage.AvatarStoragePort;
 import com.cernecommerce.core.ports.out.user.UserCachePort;
 import com.cernecommerce.core.ports.out.user.UserRepository;
+import com.cernecommerce.core.ports.out.crm.CustomerRepository;
+import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
+import com.cernecommerce.core.domain.exception.user.CustomerAccountLinkImmutableException;
+import com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException;
+import com.cernecommerce.core.domain.model.auth.UserType;
+import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +68,7 @@ class UserServiceTest {
     @Mock TotpChallengeTokenRepository totpChallengeTokenRepository;
     @Mock TwoFactorAuthPort twoFactorAuthPort;
     @Mock AvatarStoragePort avatarStoragePort;
+    @Mock CustomerRepository customerRepository;
 
     UserService userService;
 
@@ -70,7 +78,7 @@ class UserServiceTest {
                 refreshTokenPort, tokenBlocklistPort, emailPort, verificationCodeRepository,
                 passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
-                twoFactorAuthPort, avatarStoragePort, 15L, 60L, 15L, "http://localhost:3000/reset-password", 48L);
+                twoFactorAuthPort, avatarStoragePort, customerRepository, 15L, 60L, 15L, "http://localhost:3000/reset-password", 48L);
     }
 
     @Test
@@ -629,5 +637,99 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.removeRole("cli@x.com", "ROLE_CUSTOMER"))
                 .isInstanceOf(com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException.class);
         verify(userRepository, never()).save(any());
+    }
+
+    // ── PLAT-F005 — vínculo usuário↔cliente ──────────────────────────────────────────────────
+
+    private static User operador(Long id, Long customerId) {
+        return User.fromPersisted(id, "op" + id, "hashed", true, null, false, null, null, null, java.util.Set.of(),
+                null, null, UserType.OPERATOR, customerId);
+    }
+
+    private static Customer cliente(Long id) {
+        return Customer.of(id, "Cliente " + id, "85999990000", null, null, "BALCAO", java.time.Instant.now(), CustomerStage.NOVO_LEAD);
+    }
+
+    @Test
+    void linkCustomer_ligaOOperadorAoCliente() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, null)));
+        when(customerRepository.findById(50L)).thenReturn(Optional.of(cliente(50L)));
+        when(userRepository.findByCustomerId(50L)).thenReturn(Optional.empty());
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        User result = userService.linkCustomer(1L, 50L);
+
+        assertThat(result.getCustomerId()).isEqualTo(50L);
+        verify(userRepository).save(argThat(u -> Long.valueOf(50L).equals(u.getCustomerId())));
+    }
+
+    @Test
+    void linkCustomer_clienteDeOutroUsuario_recusa() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, null)));
+        when(customerRepository.findById(50L)).thenReturn(Optional.of(cliente(50L)));
+        when(userRepository.findByCustomerId(50L)).thenReturn(Optional.of(operador(2L, 50L)));
+
+        assertThatThrownBy(() -> userService.linkCustomer(1L, 50L))
+                .isInstanceOf(CustomerAlreadyLinkedException.class);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void linkCustomer_religarOMesmoCliente_eIdempotente() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, 50L)));
+        when(customerRepository.findById(50L)).thenReturn(Optional.of(cliente(50L)));
+        when(userRepository.findByCustomerId(50L)).thenReturn(Optional.of(operador(1L, 50L)));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(userService.linkCustomer(1L, 50L).getCustomerId()).isEqualTo(50L);
+    }
+
+    @Test
+    void linkCustomer_clienteInexistente_recusa() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, null)));
+        when(customerRepository.findById(50L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.linkCustomer(1L, 50L))
+                .isInstanceOf(CustomerNotFoundException.class);
+    }
+
+    @Test
+    void linkCustomer_contaDeClienteDaLoja_recusa() {
+        User conta = User.fromPersisted(3L, "c@x.com", "hashed", true, "c@x.com", true, null, null, null,
+                java.util.Set.of(), null, null, UserType.CUSTOMER, 70L);
+        when(userRepository.findById(3L)).thenReturn(Optional.of(conta));
+        when(customerRepository.findById(50L)).thenReturn(Optional.of(cliente(50L)));
+        when(userRepository.findByCustomerId(50L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.linkCustomer(3L, 50L))
+                .isInstanceOf(CustomerAccountLinkImmutableException.class);
+        assertThatThrownBy(() -> userService.unlinkCustomer(3L))
+                .isInstanceOf(CustomerAccountLinkImmutableException.class);
+    }
+
+    @Test
+    void unlinkCustomer_limpaOVinculo() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, 50L)));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(userService.unlinkCustomer(1L).getCustomerId()).isNull();
+    }
+
+    @Test
+    void deleteUser_operadorVinculado_soltaOClienteAntesDoSoftDelete() {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(operador(1L, 50L)));
+
+        userService.deleteUser(1L);
+
+        verify(userRepository).save(argThat(u -> u.getCustomerId() == null));
+        verify(userRepository).deleteById(1L);
+    }
+
+    @Test
+    void getCustomerNames_resolveEmLote() {
+        when(customerRepository.findByIds(List.of(50L))).thenReturn(List.of(cliente(50L)));
+
+        assertThat(userService.getCustomerNames(java.util.Arrays.asList(50L, null, 50L)))
+                .containsEntry(50L, "Cliente 50");
     }
 }

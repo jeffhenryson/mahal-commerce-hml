@@ -28,6 +28,14 @@ public class UserDTOConverter {
         dto.setCreatedAt(user.getCreatedAt());
         dto.setRoles(roles(user));
         dto.setPermissions(permissions(user));
+        dto.setCustomerId(user.getCustomerId());
+        return dto;
+    }
+
+    /** PLAT-F005 — com o nome do cliente vinculado já resolvido (nulo sem vínculo). */
+    public UserResponseDTO toResponse(User user, String customerName) {
+        UserResponseDTO dto = toResponse(user);
+        dto.setCustomerName(customerName);
         return dto;
     }
 

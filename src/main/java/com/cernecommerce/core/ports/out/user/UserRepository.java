@@ -21,6 +21,9 @@ public interface UserRepository {
 
     Optional<User> findByGoogleId(String googleId);
 
+    /** PLAT-F005 — a conta (operador ou cliente da loja) ligada ao cliente do CRM, se houver. */
+    Optional<User> findByCustomerId(Long customerId);
+
     PageResult<User> findFiltered(String search, Boolean enabled, String sortBy, String sortDir, int page, int size, Set<String> excludeRoles);
 
     long countAll();

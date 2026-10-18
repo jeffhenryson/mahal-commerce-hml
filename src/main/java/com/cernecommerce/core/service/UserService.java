@@ -8,7 +8,11 @@ import com.cernecommerce.core.domain.exception.email.EmailDeliveryException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeExpiredException;
 import com.cernecommerce.core.domain.exception.email.EmailVerificationCodeNotFoundException;
 import com.cernecommerce.core.domain.exception.rbac.RoleNotFoundException;
+import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
+import com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException;
+import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.ports.out.crm.CustomerRepository;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
@@ -47,11 +51,15 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class UserService implements UserUseCase {
 
@@ -69,6 +77,7 @@ public class UserService implements UserUseCase {
     private final TotpChallengeTokenRepository totpChallengeTokenRepository;
     private final TwoFactorAuthPort twoFactorAuthPort;
     private final AvatarStoragePort avatarStoragePort;
+    private final CustomerRepository customerRepository;
     private final long verificationCodeTtlMinutes;
     private final long resendCooldownSeconds;
     private final long passwordResetTtlMinutes;
@@ -90,6 +99,7 @@ public class UserService implements UserUseCase {
             TotpChallengeTokenRepository totpChallengeTokenRepository,
             TwoFactorAuthPort twoFactorAuthPort,
             AvatarStoragePort avatarStoragePort,
+            CustomerRepository customerRepository,
             long verificationCodeTtlMinutes,
             long resendCooldownSeconds,
             long passwordResetTtlMinutes,
@@ -108,6 +118,7 @@ public class UserService implements UserUseCase {
         this.totpBackupCodeRepository = totpBackupCodeRepository;
         this.totpChallengeTokenRepository = totpChallengeTokenRepository;
         this.twoFactorAuthPort = twoFactorAuthPort;
+        this.customerRepository = customerRepository;
         this.avatarStoragePort = avatarStoragePort;
         this.verificationCodeTtlMinutes = verificationCodeTtlMinutes;
         this.resendCooldownSeconds = resendCooldownSeconds;
@@ -275,6 +286,39 @@ public class UserService implements UserUseCase {
     }
 
     @Override
+    @Transactional
+    public User linkCustomer(Long userId, Long customerId) {
+        User user = getUserById(userId);
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new CustomerNotFoundException(customerId));
+        userRepository.findByCustomerId(customer.id())
+                .filter(other -> !other.getId().equals(user.getId()))
+                .ifPresent(other -> {
+                    throw new CustomerAlreadyLinkedException(customer.id(), other.getUsername());
+                });
+        user.linkCustomer(customer.id());
+        return userRepository.save(user);
+    }
+
+    @Override
+    @Transactional
+    public User unlinkCustomer(Long userId) {
+        User user = getUserById(userId);
+        if (user.getCustomerId() == null) return user;
+        user.unlinkCustomer();
+        return userRepository.save(user);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, String> getCustomerNames(Collection<Long> customerIds) {
+        List<Long> ids = customerIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return Map.of();
+        return customerRepository.findByIds(ids).stream()
+                .collect(Collectors.toMap(Customer::id, Customer::nome, (a, b) -> a));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Optional<User> findByUsername(String username) {
         return userRepository.findByUsername(username);
@@ -334,6 +378,12 @@ public class UserService implements UserUseCase {
         totpBackupCodeRepository.deleteByUsername(username);
         totpConfigRepository.deleteByUsername(username);
         if (user.getAvatarFilename() != null) avatarStoragePort.delete(user.getAvatarFilename());
+        // PLAT-F005 — o soft delete deixa a linha na tabela, e o índice único uk_users_customer_id
+        // prenderia o cliente a uma conta apagada. A conta de cliente da loja fica como está.
+        if (!user.isCustomer() && user.getCustomerId() != null) {
+            user.unlinkCustomer();
+            userRepository.save(user);
+        }
         userRepository.deleteById(id);
         userCachePort.evict(username);
         return username;

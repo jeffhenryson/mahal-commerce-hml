@@ -16,4 +16,7 @@ public class UserResponseDTO {
     private Instant createdAt;
     private List<String> roles;
     private List<String> permissions;
+    /** PLAT-F005 — o cadastro de cliente do CRM ligado à conta; nulo sem vínculo. */
+    private Long customerId;
+    private String customerName;
 }
