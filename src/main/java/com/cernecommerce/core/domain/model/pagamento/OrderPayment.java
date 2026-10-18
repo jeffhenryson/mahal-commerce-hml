@@ -18,7 +18,21 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
         Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
         Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
-        java.time.LocalDate dueDate, Long refundSessionId) {
+        java.time.LocalDate dueDate, Long refundSessionId, Long captureSessionId) {
+
+    /**
+     * Sem a sessão da captura — toda linha anterior a PED-F006, e toda captura que não é a diferença
+     * de uma troca (essas contam na sessão do pedido).
+     */
+    public OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+            java.time.LocalDate dueDate, Long refundSessionId) {
+        this(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt, createdAt,
+                channel, provider, correctionId, originCorrectionId, correctedAt, correctedBy, dueDate,
+                refundSessionId, null);
+    }
 
     /** Sem a sessão do estorno — toda linha que não é REFUNDED, e as REFUNDED anteriores a PED-F004. */
     public OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
@@ -76,6 +90,10 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         if (refundSessionId != null && status != PaymentStatus.REFUNDED) {
             throw new IllegalArgumentException("refundSessionId só existe em linha REFUNDED");
         }
+        // PED-F006 — a sessão da captura só existe na linha capturada (e na corrigida, que nasce dela).
+        if (captureSessionId != null && status != PaymentStatus.CAPTURED && status != PaymentStatus.CORRECTED) {
+            throw new IllegalArgumentException("captureSessionId só existe em linha CAPTURED");
+        }
         // PDV-F030 — espelha ck_order_payment_corrected.
         if ((status == PaymentStatus.CORRECTED)
                 != (correctionId != null && correctedAt != null && correctedBy != null)) {
@@ -107,6 +125,33 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         Instant now = Instant.now();
         return new OrderPayment(null, orderId, method, amount, PaymentStatus.CAPTURED, installments,
                 null, now, now, now, channel, provider, null, originCorrectionId, null, null, null);
+    }
+
+    /**
+     * PED-F006 — a diferença a pagar de uma troca: CAPTURED como no balcão, mas contada na sessão de
+     * caixa <b>de quem fez a troca</b> ({@code captureSessionId}), que não é necessariamente a do
+     * pedido — o cliente volta outro dia, em outro turno.
+     */
+    public static OrderPayment capturedInSession(Long orderId, PaymentMethod method, BigDecimal amount,
+            Long captureSessionId) {
+        if (captureSessionId == null) {
+            throw new IllegalArgumentException("captureSessionId é obrigatório");
+        }
+        Instant now = Instant.now();
+        return new OrderPayment(null, orderId, method, amount, PaymentStatus.CAPTURED, null,
+                null, now, now, now, null, null, null, null, null, null, null, null, captureSessionId);
+    }
+
+    /**
+     * PED-F006 — a diferença a devolver de uma troca: REFUNDED na forma escolhida, sem linha CAPTURED
+     * de origem (o crédito é o item devolvido, não um pagamento). Conta na sessão de quem fez a
+     * troca; em dinheiro, a cédula sai da gaveta dela.
+     */
+    public static OrderPayment refundedInSession(Long orderId, PaymentMethod method, BigDecimal amount,
+            Long refundSessionId) {
+        Instant now = Instant.now();
+        return new OrderPayment(null, orderId, method, amount, PaymentStatus.REFUNDED, null, null, now, null,
+                now, null, null, null, null, null, null, null, refundSessionId);
     }
 
     /**
@@ -183,9 +228,20 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
             Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
             Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
             java.time.LocalDate dueDate, Long refundSessionId) {
+        return of(id, orderId, method, amount, status, installments, gatewayRef, authorizedAt, capturedAt,
+                createdAt, channel, provider, correctionId, originCorrectionId, correctedAt, correctedBy, dueDate,
+                refundSessionId, null);
+    }
+
+    /** Reconstitui um pagamento completo, inclusive a sessão da captura da troca (PED-F006). */
+    public static OrderPayment of(Long id, Long orderId, PaymentMethod method, BigDecimal amount,
+            PaymentStatus status, Integer installments, String gatewayRef, Instant authorizedAt,
+            Instant capturedAt, Instant createdAt, PaymentChannel channel, PaymentProvider provider,
+            Long correctionId, Long originCorrectionId, Instant correctedAt, String correctedBy,
+            java.time.LocalDate dueDate, Long refundSessionId, Long captureSessionId) {
         return new OrderPayment(id, orderId, method, amount, status, installments, gatewayRef,
                 authorizedAt, capturedAt, createdAt, channel, provider, correctionId, originCorrectionId,
-                correctedAt, correctedBy, dueDate, refundSessionId);
+                correctedAt, correctedBy, dueDate, refundSessionId, captureSessionId);
     }
 
     /**
@@ -251,7 +307,7 @@ public record OrderPayment(Long id, Long orderId, PaymentMethod method, BigDecim
         }
         return new OrderPayment(id, orderId, method, amount, PaymentStatus.CORRECTED, installments,
                 gatewayRef, authorizedAt, capturedAt, createdAt, channel, provider, correctionId,
-                originCorrectionId, correctedAt, correctedBy, dueDate);
+                originCorrectionId, correctedAt, correctedBy, dueDate, null, captureSessionId);
     }
 
     /**

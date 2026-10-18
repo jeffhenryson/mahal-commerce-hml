@@ -175,6 +175,42 @@ public interface OrderUseCase {
     Map<Long, java.math.BigDecimal> getRefundedQuantities(Long orderId);
 
     /**
+     * A troca de um item (PED-F006).
+     *
+     * @param destination      {@code RESTOCK} ou {@code DISCARD} para as unidades devolvidas
+     * @param settlementMethod forma da diferença ({@code PIX}, {@code DINHEIRO}, {@code DEBITO} ou
+     *                         {@code CREDITO}); só obrigatória quando há diferença
+     */
+    record ExchangeCommand(String sku, java.math.BigDecimal quantity,
+            com.cernecommerce.core.domain.model.pedido.RefundDestination destination, String newSku,
+            java.math.BigDecimal newQuantity, String reason,
+            com.cernecommerce.core.domain.model.pagamento.PaymentMethod settlementMethod) {
+    }
+
+    /**
+     * Troca unidades de um item do pedido por outro produto, no mesmo pedido (PED-F006). As unidades
+     * devolvidas viram uma perna de estorno por item (RESTOCK dá ENTRADA no depósito do pedido;
+     * DISCARD é perda, sem mexer no saldo), o novo SKU entra no pedido pelo preço efetivo atual, sem
+     * desconto, com SAIDA no depósito do pedido, e só a diferença move dinheiro: {@code > 0} vira uma
+     * linha CAPTURED no caixa aberto de {@code username}; {@code < 0}, uma linha REFUNDED (em dinheiro,
+     * sai da gaveta dele).
+     *
+     * @throws com.cernecommerce.core.domain.exception.pedido.OrderNotExchangeableException pedido não
+     *         pago, cancelado, totalmente reembolsado ou de mesa
+     * @throws com.cernecommerce.core.domain.exception.pedido.ExchangeItemInvalidException SKU fora do
+     *         pedido, quantidade acima do que resta ou linha que não é de catálogo
+     * @throws com.cernecommerce.core.domain.exception.pedido.SettlementMethodRequiredException
+     *         diferença sem forma de pagamento
+     * @throws com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException diferença
+     *         a pagar (ou a devolver em dinheiro) sem caixa aberto de {@code username}
+     */
+    ExchangeResult exchangeItem(Long orderId, ExchangeCommand command, String username);
+
+    /** Resultado de {@link #exchangeItem}: o pedido com o item novo e a troca registrada (para a auditoria). */
+    record ExchangeResult(Order order, com.cernecommerce.core.domain.model.pedido.OrderItemExchange exchange) {
+    }
+
+    /**
      * Corrige a forma de pagamento de um pedido sem perder o registro do erro (PDV-F030).
      *
      * <p>As linhas {@code CAPTURED} vigentes passam a {@code CORRECTED}; as informadas nascem

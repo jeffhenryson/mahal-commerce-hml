@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.in.controller;
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.OrderCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderRefundRequest;
+import com.cernecommerce.adapter.in.dtos.request.OrderItemExchangeRequest;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderStatusRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderBulkStatusRequest;
@@ -472,7 +473,9 @@ public class OrdersController {
             @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content),
             @ApiResponse(responseCode = "403", description = "REFUND_NOT_OWN_SESSION — com só ORDER_REFUND_OWN_SESSION, "
                     + "o pedido não é da sessão de caixa aberta de quem estorna", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Transição não permitida: sem pagamento confirmado (use /cancel), ou já CANCELADO/REEMBOLSADO", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Transição não permitida: sem pagamento confirmado (use /cancel), ou já CANCELADO/REEMBOLSADO; "
+                    + "CASH_REFUND_REQUIRES_OPEN_SESSION — devolve dinheiro e quem estorna não tem caixa aberto (PED-C009); "
+                    + "CASH_REGISTER_SESSION_CLOSED — o caixa de quem estorna fechou no meio (PED-C013)", content = @Content),
             @ApiResponse(responseCode = "422", description = "REFUND_QUANTITY_EXCEEDED — mais unidades do que restam "
                     + "para estornar", content = @Content)
     })
@@ -509,6 +512,55 @@ public class OrdersController {
                         + " " + i.destination()).toList());
         publisher.publishEvent(
                 AuditEvent.of(EventType.ORDER_REFUNDED, authentication.getName(), details));
+        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(order);
+        fillRefundedQuantities(dto, orderId);
+        return ResponseEntity.ok(dto);
+    }
+
+    @Operation(summary = "Troca unidades de um item do pedido por outro produto",
+            description = "PED-F006 — no mesmo pedido e com histórico. As unidades devolvidas voltam ao estoque "
+                    + "(RESTOCK) ou viram perda (DISCARD, sem mexer no saldo); o novo SKU entra no pedido pelo "
+                    + "preço efetivo atual, sem desconto, com baixa no depósito do pedido. Só a diferença "
+                    + "(novo − devolvido) move dinheiro: > 0 vira linha CAPTURED no caixa aberto de quem troca; "
+                    + "< 0, linha REFUNDED (em dinheiro, sai da gaveta). O devolvido é o líquido proporcional "
+                    + "das unidades, o mesmo unitário do estorno por item.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Trocado, com o pedido atualizado", content = @Content(schema = @Schema(implementation = OrderAdminResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Corpo inválido; SETTLEMENT_METHOD_REQUIRED — há diferença e "
+                    + "não veio settlementMethod; INSUFFICIENT_STOCK — sem saldo do newSku no depósito; "
+                    + "PARENT_NOT_SELLABLE — newSku é base não vendável", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Pedido ou newSku não encontrado; NO_OPEN_SESSION — diferença a "
+                    + "pagar (ou a devolver em dinheiro) sem caixa aberto de quem troca", content = @Content),
+            @ApiResponse(responseCode = "409", description = "ORDER_NOT_EXCHANGEABLE — pedido não pago, cancelado, "
+                    + "totalmente reembolsado ou de mesa; CASH_REGISTER_SESSION_CLOSED — o caixa fechou no meio", content = @Content),
+            @ApiResponse(responseCode = "422", description = "EXCHANGE_ITEM_INVALID — sku fora do pedido, quantidade acima "
+                    + "do que resta, linha que não é de catálogo ou newSku vendido por sessão", content = @Content)
+    })
+    @PostMapping("/{id}/items/exchange")
+    @PreAuthorize("hasAuthority('ORDER_REFUND')")
+    public ResponseEntity<OrderAdminResponseDTO> exchangeItem(@PathVariable("id") Long orderId,
+            @Valid @RequestBody OrderItemExchangeRequest request, Authentication authentication) {
+        PaymentMethod method = request.getSettlementMethod() == null ? null
+                : PaymentMethod.valueOf(request.getSettlementMethod());
+        OrderUseCase.ExchangeResult result = orderUseCase.exchangeItem(orderId, new OrderUseCase.ExchangeCommand(
+                request.getSku(), request.getQuantity(), request.getDestination(), request.getNewSku(),
+                request.getNewQuantity(), request.getReason(), method), authentication.getName());
+        Order order = result.order();
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", orderId);
+        details.put("orderNumber", String.valueOf(order.orderNumber()));
+        details.put("sku", request.getSku());
+        details.put("quantity", request.getQuantity());
+        details.put("destination", request.getDestination().name());
+        details.put("newSku", request.getNewSku());
+        details.put("newQuantity", request.getNewQuantity());
+        details.put("difference", result.exchange().difference());
+        details.put("reason", request.getReason());
+        if (method != null) {
+            details.put("settlementMethod", method.name());
+        }
+        publisher.publishEvent(
+                AuditEvent.of(EventType.ORDER_ITEM_EXCHANGED, authentication.getName(), details));
         OrderAdminResponseDTO dto = orderConverter.toAdminResponse(order);
         fillRefundedQuantities(dto, orderId);
         return ResponseEntity.ok(dto);

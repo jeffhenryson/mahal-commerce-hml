@@ -52,4 +52,8 @@ public class OrderItemRefundEntity {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    /** PED-F006 — a troca de que esta linha é a perna devolvida (V164). */
+    @Column(name = "exchange_id")
+    private Long exchangeId;
 }

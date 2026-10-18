@@ -49,6 +49,7 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
         entity.setCorrectedBy(payment.correctedBy());
         entity.setDueDate(payment.dueDate());
         entity.setRefundSessionId(payment.refundSessionId());
+        entity.setCaptureSessionId(payment.captureSessionId());
         return toDomain(orderPaymentJpaRepository.save(entity));
     }
 
@@ -62,16 +63,65 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public Map<Long, List<OrderPayment>> findByOrderIds(Collection<Long> orderIds) {
+        Map<Long, List<OrderPayment>> byOrder = new LinkedHashMap<>();
+        if (orderIds == null || orderIds.isEmpty()) {
+            return byOrder;
+        }
+        for (OrderPaymentEntity entity : orderPaymentJpaRepository.findByOrderIdInOrderByIdAsc(orderIds)) {
+            byOrder.computeIfAbsent(entity.getOrderId(), k -> new ArrayList<>()).add(toDomain(entity));
+        }
+        return byOrder;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public BigDecimal sumCapturedAmountBySessionIdAndMethod(Long sessionId, PaymentMethod method) {
-        BigDecimal sum = orderPaymentJpaRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, method.name());
-        return sum == null ? BigDecimal.ZERO : sum;
+        // PED-F006 — mesma divisão do estorno (PDV-C049): a diferença de troca conta onde foi paga.
+        return orZero(orderPaymentJpaRepository.sumCapturedAmountBySessionIdAndMethod(sessionId, method.name()))
+                .add(orZero(orderPaymentJpaRepository.sumCapturedInSessionAndMethod(sessionId, method.name())));
     }
 
     @Override
     @Transactional(readOnly = true)
     public BigDecimal sumRefundedAmountBySessionIdAndMethod(Long sessionId, PaymentMethod method) {
-        BigDecimal sum = orderPaymentJpaRepository.sumRefundedAmountBySessionIdAndMethod(sessionId, method.name());
-        return sum == null ? BigDecimal.ZERO : sum;
+        // PDV-C049 — duas consultas que usam índice, no lugar de um COALESCE que varria tudo.
+        return orZero(orderPaymentJpaRepository.sumRefundedInSessionAndMethod(sessionId, method.name()))
+                .add(orZero(orderPaymentJpaRepository.sumRefundedWithoutSessionByOrderSessionAndMethod(sessionId,
+                        method.name())));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PaymentMethod, BigDecimal> sumCapturedBySessionIdGroupedByMethod(Long sessionId) {
+        Map<PaymentMethod, BigDecimal> sums = byMethod(
+                orderPaymentJpaRepository.sumCapturedBySessionIdGroupByMethod(sessionId));
+        byMethod(orderPaymentJpaRepository.sumCapturedInSessionGroupByMethod(sessionId))
+                .forEach((method, amount) -> sums.merge(method, amount, BigDecimal::add));
+        return sums;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PaymentMethod, BigDecimal> sumRefundedBySessionIdGroupedByMethod(Long sessionId) {
+        Map<PaymentMethod, BigDecimal> sums = byMethod(
+                orderPaymentJpaRepository.sumRefundedInSessionGroupByMethod(sessionId));
+        byMethod(orderPaymentJpaRepository.sumRefundedWithoutSessionByOrderSessionGroupByMethod(sessionId))
+                .forEach((method, amount) -> sums.merge(method, amount, BigDecimal::add));
+        return sums;
+    }
+
+    /** Linhas {@code [method, soma]} → mapa; método ausente significa zero. */
+    static Map<PaymentMethod, BigDecimal> byMethod(List<Object[]> rows) {
+        Map<PaymentMethod, BigDecimal> sums = new java.util.EnumMap<>(PaymentMethod.class);
+        for (Object[] row : rows) {
+            sums.merge(PaymentMethod.valueOf((String) row[0]), orZero((BigDecimal) row[1]), BigDecimal::add);
+        }
+        return sums;
+    }
+
+    private static BigDecimal orZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     @Override
@@ -107,6 +157,6 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
                 e.getChannel() == null ? null : PaymentChannel.valueOf(e.getChannel()),
                 e.getProvider() == null ? null : PaymentProvider.valueOf(e.getProvider()),
                 e.getCorrectionId(), e.getOriginCorrectionId(), e.getCorrectedAt(), e.getCorrectedBy(),
-                e.getDueDate(), e.getRefundSessionId());
+                e.getDueDate(), e.getRefundSessionId(), e.getCaptureSessionId());
     }
 }

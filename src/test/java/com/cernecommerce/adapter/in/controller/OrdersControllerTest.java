@@ -378,6 +378,42 @@ public class OrdersControllerTest {
         verify(publisher).publishEvent(any(Object.class));
     }
 
+    /** PED-F006 — a troca devolve o pedido atualizado e audita com a diferença. */
+    @Test
+    void exchangeItem_returns_200_andPublishesTheAudit() throws Exception {
+        Order after = mock(Order.class);
+        com.cernecommerce.core.domain.model.pedido.OrderItemExchange exchange =
+                mock(com.cernecommerce.core.domain.model.pedido.OrderItemExchange.class);
+        when(exchange.difference()).thenReturn(new BigDecimal("5.00"));
+        when(orderUseCase.exchangeItem(eq(1L), argThat((OrderUseCase.ExchangeCommand c) ->
+                c.settlementMethod() == com.cernecommerce.core.domain.model.pagamento.PaymentMethod.PIX
+                        && c.newSku().equals("ZOMO-50-MENTA")), eq("admin")))
+                .thenReturn(new OrderUseCase.ExchangeResult(after, exchange));
+        when(orderConverter.toAdminResponse(after)).thenReturn(mock(OrderAdminResponseDTO.class));
+
+        mockMvc.perform(post("/orders/1/items/exchange")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sku\":\"ZOMO-50-UVA\",\"quantity\":1,\"destination\":\"RESTOCK\","
+                                + "\"newSku\":\"ZOMO-50-MENTA\",\"newQuantity\":1,\"reason\":\"sabor errado\","
+                                + "\"settlementMethod\":\"PIX\"}"))
+                .andExpect(status().isOk());
+
+        verify(publisher).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void exchangeItem_formaDeAcertoInvalida_returns400() throws Exception {
+        mockMvc.perform(post("/orders/1/items/exchange")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sku\":\"A\",\"quantity\":1,\"destination\":\"RESTOCK\","
+                                + "\"newSku\":\"B\",\"newQuantity\":1,\"reason\":\"sabor errado\","
+                                + "\"settlementMethod\":\"MARCADO\"}"))
+                .andExpect(status().isBadRequest());
+        verify(orderUseCase, never()).exchangeItem(any(), any(), any());
+    }
+
     @Test
     void getSummary_returns_200_withMappedDto() throws Exception {
         OrderSummary summary = new OrderSummary(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,

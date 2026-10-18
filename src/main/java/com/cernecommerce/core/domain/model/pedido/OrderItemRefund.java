@@ -11,10 +11,20 @@ import java.time.Instant;
  * @param amount     dinheiro devolvido por estas unidades: o líquido proporcional do item
  * @param costAmount custo congelado das unidades — a perda, quando {@code destination = DISCARD}
  * @param sessionId  sessão de caixa onde o estorno foi feito; nula se quem estornou não tinha caixa aberto
+ * @param exchangeId PED-F006 — a troca de que estas unidades são a perna devolvida. Com ela, {@code amount}
+ *                   não voltou em dinheiro: virou crédito no item entregue (só a diferença move caixa)
  */
 public record OrderItemRefund(Long id, Long orderId, Long orderItemId, String sku, BigDecimal quantity,
         RefundDestination destination, BigDecimal amount, BigDecimal costAmount, String reason, Long sessionId,
-        String createdBy, Instant createdAt) {
+        String createdBy, Instant createdAt, Long exchangeId) {
+
+    /** Estorno comum, fora de troca (PED-F004). */
+    public OrderItemRefund(Long id, Long orderId, Long orderItemId, String sku, BigDecimal quantity,
+            RefundDestination destination, BigDecimal amount, BigDecimal costAmount, String reason, Long sessionId,
+            String createdBy, Instant createdAt) {
+        this(id, orderId, orderItemId, sku, quantity, destination, amount, costAmount, reason, sessionId,
+                createdBy, createdAt, null);
+    }
 
     public OrderItemRefund {
         // orderItemId é NOT NULL no banco; aqui não se exige porque item ainda não persistido (testes de
@@ -44,5 +54,16 @@ public record OrderItemRefund(Long id, Long orderId, Long orderItemId, String sk
             String createdBy, Instant createdAt) {
         return new OrderItemRefund(null, orderId, orderItemId, sku, quantity, destination, amount, costAmount,
                 reason, sessionId, createdBy, createdAt);
+    }
+
+    /** PED-F006 — a perna devolvida de uma troca. */
+    public static OrderItemRefund forExchange(Long exchangeId, Long orderId, Long orderItemId, String sku,
+            BigDecimal quantity, RefundDestination destination, BigDecimal amount, BigDecimal costAmount,
+            String reason, Long sessionId, String createdBy, Instant createdAt) {
+        if (exchangeId == null) {
+            throw new IllegalArgumentException("exchangeId é obrigatório");
+        }
+        return new OrderItemRefund(null, orderId, orderItemId, sku, quantity, destination, amount, costAmount,
+                reason, sessionId, createdBy, createdAt, exchangeId);
     }
 }

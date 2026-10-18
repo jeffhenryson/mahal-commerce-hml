@@ -80,4 +80,8 @@ public class OrderPaymentEntity {
     /** PED-F004 — sessão de caixa onde o estorno foi feito. Só em linha REFUNDED; nula nas antigas. */
     @Column(name = "refund_session_id")
     private Long refundSessionId;
+
+    /** PED-F006 — sessão de caixa onde a diferença de uma troca foi paga. Só em CAPTURED/CORRECTED. */
+    @Column(name = "capture_session_id")
+    private Long captureSessionId;
 }

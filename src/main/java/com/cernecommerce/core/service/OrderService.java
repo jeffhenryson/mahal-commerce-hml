@@ -8,11 +8,19 @@ import com.cernecommerce.core.domain.exception.pagamento.GatewayPaymentNotCorrec
 import com.cernecommerce.core.domain.exception.pagamento.InvalidCorrectionPaymentMethodException;
 import com.cernecommerce.core.domain.exception.pagamento.OrderNotCorrectableException;
 import com.cernecommerce.core.domain.exception.pagamento.PaymentTotalMismatchException;
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
+import com.cernecommerce.core.domain.exception.pedido.CashRefundRequiresOpenSessionException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
+import com.cernecommerce.core.ports.out.pedido.OrderItemExchangeRepository;
+import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
+import com.cernecommerce.core.domain.exception.pedido.ExchangeItemInvalidException;
+import com.cernecommerce.core.domain.exception.pedido.OrderNotExchangeableException;
+import com.cernecommerce.core.domain.exception.pedido.SettlementMethodRequiredException;
+import com.cernecommerce.core.domain.model.pedido.OrderItemExchange;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.pedido.RefundDestination;
 import com.cernecommerce.core.domain.model.pedido.OrderItemRefund;
@@ -69,13 +77,16 @@ public class OrderService implements OrderUseCase {
     private final OrderPaymentCorrectionRepository correctionRepository;
     private final ReceivableUseCase receivableUseCase;
     private final OrderItemRefundRepository itemRefundRepository;
+    private final OrderItemExchangeRepository itemExchangeRepository;
 
     public OrderService(OrderRepository orderRepository, EstoqueUseCase estoqueUseCase,
             OrderPaymentRepository orderPaymentRepository, CashbackUseCase cashbackUseCase,
             CashRegisterRepository cashRegisterRepository, OrderPaymentCorrectionRepository correctionRepository,
-            ReceivableUseCase receivableUseCase, OrderItemRefundRepository itemRefundRepository) {
+            ReceivableUseCase receivableUseCase, OrderItemRefundRepository itemRefundRepository,
+            OrderItemExchangeRepository itemExchangeRepository) {
         this.receivableUseCase = receivableUseCase;
         this.itemRefundRepository = itemRefundRepository;
+        this.itemExchangeRepository = itemExchangeRepository;
         this.orderRepository = orderRepository;
         this.estoqueUseCase = estoqueUseCase;
         this.orderPaymentRepository = orderPaymentRepository;
@@ -211,11 +222,29 @@ public class OrderService implements OrderUseCase {
                     order.allowedTransitions());
         }
 
-        // O estorno sai da gaveta de quem estorna. Sem caixa aberto, a soma cai no caixa do pedido.
+        // O estorno sai da gaveta de quem estorna. Sem caixa aberto, só estorno que não devolve
+        // dinheiro (PED-C009), e a soma cai no caixa do pedido.
         Long refundSessionId = cashRegisterRepository.findOpenByOperator(username)
                 .map(CashRegisterSession::id).orElse(null);
         if (ownSessionOnly && (refundSessionId == null || !refundSessionId.equals(order.sessionId()))) {
             throw new RefundNotOwnSessionException(orderId, username);
+        }
+        if (refundSessionId != null) {
+            // PED-C013 — mesma trava compartilhada de toda escrita que soma no esperado (PDV-C035).
+            // Sem ela, um fechamento simultâneo gravava o esperado e o REFUNDED caía no caixa já
+            // fechado: a cédula saía e a conferência não a contava.
+            cashRegisterRepository.lockForShare(refundSessionId);
+            boolean stillOpen = cashRegisterRepository.findById(refundSessionId)
+                    .map(CashRegisterSession::isOpen).orElse(false);
+            if (!stillOpen) {
+                throw new CashRegisterSessionClosedException(refundSessionId);
+            }
+        }
+        List<OrderPayment> payments = orderPaymentRepository.findByOrderId(orderId);
+        // PED-C009 — sem caixa aberto o estorno em dinheiro cairia no caixa do pedido, talvez fechado
+        // há dias. Decisão do dono (2026-10-17): devolver cédula exige gaveta aberta de quem devolve.
+        if (refundSessionId == null && hasCashLeftToRefund(payments)) {
+            throw new CashRefundRequiresOpenSessionException(orderId, username);
         }
 
         Map<Long, BigDecimal> already = itemRefundRepository.sumQuantityByOrderItem(orderId);
@@ -230,7 +259,7 @@ public class OrderService implements OrderUseCase {
         returnToStock(order, lines, command.itemLots(), completes, username);
 
         BigDecimal requested = lines.stream().map(RefundPlanLine::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        refundPayments(orderId, completes, requested, refundSessionId, reason, username);
+        refundPayments(orderId, payments, completes, requested, refundSessionId, reason, username);
 
         // O ledger reverte uma entrada EARNED inteira: no parcial, só a do item que zerou agora.
         if (completes) {
@@ -257,6 +286,117 @@ public class OrderService implements OrderUseCase {
     @Transactional(readOnly = true)
     public Map<Long, BigDecimal> getRefundedQuantities(Long orderId) {
         return itemRefundRepository.sumQuantityByOrderItem(orderId);
+    }
+
+    // ── PED-F006: troca de item ─────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public ExchangeResult exchangeItem(Long orderId, ExchangeCommand command, String username) {
+        // Travado como o estorno (PED-C011): decide sobre as unidades restantes e as linhas de pagamento.
+        Order order = getOrderForUpdate(orderId);
+        // Mesmo estado de origem do estorno: pago e ainda não totalmente reembolsado.
+        if (!order.allowedTransitions().contains(OrderStatus.REEMBOLSADO)) {
+            throw new OrderNotExchangeableException(orderId, order.status());
+        }
+        // PED-C007 — o consumo do salão foi servido e queimado: não há o que devolver ao balcão.
+        if (order.channel() == SalesChannel.MESA) {
+            throw new OrderNotExchangeableException(orderId, "pedido de mesa — use o estorno");
+        }
+        if (command.destination() == null || command.destination() == RefundDestination.CUSTOMER_KEEPS) {
+            throw new ExchangeItemInvalidException("O destino da troca é RESTOCK ou DISCARD.");
+        }
+
+        // A perna devolvida é o estorno por item: mesmas unidades restantes, mesmo unitário.
+        Map<Long, BigDecimal> already = itemRefundRepository.sumQuantityByOrderItem(orderId);
+        List<RefundPlanLine> lines;
+        try {
+            lines = requestedLines(order, already,
+                    List.of(new RefundItemCommand(command.sku(), command.quantity(), command.destination())));
+        } catch (RefundQuantityExceededException e) {
+            throw new ExchangeItemInvalidException("O item " + command.sku() + " não tem " + command.quantity()
+                    + " unidade(s) para trocar neste pedido.");
+        }
+        if (lines.stream().anyMatch(l -> !l.item().mode().isCatalogLine())) {
+            throw new ExchangeItemInvalidException("Só item de catálogo pode ser trocado: " + command.sku() + ".");
+        }
+        BigDecimal returnedAmount = lines.stream().map(RefundPlanLine::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // O novo item sai pelo preço efetivo de agora, sem desconto. resolveSaleInfo recusa SKU
+        // inexistente (404) e base não vendável (PARENT_NOT_SELLABLE); fromCatalog, produto sem preço.
+        EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(command.newSku());
+        if (saleInfo.sessionProduct()) {
+            throw new ExchangeItemInvalidException("O item " + command.newSku() + " é vendido por sessão de mesa.");
+        }
+        OrderItem newItem = OrderItem.fromCatalog(command.newSku(), command.newQuantity(), saleInfo.pricing(),
+                BigDecimal.ZERO, saleInfo.productName());
+        BigDecimal newAmount = newItem.netAmount().setScale(Money.MONEY_SCALE, Money.ROUNDING);
+        BigDecimal difference = newAmount.subtract(returnedAmount);
+        PaymentMethod method = difference.signum() == 0 ? null : command.settlementMethod();
+        if (difference.signum() != 0 && method == null) {
+            throw new SettlementMethodRequiredException(difference);
+        }
+
+        // A diferença a pagar entra no caixa de quem troca; a devolvida em dinheiro sai da gaveta dele.
+        Long sessionId = cashRegisterRepository.findOpenByOperator(username)
+                .map(CashRegisterSession::id).orElse(null);
+        boolean needsDrawer = difference.signum() > 0
+                || (difference.signum() < 0 && method == PaymentMethod.DINHEIRO);
+        if (needsDrawer && sessionId == null) {
+            throw new NoOpenCashRegisterSessionException(username);
+        }
+        if (sessionId != null) {
+            // PED-C013 — mesma trava compartilhada do estorno (PDV-C035).
+            cashRegisterRepository.lockForShare(sessionId);
+            boolean stillOpen = cashRegisterRepository.findById(sessionId)
+                    .map(CashRegisterSession::isOpen).orElse(false);
+            if (!stillOpen) {
+                throw new CashRegisterSessionClosedException(sessionId);
+            }
+        }
+
+        // Estoque: a devolvida volta (RESTOCK) ou é perda sem mexer no saldo (DISCARD); a nova sai.
+        String movementReason = "Troca no pedido " + order.orderNumber();
+        for (RefundPlanLine line : lines) {
+            if (line.destination().returnsToStock()) {
+                estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
+                        line.quantity(), movementReason, username, null, null);
+            }
+        }
+        estoqueUseCase.adjustStock(command.newSku(), order.warehouseCode(), MovementType.SAIDA,
+                command.newQuantity(), movementReason, username);
+
+        Order saved = orderRepository.save(order.withAddedItem(newItem));
+        Set<Long> originalIds = order.items().stream().map(OrderItem::id).collect(Collectors.toSet());
+        Long newItemId = saved.items().stream().map(OrderItem::id)
+                .filter(id -> id != null && !originalIds.contains(id))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("item da troca não recebeu id"));
+
+        Long paymentId = null;
+        if (difference.signum() > 0) {
+            paymentId = orderPaymentRepository.save(
+                    OrderPayment.capturedInSession(orderId, method, difference, sessionId)).id();
+        } else if (difference.signum() < 0) {
+            paymentId = orderPaymentRepository.save(
+                    OrderPayment.refundedInSession(orderId, method, difference.negate(), sessionId)).id();
+        }
+
+        // O ledger reverte uma entrada EARNED inteira: só a do item que zerou agora (como no parcial).
+        cashbackUseCase.reverseEarningsForOrderItems(order, zeroedItems(order, already, plannedByIndex(lines)));
+
+        Instant now = Instant.now();
+        String reason = command.reason();
+        OrderItemExchange exchange = itemExchangeRepository.save(OrderItemExchange.register(orderId,
+                lines.getFirst().item().id(), command.sku(), command.quantity(), command.destination(), newItemId,
+                command.newSku(), command.newQuantity(), returnedAmount, newAmount, method, paymentId, sessionId,
+                reason, username, now));
+        itemRefundRepository.saveAll(lines.stream()
+                .map(l -> OrderItemRefund.forExchange(exchange.id(), orderId, l.item().id(), l.item().sku(),
+                        l.quantity(), l.destination(), l.amount(), costOf(l.item(), l.quantity()), reason, sessionId,
+                        username, now))
+                .toList());
+        return new ExchangeResult(saved, exchange);
     }
 
     /** Sem {@code items}: tudo o que ainda não foi estornado, com um destino só. */
@@ -420,9 +560,8 @@ public class OrderService implements OrderUseCase {
      *       formas de pagamento pelo peso de cada uma na venda. A parte do marcado abate o recebível.</li>
      * </ul>
      */
-    private void refundPayments(Long orderId, boolean completes, BigDecimal requested, Long refundSessionId,
-            String reason, String username) {
-        List<OrderPayment> payments = orderPaymentRepository.findByOrderId(orderId);
+    private void refundPayments(Long orderId, List<OrderPayment> payments, boolean completes, BigDecimal requested,
+            Long refundSessionId, String reason, String username) {
         // O REFUNDED não aponta a linha de origem: o já estornado de cada método é descontado das
         // linhas CAPTURED daquele método, na ordem em que foram lançadas.
         Map<PaymentMethod, BigDecimal> refundedByMethod = new EnumMap<>(PaymentMethod.class);
@@ -470,6 +609,22 @@ public class OrderService implements OrderUseCase {
                 receivableUseCase.reduceOpenForOrder(orderId, share, "Estorno parcial: " + reason, username);
             }
         }
+    }
+
+    /** PED-C009 — ainda há dinheiro capturado e não estornado neste pedido? */
+    private static boolean hasCashLeftToRefund(List<OrderPayment> payments) {
+        BigDecimal left = BigDecimal.ZERO;
+        for (OrderPayment payment : payments) {
+            if (payment.method() != PaymentMethod.DINHEIRO) {
+                continue;
+            }
+            if (payment.status() == PaymentStatus.CAPTURED) {
+                left = left.add(payment.amount());
+            } else if (payment.status() == PaymentStatus.REFUNDED) {
+                left = left.subtract(payment.amount());
+            }
+        }
+        return left.signum() > 0;
     }
 
     // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────

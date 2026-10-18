@@ -30,6 +30,12 @@ public interface OrderPaymentRepository {
     List<OrderPayment> findByOrderId(Long orderId);
 
     /**
+     * PDV-C054 — {@link #findByOrderId} de vários pedidos numa consulta só, agrupado por pedido.
+     * Pedido sem pagamento fica fora do mapa.
+     */
+    Map<Long, List<OrderPayment>> findByOrderIds(Collection<Long> orderIds);
+
+    /**
      * Soma dos pagamentos {@code CAPTURED} de um método, entre os pedidos liquidados por uma
      * sessão de caixa — é o que dá o total "recebido em dinheiro", "recebido em débito" etc. no
      * fechamento. Zero quando não houve nenhum, nunca {@code null}.
@@ -47,6 +53,15 @@ public interface OrderPaymentRepository {
      * que voltou.</p>
      */
     BigDecimal sumRefundedAmountBySessionIdAndMethod(Long sessionId, PaymentMethod method);
+
+    /**
+     * PDV-C051 — {@link #sumCapturedAmountBySessionIdAndMethod} de todos os métodos numa consulta só.
+     * Método sem pagamento fica fora do mapa (leia com {@code getOrDefault(m, ZERO)}).
+     */
+    Map<PaymentMethod, BigDecimal> sumCapturedBySessionIdGroupedByMethod(Long sessionId);
+
+    /** PDV-C051 — {@link #sumRefundedAmountBySessionIdAndMethod} de todos os métodos de uma vez. */
+    Map<PaymentMethod, BigDecimal> sumRefundedBySessionIdGroupedByMethod(Long sessionId);
 
     /**
      * PDV-F038 — soma das linhas {@code MARCADO} ({@code ON_ACCOUNT}, CRM-F010) dos pedidos da

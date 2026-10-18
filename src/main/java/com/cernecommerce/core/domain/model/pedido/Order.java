@@ -508,6 +508,26 @@ public record Order(
                 separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
     }
 
+    /**
+     * PED-F006 — acrescenta ao pedido já pago o item entregue numa troca. Bruto e desconto crescem
+     * pelos do item, e o líquido segue {@code bruto − desconto − cashback}. A unidade devolvida não
+     * sai da lista: fica no {@code order_item_refund}, como no estorno por item.
+     */
+    public Order withAddedItem(OrderItem item) {
+        if (item == null || item.grossAmount() == null) {
+            throw new IllegalArgumentException("item da troca precisa de preço congelado");
+        }
+        List<OrderItem> newItems = new java.util.ArrayList<>(items);
+        newItems.add(item);
+        BigDecimal newGross = grossAmount.add(item.grossAmount());
+        BigDecimal newDiscount = discountAmount.add(item.discountAmount());
+        BigDecimal newNet = newGross.subtract(newDiscount).subtract(cashbackRedeemed);
+        return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, newItems,
+                newGross, newDiscount, cashbackRedeemed, newNet, changeAmount, cancelReason, createdAt,
+                paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+    }
+
     /** Vincula o pedido a um cliente identificado depois da montagem — o "CPF na nota?" do balcão. */
     public Order withCustomer(Long newCustomerId) {
         return new Order(id, orderNumber, channel, status, newCustomerId, sessionId, warehouseCode, items,

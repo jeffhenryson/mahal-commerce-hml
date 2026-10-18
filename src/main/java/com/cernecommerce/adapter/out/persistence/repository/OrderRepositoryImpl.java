@@ -76,27 +76,36 @@ public class OrderRepositoryImpl implements OrderRepository {
         // regravá-las seria apagar e reinserir order_item: cashback_entry.order_item_id (V70) aponta
         // para elas, e no Postgres o reembolso ou a retirada de pedido com cashback morriam na FK.
         // O H2 das ITs não tem essa FK — OrderCashbackPostgresIT é a prova.
-        if (entity.getId() != null) {
-            return toDomain(orderJpaRepository.save(entity));
-        }
+        // PED-F006 — a única exceção é o acréscimo: o item entregue numa troca chega sem id e é
+        // inserido; as linhas já gravadas continuam intocadas.
+        boolean created = entity.getId() == null;
+        boolean appended = false;
         for (OrderItem item : order.items()) {
-            OrderItemEntity itemEntity = new OrderItemEntity();
-            itemEntity.setOrder(entity);
-            itemEntity.setSku(item.sku());
-            itemEntity.setQuantity(item.quantity());
-            itemEntity.setUnitPrice(item.unitPrice());
-            itemEntity.setCostPrice(item.costPrice());
-            itemEntity.setDiscountAmount(item.discountAmount());
-            itemEntity.setCashbackPercent(item.cashbackPercent());
-            itemEntity.setProductName(item.productName());
-            itemEntity.setMode(item.mode().name());
-            itemEntity.setCourtesy(item.courtesy());
-            itemEntity.setNotes(item.notes());
-            itemEntity.setCharcoal(item.charcoal());
-            itemEntity.setSurchargeAmount(item.surchargeAmount());
-            entity.getItems().add(itemEntity);
+            if (created || item.id() == null) {
+                entity.getItems().add(toItemEntity(entity, item));
+                appended = !created;
+            }
         }
-        return toDomain(orderJpaRepository.save(entity));
+        // O flush garante o id do item acrescentado já na volta: a troca o grava no histórico.
+        return toDomain(appended ? orderJpaRepository.saveAndFlush(entity) : orderJpaRepository.save(entity));
+    }
+
+    private static OrderItemEntity toItemEntity(OrderEntity order, OrderItem item) {
+        OrderItemEntity itemEntity = new OrderItemEntity();
+        itemEntity.setOrder(order);
+        itemEntity.setSku(item.sku());
+        itemEntity.setQuantity(item.quantity());
+        itemEntity.setUnitPrice(item.unitPrice());
+        itemEntity.setCostPrice(item.costPrice());
+        itemEntity.setDiscountAmount(item.discountAmount());
+        itemEntity.setCashbackPercent(item.cashbackPercent());
+        itemEntity.setProductName(item.productName());
+        itemEntity.setMode(item.mode().name());
+        itemEntity.setCourtesy(item.courtesy());
+        itemEntity.setNotes(item.notes());
+        itemEntity.setCharcoal(item.charcoal());
+        itemEntity.setSurchargeAmount(item.surchargeAmount());
+        return itemEntity;
     }
 
     @Override

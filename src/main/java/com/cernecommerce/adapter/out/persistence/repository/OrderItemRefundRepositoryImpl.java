@@ -59,12 +59,13 @@ public class OrderItemRefundRepositoryImpl implements OrderItemRefundRepository 
         e.setSessionId(r.sessionId());
         e.setCreatedBy(r.createdBy());
         e.setCreatedAt(r.createdAt());
+        e.setExchangeId(r.exchangeId());
         return e;
     }
 
     private static OrderItemRefund toDomain(OrderItemRefundEntity e) {
         return new OrderItemRefund(e.getId(), e.getOrderId(), e.getOrderItemId(), e.getSku(), e.getQuantity(),
                 RefundDestination.valueOf(e.getDestination()), e.getAmount(), e.getCostAmount(), e.getReason(),
-                e.getSessionId(), e.getCreatedBy(), e.getCreatedAt());
+                e.getSessionId(), e.getCreatedBy(), e.getCreatedAt(), e.getExchangeId());
     }
 }
