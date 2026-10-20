@@ -298,7 +298,7 @@ public class ProductRepositoryImpl implements ProductRepository {
         Page<Long> idPage = productJpaRepository.findFilteredIds(
                 likePattern(filter.search()), filter.category(), filter.brand(), filter.active(),
                 filter.type() == null ? null : filter.type().name(), filter.kitComponentEligible(),
-                filter.status() == null ? null : filter.status().name(), pageable);
+                filter.status() == null ? null : filter.status().name(), filter.sessionProduct(), pageable);
         return toPageResult(idPage, page, size);
     }
 

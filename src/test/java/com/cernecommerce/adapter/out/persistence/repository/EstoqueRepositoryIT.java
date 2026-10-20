@@ -861,6 +861,19 @@ class EstoqueRepositoryIT {
     }
 
     @Test
+    void findAll_filtraPorProdutoDeSessao() {
+        productRepository.save(Product.create("FLT-SESSAO-SIM", "Essência", "flt-sessao", List.of())
+                .withSessionProduct(true));
+        productRepository.save(Product.create("FLT-SESSAO-NAO", "Carvão", "flt-sessao", List.of()));
+        flushAndClear();
+
+        assertThat(skus(filtrar(new ProductFilter(null, "flt-sessao", null, null, null, null, null, true))))
+                .containsExactly("FLT-SESSAO-SIM");
+        assertThat(skus(filtrar(new ProductFilter(null, "flt-sessao", null, null, null, null, null, false))))
+                .containsExactly("FLT-SESSAO-NAO");
+    }
+
+    @Test
     void countByStatus_contaSoOsRascunhos() {
         long antes = productRepository.countByStatus(ProductStatus.RASCUNHO);
         productRepository.save(Product.create("CNT-STATUS-001", "Rascunho", "cnt-status", List.of())

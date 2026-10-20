@@ -1,0 +1,22 @@
+package com.cernecommerce.adapter.out.persistence.repository;
+
+import com.cernecommerce.adapter.out.persistence.entity.SalaoMesaEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.Optional;
+
+public interface SalaoMesaJpaRepository extends JpaRepository<SalaoMesaEntity, Long> {
+
+    List<SalaoMesaEntity> findAllByOrderByNomeAsc();
+
+    Optional<SalaoMesaEntity> findByToken(String token);
+
+    @Query("""
+            SELECT COUNT(m) > 0 FROM SalaoMesaEntity m
+            WHERE LOWER(m.nome) = LOWER(:nome) AND (:excetoId IS NULL OR m.id <> :excetoId)
+            """)
+    boolean existsByNome(@Param("nome") String nome, @Param("excetoId") Long excetoId);
+}

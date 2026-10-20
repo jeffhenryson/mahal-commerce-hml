@@ -126,14 +126,16 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
     public SessionSettings getSettings() {
         return settingsJpa.findById(SessionSettingsEntity.SINGLETON_ID)
                 .map(e -> new SessionSettings(e.getVasoPadraoCodigo(), e.getVasoGrandeCodigo(),
-                        e.getUpgradeVasoGrandePreco(), SessionSettings.parseDias(e.getDiasDuploRosh())))
+                        e.getUpgradeVasoGrandePreco(), SessionSettings.parseDias(e.getDiasDuploRosh()),
+                        e.getUpgradeCarvaoJumboPreco()))
                 .orElseGet(SessionSettings::defaults);
     }
 
     @Override
     public SessionSettings saveSettings(SessionSettings settings) {
         settingsJpa.save(new SessionSettingsEntity(SessionSettingsEntity.SINGLETON_ID, settings.vasoPadraoCodigo(),
-                settings.vasoGrandeCodigo(), settings.upgradeVasoGrandePreco(), settings.diasDuploRoshAsText()));
+                settings.vasoGrandeCodigo(), settings.upgradeVasoGrandePreco(), settings.diasDuploRoshAsText(),
+                settings.upgradeCarvaoJumboPreco()));
         return getSettings();
     }
 

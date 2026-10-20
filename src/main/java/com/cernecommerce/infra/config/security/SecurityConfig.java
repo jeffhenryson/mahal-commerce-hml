@@ -127,6 +127,10 @@ public class SecurityConfig {
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/shop/kits", "/shop/kits/*",
                         "/shop/kits/*/steps/*/options").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.POST, "/shop/kits/quote").permitAll()
+                // Autoatendimento do Salão: a página do QR da mesa é aberta pelo lead, sem login. O token
+                // da mesa é a credencial (checado no serviço); o abuso é contido por IP no
+                // ResourceRateLimitingFilter, em baldes próprios — não no de login, que o salão divide.
+                .requestMatchers("/public/salao/**").permitAll()
                 // ECM-F004 (Fatia 10): notificação do gateway de pagamento — é o próprio gateway
                 // chamando, sem sessão de usuário nenhuma. A defesa mora dentro de
                 // PaymentWebhookService (payment_check sempre reconsulta a verdade), não aqui.

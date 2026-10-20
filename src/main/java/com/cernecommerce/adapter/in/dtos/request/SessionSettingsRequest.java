@@ -33,4 +33,8 @@ public class SessionSettingsRequest {
             + "duplo agora é AddSessionRequest.modo = DUPLO, gratuito em qualquer dia.",
             example = "[\"WEDNESDAY\"]", deprecated = true)
     private Set<DayOfWeek> diasDuploRosh;
+
+    @DecimalMin("0.00")
+    @Schema(description = "Acréscimo do carvão jumbo na sessão. Omitido = mantém o atual.", example = "2.00")
+    private BigDecimal upgradeCarvaoJumboPreco;
 }

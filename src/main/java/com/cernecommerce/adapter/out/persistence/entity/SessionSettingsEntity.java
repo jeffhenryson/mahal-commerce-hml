@@ -30,4 +30,7 @@ public class SessionSettingsEntity {
 
     @Column(name = "dias_duplo_rosh", nullable = false, length = 80)
     private String diasDuploRosh;
+
+    @Column(name = "upgrade_carvao_jumbo_preco", nullable = false, precision = 12, scale = 2)
+    private BigDecimal upgradeCarvaoJumboPreco;
 }

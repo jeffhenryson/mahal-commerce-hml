@@ -107,6 +107,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
               AND (:type     IS NULL OR p.type = :type)
               AND (:kitComponentEligible IS NULL OR p.kitComponentEligible = :kitComponentEligible)
               AND (:status   IS NULL OR p.status = :status)
+              AND (:sessionProduct IS NULL OR p.sessionProduct = :sessionProduct)
             """)
     Page<Long> findFilteredIds(@Param("search") String search,
             @Param("category") String category,
@@ -115,6 +116,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             @Param("type") String type,
             @Param("kitComponentEligible") Boolean kitComponentEligible,
             @Param("status") String status,
+            @Param("sessionProduct") Boolean sessionProduct,
             Pageable pageable);
 
     /** EST-F023 — conta rascunhos para aplicar o teto de 5 no servidor. */

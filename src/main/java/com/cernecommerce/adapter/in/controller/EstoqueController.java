@@ -194,9 +194,11 @@ public class EstoqueController {
             @RequestParam(required = false) ProductType type,
             @RequestParam(required = false) Boolean kitComponentEligible,
             @RequestParam(required = false) ProductStatus status,
+            @RequestParam(required = false) Boolean sessionProduct,
             @RequestParam(defaultValue = "ID") ProductSortField sort,
             @RequestParam(defaultValue = "ASC") SortDirection direction) {
-        ProductFilter filter = new ProductFilter(search, category, brand, active, type, kitComponentEligible, status);
+        ProductFilter filter = new ProductFilter(search, category, brand, active, type, kitComponentEligible, status,
+                sessionProduct);
         PageResult<Product> result = estoqueUseCase.listProducts(page, size, filter, sort, direction);
         PageResult<ProductResponseDTO> response = new PageResult<>(
                 result.content().stream().map(converter::toResponse).toList(),

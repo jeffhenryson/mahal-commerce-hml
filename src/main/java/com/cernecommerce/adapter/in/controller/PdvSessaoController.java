@@ -55,6 +55,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -416,8 +417,11 @@ public class PdvSessaoController {
     @PreAuthorize("hasAuthority('PDV_SESSAO_MANAGE')")
     public ResponseEntity<SessionSettingsResponseDTO> updateSettings(@Valid @RequestBody SessionSettingsRequest request,
             Authentication authentication) {
+        // Client que ainda não conhece o carvão jumbo não zera o preço ao salvar.
+        BigDecimal jumbo = request.getUpgradeCarvaoJumboPreco() != null ? request.getUpgradeCarvaoJumboPreco()
+                : sessionMenuUseCase.getSettings().upgradeCarvaoJumboPreco();
         SessionSettings saved = sessionMenuUseCase.updateSettings(new SessionSettings(request.getVasoPadraoCodigo(),
-                request.getVasoGrandeCodigo(), request.getUpgradeVasoGrandePreco(), request.getDiasDuploRosh()));
+                request.getVasoGrandeCodigo(), request.getUpgradeVasoGrandePreco(), request.getDiasDuploRosh(), jumbo));
         audit(authentication, menuPayload("config", saved));
         return ResponseEntity.ok(SessionSettingsResponseDTO.of(saved));
     }
@@ -457,6 +461,7 @@ public class PdvSessaoController {
             putIfPresent(p, "vasoPadraoCodigo", c.vasoPadraoCodigo());
             putIfPresent(p, "vasoGrandeCodigo", c.vasoGrandeCodigo());
             putIfPresent(p, "upgradeVasoGrandePreco", c.upgradeVasoGrandePreco());
+            putIfPresent(p, "upgradeCarvaoJumboPreco", c.upgradeCarvaoJumboPreco());
             putIfPresent(p, "diasDuploRosh", c.diasDuploRosh() == null ? null
                     : c.diasDuploRosh().stream().map(Enum::name).sorted().toList());
         }

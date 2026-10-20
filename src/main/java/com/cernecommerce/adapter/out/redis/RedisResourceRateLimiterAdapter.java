@@ -31,7 +31,13 @@ public class RedisResourceRateLimiterAdapter implements ResourceRateLimiterPort 
             "crm-export", new BucketPolicy(3600, 5),
             "estoque-movements", new BucketPolicy(60, 60),
             "notifications-stream", new BucketPolicy(60, 30),
-            "shop-catalog", new BucketPolicy(60, 120));
+            "shop-catalog", new BucketPolicy(60, 120),
+            // Página do QR da mesa (pública, por IP). A escrita é o identificar/cadastrar/pedir:
+            // apertada o bastante para não servir de oráculo de CPF, folgada para uma mesa cheia.
+            "salao-publico-leitura", new BucketPolicy(60, 120),
+            "salao-publico-escrita", new BucketPolicy(60, 30),
+            // Código de 4 dígitos da mesa: 10 tentativas a cada 10 min por IP.
+            "salao-publico-acesso", new BucketPolicy(600, 10));
 
     // Mesmo script atômico usado em RedisLoginRateLimiterAdapter: adiciona entrada, remove
     // expirados, conta e decide em um único round-trip.

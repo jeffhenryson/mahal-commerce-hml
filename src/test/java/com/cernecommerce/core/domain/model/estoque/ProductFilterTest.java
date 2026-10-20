@@ -45,5 +45,6 @@ class ProductFilterTest {
         assertFalse(new ProductFilter(null, "narguile", null, null).isEmpty());
         assertFalse(new ProductFilter(null, null, "zomo", null).isEmpty());
         assertFalse(new ProductFilter(null, null, null, true).isEmpty());
+        assertFalse(new ProductFilter(null, null, null, null, null, null, null, true).isEmpty());
     }
 }

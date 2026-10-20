@@ -51,6 +51,8 @@ public class ResourceRateLimitingFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) throws ServletException {
         String path = request.getRequestURI().substring(request.getContextPath().length());
         String method = request.getMethod();
+        // Página do QR da mesa: pública, leitura e escrita, por IP.
+        if (path.startsWith("/public/salao/")) return false;
         if (!"GET".equalsIgnoreCase(method)) return true;
 
         return !"/crm/customers/export".equals(path)
@@ -68,7 +70,7 @@ public class ResourceRateLimitingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String path = request.getRequestURI().substring(request.getContextPath().length());
-        String bucket = bucketFor(path);
+        String bucket = bucketFor(path, request.getMethod());
         String key = keyFor(bucket, request);
 
         try {
@@ -92,16 +94,21 @@ public class ResourceRateLimitingFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private String bucketFor(String path) {
+    private String bucketFor(String path, String method) {
         if ("/crm/customers/export".equals(path)) return "crm-export";
         if ("/estoque/movements".equals(path)) return "estoque-movements";
         if ("/notifications/stream".equals(path)) return "notifications-stream";
+        if (path.startsWith("/public/salao/")) {
+            // O código da mesa tem 4 dígitos: tentativas contadas à parte e bem apertadas.
+            if (path.endsWith("/acesso")) return "salao-publico-acesso";
+            return "GET".equalsIgnoreCase(method) ? "salao-publico-leitura" : "salao-publico-escrita";
+        }
         return "shop-catalog";
     }
 
     /** Endpoints autenticados usam o usuário como chave; o catálogo (público) usa o IP. */
     private String keyFor(String bucket, HttpServletRequest request) {
-        if ("shop-catalog".equals(bucket)) {
+        if ("shop-catalog".equals(bucket) || bucket.startsWith("salao-publico")) {
             return clientIp(request);
         }
         Principal principal = request.getUserPrincipal();

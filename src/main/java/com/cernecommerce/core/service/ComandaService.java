@@ -597,10 +597,13 @@ public class ComandaService implements ComandaUseCase {
 
         SessionSetup setup = SessionSetup.of(command.carvao(), addons, command.vasoGrande());
         BigDecimal price = (command.vasoGrande() ? tier.preco().add(settings.upgradeVasoGrandePreco()) : tier.preco())
-                .add(setup.addonsTotal());
+                .add(setup.addonsTotal()).add(settings.charcoalSurcharge(command.carvao()));
         StringBuilder productName = new StringBuilder("Sessão ").append(tier.nome());
         if (command.vasoGrande()) {
             productName.append(" + vaso grande");
+        }
+        if (settings.charcoalSurcharge(command.carvao()).signum() > 0) {
+            productName.append(" + carvão jumbo");
         }
         addons.forEach(a -> productName.append(" + ").append(a.nome()));
         // PDV-F034 — paga no final vai direto ao preparo; o resto espera o pagamento (PDV-F027).

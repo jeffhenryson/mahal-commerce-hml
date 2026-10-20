@@ -18,6 +18,8 @@ public enum NotificationType {
     OPERACAO,
     /** Resumo diário de vendas, caixas e fiado vencido — para quem tem FINANCEIRO_READ. */
     RESUMO,
+    /** Sessão pedida pelo QR da mesa (autoatendimento do Salão) — para quem tem PDV_COMANDA_MANAGE. */
+    SOLICITACAO_SESSAO,
     /** Alertas técnicos (bug report, falha de integração, erro 500, segurança) — para a ROLE_DEV. */
     DEV
 }

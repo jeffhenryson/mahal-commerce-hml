@@ -59,7 +59,12 @@ class SecurityArchitectureTest {
             // GET /shop/catalog ser público: a vitrine do marketplace renderiza a foto sem token.
             // O UPLOAD não está aqui — mora em EstoqueController#uploadProductImage, sob
             // ESTOQUE_PRODUCT_MANAGE, e continua coberto por esta regra.
-            "ProductImageController");
+            "ProductImageController",
+            // Página do QR da mesa (autoatendimento do Salão): o lead abre no celular, sem login.
+            // O token da mesa é a credencial (conferido no serviço), o limite é por IP
+            // (ResourceRateLimitingFilter) e nada ali devolve dado pessoal. O lado da casa
+            // (SalaoAutoatendimentoController) continua coberto por esta regra.
+            "SalaoPublicoController");
 
     private static final Set<String> SELF_SERVICE_CONTROLLERS = Set.of(
             "NotificationController", "NotificationPreferenceController", "AvatarController",

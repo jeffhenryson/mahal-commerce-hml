@@ -1408,6 +1408,76 @@ public class GlobalExceptionHandler {
      * PDV-F010 — troca apontando para linha que não é open rosh. 409 e não 400: o id existe e é
      * válido; o que impede é o estado daquela linha.
      */
+    // ── Autoatendimento do Salão (QR da mesa) ──────────────────────────────────────────────
+    // A mensagem vai como está para a página do lead e para o PDV: é ela que diz o que fazer.
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.SalaoMesaNotFoundException.class)
+    public ResponseEntity<ApiError> handleSalaoMesaNotFound(
+            com.cernecommerce.core.domain.exception.salao.SalaoMesaNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "SALAO_MESA_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.SalaoMesaNomeDuplicadoException.class)
+    public ResponseEntity<ApiError> handleSalaoMesaNomeDuplicado(
+            com.cernecommerce.core.domain.exception.salao.SalaoMesaNomeDuplicadoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SALAO_MESA_NOME_DUPLICADO", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.SolicitacaoNotFoundException.class)
+    public ResponseEntity<ApiError> handleSolicitacaoNotFound(
+            com.cernecommerce.core.domain.exception.salao.SolicitacaoNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "SOLICITACAO_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.SolicitacaoJaPendenteException.class)
+    public ResponseEntity<ApiError> handleSolicitacaoJaPendente(
+            com.cernecommerce.core.domain.exception.salao.SolicitacaoJaPendenteException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SOLICITACAO_JA_PENDENTE", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.SolicitacaoNaoPendenteException.class)
+    public ResponseEntity<ApiError> handleSolicitacaoNaoPendente(
+            com.cernecommerce.core.domain.exception.salao.SolicitacaoNaoPendenteException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SOLICITACAO_NAO_PENDENTE", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException.class)
+    public ResponseEntity<ApiError> handleEssenciaIndisponivel(
+            com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ESSENCIA_INDISPONIVEL", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ClienteNaoIdentificadoException.class)
+    public ResponseEntity<ApiError> handleClienteNaoIdentificado(
+            com.cernecommerce.core.domain.exception.salao.ClienteNaoIdentificadoException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CLIENTE_NAO_IDENTIFICADO", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ClienteJaCadastradoException.class)
+    public ResponseEntity<ApiError> handleClienteJaCadastrado(
+            com.cernecommerce.core.domain.exception.salao.ClienteJaCadastradoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CLIENTE_JA_CADASTRADO", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.AutoatendimentoDadosInvalidosException.class)
+    public ResponseEntity<ApiError> handleAutoatendimentoDadosInvalidos(
+            com.cernecommerce.core.domain.exception.salao.AutoatendimentoDadosInvalidosException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SALAO_DADOS_INVALIDOS", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.MesaOcupadaException.class)
+    public ResponseEntity<ApiError> handleMesaOcupada(
+            com.cernecommerce.core.domain.exception.salao.MesaOcupadaException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "MESA_OCUPADA", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.CodigoMesaInvalidoException.class)
+    public ResponseEntity<ApiError> handleCodigoMesaInvalido(
+            com.cernecommerce.core.domain.exception.salao.CodigoMesaInvalidoException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "CODIGO_MESA_INVALIDO", req);
+    }
+
     // ── PDV-F021 — cardápio de sessão ───────────────────────────────────────────────────────
 
     @ExceptionHandler(SessionTierNotFoundException.class)

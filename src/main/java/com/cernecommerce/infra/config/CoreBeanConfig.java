@@ -398,6 +398,21 @@ class CoreBeanConfig {
                 catalogItemsEnabled, freeTextEssenceAllowed);
     }
 
+    /** Autoatendimento do Salão: QR por mesa, destaques do dia, mesa ocupada e a fila de solicitações do PDV. */
+    @Bean
+    com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase salaoAutoatendimentoUseCase(
+            com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository repository,
+            EstoqueUseCase estoqueUseCase, WarehouseRepository warehouseRepository,
+            SessionMenuService sessionMenuService,
+            com.cernecommerce.core.ports.in.CrmUseCase crmUseCase, ComandaUseCase comandaUseCase,
+            com.cernecommerce.core.ports.in.NotificationUseCase notificationUseCase, UserRepository userRepository,
+            com.cernecommerce.core.ports.out.notification.NotificationSsePort ssePort,
+            AfterCommitExecutor afterCommitExecutor) {
+        return new com.cernecommerce.core.service.SalaoAutoatendimentoService(repository, estoqueUseCase,
+                warehouseRepository, sessionMenuService, crmUseCase, comandaUseCase,
+                notificationUseCase, userRepository, ssePort, afterCommitExecutor, Clock.systemUTC());
+    }
+
     /** PDV-F021 — bean concreto: o ComandaService usa as regras de lançamento, como faz com o PdvService. */
     @Bean
     SessionMenuService sessionMenuService(SessionMenuRepository sessionMenuRepository) {

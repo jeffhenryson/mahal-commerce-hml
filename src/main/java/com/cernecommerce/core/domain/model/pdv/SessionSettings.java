@@ -11,10 +11,11 @@ import java.util.stream.Collectors;
 
 /**
  * Configuração do cardápio de sessão (PDV-F021): qual utensílio é o vaso padrão e qual é o grande,
- * quanto custa o upgrade, e em quais dias da semana o 2º rosh sai de graça ("duplo rosh").
+ * quanto custa o upgrade, em quais dias da semana o 2º rosh sai de graça ("duplo rosh") e quanto o
+ * carvão jumbo soma à sessão (V168).
  */
 public record SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, BigDecimal upgradeVasoGrandePreco,
-        Set<DayOfWeek> diasDuploRosh) {
+        Set<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco) {
 
     public SessionSettings {
         vasoPadraoCodigo = normalizeCode(vasoPadraoCodigo);
@@ -25,6 +26,23 @@ public record SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, 
         diasDuploRosh = diasDuploRosh == null || diasDuploRosh.isEmpty()
                 ? Collections.unmodifiableSet(EnumSet.noneOf(DayOfWeek.class))
                 : Collections.unmodifiableSet(EnumSet.copyOf(diasDuploRosh));
+        if (upgradeCarvaoJumboPreco == null) {
+            upgradeCarvaoJumboPreco = BigDecimal.ZERO;
+        }
+        if (upgradeCarvaoJumboPreco.signum() < 0) {
+            throw new IllegalArgumentException("preço do carvão jumbo não pode ser negativo");
+        }
+    }
+
+    /** Sem o preço do carvão jumbo: jumbo sai de graça, como antes de V168. */
+    public SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, BigDecimal upgradeVasoGrandePreco,
+            Set<DayOfWeek> diasDuploRosh) {
+        this(vasoPadraoCodigo, vasoGrandeCodigo, upgradeVasoGrandePreco, diasDuploRosh, BigDecimal.ZERO);
+    }
+
+    /** Quanto o carvão soma ao preço da sessão: só o jumbo tem acréscimo. */
+    public BigDecimal charcoalSurcharge(Charcoal carvao) {
+        return carvao == Charcoal.JUMBO ? upgradeCarvaoJumboPreco : BigDecimal.ZERO;
     }
 
     public static SessionSettings defaults() {
