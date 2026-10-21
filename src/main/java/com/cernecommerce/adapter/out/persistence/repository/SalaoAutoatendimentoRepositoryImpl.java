@@ -122,7 +122,8 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 x.carvao() == null ? null : x.carvao().name(),
                 x.adicionalIds().isEmpty() ? null
                         : x.adicionalIds().stream().map(String::valueOf).collect(Collectors.joining(",")),
-                x.pagarNoFinal(), s.deviceToken(), x.proporcao() == null ? null : x.proporcao().name());
+                x.pagarNoFinal(), s.deviceToken(), x.proporcao() == null ? null : x.proporcao().name(),
+                s.acompanhante());
         return toDomain(solicitacaoJpa.save(e));
     }
 
@@ -147,6 +148,13 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     @Transactional(readOnly = true)
     public boolean existsPendente(Long mesaId, Long customerId, Instant desde) {
         return solicitacaoJpa.existsByMesaIdAndCustomerIdAndStatusAndCriadoEmAfter(mesaId, customerId,
+                SolicitacaoStatus.PENDENTE.name(), desde);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean existsPendenteDoAparelho(Long mesaId, String deviceToken, Instant desde) {
+        return solicitacaoJpa.existsByMesaIdAndDeviceTokenAndStatusAndCriadoEmAfter(mesaId, deviceToken,
                 SolicitacaoStatus.PENDENTE.name(), desde);
     }
 
@@ -191,14 +199,20 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     }
 
     @Override
-    public void addAcesso(Long ocupacaoId, String deviceToken) {
-        ocupacaoJpa.addAcesso(ocupacaoId, deviceToken);
+    public void addAcesso(Long ocupacaoId, String deviceToken, boolean acompanhante) {
+        ocupacaoJpa.addAcesso(ocupacaoId, deviceToken, acompanhante);
     }
 
     @Override
     @Transactional(readOnly = true)
     public boolean hasAcesso(Long ocupacaoId, String deviceToken) {
         return deviceToken != null && !deviceToken.isBlank() && ocupacaoJpa.hasAcesso(ocupacaoId, deviceToken);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isAcompanhante(Long ocupacaoId, String deviceToken) {
+        return deviceToken != null && !deviceToken.isBlank() && ocupacaoJpa.isAcompanhante(ocupacaoId, deviceToken);
     }
 
     // ── Perfis de sabor ───────────────────────────────────────────────────────────────────────
@@ -278,7 +292,7 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 new EscolhasSessao(e.isVasoGrande(), e.getCarvao() == null ? null : Charcoal.valueOf(e.getCarvao()),
                         parseIds(e.getAdicionalIds()), e.isPagarNoFinal(),
                         e.getProporcao() == null ? null : ProporcaoMistura.valueOf(e.getProporcao())),
-                e.getDeviceToken());
+                e.getDeviceToken(), e.isAcompanhante());
     }
 
     private ChamadoMesa toDomain(SalaoChamadoEntity e) {

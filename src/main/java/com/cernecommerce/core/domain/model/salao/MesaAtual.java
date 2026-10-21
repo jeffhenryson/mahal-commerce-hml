@@ -2,6 +2,7 @@ package com.cernecommerce.core.domain.model.salao;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -28,7 +29,22 @@ public record MesaAtual(String mesa, String cliente, String codigo, Instant aber
         this(mesa, cliente, codigo, abertaEm, itens, emAberto, List.of(), null);
     }
 
-    public record Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm) {
+    /** @param sessao a linha do tempo, nas linhas de sessão ({@code SESSAO}/{@code ROSH_EXTRA}); senão nula */
+    public record Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm,
+            Sessao sessao) {
+
+        public Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm) {
+            this(nome, quantidade, valor, pago, lancadoEm, null);
+        }
+    }
+
+    /**
+     * Onde a sessão está, para o cliente acompanhar (PDV-F035, sem custo, operador nem id da linha).
+     *
+     * @param essencia o texto da linha, com a proporção da mescla; nulo no 2º rosh com sabor pendente
+     */
+    public record Sessao(SessionStatus status, String essencia, boolean pagarNoFinal, Instant lancadaEm,
+            Instant inicioEm, Instant entregueEm, Instant recolhidaEm, Long preparoMin, Long naMesaMin) {
     }
 
     /** O bastante para o QR remontar o pedido: os sabores, a proporção e os extras. */

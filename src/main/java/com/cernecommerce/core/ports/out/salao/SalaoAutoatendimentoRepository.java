@@ -51,6 +51,9 @@ public interface SalaoAutoatendimentoRepository {
     /** Pendentes desde {@code desde} (as mais antigas já expiraram) desta mesa e cliente. */
     boolean existsPendente(Long mesaId, Long customerId, Instant desde);
 
+    /** Pendentes desde {@code desde} pedidas por este aparelho na mesa — a regra do acompanhante. */
+    boolean existsPendenteDoAparelho(Long mesaId, String deviceToken, Instant desde);
+
     /** Última aceita da mesa — a comanda dela, se ainda aberta, recebe a próxima sessão pedida. */
     Optional<SolicitacaoSessao> findUltimaAceita(Long mesaId);
 
@@ -70,9 +73,16 @@ public interface SalaoAutoatendimentoRepository {
     /** A ocupação mais recente de cada comanda pedida (as que não são de mesa do QR não voltam). */
     List<MesaOcupacao> findOcupacoesByComandaIds(Collection<Long> comandaIds);
 
-    void addAcesso(Long ocupacaoId, String deviceToken);
+    /**
+     * Dá acesso à ocupação ao aparelho. {@code acompanhante}: entrou pelo código, não é o titular. Acesso
+     * do titular prevalece — o aparelho que já era dele continua sendo.
+     */
+    void addAcesso(Long ocupacaoId, String deviceToken, boolean acompanhante);
 
     boolean hasAcesso(Long ocupacaoId, String deviceToken);
+
+    /** O aparelho tem acesso à ocupação como acompanhante (entrou pelo código). */
+    boolean isAcompanhante(Long ocupacaoId, String deviceToken);
 
     // ── Perfis de sabor ──
 

@@ -15,4 +15,6 @@ public interface AuditLogJpaRepository extends JpaRepository<AuditLogEntity, Lon
     @Modifying
     @Query("DELETE FROM AuditLogEntity a WHERE a.timestamp < :cutoff")
     long deleteOlderThan(@Param("cutoff") Instant cutoff);
+
+    long countByActionAndTargetAndTimestampGreaterThanEqual(String action, String target, Instant since);
 }

@@ -79,4 +79,8 @@ public class SalaoSolicitacaoEntity {
     /** Proporção da mescla (V169); nula com um sabor só. */
     @Column(length = 20)
     private String proporcao;
+
+    /** Pedido sem CPF de um aparelho que entrou pelo código: cobra no titular (V170). */
+    @Column(nullable = false)
+    private boolean acompanhante;
 }

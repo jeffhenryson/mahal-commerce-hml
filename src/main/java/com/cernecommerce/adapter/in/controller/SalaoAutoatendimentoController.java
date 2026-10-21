@@ -111,7 +111,8 @@ public class SalaoAutoatendimentoController {
 
     @Operation(summary = "Essências disponíveis, marcadas as do dia",
             description = "Disponível = lata aberta ou fechada no depósito das sessões, com faixa ativa. "
-                    + "data omitida = hoje no fuso do salão.")
+                    + "data omitida = hoje no fuso do salão. perfisConfigurados = a casa já marcou os perfis "
+                    + "do SKU; falso, os perfis são a sugestão pelo nome.")
     @GetMapping("/salao/essencias-do-dia")
     @PreAuthorize("hasAuthority('PDV_READ')")
     public ResponseEntity<EssenciaDoDiaResponseDTO> listEssenciasDoDia(

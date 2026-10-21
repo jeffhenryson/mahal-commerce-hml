@@ -8,6 +8,7 @@ import com.cernecommerce.core.domain.exception.salao.ChamadoNotFoundException;
 import com.cernecommerce.core.domain.exception.salao.ClienteJaCadastradoException;
 import com.cernecommerce.core.domain.exception.salao.ClienteNaoIdentificadoException;
 import com.cernecommerce.core.domain.exception.salao.CodigoMesaInvalidoException;
+import com.cernecommerce.core.domain.exception.salao.ConfirmacaoBloqueadaException;
 import com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaException;
 import com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException;
 import com.cernecommerce.core.domain.exception.salao.MesaOcupadaException;
@@ -38,6 +39,7 @@ import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionAddon;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
+import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
 import com.cernecommerce.core.domain.model.pdv.SessionSettings;
 import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.salao.AcessoMesa;
@@ -65,6 +67,7 @@ import com.cernecommerce.core.ports.in.NotificationUseCase;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
+import com.cernecommerce.core.ports.out.audit.AuditLogRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.NotificationSsePort;
@@ -122,7 +125,16 @@ import java.util.stream.Collectors;
  * <p>Quem é o cliente da mesa entra num aparelho novo sem o código, mas confirmando um dado que só
  * ele tem à mão: os 4 últimos dígitos do celular (entrou pelo CPF) ou os 3 primeiros do CPF (entrou
  * pelo celular). Saber o CPF de alguém não basta. As mesas abertas que a identificação lista só
- * trazem token e valor da mesa deste QR — as outras são aviso. Cada tentativa vai para a auditoria.</p>
+ * trazem token e valor da mesa deste QR — as outras são aviso. Cada tentativa vai para a auditoria, e
+ * {@link #TENTATIVAS_CONFIRMACAO} erros em {@link #JANELA_TRAVA} travam o cliente até a janela passar
+ * (os 3 primeiros do CPF são só mil combinações). Sem o outro dado no cadastro, não há fallback: entra
+ * com o código da mesa.</p>
+ *
+ * <h2>Pedido sem CPF</h2>
+ * <p>O aparelho que já tem acesso à mesa pede sem se identificar: o cliente é o titular da ocupação.
+ * Se o aparelho entrou pelo código, o pedido é de acompanhante — cobra no titular, e o PDV vê
+ * "Acompanhante de &lt;titular&gt;". Pagar no final vale para qualquer cliente: quem decide é o
+ * atendente no aceite ({@code PDV_SESSION_PAY_LATER}).</p>
  *
  * <h2>Chamados</h2>
  * <p>Conta, recolher, carvão e atendente: um ABERTO por tipo e ocupação. O esquecido vence em
@@ -143,6 +155,9 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private static final Duration JANELA_ATENDIDOS = Duration.ofHours(12);
     /** Cabe na nota da linha com o sufixo de vaso grande ({@code ComandaItem.NOTES_MAX_LENGTH}). */
     private static final int TEXTO_MISTURA_MAX = 150;
+    /** Erros de confirmação que travam o cliente, dentro de {@link #JANELA_TRAVA}. */
+    static final int TENTATIVAS_CONFIRMACAO = 5;
+    static final Duration JANELA_TRAVA = Duration.ofMinutes(15);
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final SalaoAutoatendimentoRepository repository;
@@ -156,12 +171,14 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private final NotificationSsePort ssePort;
     private final AfterCommitExecutor afterCommit;
     private final AuditEventPublisherPort auditEvents;
+    private final AuditLogRepository auditLog;
     private final Clock clock;
 
     public SalaoAutoatendimentoService(SalaoAutoatendimentoRepository repository, EstoqueUseCase estoqueUseCase,
             WarehouseRepository warehouseRepository, SessionMenuUseCase sessionMenuUseCase, CrmUseCase crmUseCase, ComandaUseCase comandaUseCase,
             NotificationUseCase notificationUseCase, UserRepository userRepository, NotificationSsePort ssePort,
-            AfterCommitExecutor afterCommit, AuditEventPublisherPort auditEvents, Clock clock) {
+            AfterCommitExecutor afterCommit, AuditEventPublisherPort auditEvents, AuditLogRepository auditLog,
+            Clock clock) {
         this.repository = repository;
         this.estoqueUseCase = estoqueUseCase;
         this.warehouseRepository = warehouseRepository;
@@ -173,6 +190,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         this.ssePort = ssePort;
         this.afterCommit = afterCommit;
         this.auditEvents = auditEvents;
+        this.auditLog = auditLog;
         this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
@@ -344,19 +362,29 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public SolicitacaoSessao solicitarPorToken(String token, Pedido pedido) {
         SalaoMesa mesa = mesaPorToken(token);
         String device = deviceObrigatorio(pedido.deviceToken());
-        if (acesso(mesa, device) == AcessoMesa.BLOQUEADO) {
+        Optional<MesaOcupacao> ocupacao = ocupacaoAberta(mesa);
+        boolean naMesa = ocupacao.map(o -> repository.hasAcesso(o.id(), device)).orElse(false);
+        if (ocupacao.isPresent() && !naMesa) {
             throw new MesaOcupadaException("Esta mesa já está com outro cliente — digite o código da mesa.");
         }
-        Customer cliente = encontrar(pedido.identificacao()).orElseThrow(() ->
-                new ClienteNaoIdentificadoException("Não encontramos seu cadastro — confira o CPF ou celular."));
+        Customer cliente;
+        boolean acompanhante = false;
+        if (semIdentificacao(pedido.identificacao()) && naMesa) {
+            // Quem já está na mesa pede sem CPF: o cliente é o titular dela.
+            cliente = crmUseCase.findCustomerById(ocupacao.get().customerId());
+            acompanhante = repository.isAcompanhante(ocupacao.get().id(), device);
+        } else if (semIdentificacao(pedido.identificacao())) {
+            throw new ClienteNaoIdentificadoException("Identifique-se com o CPF ou o celular.");
+        } else {
+            cliente = encontrar(pedido.identificacao()).orElseThrow(() ->
+                    new ClienteNaoIdentificadoException("Não encontramos seu cadastro — confira o CPF ou celular."));
+        }
         if (!faltando(cliente).isEmpty()) {
             throw new AutoatendimentoDadosInvalidosException("Complete seu cadastro antes de pedir.");
         }
+        // Pagar no final vale para todos: o atendente decide no aceite (PDV_SESSION_PAY_LATER).
         EscolhasSessao escolhas = pedido.escolhas() == null
                 ? new EscolhasSessao(false, null, List.of(), false) : pedido.escolhas();
-        if (escolhas.pagarNoFinal() && !vip(cliente)) {
-            throw new AutoatendimentoDadosInvalidosException("Pagar no final é só para clientes VIP.");
-        }
         Set<Long> adicionais = adicionaisAtivos().stream().map(SessionAddon::id).collect(Collectors.toSet());
         if (!adicionais.containsAll(escolhas.adicionalIds())) {
             throw new AutoatendimentoDadosInvalidosException("Um dos adicionais não está disponível — revise o pedido.");
@@ -372,7 +400,10 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         // A proporção é da mescla: um sabor só não tem.
         escolhas = escolhas.withProporcao(sabor2 == null ? null : escolhas.proporcao());
         Instant agora = clock.instant();
-        if (repository.existsPendente(mesa.id(), cliente.id(), agora.minus(SolicitacaoSessao.VALIDADE))) {
+        // Um pendente por pessoa: o acompanhante pede no titular, então conta pelo aparelho dele.
+        if (acompanhante
+                ? repository.existsPendenteDoAparelho(mesa.id(), device, agora.minus(SolicitacaoSessao.VALIDADE))
+                : repository.existsPendente(mesa.id(), cliente.id(), agora.minus(SolicitacaoSessao.VALIDADE))) {
             throw new SolicitacaoJaPendenteException(
                     "Você já tem um pedido aguardando o atendente nesta mesa.");
         }
@@ -380,8 +411,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         EssenciaOferecida faixa = sabor2 != null && sabor2.preco().compareTo(sabor.preco()) > 0 ? sabor2 : sabor;
         SolicitacaoSessao salva = repository.saveSolicitacao(SolicitacaoSessao.nova(mesa.id(), cliente.id(),
                 faixa.tierId(), sabor.sku(), sabor2 == null ? null : sabor2.sku(), pedido.observacao(), escolhas,
-                device, agora));
-        avisarAtendentes(mesa, cliente, sabor, sabor2);
+                device, acompanhante, agora));
+        avisarAtendentes(mesa, quemPediu(cliente.nome(), acompanhante), sabor, sabor2);
         return salva;
     }
 
@@ -423,7 +454,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
             throw new CodigoMesaInvalidoException(
                     "Código incorreto — confira com quem está na mesa ou peça ao atendente.");
         }
-        repository.addAcesso(ocupacao.get().id(), device);
+        repository.addAcesso(ocupacao.get().id(), device, true);
     }
 
     @Override
@@ -492,11 +523,11 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         Optional<MesaOcupacao> ocupacao = ocupacaoAberta(mesa);
         Optional<Customer> cliente = encontrar(identificacao);
         if (ocupacao.isEmpty() || cliente.isEmpty() || !cliente.get().id().equals(ocupacao.get().customerId())) {
-            auditarRecusa(mesa, identificacao, "ENTRAR", "MESA_OCUPADA");
+            auditarRecusa(mesa, identificacao, "ENTRAR", "MESA_OCUPADA", null);
             throw new MesaOcupadaException("Esta mesa não está aberta no seu nome — peça o código a quem está nela.");
         }
         conferir(mesa, cliente.get(), identificacao, confirmacao, "ENTRAR");
-        repository.addAcesso(ocupacao.get().id(), device);
+        repository.addAcesso(ocupacao.get().id(), device, false);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("mesaId", mesa.id());
         payload.put("mesa", mesa.nome());
@@ -557,7 +588,9 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         MesaOcupacao ocupacao = ocupada.orElseGet(() -> repository.saveOcupacao(
                 MesaOcupacao.nova(mesa.id(), comandaId, solicitacao.customerId(), clock.instant())));
         if (solicitacao.deviceToken() != null) {
-            repository.addAcesso(ocupacao.id(), solicitacao.deviceToken());
+            // Quem pediu em mesa já ocupada por outro cliente entra nela como acompanhante.
+            repository.addAcesso(ocupacao.id(), solicitacao.deviceToken(),
+                    solicitacao.acompanhante() || !ocupacao.customerId().equals(solicitacao.customerId()));
         }
         SolicitacaoSessao aceita = repository.saveSolicitacao(
                 solicitacao.aceita(comandaId, username, clock.instant()));
@@ -666,10 +699,12 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         Set<String> skus = lista.stream().map(EssenciaOferecida::sku).collect(Collectors.toSet());
         Map<String, List<PerfilSabor>> marcados = repository.findPerfis(skus);
         Set<String> configurados = repository.findSkusComPerfilConfigurado(skus);
-        return lista.stream().map(e -> new EssenciaOferecida(e.sku(), e.sabor(), e.produto(), e.marca(), e.tierId(),
-                e.tierNome(), e.preco(), configurados.contains(e.sku()) || marcados.containsKey(e.sku())
-                        ? marcados.getOrDefault(e.sku(), List.of())
-                        : PerfilSabor.sugerir(e.sabor() + " " + e.produto())))
+        return lista.stream().map(e -> {
+                    boolean configurado = configurados.contains(e.sku()) || marcados.containsKey(e.sku());
+                    return new EssenciaOferecida(e.sku(), e.sabor(), e.produto(), e.marca(), e.tierId(), e.tierNome(),
+                            e.preco(), configurado ? marcados.getOrDefault(e.sku(), List.of())
+                                    : PerfilSabor.sugerir(e.sabor() + " " + e.produto()), configurado);
+                })
                 .toList();
     }
 
@@ -722,6 +757,11 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         }
         List<CustomerMatch> achados = crmUseCase.lookupCustomers(celular, null, cpf);
         return achados.stream().map(CustomerMatch::customer).findFirst();
+    }
+
+    private static boolean semIdentificacao(Identificacao identificacao) {
+        return identificacao == null || ((identificacao.cpf() == null || identificacao.cpf().isBlank())
+                && (identificacao.celular() == null || identificacao.celular().isBlank()));
     }
 
     private static String cpfOuNulo(String cpf) {
@@ -816,6 +856,14 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private void conferir(SalaoMesa mesa, Customer cliente, Identificacao identificacao, String confirmacao,
             String acao) {
         boolean peloCpf = peloCpf(identificacao);
+        // Travado nem a certa entra: senão a trava só avisaria quando parar de tentar.
+        if (auditLog.countSince(AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA.name(), "customer:" + cliente.id(),
+                clock.instant().minus(JANELA_TRAVA)) >= TENTATIVAS_CONFIRMACAO) {
+            auditarRecusa(mesa, identificacao, acao, "CONFIRMACAO_BLOQUEADA", null);
+            throw new ConfirmacaoBloqueadaException("Muitas tentativas erradas — tente de novo em "
+                    + JANELA_TRAVA.toMinutes() + " minutos ou peça o código a quem está na mesa.",
+                    JANELA_TRAVA.toSeconds());
+        }
         // Comparação em tempo constante, como o código da mesa. Sem o dado no cadastro não há o que
         // conferir: entra com o código.
         String esperado = peloCpf ? ultimos(CustomerIdentifiers.normalizePhone(cliente.contato()), 4)
@@ -823,7 +871,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         String digitado = digitos(confirmacao);
         if (esperado == null || digitado == null || !MessageDigest.isEqual(esperado.getBytes(StandardCharsets.UTF_8),
                 digitado.getBytes(StandardCharsets.UTF_8))) {
-            auditarRecusa(mesa, identificacao, acao, "CONFIRMACAO_INVALIDA");
+            auditarRecusa(mesa, identificacao, acao, "CONFIRMACAO_INVALIDA", cliente.id());
             throw new ConfirmacaoInvalidaException(peloCpf
                     ? "Os 4 últimos dígitos do celular não conferem."
                     : "Os 3 primeiros dígitos do CPF não conferem.");
@@ -968,12 +1016,27 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         };
     }
 
-    /** O consumo da comanda como o cliente o vê, na ordem do lançamento. */
+    /** O consumo da comanda como o cliente o vê, na ordem do lançamento; a sessão com a linha do tempo. */
     private static List<MesaAtual.Item> itens(Comanda comanda) {
         return comanda.items().stream()
                 .sorted(Comparator.comparing(ComandaItem::addedAt, Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(i -> new MesaAtual.Item(i.productName(), i.quantity(), i.netSubtotal(), !i.isOpen(), i.addedAt()))
+                .map(i -> new MesaAtual.Item(i.productName(), i.quantity(), i.netSubtotal(), !i.isOpen(), i.addedAt(),
+                        sessao(i)))
                 .toList();
+    }
+
+    /** A linha do tempo (PDV-F035) da linha de sessão; nula nas demais e na anterior à V132. */
+    static MesaAtual.Sessao sessao(ComandaItem item) {
+        SessionTimeline t = SessionTimeline.of(item, null);
+        if (t == null) return null;
+        // O texto da linha é a essência (com a proporção) mais o sufixo do vaso grande.
+        String notes = item.notes();
+        if (notes != null && notes.endsWith(ComandaItem.VASO_GRANDE_NOTE_SUFFIX)) {
+            notes = notes.substring(0, notes.length() - ComandaItem.VASO_GRANDE_NOTE_SUFFIX.length());
+        }
+        return new MesaAtual.Sessao(t.status(), notes == null || notes.isBlank() ? null : notes.trim(),
+                t.pagarNoFinal(), t.lancadaEm(), t.inicioEm(), t.entregueEm(), t.recolhidaEm(), t.preparoMin(),
+                t.naMesaMin());
     }
 
     /** Os chamados que a tela do cliente mostra ({@link ChamadoMesa#recenteEm}). */
@@ -982,9 +1045,15 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         return repository.findChamadosDaComanda(comandaId).stream().filter(c -> c.recenteEm(agora)).toList();
     }
 
-    /** Sem CPF nem celular no rastro: só a mesa, a ação, por onde a pessoa se identificou e o motivo. */
-    private void auditarRecusa(SalaoMesa mesa, Identificacao identificacao, String acao, String motivo) {
+    /**
+     * Sem CPF nem celular no rastro: só a mesa, a ação, por onde a pessoa se identificou e o motivo. O
+     * cliente vai só no erro de confirmação — é a contagem da trava; a tentativa já travada não a
+     * estende.
+     */
+    private void auditarRecusa(SalaoMesa mesa, Identificacao identificacao, String acao, String motivo,
+            Long customerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        if (customerId != null) payload.put("customerId", customerId);
         payload.put("mesaId", mesa.id());
         payload.put("mesa", mesa.nome());
         payload.put("acao", acao);
@@ -1032,7 +1101,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                     .add(settings.charcoalSurcharge(x.carvao()))
                     .add(escolhidos.stream().map(SessionAddon::preco).reduce(BigDecimal.ZERO, BigDecimal::add));
             resumos.add(new SolicitacaoResumo(s, s.statusEm(agora), mesas.getOrDefault(s.mesaId(), "Mesa"),
-                    c.nome(), c.contato(), faixa == null ? null : faixa.nome(), faixa == null ? null : faixa.preco(),
+                    quemPediu(c.nome(), s.acompanhante()), c.contato(), faixa == null ? null : faixa.nome(), faixa == null ? null : faixa.preco(),
                     rotulo(rotulos, s.essenciaSku()), s.essenciaSku2() == null ? null : rotulo(rotulos, s.essenciaSku2()),
                     escolhidos.stream().map(SessionAddon::nome).toList(), total));
         }
@@ -1052,10 +1121,15 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         });
     }
 
-    private void avisarAtendentes(SalaoMesa mesa, Customer cliente, EssenciaOferecida sabor,
+    /** "Acompanhante de Maria": quem pediu sem CPF num aparelho que entrou pelo código. */
+    static String quemPediu(String titular, boolean acompanhante) {
+        return acompanhante ? "Acompanhante de " + titular : titular;
+    }
+
+    private void avisarAtendentes(SalaoMesa mesa, String quem, EssenciaOferecida sabor,
             EssenciaOferecida sabor2) {
         String titulo = "Sessão pedida na " + mesa.nome();
-        String corpo = cliente.nome() + " pediu " + sabor.sabor()
+        String corpo = quem + " pediu " + sabor.sabor()
                 + (sabor2 == null ? "" : " + " + sabor2.sabor()) + " (" + sabor.marca() + ") pelo QR.";
         avisar("salao.solicitacao.aviso", NotificationType.SOLICITACAO_SESSAO, titulo, corpo);
     }

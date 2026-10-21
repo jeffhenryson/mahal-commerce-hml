@@ -24,6 +24,9 @@ public interface SalaoSolicitacaoJpaRepository extends JpaRepository<SalaoSolici
     boolean existsByMesaIdAndCustomerIdAndStatusAndCriadoEmAfter(Long mesaId, Long customerId, String status,
             Instant desde);
 
+    boolean existsByMesaIdAndDeviceTokenAndStatusAndCriadoEmAfter(Long mesaId, String deviceToken, String status,
+            Instant desde);
+
     Optional<SalaoSolicitacaoEntity> findFirstByMesaIdAndStatusOrderByDecididoEmDesc(Long mesaId, String status);
 
     Page<SalaoSolicitacaoEntity> findByStatusOrderByCriadoEmDesc(String status, Pageable pageable);

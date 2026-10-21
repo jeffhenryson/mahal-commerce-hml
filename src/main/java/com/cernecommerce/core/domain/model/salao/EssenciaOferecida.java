@@ -10,12 +10,19 @@ import java.util.List;
  * @param produto nome do produto (a linha da marca)
  * @param perfis os marcados pela casa para o SKU, ou os sugeridos pelo nome enquanto ela não marcou;
  *        na ordem de {@link PerfilSabor}
+ * @param perfisConfigurados a casa já marcou os perfis do SKU (mesmo nenhum); falso, {@code perfis} é a
+ *        sugestão pelo nome. Só o admin usa: o QR não distingue
  */
 public record EssenciaOferecida(String sku, String sabor, String produto, String marca, Long tierId,
-        String tierNome, BigDecimal preco, List<PerfilSabor> perfis) {
+        String tierNome, BigDecimal preco, List<PerfilSabor> perfis, boolean perfisConfigurados) {
 
     public EssenciaOferecida {
         perfis = perfis == null ? List.of() : perfis.stream().distinct().sorted().toList();
+    }
+
+    public EssenciaOferecida(String sku, String sabor, String produto, String marca, Long tierId, String tierNome,
+            BigDecimal preco, List<PerfilSabor> perfis) {
+        this(sku, sabor, produto, marca, tierId, tierNome, preco, perfis, false);
     }
 
     public EssenciaOferecida(String sku, String sabor, String produto, String marca, Long tierId, String tierNome,

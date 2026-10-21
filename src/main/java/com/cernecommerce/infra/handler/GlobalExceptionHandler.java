@@ -1484,6 +1484,14 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "CONFIRMACAO_INVALIDA", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ConfirmacaoBloqueadaException.class)
+    public ResponseEntity<ApiError> handleConfirmacaoBloqueada(
+            com.cernecommerce.core.domain.exception.salao.ConfirmacaoBloqueadaException ex, HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(ex.retryAfterSeconds()))
+                .body(ApiError.of(ex.getMessage(), "CONFIRMACAO_BLOQUEADA", req.getRequestURI(), MDC.get("traceId")));
+    }
+
     @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException.class)
     public ResponseEntity<ApiError> handleChamadoJaAberto(
             com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException ex, HttpServletRequest req) {

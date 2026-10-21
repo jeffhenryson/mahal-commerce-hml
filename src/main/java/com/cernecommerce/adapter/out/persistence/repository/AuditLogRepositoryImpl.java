@@ -98,6 +98,12 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
         return jpaRepo.deleteOlderThan(cutoff);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public long countSince(String action, String target, Instant since) {
+        return jpaRepo.countByActionAndTargetAndTimestampGreaterThanEqual(action, target, since);
+    }
+
     private String resolveTarget(AuditEvent event) {
         Object role = event.details().get("role");
         if (role != null) return "role:" + role;
@@ -105,6 +111,9 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
         if (permission != null) return "permission:" + permission;
         Object targetUser = event.details().get("targetUser");
         if (targetUser != null) return "user:" + targetUser;
+        // Salão — a recusa da confirmação conta por cliente (trava de 5 erros).
+        Object customer = event.details().get("customerId");
+        if (customer != null) return "customer:" + customer;
         return null;
     }
 }

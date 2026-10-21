@@ -111,10 +111,13 @@ public class SalaoPublicoController {
                         request.novoCelular(), request.novoCpf(), request.dataNascimento()))));
     }
 
+    @Operation(summary = "Pede uma sessão", description = "Com CPF ou celular; sem eles, só o aparelho com acesso à "
+            + "mesa ocupada, e o cliente é o titular dela (quem entrou pelo código pede como acompanhante). "
+            + "Pagar no final vale para todos — o atendente decide no aceite.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Pedido enviado ao atendente"),
             @ApiResponse(responseCode = "403", description = "Mesa com outro cliente (MESA_OCUPADA)", content = @Content),
-            @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Cliente não identificado, ou sem CPF/celular e sem acesso à mesa (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
             @ApiResponse(responseCode = "409", description = "Essência indisponível (ESSENCIA_INDISPONIVEL) ou pedido já pendente (SOLICITACAO_JA_PENDENTE)", content = @Content)
     })
     @PostMapping("/solicitar")
@@ -146,8 +149,8 @@ public class SalaoPublicoController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "A mesa ocupada", description = "O código, o que foi lançado e quanto falta pagar. Só para "
-            + "aparelho com acesso.")
+    @Operation(summary = "A mesa ocupada", description = "O código, o que foi lançado (as sessões com a linha do "
+            + "tempo), quanto falta pagar, os chamados e a última sessão. Só para aparelho com acesso.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "403", description = "Sem acesso ou mesa livre (MESA_OCUPADA)", content = @Content)
@@ -166,7 +169,8 @@ public class SalaoPublicoController {
             @ApiResponse(responseCode = "400", description = "Conta sem forma de pagamento (SALAO_DADOS_INVALIDOS)", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem acesso à mesa ou comanda de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Já há um chamado aberto do mesmo tipo (CHAMADO_JA_ABERTO)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Já há um chamado aberto do mesmo tipo (CHAMADO_JA_ABERTO)", content = @Content),
+            @ApiResponse(responseCode = "429", description = "5 confirmações erradas em 15 min (CONFIRMACAO_BLOQUEADA)", content = @Content)
     })
     @PostMapping("/chamados")
     public ResponseEntity<ChamadoDaMesaResponseDTO> chamar(@PathVariable @Size(max = 64) String token,
@@ -183,7 +187,8 @@ public class SalaoPublicoController {
             + "ou os 3 primeiros do CPF (veio pelo celular). Cada tentativa vai para a auditoria.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Aparelho liberado"),
-            @ApiResponse(responseCode = "403", description = "Mesa livre ou de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content)
+            @ApiResponse(responseCode = "403", description = "Mesa livre ou de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
+            @ApiResponse(responseCode = "429", description = "5 confirmações erradas em 15 min (CONFIRMACAO_BLOQUEADA)", content = @Content)
     })
     @PostMapping("/entrar")
     public ResponseEntity<Void> entrar(@PathVariable @Size(max = 64) String token,
@@ -198,7 +203,8 @@ public class SalaoPublicoController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK (vazia sem comanda aberta)"),
             @ApiResponse(responseCode = "403", description = "Confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
-            @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content)
+            @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
+            @ApiResponse(responseCode = "429", description = "5 confirmações erradas em 15 min (CONFIRMACAO_BLOQUEADA)", content = @Content)
     })
     @PostMapping("/minhas-comandas")
     public ResponseEntity<List<MesaAbertaDoClienteResponseDTO>> minhasComandas(

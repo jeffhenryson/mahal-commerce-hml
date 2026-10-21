@@ -6,6 +6,8 @@ import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException;
 import com.cernecommerce.core.domain.exception.salao.ClienteJaCadastradoException;
 import com.cernecommerce.core.domain.exception.salao.CodigoMesaInvalidoException;
+import com.cernecommerce.core.domain.exception.salao.ClienteNaoIdentificadoException;
+import com.cernecommerce.core.domain.exception.salao.ConfirmacaoBloqueadaException;
 import com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaException;
 import com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException;
 import com.cernecommerce.core.domain.exception.salao.MesaOcupadaException;
@@ -33,6 +35,7 @@ import com.cernecommerce.core.domain.model.pdv.SessionProgress;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
 import com.cernecommerce.core.domain.model.pdv.SessionAddon;
 import com.cernecommerce.core.domain.model.pdv.SessionSettings;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.salao.AcessoMesa;
 import com.cernecommerce.core.domain.model.salao.CardapioDaMesa;
@@ -63,6 +66,7 @@ import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.PerfisDoSku;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Pedido;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
+import com.cernecommerce.core.ports.out.audit.AuditLogRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.NotificationSsePort;
@@ -92,6 +96,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -122,6 +127,7 @@ class SalaoAutoatendimentoServiceTest {
     @Mock NotificationSsePort ssePort;
     @Mock AfterCommitExecutor afterCommit;
     @Mock AuditEventPublisherPort auditEvents;
+    @Mock AuditLogRepository auditLog;
 
     SalaoAutoatendimentoService service;
 
@@ -139,7 +145,7 @@ class SalaoAutoatendimentoServiceTest {
     void setUp() {
         service = new SalaoAutoatendimentoService(repository, estoqueUseCase, warehouseRepository,
                 sessionMenuUseCase, crmUseCase, comandaUseCase, notificationUseCase,
-                userRepository, ssePort, afterCommit, auditEvents, Clock.fixed(AGORA, ZoneOffset.UTC));
+                userRepository, ssePort, afterCommit, auditEvents, auditLog, Clock.fixed(AGORA, ZoneOffset.UTC));
 
         when(repository.findMesaByToken("tok-mesa-4")).thenReturn(Optional.of(MESA));
         when(repository.findMesaById(7L)).thenReturn(Optional.of(MESA));
@@ -184,7 +190,7 @@ class SalaoAutoatendimentoServiceTest {
             SolicitacaoSessao s = inv.getArgument(0);
             return s.id() != null ? s : new SolicitacaoSessao(99L, s.codigo(), s.mesaId(), s.customerId(), s.tierId(),
                     s.essenciaSku(), s.essenciaSku2(), s.observacao(), s.status(), s.motivo(), s.comandaId(),
-                    s.criadoEm(), s.decididoEm(), s.decididoPor(), s.escolhas(), s.deviceToken());
+                    s.criadoEm(), s.decididoEm(), s.decididoPor(), s.escolhas(), s.deviceToken(), s.acompanhante());
         });
         when(crmUseCase.findCustomerById(50L)).thenReturn(MARIA);
         when(repository.saveChamado(any())).thenAnswer(inv -> {
@@ -378,24 +384,81 @@ class SalaoAutoatendimentoServiceTest {
     }
 
     @Test
-    void solicitar_pagarNoFinalSemSerVip_eRecusado() {
+    void solicitar_pagarNoFinal_valeParaQuemNaoEVip_oAtendenteDecideNoAceite() {
         identificaMaria();
         when(crmUseCase.listCustomerTags(50L)).thenReturn(List.of());
-
-        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4", new Pedido(new Identificacao("12345678901", null),
-                "ZOMO-MENTA", null, null, new EscolhasSessao(false, null, List.of(), true), APARELHO)))
-                .isInstanceOf(AutoatendimentoDadosInvalidosException.class).hasMessageContaining("VIP");
-    }
-
-    @Test
-    void solicitar_pagarNoFinalVip_passa() {
-        identificaMaria();
-        when(crmUseCase.listCustomerTags(50L)).thenReturn(List.of(new Tag(1L, "VIP")));
 
         SolicitacaoSessao s = service.solicitarPorToken("tok-mesa-4", new Pedido(new Identificacao("12345678901", null),
                 "ZOMO-MENTA", null, null, new EscolhasSessao(false, null, List.of(), true), APARELHO));
 
         assertThat(s.escolhas().pagarNoFinal()).isTrue();
+    }
+
+    // ── Pedido sem CPF de quem já está na mesa ────────────────────────────────────────────────
+
+    @Test
+    void solicitar_semCpf_doAparelhoDoTitular_pedeNoTitular() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+
+        SolicitacaoSessao s = service.solicitarPorToken("tok-mesa-4",
+                new Pedido(null, "ZOMO-MENTA", null, null, NO_CAIXA, APARELHO));
+
+        assertThat(s.customerId()).isEqualTo(50L);
+        assertThat(s.acompanhante()).isFalse();
+        verify(crmUseCase, never()).lookupCustomers(any(), any(), any());
+    }
+
+    @Test
+    void solicitar_semCpf_doAcompanhante_pedeNoTitularMarcadoEContaOPendentePeloAparelho() {
+        ocupada();
+        when(repository.hasAcesso(70L, "amigo")).thenReturn(true);
+        when(repository.isAcompanhante(70L, "amigo")).thenReturn(true);
+        // O titular já tem um pedido pendente: não segura o do acompanhante.
+        when(repository.existsPendente(eq(7L), eq(50L), any())).thenReturn(true);
+
+        SolicitacaoSessao s = service.solicitarPorToken("tok-mesa-4",
+                new Pedido(new Identificacao(" ", ""), "ZOMO-MENTA", null, null, NO_CAIXA, "amigo"));
+
+        assertThat(s.customerId()).isEqualTo(50L);
+        assertThat(s.acompanhante()).isTrue();
+    }
+
+    @Test
+    void solicitar_semCpf_acompanhanteJaComPendente_eRecusado() {
+        ocupada();
+        when(repository.hasAcesso(70L, "amigo")).thenReturn(true);
+        when(repository.isAcompanhante(70L, "amigo")).thenReturn(true);
+        when(repository.existsPendenteDoAparelho(eq(7L), eq("amigo"), any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4",
+                new Pedido(null, "ZOMO-MENTA", null, null, NO_CAIXA, "amigo")))
+                .isInstanceOf(SolicitacaoJaPendenteException.class);
+    }
+
+    @Test
+    void solicitar_semCpfESemAcessoAMesa_naoIdentificado() {
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4",
+                new Pedido(null, "ZOMO-MENTA", null, null, NO_CAIXA, APARELHO)))
+                .isInstanceOf(ClienteNaoIdentificadoException.class);
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4",
+                new Pedido(new Identificacao("", " "), "ZOMO-MENTA", null, null, NO_CAIXA, APARELHO)))
+                .isInstanceOf(ClienteNaoIdentificadoException.class);
+        verify(repository, never()).saveSolicitacao(any());
+    }
+
+    @Test
+    void aceitar_doAcompanhante_oPdvVeAcompanhanteDoTitularEOAparelhoSegueAcompanhante() {
+        ocupada();
+        SolicitacaoSessao doAmigo = new SolicitacaoSessao(99L, UUID.randomUUID(), 7L, 50L, 1L, "ZOMO-MENTA", null,
+                null, SolicitacaoStatus.PENDENTE, null, null, AGORA.minusSeconds(60), null, null, NO_CAIXA, "amigo",
+                true);
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(doAmigo));
+
+        var resumo = service.aceitar(99L, 3L, "ana", true);
+
+        assertThat(resumo.cliente()).isEqualTo("Acompanhante de Maria Luiza");
+        verify(repository).addAcesso(70L, "amigo", true);
     }
 
     @Test
@@ -470,7 +533,7 @@ class SalaoAutoatendimentoServiceTest {
         verify(repository).saveOcupacao(ocupacao.capture());
         assertThat(ocupacao.getValue().comandaId()).isEqualTo(500L);
         assertThat(ocupacao.getValue().codigo()).matches("\\d{4}");
-        verify(repository).addAcesso(70L, APARELHO);
+        verify(repository).addAcesso(70L, APARELHO, false);
         assertThat(resumo.status()).isEqualTo(SolicitacaoStatus.ACEITA);
         assertThat(resumo.solicitacao().comandaId()).isEqualTo(500L);
         assertThat(resumo.cliente()).isEqualTo("Maria Luiza");
@@ -500,7 +563,7 @@ class SalaoAutoatendimentoServiceTest {
         verify(comandaUseCase, never()).openComanda(anyLong(), anyString(), any(), anyString());
         verify(comandaUseCase).addSession(eq(500L), any(ComandaUseCase.AddSessionCommand.class), eq("ana"));
         verify(repository, never()).saveOcupacao(any());
-        verify(repository).addAcesso(70L, APARELHO);
+        verify(repository).addAcesso(70L, APARELHO, false);
     }
 
     @Test
@@ -543,7 +606,7 @@ class SalaoAutoatendimentoServiceTest {
 
         service.acessarPorToken("tok-mesa-4", "4821", "outro");
 
-        verify(repository).addAcesso(70L, "outro");
+        verify(repository).addAcesso(70L, "outro", true);
     }
 
     @Test
@@ -552,7 +615,7 @@ class SalaoAutoatendimentoServiceTest {
 
         assertThatThrownBy(() -> service.acessarPorToken("tok-mesa-4", "1234", "outro"))
                 .isInstanceOf(CodigoMesaInvalidoException.class);
-        verify(repository, never()).addAcesso(anyLong(), anyString());
+        verify(repository, never()).addAcesso(anyLong(), anyString(), anyBoolean());
     }
 
     @Test
@@ -677,6 +740,16 @@ class SalaoAutoatendimentoServiceTest {
         // Na ordem do enum, e a Menta configurada sem perfil fica sem — a sugestão parou.
         assertThat(cardapio.essencias()).extracting(EssenciaOferecida::perfis)
                 .containsExactly(List.of(PerfilSabor.FRUTADO, PerfilSabor.DOCE), List.of());
+    }
+
+    @Test
+    void essenciasDoDia_dizSeOPerfilFoiMarcadoPelaCasaOuSugerido() {
+        when(repository.findSkusComPerfilConfigurado(any())).thenReturn(Set.of("ZOMO-MENTA"));
+
+        assertThat(service.listEssenciasDoDia(HOJE)).extracting(e -> e.essencia().sku(),
+                        e -> e.essencia().perfisConfigurados())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("NAY-PESSEGO", false),
+                        org.assertj.core.groups.Tuple.tuple("ZOMO-MENTA", true));
     }
 
     @Test
@@ -897,6 +970,30 @@ class SalaoAutoatendimentoServiceTest {
                 ProporcaoMistura.NOVENTA_DEZ, true, Charcoal.JUMBO, List.of(5L)));
     }
 
+    @Test
+    void mesaAtual_itensDeSessao_trazemALinhaDoTempo_osDemaisNao() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        ComandaItem mescla = ComandaItem.of(1L, "SESS-1", BigDecimal.ONE, new BigDecimal("25.00"), null,
+                "Sessão Tradicional", AGORA.minusSeconds(1800), ConsumptionMode.SESSAO, false, null,
+                "Zomo · Uva 70% + Zomo · Menta 30%" + ComandaItem.VASO_GRANDE_NOTE_SUFFIX, null, null, null, null, null,
+                null, null, new SessionProgress(SessionStatus.ENTREGUE, AGORA.minusSeconds(1500),
+                        AGORA.minusSeconds(1200), null), null, "ZOMO-UVA", "ZOMO-MENTA", false,
+                ProporcaoMistura.SETENTA_TRINTA);
+        ComandaItem agua = ComandaItem.of(2L, "AGUA", BigDecimal.ONE, new BigDecimal("5.00"), null, "Água",
+                AGORA.minusSeconds(600), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, false, null);
+        when(comandaUseCase.getComanda(500L)).thenReturn(Comanda.of(500L, 3L, "SALAO", "Mesa 4", 50L,
+                ComandaStatus.ABERTA, List.of(mescla, agua), null, "ana", AGORA, null));
+
+        List<MesaAtual.Item> itens = service.mesaAtualPorToken("tok-mesa-4", APARELHO).itens();
+
+        assertThat(itens.get(0).sessao()).isEqualTo(new MesaAtual.Sessao(SessionStatus.ENTREGUE,
+                "Zomo · Uva 70% + Zomo · Menta 30%", false, AGORA.minusSeconds(1800), AGORA.minusSeconds(1500),
+                AGORA.minusSeconds(1200), null, 5L, null));
+        assertThat(itens.get(1).sessao()).isNull();
+    }
+
     // ── Mesas abertas do cliente ──────────────────────────────────────────────────────────────
 
     @Test
@@ -960,7 +1057,35 @@ class SalaoAutoatendimentoServiceTest {
         verify(comandaUseCase, never()).listOpenComandasByCustomer(anyLong());
         verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
                 && "MINHAS_COMANDAS".equals(e.details().get("acao"))
+                && Long.valueOf(50L).equals(e.details().get("customerId"))
                 && !e.details().containsValue("12345678901")));
+    }
+
+    @Test
+    void confirmacao_cincoErrosEm15Min_travaAteACerta() {
+        identificaMaria();
+        when(auditLog.countSince(eq("SALAO_CONFIRMACAO_RECUSADA"), eq("customer:50"),
+                eq(AGORA.minus(Duration.ofMinutes(15))))).thenReturn(5L);
+
+        assertThatThrownBy(() -> service.minhasComandasPorToken("tok-mesa-4",
+                new Identificacao("12345678901", null), "0000"))
+                .isInstanceOf(ConfirmacaoBloqueadaException.class);
+        verify(comandaUseCase, never()).listOpenComandasByCustomer(anyLong());
+        // A tentativa travada vai para a auditoria, mas sem o cliente: não estende a trava.
+        verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
+                && "CONFIRMACAO_BLOQUEADA".equals(e.details().get("motivo"))
+                && !e.details().containsKey("customerId")));
+    }
+
+    @Test
+    void confirmacao_quatroErros_aindaEntra() {
+        ocupada();
+        identificaMaria();
+        when(auditLog.countSince(anyString(), anyString(), any())).thenReturn(4L);
+
+        service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000", "novo");
+
+        verify(repository).addAcesso(70L, "novo", false);
     }
 
     // ── Entrar pela identificação ─────────────────────────────────────────────────────────────
@@ -972,7 +1097,7 @@ class SalaoAutoatendimentoServiceTest {
 
         service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000", "novo");
 
-        verify(repository).addAcesso(70L, "novo");
+        verify(repository).addAcesso(70L, "novo", false);
         verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_MESA_ENTRADA
                 && e.details().get("ocupacaoId").equals(70L) && "CPF".equals(e.details().get("identificacao"))));
     }
@@ -985,7 +1110,7 @@ class SalaoAutoatendimentoServiceTest {
 
         service.entrarPorToken("tok-mesa-4", new Identificacao(null, "(21) 99999-0000"), "123", "novo");
 
-        verify(repository).addAcesso(70L, "novo");
+        verify(repository).addAcesso(70L, "novo", false);
     }
 
     @Test
@@ -995,7 +1120,7 @@ class SalaoAutoatendimentoServiceTest {
 
         assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "1234",
                 "novo")).isInstanceOf(ConfirmacaoInvalidaException.class);
-        verify(repository, never()).addAcesso(anyLong(), anyString());
+        verify(repository, never()).addAcesso(anyLong(), anyString(), anyBoolean());
         verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
                 && "ENTRAR".equals(e.details().get("acao"))));
     }
@@ -1010,7 +1135,7 @@ class SalaoAutoatendimentoServiceTest {
 
         assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("98765432100", null), "7777",
                 "novo")).isInstanceOf(MesaOcupadaException.class);
-        verify(repository, never()).addAcesso(anyLong(), anyString());
+        verify(repository, never()).addAcesso(anyLong(), anyString(), anyBoolean());
     }
 
     @Test
@@ -1019,7 +1144,7 @@ class SalaoAutoatendimentoServiceTest {
 
         assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000",
                 "novo")).isInstanceOf(MesaOcupadaException.class);
-        verify(repository, never()).addAcesso(anyLong(), anyString());
+        verify(repository, never()).addAcesso(anyLong(), anyString(), anyBoolean());
     }
 
     @Test

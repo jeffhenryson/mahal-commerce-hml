@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.in.dtos.response;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
+import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 import com.cernecommerce.core.domain.model.salao.MesaAtual;
 
 import java.math.BigDecimal;
@@ -12,11 +13,21 @@ import java.util.List;
 public record MesaAtualResponseDTO(String mesa, String cliente, String codigo, Instant abertaEm, List<Item> itens,
         BigDecimal emAberto, List<ChamadoDaMesaResponseDTO> chamados, UltimaSessao ultimaSessao) {
 
-    public record Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm) {
+    /** {@code sessao} só nas linhas de sessão; nas demais, nula. */
+    public record Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm,
+            Sessao sessao) {
 
         public static Item of(MesaAtual.Item i) {
-            return new Item(i.nome(), i.quantidade(), i.valor(), i.pago(), i.lancadoEm());
+            MesaAtual.Sessao s = i.sessao();
+            return new Item(i.nome(), i.quantidade(), i.valor(), i.pago(), i.lancadoEm(),
+                    s == null ? null : new Sessao(s.status(), s.essencia(), s.pagarNoFinal(), s.lancadaEm(),
+                            s.inicioEm(), s.entregueEm(), s.recolhidaEm(), s.preparoMin(), s.naMesaMin()));
         }
+    }
+
+    /** A linha do tempo da sessão (PDV-F035), sem custo, operador nem id da linha. */
+    public record Sessao(SessionStatus status, String essencia, boolean pagarNoFinal, Instant lancadaEm,
+            Instant inicioEm, Instant entregueEm, Instant recolhidaEm, Long preparoMin, Long naMesaMin) {
     }
 
     public record UltimaSessao(String essenciaSku, String essenciaSku2, ProporcaoMistura proporcao,
