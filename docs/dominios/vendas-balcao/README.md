@@ -109,6 +109,9 @@ registro de vendas no balcão.
 
 ## API — Endpoints
 
+> **Salão — autoatendimento pelo QR** (`/public/salao/{token}`, `/salao/*`, `/pdv/solicitacoes-sessao`,
+> `/pdv/chamados-mesa`): referência própria em [`salao-autoatendimento.md`](salao-autoatendimento.md).
+
 | Método | Rota | Permissão | Descrição |
 |---|---|---|---|
 | `PATCH` | `/pdv/comandas/{id}/customer` | `PDV_COMANDA_MANAGE` (+ `CRM_LEAD_CREATE` com `lead`) | PDV-F020 — vincula/troca/remove o cliente da mesa aberta (`customerId` ou `lead` find-or-create) |
@@ -681,6 +684,9 @@ O quadro completo dos dez pontos de escrita do sistema está em
 
 ## Schema de Banco (Migrations)
 
+> **V167–V170** (Salão, autoatendimento pelo QR — inclui `comanda_item.essence_ratio` da V169): ver
+> [`salao-autoatendimento.md`](salao-autoatendimento.md#schema).
+
 **V57 — `pdv_cash_register_and_sale`**
 - `cash_register_session` (id, operator, opened_at, opening_amount, closed_at, status) — versão
   original, sem depósito nem conferência (chegaram na V66).
@@ -1213,6 +1219,12 @@ Convenções, variáveis e o environment compartilhado estão em
 > Ver [`pedido`](../pedido/README.md#modelo-de-domínio).
 
 ## Histórico de Implementações
+
+- **2026-10-20/21** — Salão: autoatendimento pelo QR da mesa (**V167**, **V168**, **V169**, **V170**). Mesas com
+  QR, pedido de sessão pelo cliente com aceite no PDV, ocupação com código de 4 dígitos, proporção da mescla
+  (também em `comanda_item.essence_ratio` e no lançamento do PDV), perfis de sabor, chamados da mesa, comandas
+  abertas do cliente com confirmação por dígitos e trava de 5 erros, pedido sem CPF do acompanhante, pagar no
+  final para todos e linha do tempo da sessão no QR. Tudo em [`salao-autoatendimento.md`](salao-autoatendimento.md).
 
 - **2026-10-18** — `desfazer-duplo` (PDV-F055, sem migration) e `desempenho-do-operador-e-troco-deixado`
   (PDV-F056, **V166**). Pedidos do `frontend-admin` (`PROMPT_BACKEND_CONVERTER_DUPLO.md` §"Desfazer o duplo" e

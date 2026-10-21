@@ -74,6 +74,21 @@ Todos os erros retornam `ApiError`:
 | `UNREADABLE_BODY` | 400 | Body ausente ou JSON malformado |
 | `MISSING_PARAMETER` | 400 | Parâmetro de query obrigatório ausente — a mensagem nomeia o parâmetro |
 | `EMAIL_DELIVERY_FAILED` | 503 | Falha ao enviar email |
+| `SALAO_MESA_NOT_FOUND` | 404 | QR inválido ou mesa desativada (autoatendimento do Salão) |
+| `SALAO_MESA_NOME_DUPLICADO` | 409 | Já existe mesa do QR com este nome |
+| `SALAO_DADOS_INVALIDOS` | 400 | Dados do QR inválidos (CPF, celular, conta sem forma de pagamento, adicional inativo…) |
+| `CLIENTE_NAO_IDENTIFICADO` | 404 | CPF/celular sem cadastro, ou pedido sem identificação de aparelho sem acesso à mesa |
+| `CLIENTE_JA_CADASTRADO` | 409 | Cadastro público com CPF ou celular já usado |
+| `MESA_OCUPADA` | 403 | Mesa do QR com outro cliente / aparelho sem acesso / comanda de outro cliente |
+| `CODIGO_MESA_INVALIDO` | 403 | Código de 4 dígitos da mesa incorreto |
+| `CONFIRMACAO_INVALIDA` | 403 | Dígitos de confirmação (4 últimos do celular / 3 primeiros do CPF) não conferem |
+| `CONFIRMACAO_BLOQUEADA` | 429 | 5 confirmações erradas em 15 min para o cliente — `Retry-After` |
+| `ESSENCIA_INDISPONIVEL` | 409 | Essência pedida pelo QR sem lata aberta ou sem faixa |
+| `SOLICITACAO_JA_PENDENTE` | 409 | Já há pedido do QR aguardando o atendente (por cliente; do acompanhante, por aparelho) |
+| `SOLICITACAO_NOT_FOUND` | 404 | Solicitação do QR inexistente |
+| `SOLICITACAO_NAO_PENDENTE` | 409 | Solicitação já aceita, recusada ou expirada |
+| `CHAMADO_JA_ABERTO` | 409 | Já há chamado aberto do mesmo tipo na comanda |
+| `CHAMADO_NOT_FOUND` | 404 | Chamado inexistente |
 | `INTERNAL_ERROR` | 500 | Erro interno inesperado |
 
 ---
@@ -3633,6 +3648,50 @@ Query params: page (default 0), size (default 20, máx 100)
 Ledger **append-only**: nenhuma linha é atualizada nem deletada. Saldo é sempre
 `SUM(amount) WHERE available_at <= now()` — cobre `EARNED` (positivo) e os futuros `REDEEMED`/
 `REVERSED`/`EXPIRED` (negativos, referenciando a entrada original via `reversesEntryId`).
+
+---
+
+## Salão — autoatendimento pelo QR — `/public/salao/{token}`, `/salao`, `/pdv`
+
+Referência completa (regras, schema, decisões): [`dominios/vendas-balcao/salao-autoatendimento.md`](dominios/vendas-balcao/salao-autoatendimento.md).
+
+### Público (sem login, rate limit por IP)
+
+| Método | Rota | Resumo |
+|---|---|---|
+| `GET` | `/public/salao/{token}?dispositivo=` | Cardápio: faixas, essências com lata aberta (`destaque`, `perfis`), upgrades, adicionais, `acesso` |
+| `POST` | `/public/salao/{token}/identificar` | `{cpf?, celular?}` → `{encontrado, nome, vip, faltando, mesasAbertas}` (lista resumida) |
+| `POST` | `/public/salao/{token}/cadastrar` | `{nome, celular, cpf, dataNascimento, aceite}` → 201 |
+| `POST` | `/public/salao/{token}/completar` | Preenche só o que falta no cadastro |
+| `POST` | `/public/salao/{token}/solicitar` | Pede a sessão. **Sem `cpf`/`celular`**, o aparelho com acesso à mesa pede no titular (acompanhante marcado). `pagarNoFinal` para qualquer cliente |
+| `GET` | `/public/salao/{token}/solicitacoes/{codigo}` | Status do pedido |
+| `POST` | `/public/salao/{token}/acesso` | `{codigo, dispositivo}` — entra na mesa ocupada como acompanhante |
+| `GET` | `/public/salao/{token}/mesa-atual?dispositivo=` | Consumo (itens de sessão com `sessao` = linha do tempo), `emAberto`, `chamados`, `ultimaSessao` |
+| `POST` | `/public/salao/{token}/chamados` | `{tipo, formaPagamento?, dispositivo}` ou com `comandaRef` + identificação + `confirmacao` → 201 |
+| `POST` | `/public/salao/{token}/entrar` | `{cpf?/celular?, confirmacao, dispositivo}` → 204 (só o titular) |
+| `POST` | `/public/salao/{token}/minhas-comandas` | `{cpf?/celular?, confirmacao}` → comandas abertas completas |
+
+`sessao` (nos itens): `{status, essencia, pagarNoFinal, lancadaEm, inicioEm, entregueEm, recolhidaEm, preparoMin,
+naMesaMin}` — `null` fora de `SESSAO`/`ROSH_EXTRA`. Confirmação: 4 últimos dígitos do celular (identificou-se
+pelo CPF) ou 3 primeiros do CPF (pelo celular); 5 erros em 15 min → `429 CONFIRMACAO_BLOQUEADA`.
+
+### Admin / PDV
+
+| Método | Rota | Permissão | Resumo |
+|---|---|---|---|
+| `GET`/`POST` | `/salao/mesas` | `PDV_READ` / `PDV_SESSAO_MANAGE` | Mesas do QR |
+| `PUT` | `/salao/mesas/{id}` | `PDV_SESSAO_MANAGE` | Renomeia / ativa |
+| `POST` | `/salao/mesas/{id}/regenerar-token` | `PDV_SESSAO_MANAGE` | Invalida o QR impresso |
+| `GET` | `/salao/ocupacoes` | `PDV_READ` | Mesas ocupadas com o código |
+| `GET` | `/salao/essencias-do-dia?data=` | `PDV_READ` | Disponíveis + `selecionada`; `essencia.perfis` e `essencia.perfisConfigurados` |
+| `PUT` | `/salao/essencias-do-dia?data=` | `PDV_SESSAO_MANAGE` | `{skus}` — destaques |
+| `POST` | `/salao/essencias-do-dia/copiar?de=&para=` | `PDV_SESSAO_MANAGE` | Copia destaques |
+| `PUT` | `/salao/essencias-perfis` | `PDV_SESSAO_MANAGE` | `{itens:[{sku, perfis}]}` → 204 |
+| `GET` | `/pdv/solicitacoes-sessao?status=` | `PDV_READ` | Fila do QR; `proporcao`, `acompanhante` ("Acompanhante de …" em `cliente`) |
+| `POST` | `/pdv/solicitacoes-sessao/{id}/aceitar?sessionId=` | `PDV_COMANDA_MANAGE` | Lança a sessão; pago no final exige `PDV_SESSION_PAY_LATER` |
+| `POST` | `/pdv/solicitacoes-sessao/{id}/recusar` | `PDV_COMANDA_MANAGE` | `{motivo?}` |
+| `GET` | `/pdv/chamados-mesa?status=ABERTO` | `PDV_READ` | Fila de chamados |
+| `POST` | `/pdv/chamados-mesa/{id}/atender` | `PDV_COMANDA_MANAGE` | Idempotente |
 
 ---
 
