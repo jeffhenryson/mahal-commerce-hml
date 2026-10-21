@@ -126,7 +126,7 @@ public class PdvSessaoController {
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
                 request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh(),
                 request.isPagarNoFinal(), request.getEssenciaSku(), request.getEssenciaRoshSku(),
-                request.getEssenciaSku2(), request.getEssenciaRoshSku2()),
+                request.getEssenciaSku2(), request.getEssenciaRoshSku2(), request.getProporcao()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);

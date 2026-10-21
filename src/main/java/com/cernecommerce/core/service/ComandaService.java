@@ -611,7 +611,8 @@ public class ComandaService implements ComandaUseCase {
                 ? SessionProgress.preparingPayLater(Instant.now())
                 : SessionProgress.awaitingPayment();
         ComandaItem item = consumeEssence(ComandaItem.forMenuSession(tier.sku(), price, productName.toString(),
-                ConsumptionMode.SESSAO, false, null, notes, progress, setup), sabores, comanda, username);
+                ConsumptionMode.SESSAO, false, null, notes, progress, setup), sabores, comanda, username)
+                .withEssenceRatio(command.essenciaProporcao());
 
         Comanda saved = comandaRepository.save(comanda.withAddedItem(item));
         Long sessionItemId = newItemId(comanda, saved);
@@ -733,7 +734,8 @@ public class ComandaService implements ComandaUseCase {
                 setup == null ? null : setup.charcoal(),
                 setup == null ? List.of() : setup.addons().stream().map(SessionSetup.Addon::addonId).toList(),
                 command.duplo(), command.essenciaRosh(), command.tierIdRosh(), command.pagarNoFinal(),
-                essenciaSku, command.essenciaRoshSku(), essenciaSku2, null);
+                essenciaSku, command.essenciaRoshSku(), essenciaSku2, null,
+                saborNovo ? null : origem.essenceRatio());
         // PDV-F050 — trocando o sabor, a faixa é a da nova essência (a da origem só cobre o sabor sem
         // faixa); sem sabor novo, é cópia da origem.
         return addSession(comandaId, add, !saborNovo, username);
@@ -1110,6 +1112,13 @@ public class ComandaService implements ComandaUseCase {
     @Transactional(readOnly = true)
     public PageResult<Comanda> listOpenComandas(Long sessionId, String warehouseCode, int page, int size) {
         return comandaRepository.findOpen(sessionId, warehouseCode, page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Comanda> listOpenComandasByCustomer(Long customerId) {
+        List<Long> ids = comandaRepository.findOpenIdsByCustomerId(customerId);
+        return ids.isEmpty() ? List.of() : comandaRepository.findAllByIds(ids);
     }
 
     @Override

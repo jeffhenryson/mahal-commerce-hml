@@ -57,6 +57,10 @@ public interface ComandaJpaRepository extends JpaRepository<ComandaEntity, Long>
             + "WHERE c.sessionId = :sessionId AND c.status = :status ORDER BY c.id DESC")
     List<Long> findOpenIdsBySessionId(@Param("sessionId") Long sessionId, @Param("status") String status);
 
+    @Query("SELECT c.id FROM ComandaEntity c "
+            + "WHERE c.customerId = :customerId AND c.status = :status ORDER BY c.id DESC")
+    List<Long> findOpenIdsByCustomerId(@Param("customerId") Long customerId, @Param("status") String status);
+
     /**
      * Trava a linha da comanda até o fim da transação (PDV-C008) — ver o javadoc de
      * {@code ComandaRepository.findByIdForUpdate} para o porquê de a trava ser pessimista e não

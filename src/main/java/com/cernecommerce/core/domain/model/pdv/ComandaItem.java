@@ -43,7 +43,8 @@ public record ComandaItem(
         SessionSetup setup,
         String essenceSku,
         String essenceSku2,
-        boolean essence2Package) {
+        boolean essence2Package,
+        ProporcaoMistura essenceRatio) {
 
     /** Sufixo que a sessão de vaso grande leva na {@link #notes}, depois da essência (PDV-F021). */
     public static final String VASO_GRANDE_NOTE_SUFFIX = " · Vaso grande";
@@ -141,6 +142,10 @@ public record ComandaItem(
         if (essenceSku2 == null && essence2Package) {
             throw new IllegalArgumentException("essence2Package sem essenceSku2");
         }
+        // Espelha ck_comanda_item_essence_ratio (V169): a proporção é da mescla.
+        if (essenceRatio != null && essenceSku2 == null) {
+            throw new IllegalArgumentException("essenceRatio sem essenceSku2");
+        }
     }
 
     /**
@@ -155,7 +160,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, false);
+                null, null, null, null, null, false, null);
     }
 
     /**
@@ -188,7 +193,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, unitPrice, pricing.costPrice(), productName,
                 Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null,
-                null, false);
+                null, false, null);
     }
 
     /**
@@ -210,7 +215,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, BigDecimal.ONE, unitPrice, null, productName, Instant.now(), mode,
                 courtesy, linkedItemId, notes, null, null, null, null, null, null, null, session,
-                setup == null || setup.isEmpty() ? null : setup, null, null, false);
+                setup == null || setup.isEmpty() ? null : setup, null, null, false, null);
     }
 
     /** Reconstitui um item a partir de persistência. */
@@ -322,10 +327,25 @@ public record ComandaItem(
             Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
             BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
             String essenceSku2, boolean essence2Package) {
+        return of(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy, linkedItemId,
+                notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit, kitBundleId,
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, null);
+    }
+
+    /**
+     * Reconstitui um item a partir de persistência, com a proporção da mescla (V169). Linha anterior
+     * lê {@code null}: meio a meio implícito, ou um sabor só.
+     */
+    public static ComandaItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, String productName, Instant addedAt, ConsumptionMode mode, boolean courtesy,
+            Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
+            Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
+            BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
+            String essenceSku2, boolean essence2Package, ProporcaoMistura essenceRatio) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                essence2Package);
+                essence2Package, essenceRatio);
     }
 
     /**
@@ -354,7 +374,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, tierSku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -378,7 +398,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, orderId, packageUses, packageSessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -393,7 +413,7 @@ public record ComandaItem(
     public ComandaItem withPackageCounter(int uses, int sessionsPerUnit) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, uses, sessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -404,7 +424,7 @@ public record ComandaItem(
     public ComandaItem withEssence(String essenceSku) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -415,7 +435,18 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                fromPackage);
+                fromPackage, essenceRatio);
+    }
+
+    /**
+     * Carimba quanto de cada sabor vai na mescla. Sem 2º sabor fica nula — um sabor só não tem
+     * proporção.
+     */
+    public ComandaItem withEssenceRatio(ProporcaoMistura ratio) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                essence2Package, essenceSku2 == null ? null : ratio);
     }
 
     /** PDV-F051 — a sessão tem dois sabores mesclados. */
@@ -456,7 +487,7 @@ public record ComandaItem(
     public ComandaItem withKit(String bundleId, Long templateId, BigDecimal discountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package);
+                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -470,7 +501,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**
@@ -525,7 +556,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, BigDecimal.ZERO, costPrice, productName, addedAt, mode, true,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     public ComandaItem withSessionPaid(Instant at) {
@@ -534,7 +565,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
     }
 
     /**

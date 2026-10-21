@@ -17,6 +17,7 @@ import com.cernecommerce.adapter.out.persistence.entity.ComandaItemAddonEntity;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.SessionProgress;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.ports.out.pdv.ComandaRepository;
@@ -83,6 +84,13 @@ public class ComandaRepositoryImpl implements ComandaRepository {
     @Transactional(readOnly = true)
     public List<Long> findOpenIdsBySessionId(Long sessionId) {
         return comandaJpaRepository.findOpenIdsBySessionId(sessionId, ComandaStatus.ABERTA.name());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Long> findOpenIdsByCustomerId(Long customerId) {
+        return customerId == null ? List.of()
+                : comandaJpaRepository.findOpenIdsByCustomerId(customerId, ComandaStatus.ABERTA.name());
     }
 
     // ── PDV-F029: histórico ──────────────────────────────────────────────────────────────────
@@ -296,6 +304,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setEssenceSku(item.essenceSku());
             itemEntity.setEssenceSku2(item.essenceSku2());
             itemEntity.setEssence2Package(item.essence2Package());
+            itemEntity.setEssenceRatio(item.essenceRatio() == null ? null : item.essenceRatio().name());
             itemEntity.setKitBundleId(item.kitBundleId());
             itemEntity.setKitTemplateId(item.kitTemplateId());
             itemEntity.setKitDiscountAmount(item.kitDiscountAmount());
@@ -345,7 +354,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.getSessionStatus() == null ? null : new SessionProgress(SessionStatus.valueOf(e.getSessionStatus()),
                         e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater(),
                         e.getWithdrawnReason(), e.getWithdrawnBy()),
-                toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package());
+                toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package(),
+                e.getEssenceRatio() == null ? null : ProporcaoMistura.valueOf(e.getEssenceRatio()));
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {

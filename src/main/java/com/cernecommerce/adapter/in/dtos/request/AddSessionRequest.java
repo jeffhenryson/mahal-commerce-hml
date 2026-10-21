@@ -1,6 +1,7 @@
 package com.cernecommerce.adapter.in.dtos.request;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -36,6 +37,10 @@ public class AddSessionRequest {
             + "SAME_FLAVOR_MIX). Consome 1 uso da lata de cada sabor; a faixa é a de maior preço entre os dois.",
             example = "ZIGY-MENTA")
     private String essenciaSku2;
+
+    @Schema(description = "Quanto de cada sabor vai na mescla; o 1º é o principal. Só vale com essenciaSku2 "
+            + "(sem ele é ignorada). Não muda o preço.", example = "SETENTA_TRINTA")
+    private ProporcaoMistura proporcao;
 
     @Schema(description = "Upgrade para o vaso grande (acréscimo da configuração).")
     private boolean vasoGrande;

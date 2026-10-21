@@ -14,6 +14,7 @@ import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.ComandaItem;
@@ -128,7 +129,7 @@ class ComandaSessaoServiceTest {
                         i.costPrice(), i.productName(), i.addedAt(), i.mode(), i.courtesy(), i.linkedItemId(),
                         i.notes(), i.surchargeAmount(), i.closedInOrderId(), i.packageUses(),
                         i.packageSessionsPerUnit(), null, null, null, i.session(), i.setup(), i.essenceSku(),
-                        i.essenceSku2(), i.essence2Package()));
+                        i.essenceSku2(), i.essence2Package(), i.essenceRatio()));
             }
             return Comanda.of(c.id(), c.sessionId(), c.warehouseCode(), c.tableOrCustomerLabel(), c.customerId(),
                     c.status(), items, c.orderId(), c.openedBy(), c.openedAt(), c.closedAt());
@@ -1722,6 +1723,44 @@ class ComandaSessaoServiceTest {
         assertThat(linha.notes()).isEqualTo("Zigy Banana + Zomo Menta");
     }
 
+    /** A proporção vai para a linha (relatório de mistura) e o texto digitado, para o preparador. */
+    @Test
+    void addSession_mesclaComProporcao_gravaNaLinhaComOTextoDigitado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", 2L, null));
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.findActiveTier(2L)).thenReturn(Optional.of(PREMIUM));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(null,
+                "Zigy Banana 70% + Zomo Menta 30%", false, null, List.of(), false, null, null, false, "ZIGY-BANANA",
+                null, "ZOMO-MENTA", null, ProporcaoMistura.SETENTA_TRINTA), "caixa1").items().get(0);
+
+        assertThat(linha.essenceRatio()).isEqualTo(ProporcaoMistura.SETENTA_TRINTA);
+        assertThat(linha.notes()).isEqualTo("Zigy Banana 70% + Zomo Menta 30%");
+        // A proporção não muda o preço: a maior faixa, como em toda mescla.
+        assertThat(linha.unitPrice()).isEqualByComparingTo("30.00");
+    }
+
+    @Test
+    void addSession_umSaborSo_ignoraAProporcao() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+
+        ComandaItem linha = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(null, null, false,
+                null, List.of(), false, null, null, false, "ZIGY-BANANA", null, null, null,
+                ProporcaoMistura.NOVENTA_DEZ), "caixa1").items().get(0);
+
+        assertThat(linha.essenceRatio()).isNull();
+    }
+
     @Test
     void addSession_mesclaComOMesmoSabor_eRecusadaSemTocarEmNada() {
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
@@ -1808,6 +1847,23 @@ class ComandaSessaoServiceTest {
         assertThat(nova.essenceSku()).isEqualTo("ZIGY-BANANA");
         assertThat(nova.essenceSku2()).isEqualTo("ZOMO-MENTA");
         verify(sessionMenu, never()).findActiveTier(any());
+    }
+
+    @Test
+    void repeatSession_semSaborNovo_copiaAProporcaoDaOrigem() {
+        ComandaItem origem = sessaoEm(1L, PREMIUM, entregue(), 400L)
+                .withEssence("ZIGY-BANANA").withSecondEssence("ZOMO-MENTA", false)
+                .withEssenceRatio(ProporcaoMistura.SETENTA_TRINTA);
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(origem)));
+        when(estoqueUseCase.resolveSaleInfo("ZIGY-BANANA")).thenReturn(saborComFaixa("Zigy Banana", 1L, null));
+        when(estoqueUseCase.resolveSaleInfo("ZOMO-MENTA")).thenReturn(saborComFaixa("Zomo Menta", 1L, null));
+        givenMenuForSession();
+        givenSaveAssignsItemIds();
+
+        ComandaItem nova = comandaService.repeatSession(10L, 1L,
+                new ComandaUseCase.RepeatSessionCommand(null, false, null, null), "caixa1").items().get(1);
+
+        assertThat(nova.essenceRatio()).isEqualTo(ProporcaoMistura.SETENTA_TRINTA);
     }
 
     @Test

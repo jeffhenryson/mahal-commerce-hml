@@ -117,6 +117,10 @@ public class ComandaItemEntity {
     @Column(name = "essence2_package", nullable = false)
     private boolean essence2Package;
 
+    /** Proporção da mescla (V169), {@code ProporcaoMistura}; nula com um sabor só. */
+    @Column(name = "essence_ratio", length = 20)
+    private String essenceRatio;
+
     // PDV-F019 — kit montável: o pacote, o modelo e a parte do desconto do kit desta linha.
     @Column(name = "kit_bundle_id", length = 36)
     private String kitBundleId;

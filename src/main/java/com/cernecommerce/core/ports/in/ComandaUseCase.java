@@ -6,6 +6,7 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
 import com.cernecommerce.core.domain.model.pdv.StorePurchase;
 import com.cernecommerce.core.domain.model.pdv.SessionStatus;
@@ -213,6 +214,9 @@ public interface ComandaUseCase {
      * ser da loja.</p>
      */
     PageResult<Comanda> listOpenComandas(Long sessionId, String warehouseCode, int page, int size);
+
+    /** As mesas abertas do cliente, de qualquer caixa, com os itens — o "suas mesas" do QR do Salão. */
+    List<Comanda> listOpenComandasByCustomer(Long customerId);
 
     /**
      * Fecha a comanda: converte os itens acumulados num {@code Order} concluído, validando os
@@ -485,13 +489,22 @@ public interface ComandaUseCase {
      * @param essenciaRoshSku2 PDV-F051 — 2º sabor do 2º rosh do duplo
      * @param tierId PDV-F050 — faixa do pedido: só vale para sessão em texto e essência sem faixa na
      *        ficha; com faixa na ficha, é a dela (a maior, na mescla)
+     * @param essenciaProporcao quanto de cada sabor vai na mescla; ignorada sem {@code essenciaSku2}
      */
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
             List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
-            String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2) {
+            String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
+            ProporcaoMistura essenciaProporcao) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+        }
+
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+                String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    essenciaSku, essenciaRoshSku, essenciaSku2, essenciaRoshSku2, null);
         }
 
         public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,

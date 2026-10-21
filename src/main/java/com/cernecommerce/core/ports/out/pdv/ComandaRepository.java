@@ -55,6 +55,9 @@ public interface ComandaRepository {
      */
     List<Long> findOpenIdsBySessionId(Long sessionId);
 
+    /** Ids das mesas abertas vinculadas ao cliente, de qualquer caixa — as mesas abertas do QR. */
+    List<Long> findOpenIdsByCustomerId(Long customerId);
+
     /**
      * Ids das comandas <b>ABERTAS há mais tempo que {@code cutoff}</b>, para a varredura de mesa
      * esquecida (PDV-F013), das mais antigas para as mais novas e no máximo {@code limit}.
