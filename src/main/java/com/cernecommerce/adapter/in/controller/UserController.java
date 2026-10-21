@@ -212,7 +212,9 @@ public class UserController {
                 result.content().stream().map(User::getCustomerId).toList());
         PageResult<UserResponseDTO> response = new PageResult<>(
                 result.content().stream()
-                        .map(u -> converter.toResponse(u, customerNames.get(u.getCustomerId())))
+                        // Sem vínculo não consulta o mapa: o vazio é Map.of(), que lança NPE em get(null).
+                        .map(u -> converter.toResponse(u,
+                                u.getCustomerId() == null ? null : customerNames.get(u.getCustomerId())))
                         .toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
