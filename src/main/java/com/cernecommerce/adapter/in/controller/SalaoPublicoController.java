@@ -2,11 +2,16 @@ package com.cernecommerce.adapter.in.controller;
 
 import com.cernecommerce.adapter.in.dtos.request.SalaoAcessoRequest;
 import com.cernecommerce.adapter.in.dtos.request.SalaoCadastroRequest;
+import com.cernecommerce.adapter.in.dtos.request.SalaoChamadoRequest;
 import com.cernecommerce.adapter.in.dtos.request.SalaoCompletarRequest;
+import com.cernecommerce.adapter.in.dtos.request.SalaoEntrarRequest;
 import com.cernecommerce.adapter.in.dtos.request.SalaoIdentificacaoRequest;
+import com.cernecommerce.adapter.in.dtos.request.SalaoMinhasComandasRequest;
 import com.cernecommerce.adapter.in.dtos.request.SalaoPedidoRequest;
 import com.cernecommerce.adapter.in.dtos.response.CardapioDaMesaResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.ChamadoDaMesaResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.IdentificacaoResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.MesaAbertaDoClienteResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.MesaAtualResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SolicitacaoPublicaResponseDTO;
 import com.cernecommerce.core.domain.model.salao.EscolhasSessao;
@@ -32,6 +37,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -68,6 +74,8 @@ public class SalaoPublicoController {
         return ResponseEntity.ok(CardapioDaMesaResponseDTO.of(useCase.cardapioPorToken(token, dispositivo)));
     }
 
+    @Operation(summary = "Identifica pelo CPF ou celular", description = "Se achou: nome mascarado, VIP, o que falta "
+            + "no cadastro e as comandas abertas do cliente — como aviso: token e valor só da mesa deste QR.")
     @PostMapping("/identificar")
     public ResponseEntity<IdentificacaoResponseDTO> identificar(@PathVariable @Size(max = 64) String token,
             @Valid @RequestBody SalaoIdentificacaoRequest request) {
@@ -115,7 +123,7 @@ public class SalaoPublicoController {
         SolicitacaoSessao s = useCase.solicitarPorToken(token, new SalaoAutoatendimentoUseCase.Pedido(
                 new Identificacao(request.cpf(), request.celular()), request.essenciaSku(), request.essenciaSku2(),
                 request.observacao(), new EscolhasSessao(request.vasoGrande(), request.carvao(), request.adicionalIds(),
-                        request.pagarNoFinal()), request.dispositivo()));
+                        request.pagarNoFinal(), request.proporcao()), request.dispositivo()));
         return ResponseEntity.status(HttpStatus.CREATED).body(toPublico(token, s, request.dispositivo()));
     }
 
@@ -148,6 +156,56 @@ public class SalaoPublicoController {
     public ResponseEntity<MesaAtualResponseDTO> mesaAtual(@PathVariable @Size(max = 64) String token,
             @RequestParam @Size(max = 64) String dispositivo) {
         return ResponseEntity.ok(MesaAtualResponseDTO.of(useCase.mesaAtualPorToken(token, dispositivo)));
+    }
+
+    @Operation(summary = "Chama a equipe", description = "Conta (com a forma de pagamento), recolher, carvão ou "
+            + "atendente. Sem comandaRef, na mesa deste QR, pelo aparelho com acesso. Com comandaRef, na comanda do "
+            + "cliente aberta pelo PDV, com CPF/celular e a confirmação. Avisa quem opera mesa.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Equipe avisada"),
+            @ApiResponse(responseCode = "400", description = "Conta sem forma de pagamento (SALAO_DADOS_INVALIDOS)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem acesso à mesa ou comanda de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Já há um chamado aberto do mesmo tipo (CHAMADO_JA_ABERTO)", content = @Content)
+    })
+    @PostMapping("/chamados")
+    public ResponseEntity<ChamadoDaMesaResponseDTO> chamar(@PathVariable @Size(max = 64) String token,
+            @Valid @RequestBody SalaoChamadoRequest request) {
+        Identificacao identificacao = request.cpf() == null && request.celular() == null ? null
+                : new Identificacao(request.cpf(), request.celular());
+        return ResponseEntity.status(HttpStatus.CREATED).body(ChamadoDaMesaResponseDTO.of(useCase.chamarPorToken(token,
+                new SalaoAutoatendimentoUseCase.NovoChamado(request.tipo(), request.formaPagamento(),
+                        request.dispositivo(), request.comandaRef(), identificacao, request.confirmacao()))));
+    }
+
+    @Operation(summary = "Entra na própria mesa pelo CPF/celular", description = "Para o titular da mesa ocupada: "
+            + "libera este aparelho sem o código, com a confirmação — os 4 últimos dígitos do celular (veio pelo CPF) "
+            + "ou os 3 primeiros do CPF (veio pelo celular). Cada tentativa vai para a auditoria.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Aparelho liberado"),
+            @ApiResponse(responseCode = "403", description = "Mesa livre ou de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content)
+    })
+    @PostMapping("/entrar")
+    public ResponseEntity<Void> entrar(@PathVariable @Size(max = 64) String token,
+            @Valid @RequestBody SalaoEntrarRequest request) {
+        useCase.entrarPorToken(token, new Identificacao(request.cpf(), request.celular()), request.confirmacao(),
+                request.dispositivo());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "As comandas abertas do cliente", description = "Completas — token, consumo, valor e "
+            + "chamados —, com a mesma confirmação do /entrar.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK (vazia sem comanda aberta)"),
+            @ApiResponse(responseCode = "403", description = "Confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content)
+    })
+    @PostMapping("/minhas-comandas")
+    public ResponseEntity<List<MesaAbertaDoClienteResponseDTO>> minhasComandas(
+            @PathVariable @Size(max = 64) String token, @Valid @RequestBody SalaoMinhasComandasRequest request) {
+        return ResponseEntity.ok(useCase.minhasComandasPorToken(token,
+                        new Identificacao(request.cpf(), request.celular()), request.confirmacao()).stream()
+                .map(MesaAbertaDoClienteResponseDTO::of).toList());
     }
 
     private SolicitacaoPublicaResponseDTO toPublico(String token, SolicitacaoSessao s, String dispositivo) {

@@ -20,6 +20,8 @@ public enum NotificationType {
     RESUMO,
     /** Sessão pedida pelo QR da mesa (autoatendimento do Salão) — para quem tem PDV_COMANDA_MANAGE. */
     SOLICITACAO_SESSAO,
+    /** Chamado da mesa pelo QR (conta, recolher, carvão, atendente) — para quem tem PDV_COMANDA_MANAGE. */
+    CHAMADO_MESA,
     /** Alertas técnicos (bug report, falha de integração, erro 500, segurança) — para a ROLE_DEV. */
     DEV
 }

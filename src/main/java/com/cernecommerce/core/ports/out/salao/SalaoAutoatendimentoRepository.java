@@ -1,20 +1,28 @@
 package com.cernecommerce.core.ports.out.salao;
 
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.salao.ChamadoMesa;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoSessao;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
+import com.cernecommerce.core.domain.model.salao.StatusChamado;
+import com.cernecommerce.core.domain.model.salao.TipoChamado;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** Persistência do autoatendimento do Salão: mesas com QR, essências do dia e solicitações. */
+/**
+ * Persistência do autoatendimento do Salão: mesas com QR, essências do dia, perfis de sabor,
+ * solicitações, ocupações e chamados.
+ */
 public interface SalaoAutoatendimentoRepository {
 
     List<SalaoMesa> findAllMesas();
@@ -65,4 +73,31 @@ public interface SalaoAutoatendimentoRepository {
     void addAcesso(Long ocupacaoId, String deviceToken);
 
     boolean hasAcesso(Long ocupacaoId, String deviceToken);
+
+    // ── Perfis de sabor ──
+
+    /** Os perfis marcados de cada SKU pedido; SKU sem perfil não volta. */
+    Map<String, List<PerfilSabor>> findPerfis(Collection<String> skus);
+
+    /** Dos SKUs pedidos, os que a casa já configurou — mesmo que com nenhum perfil. */
+    Set<String> findSkusComPerfilConfigurado(Collection<String> skus);
+
+    /** Substitui os perfis do SKU e o marca como configurado. Vazio limpa. */
+    void replacePerfis(String sku, Collection<PerfilSabor> perfis, Instant agora);
+
+    // ── Chamados da mesa ──
+
+    ChamadoMesa saveChamado(ChamadoMesa chamado);
+
+    /** Com trava de escrita — dois atendentes atendendo o mesmo chamado. */
+    Optional<ChamadoMesa> findChamadoByIdForUpdate(Long id);
+
+    /** Há chamado {@code tipo} ABERTO na comanda, criado depois de {@code desde} (os anteriores venceram). */
+    boolean existsChamadoAberto(Long comandaId, TipoChamado tipo, Instant desde);
+
+    /** Os chamados da comanda, mais recentes primeiro. */
+    List<ChamadoMesa> findChamadosDaComanda(Long comandaId);
+
+    /** Gravados com {@code status} desde {@code desde}, mais antigos primeiro — a ordem da fila. */
+    List<ChamadoMesa> findChamados(StatusChamado status, Instant desde);
 }

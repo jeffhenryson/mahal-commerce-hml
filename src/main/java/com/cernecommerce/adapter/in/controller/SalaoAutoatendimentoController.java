@@ -1,8 +1,10 @@
 package com.cernecommerce.adapter.in.controller;
 
 import com.cernecommerce.adapter.in.dtos.request.EssenciasDoDiaRequest;
+import com.cernecommerce.adapter.in.dtos.request.EssenciasPerfisRequest;
 import com.cernecommerce.adapter.in.dtos.request.RecusarSolicitacaoRequest;
 import com.cernecommerce.adapter.in.dtos.request.SalaoMesaRequest;
+import com.cernecommerce.adapter.in.dtos.response.ChamadoMesaResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.EssenciaDoDiaResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.MesaOcupacaoResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SalaoMesaResponseDTO;
@@ -12,6 +14,7 @@ import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoResumo;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
+import com.cernecommerce.core.domain.model.salao.StatusChamado;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -140,6 +143,20 @@ public class SalaoAutoatendimentoController {
         return ResponseEntity.ok(EssenciaDoDiaResponseDTO.of(destino, useCase.listEssenciasDoDia(destino)));
     }
 
+    @Operation(summary = "Define os perfis de sabor por SKU", description = "Substitui os perfis de cada SKU "
+            + "listado; lista vazia limpa. SKU nunca configurado tem os perfis sugeridos pelo nome.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Gravados"),
+            @ApiResponse(responseCode = "400", description = "SKU vazio ou perfil inválido", content = @Content)
+    })
+    @PutMapping("/salao/essencias-perfis")
+    @PreAuthorize("hasAuthority('PDV_SESSAO_MANAGE')")
+    public ResponseEntity<Void> salvarPerfis(@Valid @RequestBody EssenciasPerfisRequest request) {
+        useCase.salvarPerfis(request.itens().stream()
+                .map(i -> new SalaoAutoatendimentoUseCase.PerfisDoSku(i.sku(), i.perfis())).toList());
+        return ResponseEntity.noContent().build();
+    }
+
     // ── PDV: solicitações ─────────────────────────────────────────────────────────────────────
 
     @Operation(summary = "Sessões pedidas pelo QR",
@@ -190,5 +207,28 @@ public class SalaoAutoatendimentoController {
             @Valid @RequestBody(required = false) RecusarSolicitacaoRequest request, Authentication authentication) {
         return ResponseEntity.ok(SolicitacaoSessaoResponseDTO.of(
                 useCase.recusar(id, request == null ? null : request.motivo(), authentication.getName())));
+    }
+
+    // ── PDV: chamados da mesa ─────────────────────────────────────────────────────────────────
+
+    @Operation(summary = "Chamados feitos pelo QR",
+            description = "ABERTO = os de menos de 30 min das comandas ainda abertas, mais antigos primeiro. "
+                    + "ATENDIDO = os das últimas 12 h.")
+    @GetMapping("/pdv/chamados-mesa")
+    @PreAuthorize("hasAuthority('PDV_READ')")
+    public ResponseEntity<List<ChamadoMesaResponseDTO>> listChamados(
+            @RequestParam(defaultValue = "ABERTO") StatusChamado status) {
+        return ResponseEntity.ok(useCase.listChamados(status).stream().map(ChamadoMesaResponseDTO::of).toList());
+    }
+
+    @Operation(summary = "Marca o chamado como atendido", description = "Idempotente: o já atendido volta como está.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Atendido"),
+            @ApiResponse(responseCode = "404", description = "Chamado não encontrado (CHAMADO_NOT_FOUND)", content = @Content)
+    })
+    @PostMapping("/pdv/chamados-mesa/{id}/atender")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ChamadoMesaResponseDTO> atenderChamado(@PathVariable Long id, Authentication authentication) {
+        return ResponseEntity.ok(ChamadoMesaResponseDTO.of(useCase.atenderChamado(id, authentication.getName())));
     }
 }

@@ -75,4 +75,8 @@ public class SalaoSolicitacaoEntity {
 
     @Column(name = "device_token", length = 64)
     private String deviceToken;
+
+    /** Proporção da mescla (V169); nula com um sabor só. */
+    @Column(length = 20)
+    private String proporcao;
 }

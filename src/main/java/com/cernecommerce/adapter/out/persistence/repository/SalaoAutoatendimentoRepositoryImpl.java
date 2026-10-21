@@ -1,16 +1,25 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
+import com.cernecommerce.adapter.out.persistence.entity.SalaoChamadoEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaDiaEntity;
+import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaPerfilConfigEntity;
+import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaPerfilEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoMesaEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoMesaOcupacaoEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoSolicitacaoEntity;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
+import com.cernecommerce.core.domain.model.salao.ChamadoMesa;
 import com.cernecommerce.core.domain.model.salao.EscolhasSessao;
+import com.cernecommerce.core.domain.model.salao.FormaPagamentoChamado;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoSessao;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
+import com.cernecommerce.core.domain.model.salao.StatusChamado;
+import com.cernecommerce.core.domain.model.salao.TipoChamado;
 import com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +32,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -36,14 +46,21 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     private final SalaoEssenciaDiaJpaRepository essenciaDiaJpa;
     private final SalaoSolicitacaoJpaRepository solicitacaoJpa;
     private final SalaoMesaOcupacaoJpaRepository ocupacaoJpa;
+    private final SalaoEssenciaPerfilJpaRepository perfilJpa;
+    private final SalaoEssenciaPerfilConfigJpaRepository perfilConfigJpa;
+    private final SalaoChamadoJpaRepository chamadoJpa;
 
     public SalaoAutoatendimentoRepositoryImpl(SalaoMesaJpaRepository mesaJpa,
             SalaoEssenciaDiaJpaRepository essenciaDiaJpa, SalaoSolicitacaoJpaRepository solicitacaoJpa,
-            SalaoMesaOcupacaoJpaRepository ocupacaoJpa) {
+            SalaoMesaOcupacaoJpaRepository ocupacaoJpa, SalaoEssenciaPerfilJpaRepository perfilJpa,
+            SalaoEssenciaPerfilConfigJpaRepository perfilConfigJpa, SalaoChamadoJpaRepository chamadoJpa) {
         this.mesaJpa = mesaJpa;
         this.essenciaDiaJpa = essenciaDiaJpa;
         this.solicitacaoJpa = solicitacaoJpa;
         this.ocupacaoJpa = ocupacaoJpa;
+        this.perfilJpa = perfilJpa;
+        this.perfilConfigJpa = perfilConfigJpa;
+        this.chamadoJpa = chamadoJpa;
     }
 
     // ── Mesas ─────────────────────────────────────────────────────────────────────────────────
@@ -105,7 +122,7 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 x.carvao() == null ? null : x.carvao().name(),
                 x.adicionalIds().isEmpty() ? null
                         : x.adicionalIds().stream().map(String::valueOf).collect(Collectors.joining(",")),
-                x.pagarNoFinal(), s.deviceToken());
+                x.pagarNoFinal(), s.deviceToken(), x.proporcao() == null ? null : x.proporcao().name());
         return toDomain(solicitacaoJpa.save(e));
     }
 
@@ -184,6 +201,67 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
         return deviceToken != null && !deviceToken.isBlank() && ocupacaoJpa.hasAcesso(ocupacaoId, deviceToken);
     }
 
+    // ── Perfis de sabor ───────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, List<PerfilSabor>> findPerfis(Collection<String> skus) {
+        if (skus == null || skus.isEmpty()) return Map.of();
+        return perfilJpa.findBySkuIn(skus).stream().collect(Collectors.groupingBy(SalaoEssenciaPerfilEntity::getSku,
+                Collectors.mapping(e -> PerfilSabor.valueOf(e.getPerfil()), Collectors.toList())));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Set<String> findSkusComPerfilConfigurado(Collection<String> skus) {
+        if (skus == null || skus.isEmpty()) return Set.of();
+        return perfilConfigJpa.findBySkuIn(skus).stream().map(SalaoEssenciaPerfilConfigEntity::getSku)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    public void replacePerfis(String sku, Collection<PerfilSabor> perfis, Instant agora) {
+        perfilJpa.deleteBySku(sku);
+        perfilJpa.saveAll(new LinkedHashSet<>(perfis).stream()
+                .map(p -> new SalaoEssenciaPerfilEntity(sku, p.name())).toList());
+        perfilConfigJpa.save(new SalaoEssenciaPerfilConfigEntity(sku, agora));
+    }
+
+    // ── Chamados da mesa ──────────────────────────────────────────────────────────────────────
+
+    @Override
+    public ChamadoMesa saveChamado(ChamadoMesa c) {
+        return toDomain(chamadoJpa.save(new SalaoChamadoEntity(c.id(), c.comandaId(), c.mesaId(), c.ocupacaoId(),
+                c.tipo().name(),
+                c.formaPagamento() == null ? null : c.formaPagamento().name(), c.status().name(), c.criadoEm(),
+                c.atendidoEm(), c.atendidoPor())));
+    }
+
+    @Override
+    public Optional<ChamadoMesa> findChamadoByIdForUpdate(Long id) {
+        return chamadoJpa.findByIdForUpdate(id).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean existsChamadoAberto(Long comandaId, TipoChamado tipo, Instant desde) {
+        return chamadoJpa.existsByComandaIdAndTipoAndStatusAndCriadoEmAfter(comandaId, tipo.name(),
+                StatusChamado.ABERTO.name(), desde);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ChamadoMesa> findChamadosDaComanda(Long comandaId) {
+        return chamadoJpa.findByComandaIdOrderByCriadoEmDesc(comandaId).stream().map(this::toDomain).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ChamadoMesa> findChamados(StatusChamado status, Instant desde) {
+        return chamadoJpa.findByStatusAndCriadoEmAfterOrderByCriadoEmAsc(status.name(), desde).stream()
+                .map(this::toDomain).toList();
+    }
+
     private MesaOcupacao toDomain(SalaoMesaOcupacaoEntity e) {
         return new MesaOcupacao(e.getId(), e.getMesaId(), e.getComandaId(), e.getCustomerId(), e.getCodigo(),
                 e.getAbertaEm());
@@ -198,7 +276,16 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 e.getEssenciaSku(), e.getEssenciaSku2(), e.getObservacao(), SolicitacaoStatus.valueOf(e.getStatus()),
                 e.getMotivo(), e.getComandaId(), e.getCriadoEm(), e.getDecididoEm(), e.getDecididoPor(),
                 new EscolhasSessao(e.isVasoGrande(), e.getCarvao() == null ? null : Charcoal.valueOf(e.getCarvao()),
-                        parseIds(e.getAdicionalIds()), e.isPagarNoFinal()), e.getDeviceToken());
+                        parseIds(e.getAdicionalIds()), e.isPagarNoFinal(),
+                        e.getProporcao() == null ? null : ProporcaoMistura.valueOf(e.getProporcao())),
+                e.getDeviceToken());
+    }
+
+    private ChamadoMesa toDomain(SalaoChamadoEntity e) {
+        return new ChamadoMesa(e.getId(), e.getComandaId(), e.getMesaId(), e.getOcupacaoId(),
+                TipoChamado.valueOf(e.getTipo()),
+                e.getFormaPagamento() == null ? null : FormaPagamentoChamado.valueOf(e.getFormaPagamento()),
+                StatusChamado.valueOf(e.getStatus()), e.getCriadoEm(), e.getAtendidoEm(), e.getAtendidoPor());
     }
 
     private static List<Long> parseIds(String texto) {

@@ -127,6 +127,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_TRANSFERRED,
         // PDV-F036 — resposta a "o cliente comprou algo na loja?".
         COMANDA_STORE_PURCHASE_RECORDED,
+        // Salão — o cliente entrou na mesa pelo CPF/celular (QR), e as confirmações recusadas (entrar,
+        // ver as próprias comandas, chamar na comanda do PDV).
+        SALAO_MESA_ENTRADA, SALAO_CONFIRMACAO_RECUSADA,
         // Pedido
         ORDER_STATUS_CHANGED, ORDER_CANCELLED, ORDER_REFUNDED, ORDER_PAYMENT_CORRECTED,
         // PED-F006 — troca de item: devolve um item e entrega outro no mesmo pedido.

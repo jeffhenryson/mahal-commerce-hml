@@ -407,10 +407,11 @@ class CoreBeanConfig {
             com.cernecommerce.core.ports.in.CrmUseCase crmUseCase, ComandaUseCase comandaUseCase,
             com.cernecommerce.core.ports.in.NotificationUseCase notificationUseCase, UserRepository userRepository,
             com.cernecommerce.core.ports.out.notification.NotificationSsePort ssePort,
-            AfterCommitExecutor afterCommitExecutor) {
+            AfterCommitExecutor afterCommitExecutor, AuditEventPublisherPort auditEventPublisherPort) {
         return new com.cernecommerce.core.service.SalaoAutoatendimentoService(repository, estoqueUseCase,
                 warehouseRepository, sessionMenuService, crmUseCase, comandaUseCase,
-                notificationUseCase, userRepository, ssePort, afterCommitExecutor, Clock.systemUTC());
+                notificationUseCase, userRepository, ssePort, afterCommitExecutor, auditEventPublisherPort,
+                Clock.systemUTC());
     }
 
     /** PDV-F021 — bean concreto: o ComandaService usa as regras de lançamento, como faz com o PdvService. */

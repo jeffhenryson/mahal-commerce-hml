@@ -2,8 +2,11 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException;
 import com.cernecommerce.core.domain.exception.salao.AutoatendimentoDadosInvalidosException;
+import com.cernecommerce.core.domain.event.AuditEvent;
+import com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException;
 import com.cernecommerce.core.domain.exception.salao.ClienteJaCadastradoException;
 import com.cernecommerce.core.domain.exception.salao.CodigoMesaInvalidoException;
+import com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaException;
 import com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException;
 import com.cernecommerce.core.domain.exception.salao.MesaOcupadaException;
 import com.cernecommerce.core.domain.exception.salao.SalaoMesaNotFoundException;
@@ -23,18 +26,31 @@ import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
+import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
+import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
+import com.cernecommerce.core.domain.model.pdv.SessionProgress;
+import com.cernecommerce.core.domain.model.pdv.SessionSetup;
 import com.cernecommerce.core.domain.model.pdv.SessionAddon;
 import com.cernecommerce.core.domain.model.pdv.SessionSettings;
 import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.salao.AcessoMesa;
 import com.cernecommerce.core.domain.model.salao.CardapioDaMesa;
+import com.cernecommerce.core.domain.model.salao.ChamadoMesa;
 import com.cernecommerce.core.domain.model.salao.EscolhasSessao;
 import com.cernecommerce.core.domain.model.salao.EssenciaOferecida;
+import com.cernecommerce.core.domain.model.salao.FormaPagamentoChamado;
+import com.cernecommerce.core.domain.model.salao.MesaAbertaDoCliente;
+import com.cernecommerce.core.domain.model.salao.MesaAtual;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoSessao;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
+import com.cernecommerce.core.domain.model.salao.StatusChamado;
+import com.cernecommerce.core.domain.model.salao.TipoChamado;
+import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
+import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -42,10 +58,13 @@ import com.cernecommerce.core.ports.in.NotificationUseCase;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Cadastro;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Completar;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Identificacao;
+import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.NovoChamado;
+import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.PerfisDoSku;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Pedido;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
+import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.NotificationSsePort;
 import com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository;
 import com.cernecommerce.core.ports.out.user.UserRepository;
@@ -60,10 +79,12 @@ import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -74,8 +95,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -98,6 +121,7 @@ class SalaoAutoatendimentoServiceTest {
     @Mock UserRepository userRepository;
     @Mock NotificationSsePort ssePort;
     @Mock AfterCommitExecutor afterCommit;
+    @Mock AuditEventPublisherPort auditEvents;
 
     SalaoAutoatendimentoService service;
 
@@ -115,7 +139,7 @@ class SalaoAutoatendimentoServiceTest {
     void setUp() {
         service = new SalaoAutoatendimentoService(repository, estoqueUseCase, warehouseRepository,
                 sessionMenuUseCase, crmUseCase, comandaUseCase, notificationUseCase,
-                userRepository, ssePort, afterCommit, Clock.fixed(AGORA, ZoneOffset.UTC));
+                userRepository, ssePort, afterCommit, auditEvents, Clock.fixed(AGORA, ZoneOffset.UTC));
 
         when(repository.findMesaByToken("tok-mesa-4")).thenReturn(Optional.of(MESA));
         when(repository.findMesaById(7L)).thenReturn(Optional.of(MESA));
@@ -163,6 +187,11 @@ class SalaoAutoatendimentoServiceTest {
                     s.criadoEm(), s.decididoEm(), s.decididoPor(), s.escolhas(), s.deviceToken());
         });
         when(crmUseCase.findCustomerById(50L)).thenReturn(MARIA);
+        when(repository.saveChamado(any())).thenAnswer(inv -> {
+            ChamadoMesa c = inv.getArgument(0);
+            return c.id() != null ? c : new ChamadoMesa(300L, c.comandaId(), c.mesaId(), c.ocupacaoId(), c.tipo(),
+                    c.formaPagamento(), c.status(), c.criadoEm(), c.atendidoEm(), c.atendidoPor());
+        });
     }
 
     // ── O que o QR oferece ────────────────────────────────────────────────────────────────────
@@ -565,6 +594,434 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(service.ocupacoesAbertas()).isEmpty();
     }
 
+    // ── Mistura com proporção ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void solicitar_mesclaComProporcao_gravaAProporcao() {
+        identificaMaria();
+
+        SolicitacaoSessao s = service.solicitarPorToken("tok-mesa-4", new Pedido(new Identificacao("12345678901", null),
+                "ZOMO-MENTA", "NAY-PESSEGO", null,
+                new EscolhasSessao(false, null, List.of(), false, ProporcaoMistura.SETENTA_TRINTA), APARELHO));
+
+        assertThat(s.escolhas().proporcao()).isEqualTo(ProporcaoMistura.SETENTA_TRINTA);
+        // O preço não muda com a proporção: a faixa mais cara da mescla.
+        assertThat(s.tierId()).isEqualTo(2L);
+    }
+
+    @Test
+    void solicitar_umSaborSo_ignoraAProporcao() {
+        identificaMaria();
+
+        SolicitacaoSessao s = service.solicitarPorToken("tok-mesa-4", new Pedido(new Identificacao("12345678901", null),
+                "ZOMO-MENTA", null, null,
+                new EscolhasSessao(false, null, List.of(), false, ProporcaoMistura.NOVENTA_DEZ), APARELHO));
+
+        assertThat(s.escolhas().proporcao()).isNull();
+    }
+
+    @Test
+    void aceitar_mesclaComProporcao_passaOTextoEAProporcaoAoLancamento() {
+        EscolhasSessao escolhas = new EscolhasSessao(false, null, List.of(), false, ProporcaoMistura.SETENTA_TRINTA);
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(new SolicitacaoSessao(99L,
+                UUID.randomUUID(), 7L, 50L, 2L, "ZOMO-MENTA", "NAY-PESSEGO", null, SolicitacaoStatus.PENDENTE, null,
+                null, AGORA.minusSeconds(60), null, null, escolhas, APARELHO)));
+        when(comandaUseCase.openComanda(3L, "Mesa 4", 50L, "ana")).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+
+        service.aceitar(99L, 3L, "ana", false);
+
+        ArgumentCaptor<ComandaUseCase.AddSessionCommand> cmd = ArgumentCaptor.forClass(ComandaUseCase.AddSessionCommand.class);
+        verify(comandaUseCase).addSession(eq(500L), cmd.capture(), eq("ana"));
+        assertThat(cmd.getValue().essencia()).isEqualTo("Zomo · Menta 70% + Nay · Pêssego 30%");
+        assertThat(cmd.getValue().essenciaProporcao()).isEqualTo(ProporcaoMistura.SETENTA_TRINTA);
+        assertThat(cmd.getValue().essenciaSku()).isEqualTo("ZOMO-MENTA");
+        assertThat(cmd.getValue().essenciaSku2()).isEqualTo("NAY-PESSEGO");
+    }
+
+    @Test
+    void aceitar_semProporcao_deixaOTextoParaOLancamento() {
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(pendente(AGORA.minusSeconds(60))));
+        when(comandaUseCase.openComanda(3L, "Mesa 4", 50L, "ana")).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+
+        service.aceitar(99L, 3L, "ana", false);
+
+        ArgumentCaptor<ComandaUseCase.AddSessionCommand> cmd = ArgumentCaptor.forClass(ComandaUseCase.AddSessionCommand.class);
+        verify(comandaUseCase).addSession(eq(500L), cmd.capture(), eq("ana"));
+        assertThat(cmd.getValue().essencia()).isNull();
+        assertThat(cmd.getValue().essenciaProporcao()).isNull();
+    }
+
+    @Test
+    void proporcao_rotulo() {
+        assertThat(ProporcaoMistura.MEIO_A_MEIO.rotulo("Uva", "Menta")).isEqualTo("Uva 50% + Menta 50%");
+        assertThat(ProporcaoMistura.NOVENTA_DEZ.rotulo("Uva", "Menta")).isEqualTo("Uva 90% + Menta 10%");
+    }
+
+    // ── Perfis de sabor ───────────────────────────────────────────────────────────────────────
+
+    @Test
+    void cardapio_skuNaoConfigurado_ganhaOsPerfisSugeridosPeloNome() {
+        CardapioDaMesa cardapio = service.cardapioPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(cardapio.essencias()).extracting(EssenciaOferecida::perfis)
+                .containsExactly(List.of(PerfilSabor.FRUTADO), List.of(PerfilSabor.GELADO));
+    }
+
+    @Test
+    void cardapio_skuConfigurado_valeOMarcado_mesmoVazio() {
+        when(repository.findSkusComPerfilConfigurado(any())).thenReturn(Set.of("ZOMO-MENTA", "NAY-PESSEGO"));
+        when(repository.findPerfis(any())).thenReturn(Map.of("NAY-PESSEGO", List.of(PerfilSabor.DOCE, PerfilSabor.FRUTADO)));
+
+        CardapioDaMesa cardapio = service.cardapioPorToken("tok-mesa-4", APARELHO);
+
+        // Na ordem do enum, e a Menta configurada sem perfil fica sem — a sugestão parou.
+        assertThat(cardapio.essencias()).extracting(EssenciaOferecida::perfis)
+                .containsExactly(List.of(PerfilSabor.FRUTADO, PerfilSabor.DOCE), List.of());
+    }
+
+    @Test
+    void sugerirPerfis_semAcentoNemCaixa() {
+        assertThat(PerfilSabor.sugerir("Limão com Hortelã")).containsExactly(PerfilSabor.CITRICO, PerfilSabor.GELADO);
+        assertThat(PerfilSabor.sugerir("Zomo")).isEmpty();
+        assertThat(PerfilSabor.sugerir(null)).isEmpty();
+    }
+
+    @Test
+    void salvarPerfis_substituiCadaSku_oUltimoRepetidoVale() {
+        service.salvarPerfis(List.of(
+                new PerfisDoSku(" ZOMO-MENTA ", List.of(PerfilSabor.DOCE)),
+                new PerfisDoSku("ZOMO-MENTA", List.of(PerfilSabor.GELADO, PerfilSabor.FRUTADO, PerfilSabor.GELADO)),
+                new PerfisDoSku("NAY-PESSEGO", List.of())));
+
+        verify(repository).replacePerfis("ZOMO-MENTA", List.of(PerfilSabor.FRUTADO, PerfilSabor.GELADO), AGORA);
+        verify(repository).replacePerfis("NAY-PESSEGO", List.of(), AGORA);
+        verify(repository, never()).replacePerfis(eq("ZOMO-MENTA"), eq(List.of(PerfilSabor.DOCE)), any());
+    }
+
+    @Test
+    void salvarPerfis_skuVazio_eRecusadoSemGravar() {
+        assertThatThrownBy(() -> service.salvarPerfis(List.of(new PerfisDoSku(" ", List.of()))))
+                .isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+        verify(repository, never()).replacePerfis(anyString(), any(), any());
+    }
+
+    // ── Chamados da mesa ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void chamar_semAcessoAMesa_e403() {
+        ocupada();
+
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4",
+                new NovoChamado(TipoChamado.ATENDENTE, null, "outro")))
+                .isInstanceOf(MesaOcupadaException.class);
+        verify(repository, never()).saveChamado(any());
+    }
+
+    @Test
+    void chamar_contaSemFormaDePagamento_e400() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4", new NovoChamado(TipoChamado.CONTA, null, APARELHO)))
+                .isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+        verify(repository, never()).saveChamado(any());
+    }
+
+    @Test
+    void chamar_jaComUmAbertoDoMesmoTipo_e409() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        when(repository.existsChamadoAberto(500L, TipoChamado.CARVAO, AGORA.minus(ChamadoMesa.VALIDADE)))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4", new NovoChamado(TipoChamado.CARVAO, null, APARELHO)))
+                .isInstanceOf(ChamadoJaAbertoException.class);
+        verify(repository, never()).saveChamado(any());
+    }
+
+    @Test
+    void chamar_gravaNaComandaDaMesaEAvisaDepoisDoCommit() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        when(userRepository.findUsernamesByPermission("PDV_COMANDA_MANAGE")).thenReturn(Set.of("ana"));
+        doAnswer(inv -> {
+            java.util.function.Consumer<List<Object>> flush = inv.getArgument(2);
+            Object item = inv.getArgument(1);
+            flush.accept(List.of(item));
+            return null;
+        }).when(afterCommit).accumulate(anyString(), any(), any());
+
+        ChamadoMesa c = service.chamarPorToken("tok-mesa-4",
+                new NovoChamado(TipoChamado.CONTA, FormaPagamentoChamado.PIX, APARELHO));
+
+        assertThat(c.id()).isEqualTo(300L);
+        assertThat(c.comandaId()).isEqualTo(500L);
+        assertThat(c.ocupacaoId()).isEqualTo(70L);
+        assertThat(c.mesaId()).isEqualTo(7L);
+        assertThat(c.status()).isEqualTo(StatusChamado.ABERTO);
+        assertThat(c.formaPagamento()).isEqualTo(FormaPagamentoChamado.PIX);
+        // A janela do 409 é a validade: o esquecido não bloqueia um chamado novo.
+        verify(repository).existsChamadoAberto(500L, TipoChamado.CONTA, AGORA.minus(ChamadoMesa.VALIDADE));
+        verify(afterCommit).accumulate(eq("salao.chamado.aviso"), eq("Conta pedida na Mesa 4 · Pix"), any());
+        verify(notificationUseCase).notify("ana", NotificationType.CHAMADO_MESA, "Conta pedida na Mesa 4 · Pix",
+                "Maria Luiza chamou pelo QR.", "/pdv");
+    }
+
+    @Test
+    void chamado_semConta_descartaAFormaDePagamento() {
+        ChamadoMesa c = ChamadoMesa.novo(500L, null, TipoChamado.RECOLHER, FormaPagamentoChamado.PIX, AGORA);
+
+        assertThat(c.formaPagamento()).isNull();
+        assertThat(c.mesaId()).isNull();
+    }
+
+    @Test
+    void chamar_naComandaDoPdv_comAConfirmacao_gravaSemMesa() {
+        identificaMaria();
+        Comanda balcao = Comanda.of(600L, 3L, "SALAO", "Balcão", 50L, ComandaStatus.ABERTA, List.of(), null, "ana",
+                AGORA, null);
+        when(comandaUseCase.listOpenComandasByCustomer(50L)).thenReturn(List.of(balcao));
+
+        ChamadoMesa c = service.chamarPorToken("tok-mesa-4", new NovoChamado(TipoChamado.ATENDENTE, null, APARELHO,
+                SalaoAutoatendimentoService.ref(balcao), new Identificacao("12345678901", null), "0000"));
+
+        assertThat(c.comandaId()).isEqualTo(600L);
+        assertThat(c.mesaId()).isNull();
+        assertThat(c.ocupacaoId()).isNull();
+        verify(afterCommit).accumulate(eq("salao.chamado.aviso"), eq("Atendente chamado na Balcão"), any());
+    }
+
+    @Test
+    void chamar_naComandaDoPdv_confirmacaoErrada_e403EAudita() {
+        identificaMaria();
+        Comanda balcao = Comanda.of(600L, 3L, "SALAO", "Balcão", 50L, ComandaStatus.ABERTA, List.of(), null, "ana",
+                AGORA, null);
+        when(comandaUseCase.listOpenComandasByCustomer(50L)).thenReturn(List.of(balcao));
+
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4", new NovoChamado(TipoChamado.ATENDENTE, null,
+                APARELHO, SalaoAutoatendimentoService.ref(balcao), new Identificacao("12345678901", null), "1111")))
+                .isInstanceOf(ConfirmacaoInvalidaException.class);
+        verify(repository, never()).saveChamado(any());
+        verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
+                && "CHAMADO".equals(e.details().get("acao"))));
+    }
+
+    @Test
+    void chamar_refDeComandaQueNaoEDoCliente_e403() {
+        identificaMaria();
+        when(comandaUseCase.listOpenComandasByCustomer(50L)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4", new NovoChamado(TipoChamado.ATENDENTE, null,
+                APARELHO, "qualquer", new Identificacao("12345678901", null), "0000")))
+                .isInstanceOf(MesaOcupadaException.class);
+        verify(repository, never()).saveChamado(any());
+    }
+
+    @Test
+    void atender_marcaAtendidoUmaVezSo() {
+        ChamadoMesa aberto = new ChamadoMesa(300L, 500L, 7L, 70L, TipoChamado.CARVAO, null, StatusChamado.ABERTO,
+                AGORA.minusSeconds(120), null, null);
+        when(repository.findChamadoByIdForUpdate(300L)).thenReturn(Optional.of(aberto));
+        when(comandaUseCase.getComanda(500L)).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+
+        var atendido = service.atenderChamado(300L, "ana");
+
+        assertThat(atendido.chamado().status()).isEqualTo(StatusChamado.ATENDIDO);
+        assertThat(atendido.chamado().atendidoPor()).isEqualTo("ana");
+        assertThat(atendido.chamado().atendidoEm()).isEqualTo(AGORA);
+        assertThat(atendido.mesa()).isEqualTo("Mesa 4");
+        assertThat(atendido.cliente()).isEqualTo("Maria Luiza");
+
+        // De novo, por outro atendente: volta como está, com quem atendeu primeiro.
+        when(repository.findChamadoByIdForUpdate(300L)).thenReturn(Optional.of(atendido.chamado()));
+        var deNovo = service.atenderChamado(300L, "bia");
+
+        assertThat(deNovo.chamado().atendidoPor()).isEqualTo("ana");
+        verify(repository).saveChamado(any());
+    }
+
+    @Test
+    void listChamados_abertos_tiraOsExpiradosEOsDeComandaEncerrada() {
+        ChamadoMesa valendo = chamado(1L, 500L, StatusChamado.ABERTO, AGORA.minusSeconds(300));
+        ChamadoMesa esquecido = chamado(2L, 500L, StatusChamado.ABERTO, AGORA.minus(Duration.ofMinutes(31)));
+        ChamadoMesa deMesaFechada = chamado(3L, 501L, StatusChamado.ABERTO, AGORA.minusSeconds(60));
+        when(repository.findChamados(StatusChamado.ABERTO, AGORA.minus(ChamadoMesa.VALIDADE)))
+                .thenReturn(List.of(valendo, esquecido, deMesaFechada));
+        when(comandaUseCase.getComanda(500L)).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+        when(comandaUseCase.getComanda(501L)).thenReturn(fechada(501L));
+
+        var fila = service.listChamados(StatusChamado.ABERTO);
+
+        assertThat(fila).extracting(r -> r.chamado().id()).containsExactly(1L);
+        assertThat(fila.get(0).mesa()).isEqualTo("Mesa 4");
+        assertThat(fila.get(0).cliente()).isEqualTo("Maria Luiza");
+    }
+
+    // ── Mesa atual: chamados e "repetir" ──────────────────────────────────────────────────────
+
+    @Test
+    void mesaAtual_chamados_osAbertosEOsAtendidosHaPouco() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        ChamadoMesa aberto = chamado(1L, 500L, StatusChamado.ABERTO, AGORA.minusSeconds(60));
+        ChamadoMesa esquecido = chamado(2L, 500L, StatusChamado.ABERTO, AGORA.minus(Duration.ofMinutes(40)));
+        ChamadoMesa atendidoAgora = new ChamadoMesa(3L, 500L, 7L, 70L, TipoChamado.RECOLHER, null,
+                StatusChamado.ATENDIDO, AGORA.minusSeconds(900), AGORA.minusSeconds(600), "ana");
+        ChamadoMesa atendidoHaMuito = new ChamadoMesa(4L, 500L, 7L, 70L, TipoChamado.ATENDENTE, null,
+                StatusChamado.ATENDIDO, AGORA.minus(Duration.ofHours(3)), AGORA.minus(Duration.ofHours(2)), "ana");
+        when(repository.findChamadosDaComanda(500L)).thenReturn(List.of(aberto, esquecido, atendidoAgora,
+                atendidoHaMuito));
+
+        var mesa = service.mesaAtualPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(mesa.chamados()).extracting(ChamadoMesa::id).containsExactly(1L, 3L);
+        assertThat(mesa.ultimaSessao()).isNull();
+    }
+
+    @Test
+    void mesaAtual_ultimaSessao_eALinhaMaisRecenteComSabor_inclusiveDoPdv() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        ComandaItem doQr = sessao(1L, AGORA.minusSeconds(3000), "ZOMO-MENTA", null, null,
+                new SessionSetup(null, List.of(), false));
+        ComandaItem doPdv = sessao(2L, AGORA.minusSeconds(1200), "ZOMO-MENTA", "NAY-PESSEGO",
+                ProporcaoMistura.NOVENTA_DEZ, new SessionSetup(Charcoal.JUMBO,
+                        List.of(new SessionSetup.Addon(5L, "Mangueira de gelo", new BigDecimal("8.00"))), true));
+        ComandaItem soTexto = sessao(3L, AGORA.minusSeconds(60), null, null, null, null);
+        when(comandaUseCase.getComanda(500L)).thenReturn(Comanda.of(500L, 3L, "SALAO", "Mesa 4", 50L,
+                ComandaStatus.ABERTA, List.of(doQr, doPdv, soTexto), null, "ana", AGORA, null));
+
+        MesaAtual.UltimaSessao ultima = service.mesaAtualPorToken("tok-mesa-4", APARELHO).ultimaSessao();
+
+        assertThat(ultima).isEqualTo(new MesaAtual.UltimaSessao("ZOMO-MENTA", "NAY-PESSEGO",
+                ProporcaoMistura.NOVENTA_DEZ, true, Charcoal.JUMBO, List.of(5L)));
+    }
+
+    // ── Mesas abertas do cliente ──────────────────────────────────────────────────────────────
+
+    @Test
+    void identificar_listaAsComandasAbertas_soEstaMesaRevelaTokenEValor() {
+        identificaMaria();
+        comandasDaMaria();
+
+        List<MesaAbertaDoCliente> mesas = service.identificarPorToken("tok-mesa-4",
+                new Identificacao("12345678901", null)).orElseThrow().mesasAbertas();
+
+        assertThat(mesas).extracting(MesaAbertaDoCliente::mesa).containsExactly("Mesa 4", "Mesa 9", "Balcão");
+        MesaAbertaDoCliente esta = mesas.get(0);
+        assertThat(esta.estaMesa()).isTrue();
+        assertThat(esta.origem()).isEqualTo(MesaAbertaDoCliente.Origem.QR);
+        assertThat(esta.token()).isEqualTo("tok-mesa-4");
+        assertThat(esta.emAberto()).isEqualByComparingTo("0");
+        MesaAbertaDoCliente outra = mesas.get(1);
+        assertThat(outra.origem()).isEqualTo(MesaAbertaDoCliente.Origem.QR);
+        assertThat(outra.token()).isNull();
+        assertThat(outra.emAberto()).isNull();
+        MesaAbertaDoCliente balcao = mesas.get(2);
+        assertThat(balcao.origem()).isEqualTo(MesaAbertaDoCliente.Origem.PDV);
+        assertThat(balcao.token()).isNull();
+        assertThat(balcao.emAberto()).isNull();
+        assertThat(mesas).allSatisfy(m -> {
+            assertThat(m.itens()).isEmpty();
+            assertThat(m.chamados()).isEmpty();
+        });
+        // A referência é opaca: não é o id sequencial da comanda.
+        assertThat(mesas).extracting(MesaAbertaDoCliente::ref).doesNotHaveDuplicates()
+                .allSatisfy(ref -> assertThat(ref).hasSize(16).isNotIn("500", "600", "700"));
+    }
+
+    @Test
+    void identificar_semComandaAberta_listaVazia() {
+        identificaMaria();
+
+        assertThat(service.identificarPorToken("tok-mesa-4", new Identificacao("12345678901", null))
+                .orElseThrow().mesasAbertas()).isEmpty();
+    }
+
+    @Test
+    void minhasComandas_comAConfirmacao_revelaTudo() {
+        identificaMaria();
+        comandasDaMaria();
+
+        List<MesaAbertaDoCliente> mesas = service.minhasComandasPorToken("tok-mesa-4",
+                new Identificacao("12345678901", null), "0000");
+
+        assertThat(mesas).extracting(MesaAbertaDoCliente::token).containsExactly("tok-mesa-4", "tok-mesa-9", null);
+        assertThat(mesas).allSatisfy(m -> assertThat(m.emAberto()).isNotNull());
+    }
+
+    @Test
+    void minhasComandas_confirmacaoErrada_e403EAudita() {
+        identificaMaria();
+
+        assertThatThrownBy(() -> service.minhasComandasPorToken("tok-mesa-4",
+                new Identificacao("12345678901", null), "9999"))
+                .isInstanceOf(ConfirmacaoInvalidaException.class);
+        verify(comandaUseCase, never()).listOpenComandasByCustomer(anyLong());
+        verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
+                && "MINHAS_COMANDAS".equals(e.details().get("acao"))
+                && !e.details().containsValue("12345678901")));
+    }
+
+    // ── Entrar pela identificação ─────────────────────────────────────────────────────────────
+
+    @Test
+    void entrar_titularPeloCpf_confirmaComOsUltimosDoCelular() {
+        ocupada();
+        identificaMaria();
+
+        service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000", "novo");
+
+        verify(repository).addAcesso(70L, "novo");
+        verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_MESA_ENTRADA
+                && e.details().get("ocupacaoId").equals(70L) && "CPF".equals(e.details().get("identificacao"))));
+    }
+
+    @Test
+    void entrar_titularPeloCelular_confirmaComOsPrimeirosDoCpf() {
+        ocupada();
+        when(crmUseCase.lookupCustomers(eq("21999990000"), isNull(), isNull()))
+                .thenReturn(List.of(new CustomerMatch(MARIA, Set.of(CustomerMatchField.PHONE))));
+
+        service.entrarPorToken("tok-mesa-4", new Identificacao(null, "(21) 99999-0000"), "123", "novo");
+
+        verify(repository).addAcesso(70L, "novo");
+    }
+
+    @Test
+    void entrar_confirmacaoErrada_e403SemLiberar() {
+        ocupada();
+        identificaMaria();
+
+        assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "1234",
+                "novo")).isInstanceOf(ConfirmacaoInvalidaException.class);
+        verify(repository, never()).addAcesso(anyLong(), anyString());
+        verify(auditEvents).publish(argThat(e -> e.type() == AuditEvent.EventType.SALAO_CONFIRMACAO_RECUSADA
+                && "ENTRAR".equals(e.details().get("acao"))));
+    }
+
+    @Test
+    void entrar_clienteQueNaoEOTitular_e403() {
+        ocupada();
+        Customer joao = new Customer(51L, "João", "(21) 98888-7777", null, "98765432100", "PDV", AGORA,
+                CustomerStage.NOVO_LEAD, LocalDate.of(1990, 1, 1));
+        when(crmUseCase.lookupCustomers(isNull(), isNull(), eq("98765432100")))
+                .thenReturn(List.of(new CustomerMatch(joao, Set.of(CustomerMatchField.CPF))));
+
+        assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("98765432100", null), "7777",
+                "novo")).isInstanceOf(MesaOcupadaException.class);
+        verify(repository, never()).addAcesso(anyLong(), anyString());
+    }
+
+    @Test
+    void entrar_mesaLivre_e403() {
+        identificaMaria();
+
+        assertThatThrownBy(() -> service.entrarPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000",
+                "novo")).isInstanceOf(MesaOcupadaException.class);
+        verify(repository, never()).addAcesso(anyLong(), anyString());
+    }
+
     @Test
     void mascarar() {
         assertThat(SalaoAutoatendimentoService.mascarar("maria luiza")).isEqualTo("ma***");
@@ -577,6 +1034,30 @@ class SalaoAutoatendimentoServiceTest {
         when(repository.findUltimaOcupacao(7L)).thenReturn(Optional.of(
                 new MesaOcupacao(70L, 7L, 500L, 50L, "4821", AGORA.minusSeconds(600))));
         when(comandaUseCase.getComanda(500L)).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+    }
+
+    /** Maria: na Mesa 4 (este QR, comanda 500), na Mesa 9 (comanda 600) e no balcão (comanda 700). */
+    private void comandasDaMaria() {
+        SalaoMesa mesa9 = new SalaoMesa(8L, "Mesa 9", "tok-mesa-9", true, AGORA);
+        when(repository.findAllMesas()).thenReturn(List.of(MESA, mesa9));
+        when(comandaUseCase.listOpenComandasByCustomer(50L)).thenReturn(List.of(
+                comanda(500L, ComandaStatus.ABERTA),
+                Comanda.of(600L, 3L, "SALAO", "Mesa 9", 50L, ComandaStatus.ABERTA, List.of(), null, "ana", AGORA, null),
+                Comanda.of(700L, 3L, "SALAO", "Balcão", 50L, ComandaStatus.ABERTA, List.of(), null, "ana", AGORA, null)));
+        when(repository.findOcupacoesByComandaIds(any())).thenReturn(List.of(
+                new MesaOcupacao(70L, 7L, 500L, 50L, "4821", AGORA.minusSeconds(600)),
+                new MesaOcupacao(80L, 8L, 600L, 50L, "1111", AGORA.minusSeconds(900))));
+    }
+
+    private static ChamadoMesa chamado(Long id, Long comandaId, StatusChamado status, Instant criadoEm) {
+        return new ChamadoMesa(id, comandaId, 7L, 70L, TipoChamado.CARVAO, null, status, criadoEm, null, null);
+    }
+
+    private static ComandaItem sessao(Long id, Instant em, String sku, String sku2, ProporcaoMistura proporcao,
+            SessionSetup setup) {
+        return ComandaItem.of(id, "SESS-1", BigDecimal.ONE, new BigDecimal("25.00"), null, "Sessão Tradicional", em,
+                ConsumptionMode.SESSAO, false, null, "Zomo Menta", null, null, null, null, null, null, null,
+                SessionProgress.awaitingPayment(), setup, sku, sku2, false, proporcao);
     }
 
     private static Pedido pedido(String sku, String aparelho) {

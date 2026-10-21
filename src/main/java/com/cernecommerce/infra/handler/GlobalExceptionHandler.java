@@ -1478,6 +1478,24 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "CODIGO_MESA_INVALIDO", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaException.class)
+    public ResponseEntity<ApiError> handleConfirmacaoInvalida(
+            com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "CONFIRMACAO_INVALIDA", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException.class)
+    public ResponseEntity<ApiError> handleChamadoJaAberto(
+            com.cernecommerce.core.domain.exception.salao.ChamadoJaAbertoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CHAMADO_JA_ABERTO", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.ChamadoNotFoundException.class)
+    public ResponseEntity<ApiError> handleChamadoNotFound(
+            com.cernecommerce.core.domain.exception.salao.ChamadoNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CHAMADO_NOT_FOUND", req);
+    }
+
     // ── PDV-F021 — cardápio de sessão ───────────────────────────────────────────────────────
 
     @ExceptionHandler(SessionTierNotFoundException.class)
