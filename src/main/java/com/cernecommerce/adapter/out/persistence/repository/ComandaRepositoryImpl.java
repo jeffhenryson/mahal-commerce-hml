@@ -7,6 +7,7 @@ import org.springframework.data.jpa.domain.Specification;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
 import com.cernecommerce.core.domain.model.pdv.StorePurchase;
+import com.cernecommerce.adapter.out.persistence.entity.ComandaCompraLojaEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaItemEntity;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -27,10 +28,14 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -39,9 +44,12 @@ import java.util.stream.Collectors;
 public class ComandaRepositoryImpl implements ComandaRepository {
 
     private final ComandaJpaRepository comandaJpaRepository;
+    private final ComandaCompraLojaJpaRepository compraLojaJpaRepository;
 
-    public ComandaRepositoryImpl(ComandaJpaRepository comandaJpaRepository) {
+    public ComandaRepositoryImpl(ComandaJpaRepository comandaJpaRepository,
+            ComandaCompraLojaJpaRepository compraLojaJpaRepository) {
         this.comandaJpaRepository = comandaJpaRepository;
+        this.compraLojaJpaRepository = compraLojaJpaRepository;
     }
 
     @Override
@@ -93,6 +101,13 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 : comandaJpaRepository.findOpenIdsByCustomerId(customerId, ComandaStatus.ABERTA.name());
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Set<Long> findOpenIdsAmong(Collection<Long> ids) {
+        return new HashSet<>(InClauseBatches.fetch(ids,
+                lote -> comandaJpaRepository.findIdsByIdInAndStatus(lote, ComandaStatus.ABERTA.name())));
+    }
+
     // ── PDV-F029: histórico ──────────────────────────────────────────────────────────────────
 
     /**
@@ -117,6 +132,28 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             entity.setBoughtInStoreAt(at);
             return true;
         }).orElse(false);
+    }
+
+    @Override
+    public void linkStorePurchase(Long comandaId, Long orderId, String username, Instant at) {
+        if (!compraLojaJpaRepository.existsById(new ComandaCompraLojaEntity.Id(comandaId, orderId))) {
+            compraLojaJpaRepository.save(new ComandaCompraLojaEntity(comandaId, orderId, username, at));
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Long> findStorePurchaseOrderIds(Long comandaId) {
+        return compraLojaJpaRepository.findByComandaIdOrderByRegistradoEmAsc(comandaId).stream()
+                .map(ComandaCompraLojaEntity::getOrderId).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, List<Long>> findStorePurchaseOrderIdsByComanda(Collection<Long> comandaIds) {
+        return InClauseBatches.fetch(comandaIds, compraLojaJpaRepository::findByComandaIdInOrderByRegistradoEmAsc)
+                .stream().collect(Collectors.groupingBy(ComandaCompraLojaEntity::getComandaId, LinkedHashMap::new,
+                        Collectors.mapping(ComandaCompraLojaEntity::getOrderId, Collectors.toList())));
     }
 
     private ClosedComanda toClosed(ComandaEntity e) {

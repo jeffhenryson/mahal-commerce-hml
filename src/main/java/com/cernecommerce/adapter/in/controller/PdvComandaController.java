@@ -492,19 +492,21 @@ public class PdvComandaController {
     @Operation(summary = "Registra se o cliente da mesa comprou algo na loja (PDV-F036)",
             description = "Uma resposta por mesa, em qualquer status: o front pergunta ao recolher a última "
                     + "sessão ou ao encerrar, e dá para corrigir pelo histórico. Responder de novo sobrescreve. "
-                    + "Alimenta compraNaLoja em /analytics.")
+                    + "Com orderId, liga a venda da loja à mesa (vale \"comprou\"; repetir não duplica) e ela "
+                    + "aparece em comprasLoja no QR. Alimenta compraNaLoja em /analytics.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Registrado"),
-            @ApiResponse(responseCode = "400", description = "boughtInStore ausente", content = @Content),
-            @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content)
+            @ApiResponse(responseCode = "400", description = "Sem boughtInStore nem orderId", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda ou venda não encontrada", content = @Content)
     })
     @PutMapping("/{id}/store-purchase")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<Void> recordStorePurchase(@PathVariable("id") Long comandaId,
             @Valid @RequestBody StorePurchaseRequest request, Authentication authentication) {
-        comandaUseCase.recordStorePurchase(comandaId, request.getBoughtInStore(), authentication.getName());
+        boolean bought = request.getOrderId() != null || Boolean.TRUE.equals(request.getBoughtInStore());
+        comandaUseCase.recordStorePurchase(comandaId, bought, request.getOrderId(), authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_STORE_PURCHASE_RECORDED, authentication.getName(),
-                auditPayload(comandaId, "boughtInStore", request.getBoughtInStore())));
+                auditPayload(comandaId, "boughtInStore", bought, "orderId", request.getOrderId())));
         return ResponseEntity.noContent().build();
     }
 

@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.time.Duration;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException;
+import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
@@ -1122,6 +1123,18 @@ public class ComandaService implements ComandaUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Set<Long> findOpenComandaIds(java.util.Collection<Long> comandaIds) {
+        return comandaIds == null || comandaIds.isEmpty() ? Set.of() : comandaRepository.findOpenIdsAmong(comandaIds);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Comanda> listComandasByIds(List<Long> comandaIds) {
+        return comandaIds == null || comandaIds.isEmpty() ? List.of() : comandaRepository.findAllByIds(comandaIds);
+    }
+
+    @Override
     @Transactional
     public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
             boolean applyServiceFee, List<Long> itemIds, String username) {
@@ -1851,10 +1864,48 @@ public class ComandaService implements ComandaUseCase {
     /** PDV-F036 — ver {@link ComandaUseCase#recordStorePurchase}. */
     @Override
     @Transactional
-    public void recordStorePurchase(Long comandaId, boolean boughtInStore, String username) {
-        if (!comandaRepository.recordStorePurchase(comandaId, boughtInStore, username, Instant.now())) {
+    public void recordStorePurchase(Long comandaId, boolean boughtInStore, Long orderId, String username) {
+        if (orderId != null && orderRepository.findById(orderId).isEmpty()) {
+            throw new OrderNotFoundException(orderId);
+        }
+        Instant agora = Instant.now();
+        // Venda ligada é compra feita: a resposta acompanha.
+        if (!comandaRepository.recordStorePurchase(comandaId, boughtInStore || orderId != null, username, agora)) {
             throw new ComandaNotFoundException(comandaId);
         }
+        if (orderId != null) {
+            comandaRepository.linkStorePurchase(comandaId, orderId, username, agora);
+        }
+    }
+
+    /** PDV-F036 — ver {@link ComandaUseCase#listStorePurchases}. */
+    @Override
+    @Transactional(readOnly = true)
+    public List<Order> listStorePurchases(Long comandaId) {
+        return ordersInOrder(comandaRepository.findStorePurchaseOrderIds(comandaId));
+    }
+
+    /** PDV-C060 — ver {@link ComandaUseCase#listStorePurchasesByComandas}. */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, List<Order>> listStorePurchasesByComandas(java.util.Collection<Long> comandaIds) {
+        if (comandaIds == null || comandaIds.isEmpty()) return Map.of();
+        Map<Long, List<Long>> orderIds = comandaRepository.findStorePurchaseOrderIdsByComanda(comandaIds);
+        Map<Long, Order> orders = orderRepository.findAllByIds(orderIds.values().stream().flatMap(List::stream)
+                        .distinct().toList()).stream()
+                .collect(Collectors.toMap(Order::id, o -> o, (a, b) -> a));
+        Map<Long, List<Order>> result = new LinkedHashMap<>();
+        orderIds.forEach((comandaId, ids) -> result.put(comandaId,
+                ids.stream().map(orders::get).filter(Objects::nonNull).toList()));
+        return result;
+    }
+
+    /** Os pedidos dos ids numa consulta, na ordem dos ids; o que sumiu fica de fora. */
+    private List<Order> ordersInOrder(List<Long> ids) {
+        if (ids.isEmpty()) return List.of();
+        Map<Long, Order> orders = orderRepository.findAllByIds(ids).stream()
+                .collect(Collectors.toMap(Order::id, o -> o, (a, b) -> a));
+        return ids.stream().map(orders::get).filter(Objects::nonNull).toList();
     }
 
     /**

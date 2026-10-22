@@ -463,6 +463,15 @@ class PdvComandaControllerSecurityTest {
     }
 
     @Test
+    void store_purchase_with_nonexistent_order_returns_404() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/999999/store-purchase")
+                        .with(user("atendente").authorities(new SimpleGrantedAuthority("PDV_COMANDA_MANAGE")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"orderId\":999999999}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("ORDER_NOT_FOUND"));
+    }
+
+    @Test
     void history_filtered_by_store_purchase_returns_200() throws Exception {
         mockMvc.perform(get("/pdv/comandas/history?boughtInStore=true")
                         .with(user("dono").authorities(new SimpleGrantedAuthority("ORDER_READ"))))

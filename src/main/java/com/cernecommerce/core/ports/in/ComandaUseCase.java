@@ -219,6 +219,15 @@ public interface ComandaUseCase {
     List<Comanda> listOpenComandasByCustomer(Long customerId);
 
     /**
+     * PDV-C056 — dos {@code comandaIds}, os ainda ABERTOS, sem carregar as comandas. Para quem só
+     * precisa saber se a mesa continua aberta (a ocupação do QR do Salão, relida a cada poucos segundos).
+     */
+    java.util.Set<Long> findOpenComandaIds(java.util.Collection<Long> comandaIds);
+
+    /** PDV-C059 — as comandas dos ids, com os itens, numa consulta (em lotes). Id inexistente fica de fora. */
+    List<Comanda> listComandasByIds(List<Long> comandaIds);
+
+    /**
      * Fecha a comanda: converte os itens acumulados num {@code Order} concluído, validando os
      * pagamentos contra o total (mesmo contrato de {@link PdvUseCase#registerSale}). O estoque já
      * foi debitado item a item em {@link #addItem} — o fechamento não toca em saldo de novo.
@@ -323,7 +332,27 @@ public interface ComandaUseCase {
      *
      * @throws com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException
      */
-    void recordStorePurchase(Long comandaId, boolean boughtInStore, String username);
+    default void recordStorePurchase(Long comandaId, boolean boughtInStore, String username) {
+        recordStorePurchase(comandaId, boughtInStore, null, username);
+    }
+
+    /**
+     * PDV-F036 — como {@link #recordStorePurchase(Long, boolean, String)}, ligando a venda da loja à
+     * mesa. Com {@code orderId} a resposta é sempre "comprou"; ligar a mesma venda de novo não duplica.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException
+     * @throws com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException
+     */
+    void recordStorePurchase(Long comandaId, boolean boughtInStore, Long orderId, String username);
+
+    /** PDV-F036 — as vendas da loja ligadas à mesa, na ordem em que foram ligadas. */
+    List<Order> listStorePurchases(Long comandaId);
+
+    /**
+     * PDV-C060 — {@link #listStorePurchases} de várias mesas em duas consultas: comanda → vendas, na
+     * ordem do vínculo. A mesa sem venda ligada não aparece no mapa.
+     */
+    java.util.Map<Long, List<Order>> listStorePurchasesByComandas(java.util.Collection<Long> comandaIds);
 
     /**
      * Uma mesa encerrada com o que ela gerou. Os totais vêm dos pedidos MESA (inclusive os parciais);

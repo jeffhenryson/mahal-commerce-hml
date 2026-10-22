@@ -23,6 +23,9 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /** PDV-C060 — os pedidos dos ids, com itens, em lotes. Id sem pedido fica de fora; sem ordem garantida. */
+    java.util.List<Order> findAllByIds(java.util.Collection<Long> ids);
+
     /** PDV-F043 — o pedido gravado com a chave de venda do caixa, se houver. */
     Optional<Long> findIdByClientSaleId(String clientSaleId);
 

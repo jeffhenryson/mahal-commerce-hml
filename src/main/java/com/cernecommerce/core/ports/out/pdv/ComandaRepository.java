@@ -5,8 +5,11 @@ import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Port de saída para persistência de comandas de mesa (PDV-F009).
@@ -57,6 +60,12 @@ public interface ComandaRepository {
 
     /** Ids das mesas abertas vinculadas ao cliente, de qualquer caixa — as mesas abertas do QR. */
     List<Long> findOpenIdsByCustomerId(Long customerId);
+
+    /**
+     * PDV-C056 — dos {@code ids}, os das comandas ABERTAS. Projeta só o id: quem só precisa saber se
+     * a mesa ainda está aberta (a ocupação do QR do Salão) não carrega itens e adicionais.
+     */
+    Set<Long> findOpenIdsAmong(Collection<Long> ids);
 
     /**
      * Ids das comandas <b>ABERTAS há mais tempo que {@code cutoff}</b>, para a varredura de mesa
@@ -115,6 +124,15 @@ public interface ComandaRepository {
      * @return {@code false} se a comanda não existe
      */
     boolean recordStorePurchase(Long comandaId, boolean bought, String username, java.time.Instant at);
+
+    /** PDV-F036 — liga a venda da loja à mesa. Idempotente: o mesmo par não duplica. */
+    void linkStorePurchase(Long comandaId, Long orderId, String username, java.time.Instant at);
+
+    /** PDV-F036 — as vendas da loja ligadas à mesa, na ordem em que foram ligadas. */
+    List<Long> findStorePurchaseOrderIds(Long comandaId);
+
+    /** PDV-C060 — {@link #findStorePurchaseOrderIds} de várias mesas numa consulta: comanda → pedidos. */
+    Map<Long, List<Long>> findStorePurchaseOrderIdsByComanda(Collection<Long> comandaIds);
 
     /** PDV-F029 — comandas encerradas, da mais recente para a mais antiga. */
     PageResult<ClosedComanda> findHistory(ComandaHistoryFilter filter, int page, int size);

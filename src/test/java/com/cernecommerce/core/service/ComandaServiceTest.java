@@ -2294,6 +2294,68 @@ class ComandaServiceTest {
                 .isInstanceOf(ComandaNotFoundException.class);
     }
 
+    @Test
+    void recordStorePurchase_comAVenda_ligaAMesaEContaComoComprou() {
+        when(orderRepository.findById(77L)).thenReturn(Optional.of(mock(Order.class)));
+        when(comandaRepository.recordStorePurchase(eq(10L), eq(true), eq("caixa1"), any())).thenReturn(true);
+
+        comandaService.recordStorePurchase(10L, false, 77L, "caixa1");
+
+        verify(comandaRepository).recordStorePurchase(eq(10L), eq(true), eq("caixa1"), any());
+        verify(comandaRepository).linkStorePurchase(eq(10L), eq(77L), eq("caixa1"), any());
+    }
+
+    @Test
+    void recordStorePurchase_vendaInexistente_naoGravaNada() {
+        when(orderRepository.findById(77L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> comandaService.recordStorePurchase(10L, true, 77L, "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException.class);
+        verify(comandaRepository, never()).recordStorePurchase(any(), anyBoolean(), any(), any());
+        verify(comandaRepository, never()).linkStorePurchase(any(), any(), any(), any());
+    }
+
+    @Test
+    void listStorePurchases_naOrdemDoVinculo_ignoraVendaSumida() {
+        Order a = mock(Order.class);
+        Order b = mock(Order.class);
+        when(a.id()).thenReturn(2L);
+        when(b.id()).thenReturn(1L);
+        when(comandaRepository.findStorePurchaseOrderIds(10L)).thenReturn(List.of(2L, 1L, 3L));
+        // PDV-C060: uma consulta para os pedidos, não uma por pedido.
+        when(orderRepository.findAllByIds(List.of(2L, 1L, 3L))).thenReturn(List.of(b, a));
+
+        assertThat(comandaService.listStorePurchases(10L)).containsExactly(a, b);
+        verify(orderRepository, never()).findById(any());
+    }
+
+    @Test
+    void listStorePurchasesByComandas_duasConsultas_naOrdemDoVinculo() {
+        Order a = mock(Order.class);
+        Order b = mock(Order.class);
+        when(a.id()).thenReturn(2L);
+        when(b.id()).thenReturn(1L);
+        when(comandaRepository.findStorePurchaseOrderIdsByComanda(List.of(10L, 11L, 12L)))
+                .thenReturn(Map.of(10L, List.of(2L, 1L), 11L, List.of(3L)));
+        when(orderRepository.findAllByIds(any())).thenReturn(List.of(a, b));
+
+        Map<Long, List<Order>> porMesa = comandaService.listStorePurchasesByComandas(List.of(10L, 11L, 12L));
+
+        assertThat(porMesa.get(10L)).containsExactly(a, b);
+        assertThat(porMesa.get(11L)).isEmpty();
+        assertThat(porMesa).doesNotContainKey(12L);
+        verify(orderRepository, never()).findById(any());
+    }
+
+    @Test
+    void findOpenComandaIds_soOsIds_semCarregarAComanda() {
+        when(comandaRepository.findOpenIdsAmong(List.of(1L, 2L))).thenReturn(Set.of(2L));
+
+        assertThat(comandaService.findOpenComandaIds(List.of(1L, 2L))).containsExactly(2L);
+        assertThat(comandaService.findOpenComandaIds(List.of())).isEmpty();
+        verify(comandaRepository, never()).findById(any());
+    }
+
     // ── PDV-F054: passagem de turno ──────────────────────────────────────────────────────────
 
     private static CashRegisterSession caixa(Long id, String operator, String warehouseCode) {

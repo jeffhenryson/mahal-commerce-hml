@@ -131,6 +131,13 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<Order> findAllByIds(java.util.Collection<Long> ids) {
+        return InClauseBatches.fetch(ids, orderJpaRepository::findAllByIdsWithItems).stream()
+                .map(this::toDomain).toList();
+    }
+
+    @Override
     public Optional<Order> findByIdForUpdate(Long id) {
         return orderJpaRepository.lockById(id).flatMap(orderJpaRepository::findById).map(this::toDomain);
     }
