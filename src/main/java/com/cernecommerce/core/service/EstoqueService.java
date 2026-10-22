@@ -1043,6 +1043,12 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public List<Product> findProductsByAnySku(Collection<String> skus) {
+        return skus == null || skus.isEmpty() ? List.of() : productRepository.findByAnySkuIn(skus);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public EstoqueSummary getSummary() {
         ReorderAlertCounts alerts = reorderPointRepository.countAlerts();
         return new EstoqueSummary(
@@ -1197,6 +1203,14 @@ public class EstoqueService implements EstoqueUseCase {
     public PageResult<StockBalance> listStockBalances(String warehouseCode, int page, int size) {
         Warehouse warehouse = requireWarehouse(warehouseCode);
         return stockBalanceRepository.findByWarehouseId(warehouse.id(), page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Set<String> listSkusWithFreeStock(String warehouseCode, Collection<String> skus) {
+        Warehouse warehouse = requireWarehouse(warehouseCode);
+        return skus == null || skus.isEmpty() ? Set.of()
+                : stockBalanceRepository.findSkusWithFreeStock(warehouse.id(), skus);
     }
 
     @Override

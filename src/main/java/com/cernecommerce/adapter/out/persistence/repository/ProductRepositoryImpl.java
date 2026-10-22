@@ -25,6 +25,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -244,6 +246,14 @@ public class ProductRepositoryImpl implements ProductRepository {
     @Transactional(readOnly = true)
     public Optional<Product> findByAnySku(String sku) {
         return productJpaRepository.findByAnySku(sku).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Product> findByAnySkuIn(Collection<String> skus) {
+        return InClauseBatches.fetch(skus, productJpaRepository::findByAnySkuIn).stream()
+                .collect(Collectors.toMap(ProductEntity::getId, e -> e, (a, b) -> a, LinkedHashMap::new))
+                .values().stream().map(this::toDomain).toList();
     }
 
     @Override

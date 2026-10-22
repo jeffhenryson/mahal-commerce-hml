@@ -5,8 +5,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface StockBalanceJpaRepository extends JpaRepository<StockBalanceEntity, Long> {
@@ -14,6 +17,12 @@ public interface StockBalanceJpaRepository extends JpaRepository<StockBalanceEnt
     Optional<StockBalanceEntity> findBySkuAndWarehouseId(String sku, Long warehouseId);
 
     Page<StockBalanceEntity> findByWarehouseIdOrderBySkuAsc(Long warehouseId, Pageable pageable);
+
+    /** PDV-C058 — dos SKUs pedidos, os com saldo livre (físico menos reserva) no depósito. */
+    @Query("SELECT b.sku FROM StockBalanceEntity b WHERE b.warehouseId = :warehouseId AND b.sku IN :skus "
+            + "AND b.quantity - b.reservedQuantity > 0")
+    List<String> findSkusWithFreeStock(@Param("warehouseId") Long warehouseId,
+            @Param("skus") Collection<String> skus);
 
     boolean existsBySku(String sku);
 

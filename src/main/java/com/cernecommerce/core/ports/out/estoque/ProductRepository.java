@@ -10,6 +10,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductSortField;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -75,6 +76,9 @@ public interface ProductRepository {
      * prateleira, mas a {@code Pricing} mora no pai.</p>
      */
     Optional<Product> findByAnySku(String sku);
+
+    /** PDV-C059 — {@link #findByAnySku} em lote. SKU sem produto não traz nada; cada produto vem uma vez. */
+    List<Product> findByAnySkuIn(Collection<String> skus);
 
     /**
      * Indica se o SKU existe no catálogo, seja como SKU pai de um produto ou como SKU de uma

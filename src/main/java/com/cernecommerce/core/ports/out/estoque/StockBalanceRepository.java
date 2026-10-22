@@ -4,7 +4,9 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.StockBalance;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Port de saída para persistência de saldo de estoque por SKU/depósito.
@@ -15,6 +17,9 @@ public interface StockBalanceRepository {
 
     /** Saldo paginado de todos os produtos de um depósito, ordenado por SKU. */
     PageResult<StockBalance> findByWarehouseId(Long warehouseId, int page, int size);
+
+    /** PDV-C058 — dos {@code skus}, os com saldo livre (físico menos reserva) no depósito. */
+    Set<String> findSkusWithFreeStock(Long warehouseId, Collection<String> skus);
 
     StockBalance save(StockBalance stockBalance);
 

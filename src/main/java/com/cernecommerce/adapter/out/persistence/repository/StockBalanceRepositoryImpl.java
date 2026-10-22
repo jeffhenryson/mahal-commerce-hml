@@ -10,7 +10,10 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 @Transactional
@@ -35,6 +38,13 @@ public class StockBalanceRepositoryImpl implements StockBalanceRepository {
                 .findByWarehouseIdOrderBySkuAsc(warehouseId, PageRequest.of(page, size));
         return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
                 page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Set<String> findSkusWithFreeStock(Long warehouseId, Collection<String> skus) {
+        return new HashSet<>(InClauseBatches.fetch(skus,
+                lote -> stockBalanceJpaRepository.findSkusWithFreeStock(warehouseId, lote)));
     }
 
     @Override

@@ -40,9 +40,11 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Port de entrada do domínio <b>estoque</b>.
@@ -992,6 +994,12 @@ public interface EstoqueUseCase {
     Product findProductBySku(String sku);
 
     /**
+     * PDV-C059 — {@link #findProductBySku} em lote: os produtos donos dos SKUs (pai ou variação),
+     * cada um uma vez. SKU fora do catálogo não lança: só não traz produto.
+     */
+    List<Product> findProductsByAnySku(Collection<String> skus);
+
+    /**
      * Resumo pré-calculado do catálogo de estoque — números agregados que várias telas do admin
      * hoje recalculam do zero baixando o catálogo inteiro e cruzando com saldos e pontos de
      * reposição em memória (badge de alertas, tela de Alertas de Reposição, KPIs do Catálogo de
@@ -1112,6 +1120,14 @@ public interface EstoqueUseCase {
      * se o código do depósito não existir.
      */
     PageResult<StockBalance> listStockBalances(String warehouseCode, int page, int size);
+
+    /**
+     * PDV-C058 — dos {@code skus}, os com saldo livre (físico menos reserva) maior que zero no
+     * depósito, numa consulta — em vez de paginar o saldo inteiro do depósito para filtrar em memória.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException
+     */
+    Set<String> listSkusWithFreeStock(String warehouseCode, Collection<String> skus);
 
     /**
      * Registra uma movimentação manual de estoque (entrada, saída ou ajuste) e atualiza o

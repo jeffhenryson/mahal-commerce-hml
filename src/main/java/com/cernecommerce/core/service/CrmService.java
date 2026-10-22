@@ -270,6 +270,14 @@ public class CrmService implements CrmUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public Map<Long, Customer> findCustomersByIds(Collection<Long> customerIds) {
+        return customerIds == null || customerIds.isEmpty() ? Map.of()
+                : customerRepository.findByIds(customerIds).stream()
+                        .collect(Collectors.toMap(Customer::id, c -> c, (a, b) -> a));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Customer lookupCustomer(String cpf, String email, String contato) {
         // Ordem de prioridade quando mais de um critério vier preenchido: cpf (oficial) → email →
         // contato — o mais forte primeiro, para não devolver o cliente errado por coincidência de

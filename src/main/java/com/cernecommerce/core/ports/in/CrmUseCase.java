@@ -113,6 +113,12 @@ public interface CrmUseCase {
     Map<Long, String> findCustomerNames(Collection<Long> customerIds);
 
     /**
+     * Como {@link #findCustomerNames}, com o cliente inteiro — para a tela que precisa de mais que o
+     * nome (a fila de pedidos do QR do Salão mostra o contato). Id sem cliente não aparece no mapa.
+     */
+    Map<Long, Customer> findCustomersByIds(Collection<Long> customerIds);
+
+    /**
      * Busca pontual por CPF, email ou contato — o "CPF na nota?" do balcão (CRM-F002). Informe
      * exatamente um critério; os demais como {@code null}. Tentados nessa ordem de prioridade
      * quando mais de um vier preenchido: cpf (identificador oficial) → email → contato.

@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,6 +32,11 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
     @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
             + "WHERE p.sku = :sku OR p.id IN (SELECT v2.product.id FROM ProductVariantEntity v2 WHERE v2.sku = :sku)")
     Optional<ProductEntity> findByAnySku(String sku);
+
+    /** PDV-C059 — {@link #findByAnySku} em lote: os produtos donos dos SKUs pedidos, pai ou variação. */
+    @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
+            + "WHERE p.sku IN :skus OR p.id IN (SELECT v2.product.id FROM ProductVariantEntity v2 WHERE v2.sku IN :skus)")
+    List<ProductEntity> findByAnySkuIn(@Param("skus") Collection<String> skus);
 
     // Mesmo padrão de existsBySkuOrVariantSku, mas para código de barras — cobre o EAN do próprio
     // pai e o de qualquer variação numa consulta só.
