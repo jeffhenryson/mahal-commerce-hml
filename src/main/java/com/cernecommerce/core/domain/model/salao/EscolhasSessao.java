@@ -9,7 +9,8 @@ import java.util.List;
  * O que o lead escolheu além do sabor: vaso, carvão, adicionais, quando paga e, na mescla, a
  * proporção dos sabores. O aceite lança a sessão com exatamente isto.
  *
- * @param pagarNoFinal só cliente VIP pode — o resto paga no caixa antes do preparo
+ * @param pagarNoFinal o lead pediu para pagar no final — qualquer cliente pede; o atendente confirma no
+ *        aceite ou cobra agora (paga no caixa antes do preparo)
  * @param proporcao só com o 2º sabor; o serviço a zera no pedido de um sabor só
  */
 public record EscolhasSessao(boolean vasoGrande, Charcoal carvao, List<Long> adicionalIds, boolean pagarNoFinal,
@@ -30,5 +31,9 @@ public record EscolhasSessao(boolean vasoGrande, Charcoal carvao, List<Long> adi
 
     public EscolhasSessao withProporcao(ProporcaoMistura nova) {
         return new EscolhasSessao(vasoGrande, carvao, adicionalIds, pagarNoFinal, nova);
+    }
+
+    public EscolhasSessao withPagarNoFinal(boolean novo) {
+        return new EscolhasSessao(vasoGrande, carvao, adicionalIds, novo, proporcao);
     }
 }

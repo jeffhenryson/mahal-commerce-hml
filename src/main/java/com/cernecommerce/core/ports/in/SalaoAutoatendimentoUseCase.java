@@ -9,6 +9,7 @@ import com.cernecommerce.core.domain.model.salao.FormaPagamentoChamado;
 import com.cernecommerce.core.domain.model.salao.MesaAbertaDoCliente;
 import com.cernecommerce.core.domain.model.salao.MesaAtual;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.OrigemSelecao;
 import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoResumo;
@@ -20,7 +21,9 @@ import com.cernecommerce.core.domain.model.salao.TipoChamado;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -28,12 +31,13 @@ import java.util.UUID;
  * cadastra, com os dados completos), escolhe a essência entre as latas abertas, o vaso, o carvão e
  * os adicionais, e pede a sessão; o atendente aceita no PDV e a mesa abre com a sessão lançada.
  *
- * <p>O aceite da 1ª solicitação de uma mesa livre a <b>ocupa</b> ({@link MesaOcupacao}): só o
- * aparelho que pediu — ou quem digitar o código de 4 dígitos — pede ou vê a mesa até a comanda ser
- * encerrada. O aparelho é um token opaco gerado no navegador ({@code deviceToken}).</p>
+ * <p>O envio da 1ª solicitação de uma mesa livre a <b>ocupa</b> ({@link MesaOcupacao}): só o
+ * aparelho que pediu — ou quem digitar o código de 4 dígitos — pede ou vê a mesa enquanto o pedido
+ * estiver pendente e, depois do aceite, até a comanda ser encerrada. Recusado ou expirado sem nada
+ * lançado, a mesa fica livre. O aparelho é um token opaco gerado no navegador ({@code deviceToken}).</p>
  *
  * <p>O lado público ({@code *PorToken}) nunca devolve id nem dado pessoal do cliente: identificar
- * responde só se achou, o primeiro nome mascarado, se é VIP e o que falta no cadastro; o pedido
+ * responde só se achou, o primeiro nome, se é VIP e o que falta no cadastro; o pedido
  * resolve o cliente de novo no servidor pelo mesmo CPF/celular.</p>
  */
 public interface SalaoAutoatendimentoUseCase {
@@ -53,13 +57,35 @@ public interface SalaoAutoatendimentoUseCase {
     /** As ocupações ainda abertas (comanda ABERTA), uma por mesa — o atendente vê o código. */
     List<MesaOcupacao> ocupacoesAbertas();
 
-    /** Todas as oferecidas agora (latas abertas), cada uma marcada se é destaque do dia {@code data}. */
-    List<EssenciaDoDia> listEssenciasDoDia(LocalDate data);
+    /**
+     * Todas as essências do Salão — lata aberta, só fechada ou sem faixa —, cada uma marcada se é
+     * destaque do dia {@code data} (a seleção da data ou, sem ela, o modelo do dia da semana), com a
+     * origem da seleção. As duas saem da mesma leitura (PDV-C063).
+     */
+    SelecaoDoDia essenciasDoDia(LocalDate data);
 
     void setEssenciasDoDia(LocalDate data, Collection<String> skus);
 
     /** Copia a seleção de {@code de} para {@code para}, substituindo a de {@code para}. */
     void copiarEssenciasDoDia(LocalDate de, LocalDate para);
+
+    /** O modelo semanal: dia da semana (1 = segunda … 7 = domingo) → SKUs. Dia sem seleção não volta. */
+    Map<Integer, Set<String>> modeloSemanal();
+
+    /**
+     * Substitui o modelo do dia da semana. Vazio limpa.
+     *
+     * @throws com.cernecommerce.core.domain.exception.salao.AutoatendimentoDadosInvalidosException dia fora de 1..7
+     */
+    void setModelo(int diaSemana, Collection<String> skus);
+
+    /**
+     * Copia o modelo de {@code de} para cada dia de {@code para}, substituindo o deles.
+     *
+     * @throws com.cernecommerce.core.domain.exception.salao.AutoatendimentoDadosInvalidosException dia fora de
+     *         1..7 ou sem destino
+     */
+    void copiarModelo(int de, Collection<Integer> para);
 
     /**
      * Substitui os perfis de sabor de cada SKU listado (lista vazia limpa). Configurado o SKU, o QR
@@ -94,6 +120,8 @@ public interface SalaoAutoatendimentoUseCase {
     Identificado completarPorToken(String token, Completar completar);
 
     /**
+     * Pede a sessão. Mesa livre fica ocupada por este aparelho já no envio, com o código de 4 dígitos.
+     *
      * @throws com.cernecommerce.core.domain.exception.salao.ClienteNaoIdentificadoException
      * @throws com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException
      * @throws com.cernecommerce.core.domain.exception.salao.SolicitacaoJaPendenteException
@@ -118,7 +146,8 @@ public interface SalaoAutoatendimentoUseCase {
     void acessarPorToken(String token, String codigo, String deviceToken);
 
     /**
-     * A mesa ocupada como o aparelho com acesso a vê.
+     * A mesa ocupada como o aparelho com acesso a vê. Com o pedido ainda pendente, sem consumo — só o
+     * código.
      *
      * @throws com.cernecommerce.core.domain.exception.salao.MesaOcupadaException sem acesso, ou mesa livre
      */
@@ -164,14 +193,26 @@ public interface SalaoAutoatendimentoUseCase {
     /**
      * Abre a mesa com o cliente — ou usa a comanda ainda aberta da mesa — e lança a sessão com o que o
      * lead escolheu. Tudo numa transação: falhou o lançamento (sem lata, sem utensílio), a mesa não
-     * fica aberta e o pedido segue pendente. Mesa livre fica ocupada pelo aparelho que pediu.
+     * fica aberta e o pedido segue pendente. A ocupação feita no envio ganha a comanda (o código não
+     * muda); mesa livre sem ocupação fica ocupada pelo aparelho que pediu.
      *
-     * @param podePagarNoFinal o atendente tem PDV_SESSION_PAY_LATER — exigido só se o lead escolheu
-     *        pagar no final
+     * <p>Pagar no final: qualquer cliente pede, o atendente confirma. {@code pagarNoFinal} falso aceita a
+     * sessão cobrando agora; nulo mantém o que o lead pediu. O atendente nunca impõe pagar no final a
+     * quem não pediu.</p>
+     *
+     * @param podePagarNoFinal o atendente tem PDV_SESSION_PAY_LATER — exigido só se a sessão vai mesmo
+     *        ser paga no final
+     * @param pagarNoFinal a decisão do atendente; nula = como o lead pediu
      * @throws com.cernecommerce.core.domain.exception.salao.SolicitacaoNaoPendenteException
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionPayLaterNotAllowedException
      */
-    SolicitacaoResumo aceitar(Long id, Long cashSessionId, String username, boolean podePagarNoFinal);
+    SolicitacaoResumo aceitar(Long id, Long cashSessionId, String username, boolean podePagarNoFinal,
+            Boolean pagarNoFinal);
+
+    /** Aceita como o lead pediu — ver {@link #aceitar(Long, Long, String, boolean, Boolean)}. */
+    default SolicitacaoResumo aceitar(Long id, Long cashSessionId, String username, boolean podePagarNoFinal) {
+        return aceitar(id, cashSessionId, username, podePagarNoFinal, null);
+    }
 
     SolicitacaoResumo recusar(Long id, String motivo, String username);
 
@@ -200,7 +241,7 @@ public interface SalaoAutoatendimentoUseCase {
     }
 
     /**
-     * @param nome primeiro nome mascarado ("Ma***")
+     * @param nome o primeiro nome ("Maria"), sem sobrenome
      * @param faltando campos que o cadastro ainda não tem: {@code celular}, {@code cpf},
      *        {@code dataNascimento}
      * @param mesasAbertas as comandas abertas do cliente; token e valor só da mesa deste QR
@@ -214,6 +255,10 @@ public interface SalaoAutoatendimentoUseCase {
         public Identificado(String nome, boolean vip, List<String> faltando) {
             this(nome, vip, faltando, List.of());
         }
+    }
+
+    /** {@code origem} DIA: a data tem seleção própria. MODELO: vale o modelo do dia da semana. */
+    record SelecaoDoDia(OrigemSelecao origem, List<EssenciaDoDia> essencias) {
     }
 
     record PerfisDoSku(String sku, List<PerfilSabor> perfis) {

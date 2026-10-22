@@ -83,4 +83,8 @@ public class SalaoSolicitacaoEntity {
     /** Pedido sem CPF de um aparelho que entrou pelo código: cobra no titular (V170). */
     @Column(nullable = false)
     private boolean acompanhante;
+
+    /** O pagar no final que valeu no aceite (V172); nulo enquanto pendente e na recusada. */
+    @Column(name = "pagar_no_final_aceito")
+    private Boolean pagarNoFinalAceito;
 }

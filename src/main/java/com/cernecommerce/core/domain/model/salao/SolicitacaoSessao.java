@@ -16,11 +16,15 @@ import java.util.UUID;
  *
  * <p>{@link #acompanhante}: pedido sem CPF de um aparelho que entrou na mesa pelo código. O cliente é
  * o titular da ocupação (cobra na comanda dele); o PDV mostra "Acompanhante de &lt;titular&gt;".</p>
+ *
+ * <p>O pagar no final de {@link #escolhas} é o que o lead <b>pediu</b> — qualquer cliente pede. O atendente
+ * confirma no aceite, ou aceita cobrando agora: {@link #pagarNoFinalAceito} é o que valeu (nulo enquanto
+ * pendente e na recusada).</p>
  */
 public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customerId, Long tierId,
         String essenciaSku, String essenciaSku2, String observacao, SolicitacaoStatus status, String motivo,
         Long comandaId, Instant criadoEm, Instant decididoEm, String decididoPor, EscolhasSessao escolhas,
-        String deviceToken, boolean acompanhante) {
+        String deviceToken, boolean acompanhante, Boolean pagarNoFinalAceito) {
 
     /** Depois disso a pendente vira {@link SolicitacaoStatus#EXPIRADA} na leitura. */
     public static final Duration VALIDADE = Duration.ofMinutes(30);
@@ -28,6 +32,14 @@ public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customer
 
     public SolicitacaoSessao {
         escolhas = escolhas == null ? EscolhasSessao.padrao() : escolhas;
+    }
+
+    public SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customerId, Long tierId, String essenciaSku,
+            String essenciaSku2, String observacao, SolicitacaoStatus status, String motivo, Long comandaId,
+            Instant criadoEm, Instant decididoEm, String decididoPor, EscolhasSessao escolhas, String deviceToken,
+            boolean acompanhante) {
+        this(id, codigo, mesaId, customerId, tierId, essenciaSku, essenciaSku2, observacao, status, motivo, comandaId,
+                criadoEm, decididoEm, decididoPor, escolhas, deviceToken, acompanhante, null);
     }
 
     public SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customerId, Long tierId, String essenciaSku,
@@ -48,7 +60,7 @@ public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customer
             Instant agora) {
         return new SolicitacaoSessao(null, UUID.randomUUID(), mesaId, customerId, tierId, essenciaSku,
                 essenciaSku2, limpar(observacao), SolicitacaoStatus.PENDENTE, null, null, agora, null, null, escolhas,
-                deviceToken, acompanhante);
+                deviceToken, acompanhante, null);
     }
 
     /** O status como o mundo o vê: a pendente vencida é {@link SolicitacaoStatus#EXPIRADA}. */
@@ -60,16 +72,22 @@ public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customer
         return status;
     }
 
+    /** Aceita como o lead pediu. */
     public SolicitacaoSessao aceita(Long novaComandaId, String username, Instant agora) {
+        return aceita(novaComandaId, username, escolhas.pagarNoFinal(), agora);
+    }
+
+    /** @param pagarNoFinal o que o atendente confirmou — falso aceita a sessão cobrando agora */
+    public SolicitacaoSessao aceita(Long novaComandaId, String username, boolean pagarNoFinal, Instant agora) {
         return new SolicitacaoSessao(id, codigo, mesaId, customerId, tierId, essenciaSku, essenciaSku2,
                 observacao, SolicitacaoStatus.ACEITA, null, novaComandaId, criadoEm, agora, username, escolhas, deviceToken,
-                acompanhante);
+                acompanhante, pagarNoFinal);
     }
 
     public SolicitacaoSessao recusada(String novoMotivo, String username, Instant agora) {
         return new SolicitacaoSessao(id, codigo, mesaId, customerId, tierId, essenciaSku, essenciaSku2,
                 observacao, SolicitacaoStatus.RECUSADA, limpar(novoMotivo), null, criadoEm, agora, username, escolhas,
-                deviceToken, acompanhante);
+                deviceToken, acompanhante, null);
     }
 
     private static String limpar(String texto) {

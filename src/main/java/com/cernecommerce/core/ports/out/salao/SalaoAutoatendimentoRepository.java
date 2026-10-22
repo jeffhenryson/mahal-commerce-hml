@@ -29,7 +29,13 @@ public interface SalaoAutoatendimentoRepository {
 
     Optional<SalaoMesa> findMesaById(Long id);
 
+    /** As mesas dos ids, numa consulta; id sem mesa fica de fora. */
+    List<SalaoMesa> findMesasByIds(Collection<Long> ids);
+
     Optional<SalaoMesa> findMesaByToken(String token);
+
+    /** Com trava de escrita — dois aparelhos pedindo na mesma mesa livre não a ocupam duas vezes. */
+    Optional<SalaoMesa> findMesaByIdForUpdate(Long id);
 
     boolean existsMesaComNome(String nome, Long excetoId);
 
@@ -39,9 +45,19 @@ public interface SalaoAutoatendimentoRepository {
 
     void replaceEssenciasDoDia(LocalDate data, Collection<String> skus);
 
+    /** O modelo semanal: dia da semana (1 = segunda) → SKUs. Dia sem seleção não volta. */
+    Map<Integer, Set<String>> findModelo();
+
+    Set<String> findModelo(int diaSemana);
+
+    void replaceModelo(int diaSemana, Collection<String> skus);
+
     SolicitacaoSessao saveSolicitacao(SolicitacaoSessao solicitacao);
 
     Optional<SolicitacaoSessao> findSolicitacaoById(Long id);
+
+    /** As solicitações dos ids, numa consulta; id sem solicitação fica de fora. */
+    List<SolicitacaoSessao> findSolicitacoesByIds(Collection<Long> ids);
 
     /** Com trava de escrita — dois atendentes aceitando o mesmo pedido não abrem duas mesas. */
     Optional<SolicitacaoSessao> findSolicitacaoByIdForUpdate(Long id);
@@ -63,12 +79,21 @@ public interface SalaoAutoatendimentoRepository {
      */
     PageResult<SolicitacaoSessao> findSolicitacoes(SolicitacaoStatus status, Instant desde, int page, int size);
 
+    /** Gravadas com {@code status} antes de {@code antes}, mais recentes primeiro — as PENDENTE vencidas são as EXPIRADA. */
+    PageResult<SolicitacaoSessao> findSolicitacoesAntesDe(SolicitacaoStatus status, Instant antes, int page, int size);
+
     // ── Ocupação da mesa ──
 
     MesaOcupacao saveOcupacao(MesaOcupacao ocupacao);
 
-    /** A ocupação mais recente da mesa — vale se a comanda dela ainda está aberta. */
+    /**
+     * A ocupação mais recente da mesa — vale se a comanda dela ainda está aberta ou, sem comanda, se a
+     * solicitação de origem ainda está pendente.
+     */
     Optional<MesaOcupacao> findUltimaOcupacao(Long mesaId);
+
+    /** {@link #findUltimaOcupacao} de todas as mesas, numa consulta. Mesa nunca ocupada não volta. */
+    List<MesaOcupacao> findUltimaOcupacaoDeCadaMesa();
 
     /** A ocupação mais recente de cada comanda pedida (as que não são de mesa do QR não voltam). */
     List<MesaOcupacao> findOcupacoesByComandaIds(Collection<Long> comandaIds);
@@ -81,8 +106,11 @@ public interface SalaoAutoatendimentoRepository {
 
     boolean hasAcesso(Long ocupacaoId, String deviceToken);
 
-    /** O aparelho tem acesso à ocupação como acompanhante (entrou pelo código). */
-    boolean isAcompanhante(Long ocupacaoId, String deviceToken);
+    /**
+     * O acesso do aparelho à ocupação numa leitura: vazio sem acesso; {@code true} se entrou como
+     * acompanhante (pelo código), {@code false} se é do titular.
+     */
+    Optional<Boolean> findAcesso(Long ocupacaoId, String deviceToken);
 
     // ── Perfis de sabor ──
 
@@ -92,8 +120,8 @@ public interface SalaoAutoatendimentoRepository {
     /** Dos SKUs pedidos, os que a casa já configurou — mesmo que com nenhum perfil. */
     Set<String> findSkusComPerfilConfigurado(Collection<String> skus);
 
-    /** Substitui os perfis do SKU e o marca como configurado. Vazio limpa. */
-    void replacePerfis(String sku, Collection<PerfilSabor> perfis, Instant agora);
+    /** Substitui os perfis de cada SKU e os marca como configurados, em lote. Lista vazia limpa o SKU. */
+    void replacePerfis(Map<String, List<PerfilSabor>> perfisPorSku, Instant agora);
 
     // ── Chamados da mesa ──
 
@@ -107,6 +135,9 @@ public interface SalaoAutoatendimentoRepository {
 
     /** Os chamados da comanda, mais recentes primeiro. */
     List<ChamadoMesa> findChamadosDaComanda(Long comandaId);
+
+    /** {@link #findChamadosDaComanda} de várias comandas numa consulta: comanda → chamados, mais recentes primeiro. */
+    Map<Long, List<ChamadoMesa>> findChamadosDasComandas(Collection<Long> comandaIds);
 
     /** Gravados com {@code status} desde {@code desde}, mais antigos primeiro — a ordem da fila. */
     List<ChamadoMesa> findChamados(StatusChamado status, Instant desde);

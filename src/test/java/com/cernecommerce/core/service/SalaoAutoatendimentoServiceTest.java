@@ -40,25 +40,33 @@ import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.salao.AcessoMesa;
 import com.cernecommerce.core.domain.model.salao.CardapioDaMesa;
 import com.cernecommerce.core.domain.model.salao.ChamadoMesa;
+import com.cernecommerce.core.domain.model.salao.Disponibilidade;
 import com.cernecommerce.core.domain.model.salao.EscolhasSessao;
 import com.cernecommerce.core.domain.model.salao.EssenciaOferecida;
 import com.cernecommerce.core.domain.model.salao.FormaPagamentoChamado;
 import com.cernecommerce.core.domain.model.salao.MesaAbertaDoCliente;
 import com.cernecommerce.core.domain.model.salao.MesaAtual;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.OrigemSelecao;
 import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoSessao;
+import com.cernecommerce.core.domain.model.salao.SolicitacaoResumo;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
 import com.cernecommerce.core.domain.model.salao.StatusChamado;
 import com.cernecommerce.core.domain.model.salao.TipoChamado;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
+import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderItem;
+import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.NotificationUseCase;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Cadastro;
+import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.ChamadoResumo;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Completar;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Identificacao;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.NovoChamado;
@@ -77,6 +85,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -87,10 +96,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,7 +117,9 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -182,8 +197,12 @@ class SalaoAutoatendimentoServiceTest {
         when(repository.findUltimaOcupacao(7L)).thenReturn(Optional.empty());
         when(repository.saveOcupacao(any())).thenAnswer(inv -> {
             MesaOcupacao o = inv.getArgument(0);
-            return new MesaOcupacao(70L, o.mesaId(), o.comandaId(), o.customerId(), o.codigo(), o.abertaEm());
+            return new MesaOcupacao(70L, o.mesaId(), o.comandaId(), o.solicitacaoId(), o.customerId(), o.codigo(),
+                    o.abertaEm());
         });
+        // Lata fechada: nenhuma, salvo nos testes de disponibilidade.
+        when(estoqueUseCase.listSkusWithFreeStock(anyString(), any())).thenReturn(Set.of());
+        lotesPelosStubsPorItem();
 
         when(repository.findEssenciasDoDia(any())).thenReturn(Set.of());
         when(repository.saveSolicitacao(any())).thenAnswer(inv -> {
@@ -200,6 +219,68 @@ class SalaoAutoatendimentoServiceTest {
         });
     }
 
+    /**
+     * As leituras em lote (PDV-C056..C062) respondem pelos stubs por item que cada teste já faz — a
+     * comanda pelo getComanda, a solicitação pelo findSolicitacaoById, e assim por diante. Os testes de
+     * N+1 sobrescrevem estes stubs e conferem que o caminho por item não é chamado — sempre com
+     * {@code doReturn}: o {@code when(...)} executaria a ponte, que chama outro mock, e o
+     * {@code thenReturn} cairia nele.
+     */
+    private void lotesPelosStubsPorItem() {
+        when(comandaUseCase.findOpenComandaIds(any())).thenAnswer(inv -> longs(inv)
+                .stream().filter(id -> {
+                    Comanda c = comandaUseCase.getComanda(id);
+                    return c != null && c.status() == ComandaStatus.ABERTA;
+                }).collect(Collectors.toSet()));
+        when(comandaUseCase.listComandasByIds(any())).thenAnswer(inv -> longs(inv).stream()
+                .map(comandaUseCase::getComanda).filter(Objects::nonNull).toList());
+        when(comandaUseCase.listStorePurchasesByComandas(any())).thenAnswer(inv -> {
+            Map<Long, List<Order>> porComanda = new HashMap<>();
+            for (Long id : longs(inv)) {
+                List<Order> vendas = comandaUseCase.listStorePurchases(id);
+                if (vendas != null && !vendas.isEmpty()) porComanda.put(id, vendas);
+            }
+            return porComanda;
+        });
+        when(repository.findSolicitacoesByIds(any())).thenAnswer(inv -> longs(inv)
+                .stream().map(repository::findSolicitacaoById).filter(Objects::nonNull).flatMap(Optional::stream)
+                .toList());
+        when(repository.findAcesso(anyLong(), any())).thenAnswer(inv ->
+                repository.hasAcesso(inv.getArgument(0), inv.getArgument(1)) ? Optional.of(false) : Optional.empty());
+        when(repository.findMesasByIds(any())).thenAnswer(inv -> repository.findAllMesas().stream()
+                .filter(m -> longs(inv).contains(m.id())).toList());
+        when(repository.findUltimaOcupacaoDeCadaMesa()).thenAnswer(inv -> repository.findAllMesas().stream()
+                .map(m -> repository.findUltimaOcupacao(m.id())).filter(Objects::nonNull).flatMap(Optional::stream)
+                .toList());
+        when(repository.findChamadosDasComandas(any())).thenAnswer(inv -> {
+            Map<Long, List<ChamadoMesa>> porComanda = new HashMap<>();
+            for (Long id : longs(inv)) {
+                List<ChamadoMesa> chamados = repository.findChamadosDaComanda(id);
+                if (chamados != null && !chamados.isEmpty()) porComanda.put(id, chamados);
+            }
+            return porComanda;
+        });
+        when(crmUseCase.findCustomersByIds(any())).thenAnswer(inv -> longs(inv)
+                .stream().map(crmUseCase::findCustomerById).filter(Objects::nonNull)
+                .collect(Collectors.toMap(Customer::id, c -> c)));
+        when(crmUseCase.findCustomerNames(any())).thenAnswer(inv -> longs(inv)
+                .stream().map(crmUseCase::findCustomerById).filter(Objects::nonNull)
+                .collect(Collectors.toMap(Customer::id, Customer::nome)));
+        when(estoqueUseCase.findProductsByAnySku(any())).thenAnswer(inv -> strings(inv)
+                .stream().map(estoqueUseCase::findProductBySku).filter(Objects::nonNull).distinct().toList());
+    }
+
+    /** O argumento do lote; nulo quando o próprio teste sobrescreve o stub com {@code any()}. */
+    private static List<Long> longs(InvocationOnMock inv) {
+        Collection<Long> ids = inv.getArgument(0);
+        return ids == null ? List.of() : List.copyOf(ids);
+    }
+
+    private static List<String> strings(InvocationOnMock inv) {
+        Collection<String> skus = inv.getArgument(0);
+        return skus == null ? List.of() : List.copyOf(skus);
+    }
+
     // ── O que o QR oferece ────────────────────────────────────────────────────────────────────
 
     @Test
@@ -208,7 +289,7 @@ class SalaoAutoatendimentoServiceTest {
 
         assertThat(cardapio.mesa()).isEqualTo("Mesa 4");
         assertThat(cardapio.faixas()).extracting(SessionTier::nome).containsExactly("Tradicional", "Premium");
-        // Só lata aberta e com faixa: Uva (só fechada), Limão (nada) e "sem faixa" ficam de fora.
+        // Só lata aberta e com faixa: Uva e Limão (sem lata) e "sem faixa" ficam de fora.
         assertThat(cardapio.essencias()).extracting(EssenciaOferecida::sku).containsExactly("NAY-PESSEGO", "ZOMO-MENTA");
         assertThat(cardapio.essencias()).extracting(EssenciaOferecida::sabor).containsExactly("Pêssego", "Menta");
         assertThat(cardapio.essencias().get(0).preco()).isEqualByComparingTo("30.00");
@@ -269,13 +350,13 @@ class SalaoAutoatendimentoServiceTest {
     // ── Identificação e cadastro ──────────────────────────────────────────────────────────────
 
     @Test
-    void identificar_devolveONomeMascaradoSeEVipEOQueFalta() {
+    void identificar_devolveOPrimeiroNomeSeEVipEOQueFalta() {
         identificaMaria();
         when(crmUseCase.listCustomerTags(50L)).thenReturn(List.of(new Tag(1L, "VIP")));
 
         var achado = service.identificarPorToken("tok-mesa-4", new Identificacao("123.456.789-01", null)).orElseThrow();
 
-        assertThat(achado.nome()).isEqualTo("Ma***");
+        assertThat(achado.nome()).isEqualTo("Maria");
         assertThat(achado.vip()).isTrue();
         assertThat(achado.faltando()).isEmpty();
     }
@@ -316,7 +397,7 @@ class SalaoAutoatendimentoServiceTest {
 
         LocalDate nascimento = LocalDate.of(1995, 3, 10);
         assertThat(service.cadastrarPorToken("tok-mesa-4",
-                new Cadastro("Maria Luiza", "(21) 99999-0000", "123.456.789-01", nascimento)).nome()).isEqualTo("Ma***");
+                new Cadastro("Maria Luiza", "(21) 99999-0000", "123.456.789-01", nascimento)).nome()).isEqualTo("Maria");
         verify(crmUseCase).createCustomer("Maria Luiza", "(21) 99999-0000", null, "12345678901", "QR Salão", nascimento);
     }
 
@@ -381,6 +462,14 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(s.escolhas()).isEqualTo(new EscolhasSessao(true, Charcoal.JUMBO, List.of(5L), false));
         assertThat(s.deviceToken()).isEqualTo(APARELHO);
         verify(afterCommit).accumulate(anyString(), any(), any());
+        // Mesa livre: ocupada já no envio, pelo aparelho que pediu, ainda sem comanda.
+        ArgumentCaptor<MesaOcupacao> ocupacao = ArgumentCaptor.forClass(MesaOcupacao.class);
+        verify(repository).findMesaByIdForUpdate(7L);
+        verify(repository).saveOcupacao(ocupacao.capture());
+        assertThat(ocupacao.getValue().comandaId()).isNull();
+        assertThat(ocupacao.getValue().solicitacaoId()).isEqualTo(99L);
+        assertThat(ocupacao.getValue().customerId()).isEqualTo(50L);
+        verify(repository).addAcesso(70L, APARELHO, false);
     }
 
     @Test
@@ -413,7 +502,7 @@ class SalaoAutoatendimentoServiceTest {
     void solicitar_semCpf_doAcompanhante_pedeNoTitularMarcadoEContaOPendentePeloAparelho() {
         ocupada();
         when(repository.hasAcesso(70L, "amigo")).thenReturn(true);
-        when(repository.isAcompanhante(70L, "amigo")).thenReturn(true);
+        doReturn(Optional.of(true)).when(repository).findAcesso(70L, "amigo");
         // O titular já tem um pedido pendente: não segura o do acompanhante.
         when(repository.existsPendente(eq(7L), eq(50L), any())).thenReturn(true);
 
@@ -428,7 +517,7 @@ class SalaoAutoatendimentoServiceTest {
     void solicitar_semCpf_acompanhanteJaComPendente_eRecusado() {
         ocupada();
         when(repository.hasAcesso(70L, "amigo")).thenReturn(true);
-        when(repository.isAcompanhante(70L, "amigo")).thenReturn(true);
+        doReturn(Optional.of(true)).when(repository).findAcesso(70L, "amigo");
         when(repository.existsPendenteDoAparelho(eq(7L), eq("amigo"), any())).thenReturn(true);
 
         assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4",
@@ -551,6 +640,64 @@ class SalaoAutoatendimentoServiceTest {
         assertThatThrownBy(() -> service.aceitar(99L, 3L, "ana", false))
                 .isInstanceOf(SessionPayLaterNotAllowedException.class);
         verify(comandaUseCase, never()).openComanda(anyLong(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void aceitar_atendenteNegaOPagarNoFinal_aceitaCobrandoAgoraSemPermissao() {
+        pedidoPagarNoFinal();
+
+        var resumo = service.aceitar(99L, 3L, "ana", false, false);
+
+        ArgumentCaptor<ComandaUseCase.AddSessionCommand> cmd = ArgumentCaptor.forClass(ComandaUseCase.AddSessionCommand.class);
+        verify(comandaUseCase).addSession(eq(500L), cmd.capture(), eq("ana"));
+        assertThat(cmd.getValue().pagarNoFinal()).isFalse();
+        assertThat(resumo.status()).isEqualTo(SolicitacaoStatus.ACEITA);
+        assertThat(resumo.solicitacao().pagarNoFinalAceito()).isFalse();
+        // O que o lead pediu continua registrado.
+        assertThat(resumo.solicitacao().escolhas().pagarNoFinal()).isTrue();
+    }
+
+    @Test
+    void aceitar_atendenteConfirmaOPagarNoFinal_comPermissao() {
+        pedidoPagarNoFinal();
+
+        var resumo = service.aceitar(99L, 3L, "ana", true, true);
+
+        ArgumentCaptor<ComandaUseCase.AddSessionCommand> cmd = ArgumentCaptor.forClass(ComandaUseCase.AddSessionCommand.class);
+        verify(comandaUseCase).addSession(eq(500L), cmd.capture(), eq("ana"));
+        assertThat(cmd.getValue().pagarNoFinal()).isTrue();
+        assertThat(resumo.solicitacao().pagarNoFinalAceito()).isTrue();
+    }
+
+    @Test
+    void aceitar_atendenteConfirmaSemPermissao_eRecusado() {
+        pedidoPagarNoFinal();
+
+        assertThatThrownBy(() -> service.aceitar(99L, 3L, "ana", false, true))
+                .isInstanceOf(SessionPayLaterNotAllowedException.class);
+        verify(comandaUseCase, never()).addSession(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void aceitar_atendenteNaoImpoePagarNoFinalAQuemNaoPediu() {
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(pendente(AGORA.minusSeconds(60))));
+        when(repository.findUltimaAceita(7L)).thenReturn(Optional.empty());
+        when(comandaUseCase.openComanda(3L, "Mesa 4", 50L, "ana")).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+
+        var resumo = service.aceitar(99L, 3L, "ana", true, true);
+
+        ArgumentCaptor<ComandaUseCase.AddSessionCommand> cmd = ArgumentCaptor.forClass(ComandaUseCase.AddSessionCommand.class);
+        verify(comandaUseCase).addSession(eq(500L), cmd.capture(), eq("ana"));
+        assertThat(cmd.getValue().pagarNoFinal()).isFalse();
+        assertThat(resumo.solicitacao().pagarNoFinalAceito()).isFalse();
+    }
+
+    /** Pedido com pagar no final, de quem não é VIP, em mesa livre. */
+    private void pedidoPagarNoFinal() {
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(
+                pendente(AGORA.minusSeconds(60), new EscolhasSessao(false, null, List.of(), true))));
+        when(repository.findUltimaAceita(7L)).thenReturn(Optional.empty());
+        when(comandaUseCase.openComanda(3L, "Mesa 4", 50L, "ana")).thenReturn(comanda(500L, ComandaStatus.ABERTA));
     }
 
     @Test
@@ -746,9 +893,10 @@ class SalaoAutoatendimentoServiceTest {
     void essenciasDoDia_dizSeOPerfilFoiMarcadoPelaCasaOuSugerido() {
         when(repository.findSkusComPerfilConfigurado(any())).thenReturn(Set.of("ZOMO-MENTA"));
 
-        assertThat(service.listEssenciasDoDia(HOJE)).extracting(e -> e.essencia().sku(),
+        assertThat(service.essenciasDoDia(HOJE).essencias()).extracting(e -> e.essencia().sku(),
                         e -> e.essencia().perfisConfigurados())
-                .containsExactly(org.assertj.core.groups.Tuple.tuple("NAY-PESSEGO", false),
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("SEMFAIXA", false),
+                        org.assertj.core.groups.Tuple.tuple("NAY-PESSEGO", false),
                         org.assertj.core.groups.Tuple.tuple("ZOMO-MENTA", true));
     }
 
@@ -766,16 +914,16 @@ class SalaoAutoatendimentoServiceTest {
                 new PerfisDoSku("ZOMO-MENTA", List.of(PerfilSabor.GELADO, PerfilSabor.FRUTADO, PerfilSabor.GELADO)),
                 new PerfisDoSku("NAY-PESSEGO", List.of())));
 
-        verify(repository).replacePerfis("ZOMO-MENTA", List.of(PerfilSabor.FRUTADO, PerfilSabor.GELADO), AGORA);
-        verify(repository).replacePerfis("NAY-PESSEGO", List.of(), AGORA);
-        verify(repository, never()).replacePerfis(eq("ZOMO-MENTA"), eq(List.of(PerfilSabor.DOCE)), any());
+        // Uma gravação para todos os SKUs (PDV-C064); o repetido fica com a última lista.
+        verify(repository).replacePerfis(Map.of("ZOMO-MENTA", List.of(PerfilSabor.FRUTADO, PerfilSabor.GELADO),
+                "NAY-PESSEGO", List.of()), AGORA);
     }
 
     @Test
     void salvarPerfis_skuVazio_eRecusadoSemGravar() {
         assertThatThrownBy(() -> service.salvarPerfis(List.of(new PerfisDoSku(" ", List.of()))))
                 .isInstanceOf(AutoatendimentoDadosInvalidosException.class);
-        verify(repository, never()).replacePerfis(anyString(), any(), any());
+        verify(repository, never()).replacePerfis(any(), any());
     }
 
     // ── Chamados da mesa ──────────────────────────────────────────────────────────────────────
@@ -928,6 +1076,126 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(fila).extracting(r -> r.chamado().id()).containsExactly(1L);
         assertThat(fila.get(0).mesa()).isEqualTo("Mesa 4");
         assertThat(fila.get(0).cliente()).isEqualTo("Maria Luiza");
+    }
+
+    // ── Leituras em lote (PDV-C056..C062) ─────────────────────────────────────────────────────
+
+    @Test
+    void ocupacoesAbertas_emLote_semCarregarAComanda() {
+        SolicitacaoSessao origem = pendente(AGORA.minusSeconds(60));
+        doReturn(List.of(
+                new MesaOcupacao(70L, 7L, 500L, 50L, "4821", AGORA.minusSeconds(600)),
+                new MesaOcupacao(71L, 8L, 501L, 50L, "1111", AGORA.minusSeconds(900)),
+                new MesaOcupacao(72L, 9L, null, origem.id(), 50L, "2222", AGORA.minusSeconds(60)))).when(repository).findUltimaOcupacaoDeCadaMesa();
+        doReturn(Set.of(500L)).when(comandaUseCase).findOpenComandaIds(any());
+        doReturn(List.of(origem)).when(repository).findSolicitacoesByIds(any());
+
+        assertThat(service.ocupacoesAbertas()).extracting(MesaOcupacao::codigo).containsExactly("4821", "2222");
+        verify(comandaUseCase).findOpenComandaIds(List.of(500L, 501L));
+        verify(comandaUseCase, never()).getComanda(any());
+        verify(repository, never()).findUltimaOcupacao(anyLong());
+        verify(repository, never()).findSolicitacaoById(any());
+    }
+
+    @Test
+    void cardapio_mesaOcupada_naoCarregaAComanda() {
+        ocupada();
+        doReturn(Set.of(500L)).when(comandaUseCase).findOpenComandaIds(any());
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+
+        assertThat(service.cardapioPorToken("tok-mesa-4", APARELHO).acesso()).isEqualTo(AcessoMesa.LIBERADO);
+        verify(comandaUseCase, never()).getComanda(any());
+    }
+
+    @Test
+    void mesaAtual_carregaAComandaUmaVezSo() {
+        ocupada();
+        doReturn(Set.of(500L)).when(comandaUseCase).findOpenComandaIds(any());
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+
+        service.mesaAtualPorToken("tok-mesa-4", APARELHO);
+
+        verify(comandaUseCase, times(1)).getComanda(500L);
+    }
+
+    @Test
+    void solicitar_leOAcessoDoAparelhoUmaVez() {
+        ocupada();
+        doReturn(Optional.of(true)).when(repository).findAcesso(70L, "amigo");
+
+        service.solicitarPorToken("tok-mesa-4", new Pedido(null, "ZOMO-MENTA", null, null, NO_CAIXA, "amigo"));
+
+        verify(repository, times(1)).findAcesso(70L, "amigo");
+        verify(repository, never()).hasAcesso(anyLong(), anyString());
+    }
+
+    @Test
+    void listChamados_comandasEClientesEmLote() {
+        ChamadoMesa daMesa = chamado(1L, 500L, StatusChamado.ABERTO, AGORA.minusSeconds(300));
+        ChamadoMesa doBalcao = new ChamadoMesa(2L, 700L, null, null, TipoChamado.CONTA,
+                FormaPagamentoChamado.PIX, StatusChamado.ABERTO,
+                AGORA.minusSeconds(120), null, null);
+        when(repository.findChamados(StatusChamado.ABERTO, AGORA.minus(ChamadoMesa.VALIDADE)))
+                .thenReturn(List.of(daMesa, doBalcao));
+        doReturn(Set.of(500L, 700L)).when(comandaUseCase).findOpenComandaIds(any());
+        doReturn(List.of(comanda(500L, ComandaStatus.ABERTA),
+                Comanda.of(700L, 3L, "SALAO", "Balcão", 50L, ComandaStatus.ABERTA, List.of(), null, "ana", AGORA, null))).when(comandaUseCase).listComandasByIds(any());
+        doReturn(Map.of(50L, "Maria Luiza")).when(crmUseCase).findCustomerNames(any());
+
+        var fila = service.listChamados(StatusChamado.ABERTO);
+
+        assertThat(fila).extracting(ChamadoResumo::mesa).containsExactly("Mesa 4", "Balcão");
+        assertThat(fila).extracting(ChamadoResumo::cliente).containsExactly("Maria Luiza", "Maria Luiza");
+        verify(comandaUseCase, never()).getComanda(any());
+        verify(crmUseCase, never()).findCustomerById(any());
+    }
+
+    @Test
+    void listSolicitacoes_clientesERotulosEmLote() {
+        SolicitacaoSessao mescla = new SolicitacaoSessao(98L, UUID.randomUUID(), 7L, 50L, 1L, "ZOMO-MENTA", "ZOMO-UVA",
+                null, SolicitacaoStatus.PENDENTE, null, null, AGORA.minusSeconds(60), null, null, NO_CAIXA, APARELHO);
+        when(repository.findSolicitacoes(eq(SolicitacaoStatus.PENDENTE), any(), eq(0), eq(20)))
+                .thenReturn(new PageResult<>(List.of(pendente(AGORA.minusSeconds(30)), mescla), 0, 20, 2, 1));
+        Product zomo = estoqueUseCase.findProductBySku("ZOMO-MENTA");
+        doReturn(Map.of(50L, MARIA)).when(crmUseCase).findCustomersByIds(any());
+        doReturn(List.of(zomo)).when(estoqueUseCase).findProductsByAnySku(any());
+
+        var pagina = service.listSolicitacoes(SolicitacaoStatus.PENDENTE, 0, 20);
+
+        assertThat(pagina.content()).extracting(SolicitacaoResumo::essencia, SolicitacaoResumo::essencia2)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Zomo · Menta", null),
+                        org.assertj.core.groups.Tuple.tuple("Zomo · Menta", "Zomo · Uva"));
+        assertThat(pagina.content()).extracting(SolicitacaoResumo::cliente).containsOnly("Maria Luiza");
+        verify(crmUseCase, never()).findCustomerById(any());
+        verify(estoqueUseCase, times(1)).findProductsByAnySku(Set.of("ZOMO-MENTA", "ZOMO-UVA"));
+    }
+
+    @Test
+    void listSolicitacoes_expiradas_filtradasNaConsulta_paginaETotalBatem() {
+        SolicitacaoSessao vencida = pendente(AGORA.minus(Duration.ofMinutes(45)));
+        when(repository.findSolicitacoesAntesDe(SolicitacaoStatus.PENDENTE, AGORA.minus(SolicitacaoSessao.VALIDADE),
+                0, 20)).thenReturn(new PageResult<>(List.of(vencida), 0, 20, 1, 1));
+
+        var pagina = service.listSolicitacoes(SolicitacaoStatus.EXPIRADA, 0, 20);
+
+        assertThat(pagina.content()).extracting(SolicitacaoResumo::status).containsExactly(SolicitacaoStatus.EXPIRADA);
+        assertThat(pagina.totalElements()).isEqualTo(1);
+        verify(repository, never()).findSolicitacoes(any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void minhasComandas_chamadosEComprasEmLote() {
+        identificaMaria();
+        comandasDaMaria();
+        doReturn(Map.of()).when(repository).findChamadosDasComandas(any());
+        doReturn(Map.of()).when(comandaUseCase).listStorePurchasesByComandas(any());
+
+        service.minhasComandasPorToken("tok-mesa-4", new Identificacao("12345678901", null), "0000");
+
+        verify(repository).findChamadosDasComandas(List.of(500L, 600L, 700L));
+        verify(comandaUseCase).listStorePurchasesByComandas(List.of(500L, 600L, 700L));
+        verify(repository, never()).findChamadosDaComanda(anyLong());
+        verify(comandaUseCase, never()).listStorePurchases(anyLong());
     }
 
     // ── Mesa atual: chamados e "repetir" ──────────────────────────────────────────────────────
@@ -1148,6 +1416,14 @@ class SalaoAutoatendimentoServiceTest {
     }
 
     @Test
+    void primeiroNome() {
+        assertThat(SalaoAutoatendimentoService.primeiroNome(" Maria  Luiza ")).isEqualTo("Maria");
+        assertThat(SalaoAutoatendimentoService.primeiroNome("A")).isEqualTo("A");
+        assertThat(SalaoAutoatendimentoService.primeiroNome(" ")).isEqualTo("Cliente");
+        assertThat(SalaoAutoatendimentoService.primeiroNome(null)).isEqualTo("Cliente");
+    }
+
+    @Test
     void mascarar() {
         assertThat(SalaoAutoatendimentoService.mascarar("maria luiza")).isEqualTo("ma***");
         assertThat(SalaoAutoatendimentoService.mascarar("A")).isEqualTo("A***");
@@ -1183,6 +1459,222 @@ class SalaoAutoatendimentoServiceTest {
         return ComandaItem.of(id, "SESS-1", BigDecimal.ONE, new BigDecimal("25.00"), null, "Sessão Tradicional", em,
                 ConsumptionMode.SESSAO, false, null, "Zomo Menta", null, null, null, null, null, null, null,
                 SessionProgress.awaitingPayment(), setup, sku, sku2, false, proporcao);
+    }
+
+    // ── Disponibilidade: lata fechada e sem faixa ─────────────────────────────────────────────
+
+    @Test
+    void cardapio_ofereceTambemASoComLataFechada_eOAdminVeOMotivo() {
+        latasFechadas("ZOMO-LIMAO", "ZOMO-UVA");
+
+        CardapioDaMesa cardapio = service.cardapioPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(cardapio.essencias()).extracting(EssenciaOferecida::sku, EssenciaOferecida::disponibilidade)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("NAY-PESSEGO", Disponibilidade.ABERTA),
+                        org.assertj.core.groups.Tuple.tuple("ZOMO-LIMAO", Disponibilidade.FECHADA),
+                        org.assertj.core.groups.Tuple.tuple("ZOMO-MENTA", Disponibilidade.ABERTA),
+                        org.assertj.core.groups.Tuple.tuple("ZOMO-UVA", Disponibilidade.FECHADA));
+        // O admin vê também a sem faixa (sem marca, vem antes), com o motivo; a aberta não tem motivo.
+        var admin = service.essenciasDoDia(HOJE).essencias().stream().map(e -> e.essencia()).toList();
+        assertThat(admin).extracting(EssenciaOferecida::sku)
+                .containsExactly("SEMFAIXA", "NAY-PESSEGO", "ZOMO-LIMAO", "ZOMO-MENTA", "ZOMO-UVA");
+        EssenciaOferecida semFaixa = admin.get(0);
+        assertThat(semFaixa.disponibilidade()).isEqualTo(Disponibilidade.SEM_FAIXA);
+        assertThat(semFaixa.tierId()).isNull();
+        assertThat(semFaixa.motivoFora()).isNotBlank();
+        assertThat(admin.get(2).motivoFora()).isNotBlank();
+        assertThat(admin.get(1).motivoFora()).isNull();
+    }
+
+    @Test
+    void latasFechadas_consultaOSaldoSoDosSkusDeSessao_semPaginarODeposito() {
+        service.cardapioPorToken("tok-mesa-4", APARELHO);
+
+        // PDV-C058: o saldo livre (físico menos reserva, filtrado na consulta) só dos SKUs vendáveis de sessão.
+        verify(estoqueUseCase).listSkusWithFreeStock("SALAO",
+                Set.of("ZOMO-MENTA", "ZOMO-UVA", "ZOMO-LIMAO", "NAY-PESSEGO", "SEMFAIXA"));
+        verify(estoqueUseCase, never()).listStockBalances(anyString(), anyInt(), anyInt());
+        // As faixas, uma vez por cardápio.
+        verify(sessionMenuUseCase).listTiers();
+    }
+
+    @Test
+    void solicitar_essenciaSoComLataFechada_eAceito() {
+        identificaMaria();
+        latasFechadas("ZOMO-UVA");
+
+        assertThat(service.solicitarPorToken("tok-mesa-4", pedido("ZOMO-UVA", APARELHO)).essenciaSku())
+                .isEqualTo("ZOMO-UVA");
+    }
+
+    @Test
+    void solicitar_essenciaSemFaixa_eRecusada() {
+        identificaMaria();
+
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4", pedido("SEMFAIXA", APARELHO)))
+                .isInstanceOf(EssenciaIndisponivelException.class);
+    }
+
+    // ── Modelo semanal ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void diaSemSelecao_usaOModeloDoDiaDaSemana() {
+        // 17/10/2026 é sábado = 6.
+        when(repository.findModelo(6)).thenReturn(Set.of("ZOMO-MENTA"));
+
+        assertThat(service.essenciasDoDia(HOJE).origem()).isEqualTo(OrigemSelecao.MODELO);
+        assertThat(service.essenciasDoDia(HOJE).essencias()).filteredOn(e -> e.selecionada())
+                .extracting(e -> e.essencia().sku()).containsExactly("ZOMO-MENTA");
+        assertThat(service.cardapioPorToken("tok-mesa-4", APARELHO).destaques()).containsExactly("ZOMO-MENTA");
+    }
+
+    @Test
+    void selecaoDoDia_venceOModelo() {
+        when(repository.findModelo(6)).thenReturn(Set.of("ZOMO-MENTA"));
+        when(repository.findEssenciasDoDia(HOJE)).thenReturn(Set.of("NAY-PESSEGO"));
+
+        assertThat(service.essenciasDoDia(HOJE).origem()).isEqualTo(OrigemSelecao.DIA);
+        assertThat(service.cardapioPorToken("tok-mesa-4", APARELHO).destaques()).containsExactly("NAY-PESSEGO");
+    }
+
+    @Test
+    void setModelo_limpaOsSkus_eRecusaDiaInvalido() {
+        service.setModelo(2, List.of(" ZOMO-MENTA ", "", "ZOMO-MENTA", "NAY-PESSEGO"));
+
+        verify(repository).replaceModelo(2, Set.of("ZOMO-MENTA", "NAY-PESSEGO"));
+        assertThatThrownBy(() -> service.setModelo(0, List.of())).isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+        assertThatThrownBy(() -> service.setModelo(8, List.of())).isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+    }
+
+    @Test
+    void copiarModelo_paraCadaDestino() {
+        when(repository.findModelo(2)).thenReturn(Set.of("ZOMO-MENTA"));
+
+        service.copiarModelo(2, List.of(3, 4, 2));
+
+        verify(repository).replaceModelo(3, Set.of("ZOMO-MENTA"));
+        verify(repository).replaceModelo(4, Set.of("ZOMO-MENTA"));
+        verify(repository, never()).replaceModelo(eq(2), any());
+        assertThatThrownBy(() -> service.copiarModelo(2, List.of(9)))
+                .isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+        assertThatThrownBy(() -> service.copiarModelo(2, List.of()))
+                .isInstanceOf(AutoatendimentoDadosInvalidosException.class);
+    }
+
+    // ── Ocupação no envio do pedido ───────────────────────────────────────────────────────────
+
+    @Test
+    void ocupadaNoEnvio_outroAparelhoPrecisaDoCodigo() {
+        identificaMaria();
+        ocupadaNoEnvio(pendente(AGORA.minusSeconds(60)));
+
+        assertThat(service.cardapioPorToken("tok-mesa-4", "outro").acesso()).isEqualTo(AcessoMesa.BLOQUEADO);
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4", pedido("ZOMO-MENTA", "outro")))
+                .isInstanceOf(MesaOcupadaException.class);
+        assertThat(service.codigoDaMesa("tok-mesa-4", APARELHO)).contains("4821");
+    }
+
+    @Test
+    void ocupadaNoEnvio_recusadaOuExpirada_aMesaFicaLivre() {
+        SolicitacaoSessao recusada = pendente(AGORA.minusSeconds(60)).recusada("sem lata", "ana", AGORA);
+        ocupadaNoEnvio(recusada);
+        assertThat(service.cardapioPorToken("tok-mesa-4", "outro").acesso()).isEqualTo(AcessoMesa.LIVRE);
+
+        ocupadaNoEnvio(pendente(AGORA.minus(SolicitacaoSessao.VALIDADE).minusSeconds(1)));
+        assertThat(service.cardapioPorToken("tok-mesa-4", "outro").acesso()).isEqualTo(AcessoMesa.LIVRE);
+        assertThat(service.ocupacoesAbertas()).isEmpty();
+    }
+
+    @Test
+    void ocupadaNoEnvio_mesaAtualSoComOCodigo_eChamadoEspera() {
+        ocupadaNoEnvio(pendente(AGORA.minusSeconds(60)));
+
+        MesaAtual mesa = service.mesaAtualPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(mesa.codigo()).isEqualTo("4821");
+        assertThat(mesa.itens()).isEmpty();
+        assertThat(mesa.emAberto()).isEqualByComparingTo("0");
+        verify(comandaUseCase, never()).getComanda(anyLong());
+        assertThatThrownBy(() -> service.chamarPorToken("tok-mesa-4",
+                new NovoChamado(TipoChamado.ATENDENTE, null, APARELHO)))
+                .isInstanceOf(MesaOcupadaException.class);
+    }
+
+    @Test
+    void aceitar_ocupadaNoEnvio_aMesmaOcupacaoGanhaAComanda() {
+        SolicitacaoSessao doEnvio = pendente(AGORA.minusSeconds(60));
+        ocupadaNoEnvio(doEnvio);
+        when(repository.findSolicitacaoByIdForUpdate(99L)).thenReturn(Optional.of(doEnvio));
+        when(repository.findUltimaAceita(7L)).thenReturn(Optional.empty());
+        when(comandaUseCase.openComanda(3L, "Mesa 4", 50L, "ana")).thenReturn(comanda(500L, ComandaStatus.ABERTA));
+
+        service.aceitar(99L, 3L, "ana", true);
+
+        ArgumentCaptor<MesaOcupacao> ocupacao = ArgumentCaptor.forClass(MesaOcupacao.class);
+        verify(repository).saveOcupacao(ocupacao.capture());
+        assertThat(ocupacao.getValue().id()).isEqualTo(70L);
+        assertThat(ocupacao.getValue().comandaId()).isEqualTo(500L);
+        assertThat(ocupacao.getValue().codigo()).isEqualTo("4821");
+        verify(repository).addAcesso(70L, APARELHO, false);
+    }
+
+    // ── Linha de sessão e compras da loja ─────────────────────────────────────────────────────
+
+    @Test
+    void sessao_semAndamentoGravado_vemSoComOLancamento() {
+        // Linha de sessão sem SessionProgress: a anterior à V132.
+        ComandaItem antiga = ComandaItem.of(1L, "SESSAO-TRAD", BigDecimal.ONE, new BigDecimal("25.00"),
+                BigDecimal.ZERO, "Sessão", AGORA, ConsumptionMode.SESSAO, false, null, "Zomo · Menta", null);
+        ComandaItem bebida = ComandaItem.of(2L, "AGUA", BigDecimal.ONE, new BigDecimal("5.00"), BigDecimal.ZERO,
+                "Água", AGORA);
+
+        MesaAtual.Sessao sessao = SalaoAutoatendimentoService.sessao(antiga);
+
+        assertThat(sessao).isNotNull();
+        assertThat(sessao.status()).isNull();
+        assertThat(sessao.essencia()).isEqualTo("Zomo · Menta");
+        assertThat(sessao.lancadaEm()).isEqualTo(AGORA);
+        assertThat(SalaoAutoatendimentoService.sessao(bebida)).isNull();
+    }
+
+    @Test
+    void mesaAtual_trazAsComprasDaLoja_semACancelada() {
+        ocupada();
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+        when(comandaUseCase.listStorePurchases(500L)).thenReturn(List.of(
+                compra(900L, "000123", OrderStatus.CONCLUIDO), compra(901L, "000124", OrderStatus.CANCELADO)));
+
+        MesaAtual mesa = service.mesaAtualPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(mesa.comprasLoja()).hasSize(1);
+        MesaAtual.CompraLoja compra = mesa.comprasLoja().get(0);
+        assertThat(compra.id()).isEqualTo("000123");
+        assertThat(compra.em()).isEqualTo(AGORA);
+        assertThat(compra.total()).isEqualByComparingTo("40.00");
+        assertThat(compra.itens()).extracting(MesaAtual.ItemCompra::nome, MesaAtual.ItemCompra::valor)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Essência Zomo Menta", new BigDecimal("40.00")));
+    }
+
+    private void latasFechadas(String... skus) {
+        when(estoqueUseCase.listSkusWithFreeStock(eq("SALAO"), any())).thenReturn(Set.of(skus));
+    }
+
+    /** A Mesa 4 ocupada pelo aparelho no envio do pedido {@code origem}, ainda sem comanda. */
+    private void ocupadaNoEnvio(SolicitacaoSessao origem) {
+        when(repository.findUltimaOcupacao(7L)).thenReturn(Optional.of(
+                new MesaOcupacao(70L, 7L, null, origem.id(), 50L, "4821", AGORA.minusSeconds(60))));
+        when(repository.findSolicitacaoById(origem.id())).thenReturn(Optional.of(origem));
+        when(repository.hasAcesso(70L, APARELHO)).thenReturn(true);
+    }
+
+    private static Order compra(Long id, String numero, OrderStatus status) {
+        OrderItem item = OrderItem.of(1L, "ZOMO-MENTA-LATA", BigDecimal.ONE, new BigDecimal("40.00"),
+                new BigDecimal("20.00"), BigDecimal.ZERO, BigDecimal.ZERO, "Essência Zomo Menta");
+        boolean cancelada = status == OrderStatus.CANCELADO;
+        return Order.of(id, numero, SalesChannel.BALCAO, status, 50L, 3L, "LOJA", List.of(item),
+                new BigDecimal("40.00"), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("40.00"), BigDecimal.ZERO,
+                cancelada ? "desistiu" : null, AGORA.minusSeconds(300), AGORA, cancelada ? null : AGORA,
+                cancelada ? AGORA : null, null, 0);
     }
 
     private static Pedido pedido(String sku, String aparelho) {

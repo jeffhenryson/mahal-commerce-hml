@@ -16,6 +16,11 @@ public interface SalaoMesaOcupacaoJpaRepository extends JpaRepository<SalaoMesaO
 
     List<SalaoMesaOcupacaoEntity> findByComandaIdIn(Collection<Long> comandaIds);
 
+    /** PDV-C057 — a ocupação mais recente de cada mesa, numa consulta (usa idx_salao_mesa_ocupacao_mesa). */
+    @Query(value = "SELECT DISTINCT ON (mesa_id) * FROM salao_mesa_ocupacao "
+            + "ORDER BY mesa_id, aberta_em DESC, id DESC", nativeQuery = true)
+    List<SalaoMesaOcupacaoEntity> findUltimaDeCadaMesa();
+
     // O aparelho da mesa é só um token opaco: sem entidade própria, a tabela de acessos é um conjunto.
     // Acesso do titular prevalece (V170): o aparelho que já era dele não vira acompanhante.
     @Modifying
@@ -30,7 +35,8 @@ public interface SalaoMesaOcupacaoJpaRepository extends JpaRepository<SalaoMesaO
             + "AND device_token = :deviceToken)", nativeQuery = true)
     boolean hasAcesso(@Param("ocupacaoId") Long ocupacaoId, @Param("deviceToken") String deviceToken);
 
-    @Query(value = "SELECT EXISTS (SELECT 1 FROM salao_mesa_acesso WHERE ocupacao_id = :ocupacaoId "
-            + "AND device_token = :deviceToken AND acompanhante)", nativeQuery = true)
-    boolean isAcompanhante(@Param("ocupacaoId") Long ocupacaoId, @Param("deviceToken") String deviceToken);
+    /** O acesso do aparelho: vazio sem acesso; senão se entrou como acompanhante (PDV-C062). */
+    @Query(value = "SELECT acompanhante FROM salao_mesa_acesso WHERE ocupacao_id = :ocupacaoId "
+            + "AND device_token = :deviceToken", nativeQuery = true)
+    Optional<Boolean> findAcompanhante(@Param("ocupacaoId") Long ocupacaoId, @Param("deviceToken") String deviceToken);
 }

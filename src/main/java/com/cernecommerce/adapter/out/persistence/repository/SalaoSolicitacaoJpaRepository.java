@@ -33,4 +33,8 @@ public interface SalaoSolicitacaoJpaRepository extends JpaRepository<SalaoSolici
 
     Page<SalaoSolicitacaoEntity> findByStatusAndCriadoEmAfterOrderByCriadoEmDesc(String status, Instant desde,
             Pageable pageable);
+
+    /** PDV-C061 — as gravadas com {@code status} antes de {@code antes}: as PENDENTE já vencidas são as EXPIRADA. */
+    Page<SalaoSolicitacaoEntity> findByStatusAndCriadoEmBeforeOrderByCriadoEmDesc(String status, Instant antes,
+            Pageable pageable);
 }

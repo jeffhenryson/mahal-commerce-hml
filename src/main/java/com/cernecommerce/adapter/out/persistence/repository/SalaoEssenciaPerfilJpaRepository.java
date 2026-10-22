@@ -15,6 +15,6 @@ public interface SalaoEssenciaPerfilJpaRepository
     List<SalaoEssenciaPerfilEntity> findBySkuIn(Collection<String> skus);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("DELETE FROM SalaoEssenciaPerfilEntity e WHERE e.sku = :sku")
-    void deleteBySku(@Param("sku") String sku);
+    @Query("DELETE FROM SalaoEssenciaPerfilEntity e WHERE e.sku IN :skus")
+    void deleteBySkuIn(@Param("skus") Collection<String> skus);
 }

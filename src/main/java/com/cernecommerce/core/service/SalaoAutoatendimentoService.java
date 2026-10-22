@@ -35,7 +35,6 @@ import com.cernecommerce.core.domain.model.notification.Notification;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.ComandaItem;
-import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionAddon;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
@@ -45,6 +44,7 @@ import com.cernecommerce.core.domain.model.pdv.SessionTier;
 import com.cernecommerce.core.domain.model.salao.AcessoMesa;
 import com.cernecommerce.core.domain.model.salao.CardapioDaMesa;
 import com.cernecommerce.core.domain.model.salao.ChamadoMesa;
+import com.cernecommerce.core.domain.model.salao.Disponibilidade;
 import com.cernecommerce.core.domain.model.salao.EscolhasSessao;
 import com.cernecommerce.core.domain.model.salao.EssenciaDoDia;
 import com.cernecommerce.core.domain.model.salao.EssenciaOferecida;
@@ -52,6 +52,7 @@ import com.cernecommerce.core.domain.model.salao.FormaPagamentoChamado;
 import com.cernecommerce.core.domain.model.salao.MesaAbertaDoCliente;
 import com.cernecommerce.core.domain.model.salao.MesaAtual;
 import com.cernecommerce.core.domain.model.salao.MesaOcupacao;
+import com.cernecommerce.core.domain.model.salao.OrigemSelecao;
 import com.cernecommerce.core.domain.model.salao.PerfilSabor;
 import com.cernecommerce.core.domain.model.salao.SalaoMesa;
 import com.cernecommerce.core.domain.model.salao.SolicitacaoResumo;
@@ -60,6 +61,8 @@ import com.cernecommerce.core.domain.model.salao.SolicitacaoStatus;
 import com.cernecommerce.core.domain.model.salao.StatusChamado;
 import com.cernecommerce.core.domain.model.salao.TipoChamado;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
+import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -73,11 +76,14 @@ import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.NotificationSsePort;
 import com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository;
 import com.cernecommerce.core.ports.out.user.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -97,26 +103,31 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Autoatendimento do Salão — ver {@link SalaoAutoatendimentoUseCase}.
  *
  * <h2>O que o QR oferece</h2>
- * <p>A mesma regra do seletor de essência do PDV ({@code montarCatalogoEssencias} no admin): as
- * sessões consomem do depósito do Salão, se houver um ativo, senão do depósito padrão; o QR oferece
- * as essências com <b>lata aberta</b> lá e faixa ativa (a sem faixa o lançamento recusaria). As
- * marcadas no dia são destaques: aparecem no topo, não filtram.</p>
+ * <p>As sessões consomem do depósito do Salão, se houver um ativo, senão do depósito padrão. Lá, o QR
+ * oferece as essências com faixa ativa e <b>lata aberta</b> ou só <b>fechada</b> — a fechada abre na
+ * 1ª sessão ({@code consumeSession}). A sem faixa o lançamento recusaria: só o admin a vê, com o
+ * motivo ({@link Disponibilidade}). As marcadas no dia são destaques: aparecem no topo, não filtram.
+ * A data sem seleção própria usa o modelo do dia da semana.</p>
  *
  * <h2>Mesa ocupada</h2>
- * <p>O aceite da 1ª solicitação de mesa livre grava uma {@link MesaOcupacao} com código de 4 dígitos
- * e dá acesso ao aparelho que pediu. Enquanto a comanda dela estiver aberta, aparelho sem acesso
- * não pede nem vê a mesa — entra com o código. Encerrou a comanda, a mesa está livre de novo.</p>
+ * <p>O envio da 1ª solicitação de mesa livre grava uma {@link MesaOcupacao} com código de 4 dígitos
+ * e dá acesso ao aparelho que pediu — o lead recebe o código já com o pedido pendente. Sem comanda, a
+ * ocupação vale enquanto o pedido estiver pendente: recusado ou expirado sem nada lançado, a mesa
+ * está livre. O aceite grava a comanda nela; daí vale enquanto a comanda estiver aberta. Aparelho
+ * sem acesso não pede nem vê a mesa — entra com o código.</p>
  *
  * <h2>Dados pessoais no lado público</h2>
- * <p>Identificar responde só se achou e o primeiro nome mascarado. O cadastro público nunca toca
+ * <p>Identificar responde só se achou e o primeiro nome (sem sobrenome). O cadastro público nunca toca
  * cliente existente (o find-or-create do CRM completaria o CPF de um terceiro): CPF ou celular já
  * usado é 409 e o lead se identifica. O pedido não carrega id — o servidor resolve o cliente de novo
  * pelo CPF/celular.</p>
@@ -137,11 +148,12 @@ import java.util.stream.Collectors;
  * atendente no aceite ({@code PDV_SESSION_PAY_LATER}).</p>
  *
  * <h2>Chamados</h2>
- * <p>Conta, recolher, carvão e atendente: um ABERTO por tipo e ocupação. O esquecido vence em
+ * <p>Conta, recolher, carvão e atendente: um ABERTO por tipo e comanda. O esquecido vence em
  * {@link ChamadoMesa#VALIDADE} na leitura, e o da comanda encerrada sai da fila com a ocupação.</p>
  */
 public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase {
 
+    private static final Logger log = LoggerFactory.getLogger(SalaoAutoatendimentoService.class);
     static final ZoneId ZONA_SALAO = ZoneId.of("America/Sao_Paulo");
     static final String ORIGEM_LEAD = "QR Salão";
     /** Quem recebe o aviso de pedido novo: quem opera mesa. */
@@ -159,6 +171,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     static final int TENTATIVAS_CONFIRMACAO = 5;
     static final Duration JANELA_TRAVA = Duration.ofMinutes(15);
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String CADASTRO_NAO_ENCONTRADO = "Não encontramos seu cadastro — confira o CPF ou celular.";
+    private static final String SEM_ACESSO = "Sem acesso a esta mesa — digite o código da mesa.";
 
     private final SalaoAutoatendimentoRepository repository;
     private final EstoqueUseCase estoqueUseCase;
@@ -206,9 +220,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional
     public SalaoMesa createMesa(String nome) {
         String limpo = nome == null ? null : nome.trim();
-        if (limpo != null && repository.existsMesaComNome(limpo, null)) {
-            throw new SalaoMesaNomeDuplicadoException("Já existe uma mesa chamada \"" + limpo + "\".");
-        }
+        if (limpo != null) exigirNomeLivre(limpo, null);
         return repository.saveMesa(new SalaoMesa(null, limpo, novoToken(), true, clock.instant()));
     }
 
@@ -217,10 +229,14 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public SalaoMesa updateMesa(Long id, String nome, boolean ativo) {
         SalaoMesa atual = mesa(id);
         String limpo = nome == null ? atual.nome() : nome.trim();
-        if (repository.existsMesaComNome(limpo, id)) {
-            throw new SalaoMesaNomeDuplicadoException("Já existe uma mesa chamada \"" + limpo + "\".");
-        }
+        exigirNomeLivre(limpo, id);
         return repository.saveMesa(atual.withNome(limpo).withAtivo(ativo));
+    }
+
+    private void exigirNomeLivre(String nome, Long excetoId) {
+        if (repository.existsMesaComNome(nome, excetoId)) {
+            throw new SalaoMesaNomeDuplicadoException("Já existe uma mesa chamada \"" + nome + "\".");
+        }
     }
 
     @Override
@@ -232,29 +248,80 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Override
     @Transactional(readOnly = true)
     public List<MesaOcupacao> ocupacoesAbertas() {
-        return repository.findAllMesas().stream().map(this::ocupacaoAberta).flatMap(Optional::stream).toList();
+        // A última de cada mesa numa consulta e a validade de todas em lote (PDV-C057), em vez de 2–3
+        // consultas por mesa. Ordem: a do id da mesa.
+        return valendo(repository.findUltimaOcupacaoDeCadaMesa());
     }
 
     // ── Admin: essências do dia ───────────────────────────────────────────────────────────────
 
     @Override
     @Transactional(readOnly = true)
-    public List<EssenciaDoDia> listEssenciasDoDia(LocalDate data) {
-        Set<String> doDia = repository.findEssenciasDoDia(data);
-        return disponiveis().stream().map(e -> new EssenciaDoDia(e, doDia.contains(e.sku()))).toList();
+    public SelecaoDoDia essenciasDoDia(LocalDate data) {
+        Map.Entry<OrigemSelecao, Set<String>> selecao = selecaoDoDia(data);
+        return new SelecaoDoDia(selecao.getKey(), essenciasDoSalao(faixasAtivas()).stream()
+                .map(e -> new EssenciaDoDia(e, selecao.getValue().contains(e.sku()))).toList());
     }
 
     @Override
     @Transactional
     public void setEssenciasDoDia(LocalDate data, Collection<String> skus) {
-        repository.replaceEssenciasDoDia(data, skus == null ? List.of() : new LinkedHashSet<>(skus.stream()
-                .filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).toList()));
+        repository.replaceEssenciasDoDia(data, limpar(skus));
+    }
+
+    private static Set<String> limpar(Collection<String> skus) {
+        return skus == null ? Set.of() : new LinkedHashSet<>(skus.stream()
+                .filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).toList());
+    }
+
+    /** 1 = segunda … 7 = domingo, como {@link java.time.DayOfWeek#getValue}. */
+    private static int diaSemana(int dia) {
+        if (dia < 1 || dia > 7) {
+            throw new AutoatendimentoDadosInvalidosException("Dia da semana inválido: use 1 (segunda) a 7 (domingo).");
+        }
+        return dia;
+    }
+
+    /**
+     * Origem → SKUs: a seleção da data ou, sem ela, o modelo do dia da semana. (Par em vez de record
+     * próprio: tipo aninhado em {@code core.service} fere a regra de HexagonalArchitectureTest.)
+     */
+    private Map.Entry<OrigemSelecao, Set<String>> selecaoDoDia(LocalDate data) {
+        Set<String> doDia = repository.findEssenciasDoDia(data);
+        return doDia.isEmpty()
+                ? Map.entry(OrigemSelecao.MODELO, repository.findModelo(data.getDayOfWeek().getValue()))
+                : Map.entry(OrigemSelecao.DIA, doDia);
     }
 
     @Override
     @Transactional
     public void copiarEssenciasDoDia(LocalDate de, LocalDate para) {
         repository.replaceEssenciasDoDia(para, repository.findEssenciasDoDia(de));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Integer, Set<String>> modeloSemanal() {
+        return new TreeMap<>(repository.findModelo());
+    }
+
+    @Override
+    @Transactional
+    public void setModelo(int diaSemana, Collection<String> skus) {
+        repository.replaceModelo(diaSemana(diaSemana), limpar(skus));
+    }
+
+    @Override
+    @Transactional
+    public void copiarModelo(int de, Collection<Integer> para) {
+        Set<String> skus = repository.findModelo(diaSemana(de));
+        if (para == null || para.isEmpty()) {
+            throw new AutoatendimentoDadosInvalidosException("Escolha para quais dias copiar.");
+        }
+        for (Integer destino : new LinkedHashSet<>(para)) {
+            if (destino == null) throw new AutoatendimentoDadosInvalidosException("Dia da semana inválido.");
+            if (destino != de) repository.replaceModelo(diaSemana(destino), skus);
+        }
     }
 
     @Override
@@ -268,8 +335,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
             }
             porSku.put(sku, item.perfis().stream().filter(Objects::nonNull).distinct().sorted().toList());
         }
-        Instant agora = clock.instant();
-        porSku.forEach((sku, perfis) -> repository.replacePerfis(sku, perfis, agora));
+        repository.replacePerfis(porSku, clock.instant());
     }
 
     @Override
@@ -283,10 +349,9 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional(readOnly = true)
     public CardapioDaMesa cardapioPorToken(String token, String deviceToken) {
         SalaoMesa mesa = mesaPorToken(token);
-        List<SessionTier> faixas = sessionMenuUseCase.listTiers().stream().filter(SessionTier::ativo)
-                .sorted(Comparator.comparingInt(SessionTier::ordem)).toList();
-        List<EssenciaOferecida> oferecidas = disponiveis();
-        Set<String> destaques = new HashSet<>(repository.findEssenciasDoDia(hoje()));
+        List<SessionTier> faixas = faixasAtivas();
+        List<EssenciaOferecida> oferecidas = disponiveis(faixas);
+        Set<String> destaques = new HashSet<>(selecaoDoDia(hoje()).getValue());
         destaques.retainAll(oferecidas.stream().map(EssenciaOferecida::sku).collect(Collectors.toSet()));
         SessionSettings settings = sessionMenuUseCase.getSettings();
         return new CardapioDaMesa(mesa.nome(), faixas, oferecidas, destaques, settings.upgradeVasoGrandePreco(),
@@ -332,7 +397,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public Identificado completarPorToken(String token, Completar completar) {
         SalaoMesa mesa = mesaPorToken(token);
         Customer cliente = encontrar(completar.identificacao()).orElseThrow(() ->
-                new ClienteNaoIdentificadoException("Não encontramos seu cadastro — confira o CPF ou celular."));
+                new ClienteNaoIdentificadoException(CADASTRO_NAO_ENCONTRADO));
         String contato = cliente.contato();
         String cpf = cliente.cpf();
         LocalDate nascimento = null;
@@ -362,8 +427,12 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public SolicitacaoSessao solicitarPorToken(String token, Pedido pedido) {
         SalaoMesa mesa = mesaPorToken(token);
         String device = deviceObrigatorio(pedido.deviceToken());
+        // Dois aparelhos pedindo na mesma mesa livre: o segundo espera e já a encontra ocupada.
+        repository.findMesaByIdForUpdate(mesa.id());
         Optional<MesaOcupacao> ocupacao = ocupacaoAberta(mesa);
-        boolean naMesa = ocupacao.map(o -> repository.hasAcesso(o.id(), device)).orElse(false);
+        // O acesso e se é de acompanhante, numa leitura (PDV-C062).
+        Optional<Boolean> acesso = ocupacao.flatMap(o -> repository.findAcesso(o.id(), device));
+        boolean naMesa = acesso.isPresent();
         if (ocupacao.isPresent() && !naMesa) {
             throw new MesaOcupadaException("Esta mesa já está com outro cliente — digite o código da mesa.");
         }
@@ -372,12 +441,12 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         if (semIdentificacao(pedido.identificacao()) && naMesa) {
             // Quem já está na mesa pede sem CPF: o cliente é o titular dela.
             cliente = crmUseCase.findCustomerById(ocupacao.get().customerId());
-            acompanhante = repository.isAcompanhante(ocupacao.get().id(), device);
+            acompanhante = acesso.get();
         } else if (semIdentificacao(pedido.identificacao())) {
             throw new ClienteNaoIdentificadoException("Identifique-se com o CPF ou o celular.");
         } else {
             cliente = encontrar(pedido.identificacao()).orElseThrow(() ->
-                    new ClienteNaoIdentificadoException("Não encontramos seu cadastro — confira o CPF ou celular."));
+                    new ClienteNaoIdentificadoException(CADASTRO_NAO_ENCONTRADO));
         }
         if (!faltando(cliente).isEmpty()) {
             throw new AutoatendimentoDadosInvalidosException("Complete seu cadastro antes de pedir.");
@@ -389,7 +458,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         if (!adicionais.containsAll(escolhas.adicionalIds())) {
             throw new AutoatendimentoDadosInvalidosException("Um dos adicionais não está disponível — revise o pedido.");
         }
-        Map<String, EssenciaOferecida> oferecidas = disponiveis().stream()
+        Map<String, EssenciaOferecida> oferecidas = disponiveis(faixasAtivas()).stream()
                 .collect(Collectors.toMap(EssenciaOferecida::sku, Function.identity(), (a, b) -> a));
         EssenciaOferecida sabor = oferecida(oferecidas, pedido.essenciaSku());
         String sku2 = pedido.essenciaSku2() == null || pedido.essenciaSku2().isBlank() ? null : pedido.essenciaSku2();
@@ -412,6 +481,12 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         SolicitacaoSessao salva = repository.saveSolicitacao(SolicitacaoSessao.nova(mesa.id(), cliente.id(),
                 faixa.tierId(), sabor.sku(), sabor2 == null ? null : sabor2.sku(), pedido.observacao(), escolhas,
                 device, acompanhante, agora));
+        if (ocupacao.isEmpty()) {
+            // A mesa fica com quem pediu já no envio: o código vai com o pedido pendente.
+            MesaOcupacao nova = repository.saveOcupacao(
+                    MesaOcupacao.pendente(mesa.id(), salva.id(), cliente.id(), agora));
+            repository.addAcesso(nova.id(), device, false);
+        }
         avisarAtendentes(mesa, quemPediu(cliente.nome(), acompanhante), sabor, sabor2);
         return salva;
     }
@@ -463,11 +538,17 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         SalaoMesa mesa = mesaPorToken(token);
         MesaOcupacao ocupacao = ocupacaoAberta(mesa)
                 .filter(o -> repository.hasAcesso(o.id(), deviceToken))
-                .orElseThrow(() -> new MesaOcupadaException("Sem acesso a esta mesa — digite o código da mesa."));
-        Comanda comanda = comandaUseCase.getComanda(ocupacao.comandaId());
+                .orElseThrow(() -> new MesaOcupadaException(SEM_ACESSO));
         Customer cliente = crmUseCase.findCustomerById(ocupacao.customerId());
+        if (ocupacao.pendente()) {
+            // Pedido ainda com o atendente: nada lançado, só o código.
+            return new MesaAtual(mesa.nome(), mascarar(cliente.nome()), ocupacao.codigo(), ocupacao.abertaEm(),
+                    List.of(), BigDecimal.ZERO);
+        }
+        Comanda comanda = comandaUseCase.getComanda(ocupacao.comandaId());
         return new MesaAtual(mesa.nome(), mascarar(cliente.nome()), ocupacao.codigo(), ocupacao.abertaEm(), itens(comanda),
-                comanda.runningTotal(), chamadosRecentes(comanda.id()), ultimaSessao(comanda).orElse(null));
+                comanda.runningTotal(), recentes(repository.findChamadosDaComanda(comanda.id())),
+                ultimaSessao(comanda).orElse(null), comprasLoja(comandaUseCase.listStorePurchases(comanda.id())));
     }
 
     @Override
@@ -488,7 +569,10 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
             // A mesa deste QR, pelo aparelho que tem acesso a ela.
             ocupacao = ocupacaoAberta(mesa)
                     .filter(o -> repository.hasAcesso(o.id(), device))
-                    .orElseThrow(() -> new MesaOcupadaException("Sem acesso a esta mesa — digite o código da mesa."));
+                    .orElseThrow(() -> new MesaOcupadaException(SEM_ACESSO));
+            if (ocupacao.pendente()) {
+                throw new MesaOcupadaException("Aguarde o atendente aceitar o pedido para chamar a equipe.");
+            }
             comanda = comandaUseCase.getComanda(ocupacao.comandaId());
             onde = mesa.nome();
         } else {
@@ -550,27 +634,31 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional(readOnly = true)
     public PageResult<SolicitacaoResumo> listSolicitacoes(SolicitacaoStatus status, int page, int size) {
         Instant agora = clock.instant();
-        // EXPIRADA não é gravada: são as PENDENTE anteriores à validade.
-        PageResult<SolicitacaoSessao> pagina = status == SolicitacaoStatus.EXPIRADA
-                ? repository.findSolicitacoes(SolicitacaoStatus.PENDENTE, null, page, size)
-                : repository.findSolicitacoes(status, status == SolicitacaoStatus.PENDENTE
-                        ? agora.minus(SolicitacaoSessao.VALIDADE) : null, page, size);
-        List<SolicitacaoSessao> linhas = status == SolicitacaoStatus.EXPIRADA
-                ? pagina.content().stream().filter(s -> s.statusEm(agora) == SolicitacaoStatus.EXPIRADA).toList()
-                : pagina.content();
-        List<SolicitacaoResumo> resumos = resumir(linhas, agora);
+        Instant validade = agora.minus(SolicitacaoSessao.VALIDADE);
+        // EXPIRADA não é gravada: são as PENDENTE anteriores à validade — filtradas na consulta, para a
+        // página e o total baterem (PDV-C061).
+        PageResult<SolicitacaoSessao> pagina = switch (status) {
+            case EXPIRADA -> repository.findSolicitacoesAntesDe(SolicitacaoStatus.PENDENTE, validade, page, size);
+            case PENDENTE -> repository.findSolicitacoes(status, validade, page, size);
+            default -> repository.findSolicitacoes(status, null, page, size);
+        };
+        List<SolicitacaoResumo> resumos = resumir(pagina.content(), agora);
         return new PageResult<>(resumos, pagina.page(), pagina.size(), pagina.totalElements(), pagina.totalPages());
     }
 
     @Override
     @Transactional
-    public SolicitacaoResumo aceitar(Long id, Long cashSessionId, String username, boolean podePagarNoFinal) {
+    public SolicitacaoResumo aceitar(Long id, Long cashSessionId, String username, boolean podePagarNoFinal,
+            Boolean pagarNoFinal) {
         SolicitacaoSessao solicitacao = pendente(id);
-        EscolhasSessao escolhas = solicitacao.escolhas();
-        if (escolhas.pagarNoFinal() && !podePagarNoFinal) {
+        // O lead pede; o atendente confirma ou nega (cobra agora) — nunca impõe a quem não pediu.
+        boolean pagaNoFinal = solicitacao.escolhas().pagarNoFinal() && (pagarNoFinal == null || pagarNoFinal);
+        EscolhasSessao escolhas = solicitacao.escolhas().withPagarNoFinal(pagaNoFinal);
+        if (pagaNoFinal && !podePagarNoFinal) {
             throw new SessionPayLaterNotAllowedException(username);
         }
         SalaoMesa mesa = mesa(solicitacao.mesaId());
+        Instant agora = clock.instant();
         Optional<MesaOcupacao> ocupada = ocupacaoAberta(mesa);
         Long comandaId = ocupada.map(MesaOcupacao::comandaId)
                 .or(() -> comandaAbertaDaMesa(mesa))
@@ -585,24 +673,27 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 escolhas.vasoGrande(), escolhas.carvao(), escolhas.adicionalIds(), false, null, null,
                 escolhas.pagarNoFinal(), solicitacao.essenciaSku(), null, solicitacao.essenciaSku2(), null, proporcao),
                 username);
-        MesaOcupacao ocupacao = ocupada.orElseGet(() -> repository.saveOcupacao(
-                MesaOcupacao.nova(mesa.id(), comandaId, solicitacao.customerId(), clock.instant())));
+        // Ocupada no envio: a mesma ocupação (e o mesmo código) ganha a comanda.
+        MesaOcupacao ocupacao = ocupada
+                .map(o -> o.pendente() ? repository.saveOcupacao(o.withComandaId(comandaId)) : o)
+                .orElseGet(() -> repository.saveOcupacao(
+                        MesaOcupacao.nova(mesa.id(), comandaId, solicitacao.customerId(), agora)));
         if (solicitacao.deviceToken() != null) {
             // Quem pediu em mesa já ocupada por outro cliente entra nela como acompanhante.
             repository.addAcesso(ocupacao.id(), solicitacao.deviceToken(),
                     solicitacao.acompanhante() || !ocupacao.customerId().equals(solicitacao.customerId()));
         }
         SolicitacaoSessao aceita = repository.saveSolicitacao(
-                solicitacao.aceita(comandaId, username, clock.instant()));
-        return resumir(List.of(aceita), clock.instant()).get(0);
+                solicitacao.aceita(comandaId, username, pagaNoFinal, agora));
+        return resumir(List.of(aceita), agora).get(0);
     }
 
     @Override
     @Transactional
     public SolicitacaoResumo recusar(Long id, String motivo, String username) {
-        SolicitacaoSessao recusada = repository.saveSolicitacao(
-                pendente(id).recusada(motivo, username, clock.instant()));
-        return resumir(List.of(recusada), clock.instant()).get(0);
+        Instant agora = clock.instant();
+        SolicitacaoSessao recusada = repository.saveSolicitacao(pendente(id).recusada(motivo, username, agora));
+        return resumir(List.of(recusada), agora).get(0);
     }
 
     // ── PDV: chamados da mesa ─────────────────────────────────────────────────────────────────
@@ -611,19 +702,15 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional(readOnly = true)
     public List<ChamadoResumo> listChamados(StatusChamado status) {
         Instant agora = clock.instant();
-        Map<Long, Optional<Comanda>> comandas = new HashMap<>();
         if (status == StatusChamado.ATENDIDO) {
-            return resumirChamados(repository.findChamados(StatusChamado.ATENDIDO, agora.minus(JANELA_ATENDIDOS)),
-                    comandas);
+            return resumirChamados(repository.findChamados(StatusChamado.ATENDIDO, agora.minus(JANELA_ATENDIDOS)));
         }
-        // O da comanda encerrada sai da fila: a mesa já foi embora.
-        List<ChamadoMesa> abertos = repository.findChamados(StatusChamado.ABERTO, agora.minus(ChamadoMesa.VALIDADE))
-                .stream()
-                .filter(c -> c.abertoEm(agora))
-                .filter(c -> comandas.computeIfAbsent(c.comandaId(), this::comandaOuVazio)
-                        .map(x -> x.status() == ComandaStatus.ABERTA).orElse(false))
-                .toList();
-        return resumirChamados(abertos, comandas);
+        List<ChamadoMesa> vigentes = repository.findChamados(StatusChamado.ABERTO, agora.minus(ChamadoMesa.VALIDADE))
+                .stream().filter(c -> c.abertoEm(agora)).toList();
+        // O da comanda encerrada sai da fila: a mesa já foi embora. Status de todas numa consulta (PDV-C059).
+        Set<Long> abertas = comandaUseCase.findOpenComandaIds(
+                vigentes.stream().map(ChamadoMesa::comandaId).collect(Collectors.toSet()));
+        return resumirChamados(vigentes.stream().filter(c -> abertas.contains(c.comandaId())).toList());
     }
 
     @Override
@@ -633,61 +720,91 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 .orElseThrow(() -> new ChamadoNotFoundException("Chamado não encontrado: " + id));
         ChamadoMesa atendido = chamado.status() == StatusChamado.ATENDIDO ? chamado
                 : repository.saveChamado(chamado.atendido(username, clock.instant()));
-        return resumirChamados(List.of(atendido), new HashMap<>()).get(0);
+        return resumirChamados(List.of(atendido)).get(0);
     }
 
-    /** A mesa do QR por nome, ou o rótulo da comanda do PDV; o cliente da comanda por nome. */
-    private List<ChamadoResumo> resumirChamados(List<ChamadoMesa> chamados, Map<Long, Optional<Comanda>> comandas) {
+    /**
+     * A mesa do QR por nome, ou o rótulo da comanda do PDV; o cliente da comanda por nome. Mesas,
+     * comandas e clientes em lote: uma consulta de cada, não uma por chamado (PDV-C059).
+     */
+    private List<ChamadoResumo> resumirChamados(List<ChamadoMesa> chamados) {
         if (chamados.isEmpty()) return List.of();
-        Map<Long, String> mesas = repository.findAllMesas().stream()
+        Map<Long, String> mesas = repository.findMesasByIds(chamados.stream().map(ChamadoMesa::mesaId)
+                        .filter(Objects::nonNull).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(SalaoMesa::id, SalaoMesa::nome));
-        Map<Long, String> clientes = new HashMap<>();
+        Map<Long, Comanda> comandas = comandaUseCase.listComandasByIds(chamados.stream().map(ChamadoMesa::comandaId)
+                        .distinct().toList()).stream()
+                .collect(Collectors.toMap(Comanda::id, Function.identity(), (a, b) -> a));
+        Map<Long, String> clientes = crmUseCase.findCustomerNames(comandas.values().stream().map(Comanda::customerId)
+                .filter(Objects::nonNull).collect(Collectors.toSet()));
         List<ChamadoResumo> resumos = new ArrayList<>();
         for (ChamadoMesa c : chamados) {
-            Optional<Comanda> comanda = comandas.computeIfAbsent(c.comandaId(), this::comandaOuVazio);
+            Comanda comanda = comandas.get(c.comandaId());
             String onde = c.mesaId() != null ? mesas.getOrDefault(c.mesaId(), "Mesa")
-                    : comanda.map(Comanda::tableOrCustomerLabel).orElse("Comanda");
-            String cliente = comanda.map(Comanda::customerId)
-                    .map(cid -> clientes.computeIfAbsent(cid, x -> crmUseCase.findCustomerById(x).nome()))
-                    .orElse(null);
+                    : comanda == null ? "Comanda" : comanda.tableOrCustomerLabel();
+            String cliente = comanda == null || comanda.customerId() == null ? null : clientes.get(comanda.customerId());
             resumos.add(new ChamadoResumo(c, onde, cliente));
         }
         return resumos;
     }
 
-    private Optional<Comanda> comandaOuVazio(Long comandaId) {
-        try {
-            return Optional.of(comandaUseCase.getComanda(comandaId));
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
-    }
-
     // ── Disponibilidade ───────────────────────────────────────────────────────────────────────
 
-    /** Lata aberta no depósito das sessões, e com faixa ativa. Ordem: marca, sabor. */
-    private List<EssenciaOferecida> disponiveis() {
+    /** As que o QR oferece: com faixa ativa, de lata aberta ou fechada. Ordem: marca, sabor. */
+    private List<EssenciaOferecida> disponiveis(List<SessionTier> faixasAtivas) {
+        return essenciasDoSalao(faixasAtivas).stream().filter(e -> e.disponibilidade().noQr()).toList();
+    }
+
+    /** As faixas ativas, na ordem do cardápio. Lidas uma vez por requisição e passadas adiante (PDV-C058). */
+    private List<SessionTier> faixasAtivas() {
+        return sessionMenuUseCase.listTiers().stream().filter(SessionTier::ativo)
+                .sorted(Comparator.comparingInt(SessionTier::ordem)).toList();
+    }
+
+    /**
+     * Todas as essências com lata aberta ou fechada no depósito das sessões, com a disponibilidade —
+     * a que não tem estoque lá fica de fora. Ordem: marca, sabor.
+     */
+    private List<EssenciaOferecida> essenciasDoSalao(List<SessionTier> faixasAtivas) {
         Warehouse deposito = warehouseRepository.findActiveByType(WarehouseType.SALAO)
                 .orElseGet(estoqueUseCase::getDefaultWarehouse);
         Set<String> abertas = estoqueUseCase.listOpenPackages(deposito.code()).stream()
                 .map(OpenPackage::sku).collect(Collectors.toSet());
-        Map<Long, SessionTier> faixas = sessionMenuUseCase.listTiers().stream().filter(SessionTier::ativo)
+        Map<Long, SessionTier> faixas = faixasAtivas.stream()
                 .collect(Collectors.toMap(SessionTier::id, Function.identity()));
+        List<Map.Entry<Product, Map<String, String>>> produtos = produtosDeSessao().stream()
+                .map(p -> Map.entry(p, skusVendaveis(p))).toList();
+        // Saldo livre só dos SKUs de sessão, numa consulta — não o depósito inteiro (PDV-C058).
+        Set<String> fechadas = estoqueUseCase.listSkusWithFreeStock(deposito.code(),
+                produtos.stream().flatMap(e -> e.getValue().keySet().stream()).collect(Collectors.toSet()));
 
         List<EssenciaOferecida> lista = new ArrayList<>();
-        for (Product p : produtosDeSessao()) {
+        for (Map.Entry<Product, Map<String, String>> entrada : produtos) {
+            Product p = entrada.getKey();
             SessionTier faixa = p.sessionTierId() == null ? null : faixas.get(p.sessionTierId());
-            if (faixa == null) continue;
-            for (Map.Entry<String, String> sku : skusVendaveis(p).entrySet()) {
-                if (!abertas.contains(sku.getKey())) continue;
-                lista.add(new EssenciaOferecida(sku.getKey(), sku.getValue(), p.name(), p.brand(), faixa.id(),
-                        faixa.nome(), faixa.preco()));
+            for (Map.Entry<String, String> sku : entrada.getValue().entrySet()) {
+                boolean aberta = abertas.contains(sku.getKey());
+                if (!aberta && !fechadas.contains(sku.getKey())) continue;
+                Disponibilidade disponibilidade = faixa == null ? Disponibilidade.SEM_FAIXA
+                        : aberta ? Disponibilidade.ABERTA : Disponibilidade.FECHADA;
+                lista.add(new EssenciaOferecida(sku.getKey(), sku.getValue(), p.name(), p.brand(),
+                        faixa == null ? null : faixa.id(), faixa == null ? null : faixa.nome(),
+                        faixa == null ? null : faixa.preco(), List.of(), false, disponibilidade,
+                        motivoFora(disponibilidade)));
             }
         }
         lista.sort(Comparator.comparing((EssenciaOferecida e) -> Objects.toString(e.marca(), ""),
                         String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(EssenciaOferecida::sabor, String.CASE_INSENSITIVE_ORDER));
         return comPerfis(lista);
+    }
+
+    private static String motivoFora(Disponibilidade disponibilidade) {
+        return switch (disponibilidade) {
+            case ABERTA -> null;
+            case FECHADA -> "Só lata fechada no Salão — abre na 1ª sessão.";
+            case SEM_FAIXA -> "Sem faixa de sessão ativa — não aparece no QR.";
+        };
     }
 
     /**
@@ -701,9 +818,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         Set<String> configurados = repository.findSkusComPerfilConfigurado(skus);
         return lista.stream().map(e -> {
                     boolean configurado = configurados.contains(e.sku()) || marcados.containsKey(e.sku());
-                    return new EssenciaOferecida(e.sku(), e.sabor(), e.produto(), e.marca(), e.tierId(), e.tierNome(),
-                            e.preco(), configurado ? marcados.getOrDefault(e.sku(), List.of())
-                                    : PerfilSabor.sugerir(e.sabor() + " " + e.produto()), configurado);
+                    return e.comPerfis(configurado ? marcados.getOrDefault(e.sku(), List.of())
+                            : PerfilSabor.sugerir(e.sabor() + " " + e.produto()), configurado);
                 })
                 .toList();
     }
@@ -724,7 +840,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
      * produto não tem variação ou vende o base, o próprio produto.
      */
     static Map<String, String> skusVendaveis(Product p) {
-        Map<String, String> skus = new java.util.LinkedHashMap<>();
+        Map<String, String> skus = new LinkedHashMap<>();
         List<ProductVariant> variacoes = p.variants() == null ? List.of() : p.variants();
         if (variacoes.isEmpty() || p.parentSellable()) {
             skus.put(p.sku(), p.name());
@@ -776,18 +892,23 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private static String celularOuNulo(String celular) {
         String digitos = CustomerIdentifiers.normalizePhone(celular);
         if (digitos == null) return null;
-        if (digitos.length() < 10 || digitos.length() > 11) {
+        if (!celularValido(digitos)) {
             throw new AutoatendimentoDadosInvalidosException("Celular inválido — use DDD + número.");
         }
         return digitos;
     }
 
+    /** DDD + número: 10 ou 11 dígitos. */
+    private static boolean celularValido(String digitos) {
+        return digitos != null && digitos.length() >= 10 && digitos.length() <= 11;
+    }
+
     private Identificado identificado(Customer c) {
-        return new Identificado(mascarar(c.nome()), vip(c), faltando(c));
+        return new Identificado(primeiroNome(c.nome()), vip(c), faltando(c));
     }
 
     private Identificado identificado(Customer c, SalaoMesa mesaDoQr) {
-        return new Identificado(mascarar(c.nome()), vip(c), faltando(c), mesasAbertas(c, mesaDoQr, false));
+        return new Identificado(primeiroNome(c.nome()), vip(c), faltando(c), mesasAbertas(c, mesaDoQr, false));
     }
 
     /**
@@ -799,12 +920,16 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private List<MesaAbertaDoCliente> mesasAbertas(Customer c, SalaoMesa mesaDoQr, boolean completo) {
         List<Comanda> comandas = comandaUseCase.listOpenComandasByCustomer(c.id());
         if (comandas.isEmpty()) return List.of();
-        Map<Long, MesaOcupacao> ocupacoes = repository.findOcupacoesByComandaIds(
-                        comandas.stream().map(Comanda::id).toList()).stream()
+        List<Long> ids = comandas.stream().map(Comanda::id).toList();
+        Map<Long, MesaOcupacao> ocupacoes = repository.findOcupacoesByComandaIds(ids).stream()
                 .collect(Collectors.toMap(MesaOcupacao::comandaId, Function.identity(),
                         (a, b) -> a.abertaEm().isAfter(b.abertaEm()) ? a : b));
-        Map<Long, SalaoMesa> mesas = repository.findAllMesas().stream()
+        Map<Long, SalaoMesa> mesas = repository.findMesasByIds(ocupacoes.values().stream()
+                        .map(MesaOcupacao::mesaId).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(SalaoMesa::id, Function.identity()));
+        // Consumo, chamados e compras da loja de todas as comandas em lote, não por comanda (PDV-C060).
+        Map<Long, List<ChamadoMesa>> chamados = completo ? repository.findChamadosDasComandas(ids) : Map.of();
+        Map<Long, List<Order>> compras = completo ? comandaUseCase.listStorePurchasesByComandas(ids) : Map.of();
         List<MesaAbertaDoCliente> lista = new ArrayList<>();
         for (Comanda comanda : comandas) {
             MesaOcupacao o = ocupacoes.get(comanda.id());
@@ -818,7 +943,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                     o == null ? comanda.openedAt() : o.abertaEm(),
                     revela ? comanda.runningTotal() : null, estaMesa,
                     completo ? itens(comanda) : List.of(),
-                    completo ? chamadosRecentes(comanda.id()) : List.of()));
+                    completo ? recentes(chamados.getOrDefault(comanda.id(), List.of())) : List.of(),
+                    completo ? comprasLoja(compras.getOrDefault(comanda.id(), List.of())) : List.of()));
         }
         // A desta mesa primeiro: é a que o QR deixa entrar.
         lista.sort(Comparator.comparing(MesaAbertaDoCliente::estaMesa).reversed());
@@ -834,7 +960,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(("comanda:" + comanda.id() + ":"
                     + comanda.openedAt()).getBytes(StandardCharsets.UTF_8));
             return Base64.getUrlEncoder().withoutPadding().encodeToString(hash).substring(0, 16);
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 indisponível", e);
         }
     }
@@ -848,7 +974,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
      */
     private Customer confirmado(SalaoMesa mesa, Identificacao identificacao, String confirmacao, String acao) {
         Customer cliente = encontrar(identificacao).orElseThrow(() ->
-                new ClienteNaoIdentificadoException("Não encontramos seu cadastro — confira o CPF ou celular."));
+                new ClienteNaoIdentificadoException(CADASTRO_NAO_ENCONTRADO));
         conferir(mesa, cliente, identificacao, confirmacao, acao);
         return cliente;
     }
@@ -903,8 +1029,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     /** O que o QR exige e o cadastro ainda não tem. */
     static List<String> faltando(Customer c) {
         List<String> faltam = new ArrayList<>();
-        String digitos = CustomerIdentifiers.normalizePhone(c.contato());
-        if (digitos == null || digitos.length() < 10 || digitos.length() > 11) faltam.add("celular");
+        if (!celularValido(CustomerIdentifiers.normalizePhone(c.contato()))) faltam.add("celular");
         if (c.cpf() == null || c.cpf().isBlank()) faltam.add("cpf");
         if (c.dataNascimento() == null) faltam.add("dataNascimento");
         return faltam;
@@ -917,10 +1042,16 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         }
     }
 
+    /** "Maria Luiza" → "Maria". O lead se reconhece; o sobrenome fica no cadastro. */
+    static String primeiroNome(String nome) {
+        if (nome == null || nome.isBlank()) return "Cliente";
+        return nome.trim().split("\\s+")[0];
+    }
+
     /** "Maria Luiza" → "Ma***". O suficiente para o lead se reconhecer, sem expor o cadastro. */
     static String mascarar(String nome) {
         if (nome == null || nome.isBlank()) return "***";
-        String primeiro = nome.trim().split("\\s+")[0];
+        String primeiro = primeiroNome(nome);
         return primeiro.substring(0, Math.min(2, primeiro.length())) + "***";
     }
 
@@ -948,17 +1079,37 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         return s;
     }
 
-    /** A ocupação da mesa, se a comanda dela ainda está aberta. */
+    /**
+     * A ocupação da mesa, se ainda vale: com comanda, enquanto ela estiver aberta; sem comanda (ocupada
+     * no envio), enquanto o pedido estiver pendente — recusado ou expirado sem nada lançado, a mesa
+     * está livre.
+     */
     private Optional<MesaOcupacao> ocupacaoAberta(SalaoMesa mesa) {
-        return repository.findUltimaOcupacao(mesa.id()).filter(o -> comandaAberta(o.comandaId()));
+        return repository.findUltimaOcupacao(mesa.id()).filter(o -> !valendo(List.of(o)).isEmpty());
+    }
+
+    /**
+     * As ocupações que ainda valem (ver {@link #ocupacaoAberta}). Só os ids das comandas abertas e as
+     * solicitações de origem, em lote: nada de carregar a comanda inteira para ler o status (PDV-C056).
+     */
+    private List<MesaOcupacao> valendo(List<MesaOcupacao> ocupacoes) {
+        if (ocupacoes.isEmpty()) return List.of();
+        List<Long> comandaIds = ocupacoes.stream().filter(o -> !o.pendente()).map(MesaOcupacao::comandaId).toList();
+        List<Long> solicitacaoIds = ocupacoes.stream().filter(MesaOcupacao::pendente)
+                .map(MesaOcupacao::solicitacaoId).filter(Objects::nonNull).toList();
+        Set<Long> abertas = comandaIds.isEmpty() ? Set.of() : comandaUseCase.findOpenComandaIds(comandaIds);
+        Instant agora = clock.instant();
+        Set<Long> pendentes = solicitacaoIds.isEmpty() ? Set.of()
+                : repository.findSolicitacoesByIds(solicitacaoIds).stream()
+                        .filter(s -> s.statusEm(agora) == SolicitacaoStatus.PENDENTE)
+                        .map(SolicitacaoSessao::id).collect(Collectors.toSet());
+        return ocupacoes.stream()
+                .filter(o -> o.pendente() ? pendentes.contains(o.solicitacaoId()) : abertas.contains(o.comandaId()))
+                .toList();
     }
 
     private boolean comandaAberta(Long comandaId) {
-        try {
-            return comandaUseCase.getComanda(comandaId).status() == ComandaStatus.ABERTA;
-        } catch (RuntimeException e) {
-            return false;
-        }
+        return comandaUseCase.findOpenComandaIds(List.of(comandaId)).contains(comandaId);
     }
 
     private AcessoMesa acesso(SalaoMesa mesa, String deviceToken) {
@@ -994,8 +1145,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
 
     /** "Zomo · Uva 70% + Zomo · Menta 30%". Longo demais para a nota, fica com o texto padrão do lançamento. */
     private String textoDaMistura(ProporcaoMistura proporcao, String sku1, String sku2) {
-        Map<String, String> rotulos = new HashMap<>();
-        String texto = proporcao.rotulo(rotulo(rotulos, sku1), rotulo(rotulos, sku2));
+        Map<String, String> rotulos = rotulos(List.of(sku1, sku2));
+        String texto = proporcao.rotulo(rotulos.getOrDefault(sku1, sku1), rotulos.getOrDefault(sku2, sku2));
         return texto.length() <= TEXTO_MISTURA_MAX ? texto : null;
     }
 
@@ -1025,24 +1176,45 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 .toList();
     }
 
-    /** A linha do tempo (PDV-F035) da linha de sessão; nula nas demais e na anterior à V132. */
+    /**
+     * A linha do tempo (PDV-F035) da linha de sessão; nula nas demais. Toda linha de sessão tem a
+     * sua: a anterior à V132, sem andamento gravado, vem só com o lançamento e o status nulo.
+     */
     static MesaAtual.Sessao sessao(ComandaItem item) {
-        SessionTimeline t = SessionTimeline.of(item, null);
-        if (t == null) return null;
+        if (item.mode() == null || !item.mode().isMenuSession()) return null;
         // O texto da linha é a essência (com a proporção) mais o sufixo do vaso grande.
         String notes = item.notes();
         if (notes != null && notes.endsWith(ComandaItem.VASO_GRANDE_NOTE_SUFFIX)) {
             notes = notes.substring(0, notes.length() - ComandaItem.VASO_GRANDE_NOTE_SUFFIX.length());
         }
-        return new MesaAtual.Sessao(t.status(), notes == null || notes.isBlank() ? null : notes.trim(),
-                t.pagarNoFinal(), t.lancadaEm(), t.inicioEm(), t.entregueEm(), t.recolhidaEm(), t.preparoMin(),
-                t.naMesaMin());
+        String essencia = notes == null || notes.isBlank() ? null : notes.trim();
+        SessionTimeline t = SessionTimeline.of(item, null);
+        if (t == null) {
+            return new MesaAtual.Sessao(null, essencia, false, item.addedAt(), null, null, null, null, null);
+        }
+        return new MesaAtual.Sessao(t.status(), essencia, t.pagarNoFinal(), t.lancadaEm(), t.inicioEm(),
+                t.entregueEm(), t.recolhidaEm(), t.preparoMin(), t.naMesaMin());
     }
 
-    /** Os chamados que a tela do cliente mostra ({@link ChamadoMesa#recenteEm}). */
-    private List<ChamadoMesa> chamadosRecentes(Long comandaId) {
+    /** As vendas da loja ligadas à mesa (PDV-F036); a cancelada ou reembolsada não conta. */
+    private static List<MesaAtual.CompraLoja> comprasLoja(List<Order> vendas) {
+        return vendas.stream()
+                .filter(o -> o.status() != OrderStatus.CANCELADO && o.status() != OrderStatus.REEMBOLSADO)
+                .map(SalaoAutoatendimentoService::compraLoja)
+                .toList();
+    }
+
+    private static MesaAtual.CompraLoja compraLoja(Order o) {
+        return new MesaAtual.CompraLoja(o.orderNumber(), o.concludedAt() != null ? o.concludedAt() : o.createdAt(),
+                o.items().stream().map(i -> new MesaAtual.ItemCompra(
+                        i.productName() == null ? i.sku() : i.productName(), i.quantity(), i.netAmount())).toList(),
+                o.netAmount());
+    }
+
+    /** Dos chamados da comanda, os que a tela do cliente mostra ({@link ChamadoMesa#recenteEm}). */
+    private List<ChamadoMesa> recentes(List<ChamadoMesa> chamados) {
         Instant agora = clock.instant();
-        return repository.findChamadosDaComanda(comandaId).stream().filter(c -> c.recenteEm(agora)).toList();
+        return chamados.stream().filter(c -> c.recenteEm(agora)).toList();
     }
 
     /**
@@ -1075,23 +1247,27 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         return repository.findUltimaAceita(mesa.id())
                 .map(SolicitacaoSessao::comandaId)
                 .filter(Objects::nonNull)
-                .filter(id -> comandaUseCase.getComanda(id).status() == ComandaStatus.ABERTA);
+                .filter(this::comandaAberta);
     }
 
     private List<SolicitacaoResumo> resumir(List<SolicitacaoSessao> linhas, Instant agora) {
         if (linhas.isEmpty()) return List.of();
-        Map<Long, String> mesas = repository.findAllMesas().stream()
+        // Mesas, clientes e rótulos dos sabores em lote: uma consulta de cada, não uma por linha (PDV-C059).
+        Map<Long, String> mesas = repository.findMesasByIds(linhas.stream().map(SolicitacaoSessao::mesaId)
+                        .collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(SalaoMesa::id, SalaoMesa::nome));
+        Map<Long, Customer> clientes = crmUseCase.findCustomersByIds(linhas.stream()
+                .map(SolicitacaoSessao::customerId).collect(Collectors.toSet()));
+        Map<String, String> rotulos = rotulos(linhas.stream()
+                .flatMap(s -> Stream.of(s.essenciaSku(), s.essenciaSku2())).filter(Objects::nonNull).toList());
         Map<Long, SessionTier> faixas = sessionMenuUseCase.listTiers().stream()
                 .collect(Collectors.toMap(SessionTier::id, Function.identity()));
         Map<Long, SessionAddon> adicionais = sessionMenuUseCase.listAddons().stream()
                 .collect(Collectors.toMap(SessionAddon::id, Function.identity()));
         SessionSettings settings = sessionMenuUseCase.getSettings();
-        Map<Long, Customer> clientes = new HashMap<>();
-        Map<String, String> rotulos = new HashMap<>();
         List<SolicitacaoResumo> resumos = new ArrayList<>();
         for (SolicitacaoSessao s : linhas) {
-            Customer c = clientes.computeIfAbsent(s.customerId(), crmUseCase::findCustomerById);
+            Customer c = clientes.get(s.customerId());
             SessionTier faixa = s.tierId() == null ? null : faixas.get(s.tierId());
             EscolhasSessao x = s.escolhas();
             List<SessionAddon> escolhidos = x.adicionalIds().stream().map(adicionais::get).filter(Objects::nonNull)
@@ -1101,24 +1277,33 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                     .add(settings.charcoalSurcharge(x.carvao()))
                     .add(escolhidos.stream().map(SessionAddon::preco).reduce(BigDecimal.ZERO, BigDecimal::add));
             resumos.add(new SolicitacaoResumo(s, s.statusEm(agora), mesas.getOrDefault(s.mesaId(), "Mesa"),
-                    quemPediu(c.nome(), s.acompanhante()), c.contato(), faixa == null ? null : faixa.nome(), faixa == null ? null : faixa.preco(),
-                    rotulo(rotulos, s.essenciaSku()), s.essenciaSku2() == null ? null : rotulo(rotulos, s.essenciaSku2()),
+                    quemPediu(c == null ? "Cliente" : c.nome(), s.acompanhante()), c == null ? null : c.contato(),
+                    faixa == null ? null : faixa.nome(), faixa == null ? null : faixa.preco(),
+                    rotulos.getOrDefault(s.essenciaSku(), s.essenciaSku()),
+                    s.essenciaSku2() == null ? null : rotulos.getOrDefault(s.essenciaSku2(), s.essenciaSku2()),
                     escolhidos.stream().map(SessionAddon::nome).toList(), total));
         }
         return resumos;
     }
 
-    /** "Zomo · Menta" — o produto e o sabor. SKU que sumiu do catálogo aparece como SKU. */
-    private String rotulo(Map<String, String> cache, String sku) {
-        return cache.computeIfAbsent(sku, s -> {
-            try {
-                Product p = estoqueUseCase.findProductBySku(s);
-                String sabor = skusVendaveis(p).getOrDefault(s, p.name());
-                return sabor.equals(p.name()) ? p.name() : p.name() + " · " + sabor;
-            } catch (RuntimeException e) {
-                return s;
-            }
-        });
+    /**
+     * SKU → "Zomo · Menta" (o produto e o sabor), numa consulta. O SKU que sumiu do catálogo não volta
+     * no mapa: quem usa mostra o próprio SKU.
+     */
+    private Map<String, String> rotulos(Collection<String> skus) {
+        Set<String> pedidos = new HashSet<>(skus);
+        Map<String, String> rotulos = new HashMap<>();
+        for (Product p : estoqueUseCase.findProductsByAnySku(pedidos)) {
+            Map<String, String> vendaveis = skusVendaveis(p);
+            Stream.concat(Stream.of(p.sku()), (p.variants() == null ? List.<ProductVariant>of() : p.variants())
+                            .stream().map(ProductVariant::sku))
+                    .filter(pedidos::contains)
+                    .forEach(sku -> {
+                        String sabor = vendaveis.getOrDefault(sku, p.name());
+                        rotulos.put(sku, sabor.equals(p.name()) ? p.name() : p.name() + " · " + sabor);
+                    });
+        }
+        return rotulos;
     }
 
     /** "Acompanhante de Maria": quem pediu sem CPF num aparelho que entrou pelo código. */
@@ -1145,7 +1330,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                     ssePort.send(username, salva);
                 }
             } catch (RuntimeException e) {
-                // ver acima
+                log.warn("Aviso {} do Salão não enviado: {}", chave, e.getMessage(), e);
             }
         });
     }

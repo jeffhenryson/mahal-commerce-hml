@@ -45,7 +45,7 @@ import java.util.UUID;
  * {@code SecurityConfig} (permitAll) e {@code ResourceRateLimitingFilter} (limite por IP).
  *
  * <p>Nada aqui devolve id de cliente, e-mail, CPF ou telefone: identificar responde só se achou, o
- * primeiro nome mascarado, se é VIP e o que falta no cadastro.</p>
+ * primeiro nome, se é VIP e o que falta no cadastro.</p>
  *
  * <p>{@code dispositivo} é o token do aparelho, gerado no navegador. Vai na query (GET) ou no corpo
  * (POST) — não em cabeçalho próprio, que o CORS de produção não libera.</p>
@@ -62,8 +62,9 @@ public class SalaoPublicoController {
         this.useCase = useCase;
     }
 
-    @Operation(summary = "Cardápio da mesa", description = "Faixas ativas e essências oferecidas (as do dia, "
-            + "ou todas as disponíveis sem seleção).")
+    @Operation(summary = "Cardápio da mesa", description = "Faixas ativas e essências oferecidas: com faixa e "
+            + "lata aberta ou só fechada (disponibilidade ABERTA/FECHADA). Destaques = a seleção do dia ou, sem "
+            + "ela, o modelo do dia da semana.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "404", description = "QR inválido ou mesa desativada (SALAO_MESA_NOT_FOUND)", content = @Content)
@@ -74,7 +75,7 @@ public class SalaoPublicoController {
         return ResponseEntity.ok(CardapioDaMesaResponseDTO.of(useCase.cardapioPorToken(token, dispositivo)));
     }
 
-    @Operation(summary = "Identifica pelo CPF ou celular", description = "Se achou: nome mascarado, VIP, o que falta "
+    @Operation(summary = "Identifica pelo CPF ou celular", description = "Se achou: o primeiro nome, VIP, o que falta "
             + "no cadastro e as comandas abertas do cliente — como aviso: token e valor só da mesa deste QR.")
     @PostMapping("/identificar")
     public ResponseEntity<IdentificacaoResponseDTO> identificar(@PathVariable @Size(max = 64) String token,
@@ -113,7 +114,9 @@ public class SalaoPublicoController {
 
     @Operation(summary = "Pede uma sessão", description = "Com CPF ou celular; sem eles, só o aparelho com acesso à "
             + "mesa ocupada, e o cliente é o titular dela (quem entrou pelo código pede como acompanhante). "
-            + "Pagar no final vale para todos — o atendente decide no aceite.")
+            + "Pagar no final vale para todos — o lead pede, o atendente confirma ou cobra agora no aceite. Mesa livre fica ocupada por este "
+            + "aparelho já no envio: codigoMesa vem com o pedido pendente. Recusado ou expirado sem nada lançado, "
+            + "a mesa fica livre.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Pedido enviado ao atendente"),
             @ApiResponse(responseCode = "403", description = "Mesa com outro cliente (MESA_OCUPADA)", content = @Content),
@@ -149,8 +152,10 @@ public class SalaoPublicoController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "A mesa ocupada", description = "O código, o que foi lançado (as sessões com a linha do "
-            + "tempo), quanto falta pagar, os chamados e a última sessão. Só para aparelho com acesso.")
+    @Operation(summary = "A mesa ocupada", description = "O código, o que foi lançado (toda linha de sessão com "
+            + "a linha do tempo em itens[].sessao), quanto falta pagar, os chamados, a última sessão e as compras "
+            + "da loja ligadas à mesa (comprasLoja). Com o pedido ainda pendente, só o código. Só para aparelho "
+            + "com acesso.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "403", description = "Sem acesso ou mesa livre (MESA_OCUPADA)", content = @Content)
@@ -167,7 +172,7 @@ public class SalaoPublicoController {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Equipe avisada"),
             @ApiResponse(responseCode = "400", description = "Conta sem forma de pagamento (SALAO_DADOS_INVALIDOS)", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Sem acesso à mesa ou comanda de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem acesso à mesa, pedido ainda pendente ou comanda de outro cliente (MESA_OCUPADA); confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Cliente não identificado (CLIENTE_NAO_IDENTIFICADO)", content = @Content),
             @ApiResponse(responseCode = "409", description = "Já há um chamado aberto do mesmo tipo (CHAMADO_JA_ABERTO)", content = @Content),
             @ApiResponse(responseCode = "429", description = "5 confirmações erradas em 15 min (CONFIRMACAO_BLOQUEADA)", content = @Content)
@@ -198,8 +203,8 @@ public class SalaoPublicoController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "As comandas abertas do cliente", description = "Completas — token, consumo, valor e "
-            + "chamados —, com a mesma confirmação do /entrar.")
+    @Operation(summary = "As comandas abertas do cliente", description = "Completas — token, consumo (com "
+            + "itens[].sessao), valor, chamados e compras da loja —, com a mesma confirmação do /entrar.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK (vazia sem comanda aberta)"),
             @ApiResponse(responseCode = "403", description = "Confirmação errada (CONFIRMACAO_INVALIDA)", content = @Content),
@@ -216,8 +221,11 @@ public class SalaoPublicoController {
 
     private SolicitacaoPublicaResponseDTO toPublico(String token, SolicitacaoSessao s, String dispositivo) {
         SolicitacaoStatus status = useCase.statusPublico(s);
-        String codigoMesa = status == SolicitacaoStatus.ACEITA && dispositivo != null
+        // A mesa fica com quem pediu já no envio: o código vale desde o pedido pendente.
+        String codigoMesa = (status == SolicitacaoStatus.PENDENTE || status == SolicitacaoStatus.ACEITA)
+                && dispositivo != null
                 ? useCase.codigoDaMesa(token, dispositivo).orElse(null) : null;
-        return new SolicitacaoPublicaResponseDTO(s.codigo(), status, s.motivo(), s.criadoEm(), codigoMesa);
+        return new SolicitacaoPublicaResponseDTO(s.codigo(), status, s.motivo(), s.criadoEm(), codigoMesa,
+                status == SolicitacaoStatus.ACEITA ? s.pagarNoFinalAceito() : null);
     }
 }

@@ -17,13 +17,21 @@ import java.util.List;
  * @param emAberto nulo onde a lista não revela
  * @param itens vazio onde a lista não revela
  * @param chamados os abertos e os atendidos há pouco; vazio onde a lista não revela
+ * @param comprasLoja as vendas da loja ligadas à mesa; vazio onde a lista não revela
  */
 public record MesaAbertaDoCliente(String ref, Origem origem, String token, String mesa, Instant abertaEm,
-        BigDecimal emAberto, boolean estaMesa, List<MesaAtual.Item> itens, List<ChamadoMesa> chamados) {
+        BigDecimal emAberto, boolean estaMesa, List<MesaAtual.Item> itens, List<ChamadoMesa> chamados,
+        List<MesaAtual.CompraLoja> comprasLoja) {
 
     public MesaAbertaDoCliente {
         itens = itens == null ? List.of() : List.copyOf(itens);
         chamados = chamados == null ? List.of() : List.copyOf(chamados);
+        comprasLoja = comprasLoja == null ? List.of() : List.copyOf(comprasLoja);
+    }
+
+    public MesaAbertaDoCliente(String ref, Origem origem, String token, String mesa, Instant abertaEm,
+            BigDecimal emAberto, boolean estaMesa, List<MesaAtual.Item> itens, List<ChamadoMesa> chamados) {
+        this(ref, origem, token, mesa, abertaEm, emAberto, estaMesa, itens, chamados, List.of());
     }
 
     /** QR: mesa com QR (há ocupação). PDV: comanda aberta pelo PDV, sem QR. */

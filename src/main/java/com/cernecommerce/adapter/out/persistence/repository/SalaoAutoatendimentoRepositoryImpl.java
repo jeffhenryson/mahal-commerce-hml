@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.SalaoChamadoEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaDiaEntity;
+import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaModeloEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaPerfilConfigEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoEssenciaPerfilEntity;
 import com.cernecommerce.adapter.out.persistence.entity.SalaoMesaEntity;
@@ -30,11 +31,13 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -49,11 +52,13 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     private final SalaoEssenciaPerfilJpaRepository perfilJpa;
     private final SalaoEssenciaPerfilConfigJpaRepository perfilConfigJpa;
     private final SalaoChamadoJpaRepository chamadoJpa;
+    private final SalaoEssenciaModeloJpaRepository modeloJpa;
 
     public SalaoAutoatendimentoRepositoryImpl(SalaoMesaJpaRepository mesaJpa,
             SalaoEssenciaDiaJpaRepository essenciaDiaJpa, SalaoSolicitacaoJpaRepository solicitacaoJpa,
             SalaoMesaOcupacaoJpaRepository ocupacaoJpa, SalaoEssenciaPerfilJpaRepository perfilJpa,
-            SalaoEssenciaPerfilConfigJpaRepository perfilConfigJpa, SalaoChamadoJpaRepository chamadoJpa) {
+            SalaoEssenciaPerfilConfigJpaRepository perfilConfigJpa, SalaoChamadoJpaRepository chamadoJpa,
+            SalaoEssenciaModeloJpaRepository modeloJpa) {
         this.mesaJpa = mesaJpa;
         this.essenciaDiaJpa = essenciaDiaJpa;
         this.solicitacaoJpa = solicitacaoJpa;
@@ -61,6 +66,7 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
         this.perfilJpa = perfilJpa;
         this.perfilConfigJpa = perfilConfigJpa;
         this.chamadoJpa = chamadoJpa;
+        this.modeloJpa = modeloJpa;
     }
 
     // ── Mesas ─────────────────────────────────────────────────────────────────────────────────
@@ -79,6 +85,12 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
 
     @Override
     @Transactional(readOnly = true)
+    public List<SalaoMesa> findMesasByIds(Collection<Long> ids) {
+        return ids == null || ids.isEmpty() ? List.of() : mesaJpa.findAllById(ids).stream().map(this::toDomain).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Optional<SalaoMesa> findMesaByToken(String token) {
         return token == null || token.isBlank() ? Optional.empty() : mesaJpa.findByToken(token).map(this::toDomain);
     }
@@ -90,9 +102,14 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     }
 
     @Override
+    public Optional<SalaoMesa> findMesaByIdForUpdate(Long id) {
+        return mesaJpa.findByIdForUpdate(id).map(this::toDomain);
+    }
+
+    @Override
     public SalaoMesa saveMesa(SalaoMesa mesa) {
         return toDomain(mesaJpa.save(new SalaoMesaEntity(mesa.id(), mesa.nome(), mesa.token(), mesa.ativo(),
-                mesa.criadoEm() == null ? Instant.now() : mesa.criadoEm())));
+                mesa.criadoEm())));
     }
 
     // ── Essências do dia ──────────────────────────────────────────────────────────────────────
@@ -111,6 +128,32 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
         essenciaDiaJpa.saveAll(copia.stream().map(sku -> new SalaoEssenciaDiaEntity(data, sku)).toList());
     }
 
+    // ── Modelo semanal ────────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Integer, Set<String>> findModelo() {
+        Map<Integer, Set<String>> dias = new TreeMap<>();
+        for (SalaoEssenciaModeloEntity e : modeloJpa.findAllByOrderByDiaSemanaAsc()) {
+            dias.computeIfAbsent(e.getDiaSemana(), d -> new LinkedHashSet<>()).add(e.getSku());
+        }
+        return dias;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Set<String> findModelo(int diaSemana) {
+        return modeloJpa.findByDiaSemana(diaSemana).stream().map(SalaoEssenciaModeloEntity::getSku)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    @Override
+    public void replaceModelo(int diaSemana, Collection<String> skus) {
+        List<String> copia = List.copyOf(new LinkedHashSet<>(skus));
+        modeloJpa.deleteByDiaSemana(diaSemana);
+        modeloJpa.saveAll(copia.stream().map(sku -> new SalaoEssenciaModeloEntity(diaSemana, sku)).toList());
+    }
+
     // ── Solicitações ──────────────────────────────────────────────────────────────────────────
 
     @Override
@@ -123,7 +166,7 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 x.adicionalIds().isEmpty() ? null
                         : x.adicionalIds().stream().map(String::valueOf).collect(Collectors.joining(",")),
                 x.pagarNoFinal(), s.deviceToken(), x.proporcao() == null ? null : x.proporcao().name(),
-                s.acompanhante());
+                s.acompanhante(), s.pagarNoFinalAceito());
         return toDomain(solicitacaoJpa.save(e));
     }
 
@@ -131,6 +174,13 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     @Transactional(readOnly = true)
     public Optional<SolicitacaoSessao> findSolicitacaoById(Long id) {
         return solicitacaoJpa.findById(id).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SolicitacaoSessao> findSolicitacoesByIds(Collection<Long> ids) {
+        return ids == null || ids.isEmpty() ? List.of()
+                : solicitacaoJpa.findAllById(ids).stream().map(this::toDomain).toList();
     }
 
     @Override
@@ -173,6 +223,18 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
         Page<SalaoSolicitacaoEntity> pagina = desde == null
                 ? solicitacaoJpa.findByStatusOrderByCriadoEmDesc(status.name(), pageable)
                 : solicitacaoJpa.findByStatusAndCriadoEmAfterOrderByCriadoEmDesc(status.name(), desde, pageable);
+        return pagina(pagina, page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<SolicitacaoSessao> findSolicitacoesAntesDe(SolicitacaoStatus status, Instant antes, int page,
+            int size) {
+        return pagina(solicitacaoJpa.findByStatusAndCriadoEmBeforeOrderByCriadoEmDesc(status.name(), antes,
+                PageRequest.of(page, size)), page, size);
+    }
+
+    private PageResult<SolicitacaoSessao> pagina(Page<SalaoSolicitacaoEntity> pagina, int page, int size) {
         return new PageResult<>(pagina.getContent().stream().map(this::toDomain).toList(), page, size,
                 pagina.getTotalElements(), pagina.getTotalPages());
     }
@@ -182,13 +244,19 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     @Override
     public MesaOcupacao saveOcupacao(MesaOcupacao o) {
         return toDomain(ocupacaoJpa.save(new SalaoMesaOcupacaoEntity(o.id(), o.mesaId(), o.comandaId(),
-                o.customerId(), o.codigo(), o.abertaEm())));
+                o.solicitacaoId(), o.customerId(), o.codigo(), o.abertaEm())));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Optional<MesaOcupacao> findUltimaOcupacao(Long mesaId) {
         return ocupacaoJpa.findFirstByMesaIdOrderByAbertaEmDescIdDesc(mesaId).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<MesaOcupacao> findUltimaOcupacaoDeCadaMesa() {
+        return ocupacaoJpa.findUltimaDeCadaMesa().stream().map(this::toDomain).toList();
     }
 
     @Override
@@ -211,8 +279,9 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
 
     @Override
     @Transactional(readOnly = true)
-    public boolean isAcompanhante(Long ocupacaoId, String deviceToken) {
-        return deviceToken != null && !deviceToken.isBlank() && ocupacaoJpa.isAcompanhante(ocupacaoId, deviceToken);
+    public Optional<Boolean> findAcesso(Long ocupacaoId, String deviceToken) {
+        return deviceToken == null || deviceToken.isBlank() ? Optional.empty()
+                : ocupacaoJpa.findAcompanhante(ocupacaoId, deviceToken);
     }
 
     // ── Perfis de sabor ───────────────────────────────────────────────────────────────────────
@@ -234,11 +303,15 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
     }
 
     @Override
-    public void replacePerfis(String sku, Collection<PerfilSabor> perfis, Instant agora) {
-        perfilJpa.deleteBySku(sku);
-        perfilJpa.saveAll(new LinkedHashSet<>(perfis).stream()
-                .map(p -> new SalaoEssenciaPerfilEntity(sku, p.name())).toList());
-        perfilConfigJpa.save(new SalaoEssenciaPerfilConfigEntity(sku, agora));
+    public void replacePerfis(Map<String, List<PerfilSabor>> perfisPorSku, Instant agora) {
+        if (perfisPorSku.isEmpty()) return;
+        perfilJpa.deleteBySkuIn(perfisPorSku.keySet());
+        perfilJpa.saveAll(perfisPorSku.entrySet().stream()
+                .flatMap(e -> new LinkedHashSet<>(e.getValue()).stream()
+                        .map(p -> new SalaoEssenciaPerfilEntity(e.getKey(), p.name())))
+                .toList());
+        perfilConfigJpa.saveAll(perfisPorSku.keySet().stream()
+                .map(sku -> new SalaoEssenciaPerfilConfigEntity(sku, agora)).toList());
     }
 
     // ── Chamados da mesa ──────────────────────────────────────────────────────────────────────
@@ -271,14 +344,22 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
 
     @Override
     @Transactional(readOnly = true)
+    public Map<Long, List<ChamadoMesa>> findChamadosDasComandas(Collection<Long> comandaIds) {
+        return comandaIds == null || comandaIds.isEmpty() ? Map.of()
+                : chamadoJpa.findByComandaIdInOrderByCriadoEmDesc(comandaIds).stream().map(this::toDomain)
+                        .collect(Collectors.groupingBy(ChamadoMesa::comandaId, LinkedHashMap::new, Collectors.toList()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<ChamadoMesa> findChamados(StatusChamado status, Instant desde) {
         return chamadoJpa.findByStatusAndCriadoEmAfterOrderByCriadoEmAsc(status.name(), desde).stream()
                 .map(this::toDomain).toList();
     }
 
     private MesaOcupacao toDomain(SalaoMesaOcupacaoEntity e) {
-        return new MesaOcupacao(e.getId(), e.getMesaId(), e.getComandaId(), e.getCustomerId(), e.getCodigo(),
-                e.getAbertaEm());
+        return new MesaOcupacao(e.getId(), e.getMesaId(), e.getComandaId(), e.getSolicitacaoId(), e.getCustomerId(),
+                e.getCodigo(), e.getAbertaEm());
     }
 
     private SalaoMesa toDomain(SalaoMesaEntity e) {
@@ -292,7 +373,7 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
                 new EscolhasSessao(e.isVasoGrande(), e.getCarvao() == null ? null : Charcoal.valueOf(e.getCarvao()),
                         parseIds(e.getAdicionalIds()), e.isPagarNoFinal(),
                         e.getProporcao() == null ? null : ProporcaoMistura.valueOf(e.getProporcao())),
-                e.getDeviceToken(), e.isAcompanhante());
+                e.getDeviceToken(), e.isAcompanhante(), e.getPagarNoFinalAceito());
     }
 
     private ChamadoMesa toDomain(SalaoChamadoEntity e) {
