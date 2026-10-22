@@ -83,7 +83,7 @@ Todos os erros retornam `ApiError`:
 | `CODIGO_MESA_INVALIDO` | 403 | Código de 4 dígitos da mesa incorreto |
 | `CONFIRMACAO_INVALIDA` | 403 | Dígitos de confirmação (4 últimos do celular / 3 primeiros do CPF) não conferem |
 | `CONFIRMACAO_BLOQUEADA` | 429 | 5 confirmações erradas em 15 min para o cliente — `Retry-After` |
-| `ESSENCIA_INDISPONIVEL` | 409 | Essência pedida pelo QR sem lata aberta ou sem faixa |
+| `ESSENCIA_INDISPONIVEL` | 409 | Essência pedida pelo QR sem lata (aberta ou fechada) no Salão ou sem faixa |
 | `SOLICITACAO_JA_PENDENTE` | 409 | Já há pedido do QR aguardando o atendente (por cliente; do acompanhante, por aparelho) |
 | `SOLICITACAO_NOT_FOUND` | 404 | Solicitação do QR inexistente |
 | `SOLICITACAO_NAO_PENDENTE` | 409 | Solicitação já aceita, recusada ou expirada |
@@ -2534,10 +2534,12 @@ conta só mesas com sessão, e `taxaConversao` (percentual, duas casas) é `comp
 
 ### PUT /pdv/comandas/{id}/store-purchase — Permissão: PDV_COMANDA_MANAGE
 
-PDV-F036 — `{ "boughtInStore": true }`. Registra se o cliente da mesa comprou algo na loja. Uma
-resposta por mesa, em **qualquer status** (o front pergunta ao recolher a última sessão ou ao
-encerrar, e corrige pelo histórico); responder de novo sobrescreve. `204`; `400` sem
-`boughtInStore`; `404 COMANDA_NOT_FOUND`. Evento `COMANDA_STORE_PURCHASE_RECORDED`.
+PDV-F036 — `{ "boughtInStore": true, "orderId": 1234 }`. Registra se o cliente da mesa comprou algo na
+loja. Uma resposta por mesa, em **qualquer status** (o front pergunta ao recolher a última sessão ou ao
+encerrar, e corrige pelo histórico); responder de novo sobrescreve. Com `orderId` (opcional), liga a
+venda à mesa (`comanda_compra_loja`, várias por mesa; repetir não duplica) e a resposta vale "comprou";
+a venda aparece em `comprasLoja` no QR. `204`; `400` sem `boughtInStore` nem `orderId`;
+`404 COMANDA_NOT_FOUND` / `ORDER_NOT_FOUND`. Evento `COMANDA_STORE_PURCHASE_RECORDED` (com `orderId`).
 
 ### GET /pdv/comandas — Permissão: PDV_READ
 
@@ -3659,21 +3661,23 @@ Referência completa (regras, schema, decisões): [`dominios/vendas-balcao/salao
 
 | Método | Rota | Resumo |
 |---|---|---|
-| `GET` | `/public/salao/{token}?dispositivo=` | Cardápio: faixas, essências com lata aberta (`destaque`, `perfis`), upgrades, adicionais, `acesso` |
-| `POST` | `/public/salao/{token}/identificar` | `{cpf?, celular?}` → `{encontrado, nome, vip, faltando, mesasAbertas}` (lista resumida) |
+| `GET` | `/public/salao/{token}?dispositivo=` | Cardápio: faixas, essências com faixa e lata aberta ou só fechada (`disponibilidade` `ABERTA`/`FECHADA`, `destaque`, `perfis`), upgrades, adicionais, `acesso` |
+| `POST` | `/public/salao/{token}/identificar` | `{cpf?, celular?}` → `{encontrado, nome, vip, faltando, mesasAbertas}` (lista resumida). `nome` = primeiro nome, sem máscara (também em `cadastrar`/`completar`) |
 | `POST` | `/public/salao/{token}/cadastrar` | `{nome, celular, cpf, dataNascimento, aceite}` → 201 |
 | `POST` | `/public/salao/{token}/completar` | Preenche só o que falta no cadastro |
-| `POST` | `/public/salao/{token}/solicitar` | Pede a sessão. **Sem `cpf`/`celular`**, o aparelho com acesso à mesa pede no titular (acompanhante marcado). `pagarNoFinal` para qualquer cliente |
-| `GET` | `/public/salao/{token}/solicitacoes/{codigo}` | Status do pedido |
+| `POST` | `/public/salao/{token}/solicitar` | Pede a sessão. **Sem `cpf`/`celular`**, o aparelho com acesso à mesa pede no titular (acompanhante marcado). `pagarNoFinal` para qualquer cliente. Mesa livre fica ocupada no envio: `codigoMesa` já vem no pedido `PENDENTE`; recusado ou expirado sem nada lançado, a mesa fica livre |
+| `GET` | `/public/salao/{token}/solicitacoes/{codigo}` | Status do pedido; `codigoMesa` em `PENDENTE` e `ACEITA` (aparelho com acesso); `pagarNoFinal` no `ACEITA` = o que o atendente confirmou (`false` = pagar no caixa agora) |
 | `POST` | `/public/salao/{token}/acesso` | `{codigo, dispositivo}` — entra na mesa ocupada como acompanhante |
-| `GET` | `/public/salao/{token}/mesa-atual?dispositivo=` | Consumo (itens de sessão com `sessao` = linha do tempo), `emAberto`, `chamados`, `ultimaSessao` |
+| `GET` | `/public/salao/{token}/mesa-atual?dispositivo=` | Consumo (toda linha de sessão com `sessao` = linha do tempo), `emAberto`, `chamados`, `ultimaSessao`, `comprasLoja`. Pedido ainda pendente: só o código, sem consumo |
 | `POST` | `/public/salao/{token}/chamados` | `{tipo, formaPagamento?, dispositivo}` ou com `comandaRef` + identificação + `confirmacao` → 201 |
 | `POST` | `/public/salao/{token}/entrar` | `{cpf?/celular?, confirmacao, dispositivo}` → 204 (só o titular) |
-| `POST` | `/public/salao/{token}/minhas-comandas` | `{cpf?/celular?, confirmacao}` → comandas abertas completas |
+| `POST` | `/public/salao/{token}/minhas-comandas` | `{cpf?/celular?, confirmacao}` → comandas abertas completas (com `comprasLoja`) |
 
 `sessao` (nos itens): `{status, essencia, pagarNoFinal, lancadaEm, inicioEm, entregueEm, recolhidaEm, preparoMin,
-naMesaMin}` — `null` fora de `SESSAO`/`ROSH_EXTRA`. Confirmação: 4 últimos dígitos do celular (identificou-se
-pelo CPF) ou 3 primeiros do CPF (pelo celular); 5 erros em 15 min → `429 CONFIRMACAO_BLOQUEADA`.
+naMesaMin}` — `null` fora de `SESSAO`/`ROSH_EXTRA`; na sessão anterior à V132, só `lancadaEm`/`essencia` e `status`
+nulo. `comprasLoja`: `[{id, em, itens: [{nome, quantidade, valor}], total}]` — as vendas ligadas pelo
+`PUT /pdv/comandas/{id}/store-purchase` com `orderId`; `id` = número do pedido; cancelada/reembolsada fica de fora.
+Confirmação: 4 últimos dígitos do celular (identificou-se pelo CPF) ou 3 primeiros do CPF (pelo celular); 5 erros em 15 min → `429 CONFIRMACAO_BLOQUEADA`.
 
 ### Admin / PDV
 
@@ -3682,13 +3686,16 @@ pelo CPF) ou 3 primeiros do CPF (pelo celular); 5 erros em 15 min → `429 CONFI
 | `GET`/`POST` | `/salao/mesas` | `PDV_READ` / `PDV_SESSAO_MANAGE` | Mesas do QR |
 | `PUT` | `/salao/mesas/{id}` | `PDV_SESSAO_MANAGE` | Renomeia / ativa |
 | `POST` | `/salao/mesas/{id}/regenerar-token` | `PDV_SESSAO_MANAGE` | Invalida o QR impresso |
-| `GET` | `/salao/ocupacoes` | `PDV_READ` | Mesas ocupadas com o código |
-| `GET` | `/salao/essencias-do-dia?data=` | `PDV_READ` | Disponíveis + `selecionada`; `essencia.perfis` e `essencia.perfisConfigurados` |
-| `PUT` | `/salao/essencias-do-dia?data=` | `PDV_SESSAO_MANAGE` | `{skus}` — destaques |
+| `GET` | `/salao/ocupacoes` | `PDV_READ` | Mesas ocupadas com o código (`comandaId` nulo enquanto o pedido do envio está pendente) |
+| `GET` | `/salao/essencias-do-dia?data=` | `PDV_READ` | Toda essência com lata aberta ou fechada no Salão + `selecionada`; `essencia.disponibilidade` (`ABERTA`/`FECHADA`/`SEM_FAIXA`), `essencia.motivoFora`, `essencia.perfis`, `essencia.perfisConfigurados`; `origem` (`DIA`/`MODELO`) |
+| `PUT` | `/salao/essencias-do-dia?data=` | `PDV_SESSAO_MANAGE` | `{skus}` — destaques; vazio = a data volta ao modelo semanal |
 | `POST` | `/salao/essencias-do-dia/copiar?de=&para=` | `PDV_SESSAO_MANAGE` | Copia destaques |
+| `GET` | `/salao/essencias-modelo` | `PDV_READ` | `{dias: [{diaSemana: 1..7, skus}]}` — 1 = segunda; sempre os 7 dias |
+| `PUT` | `/salao/essencias-modelo/{dia}` | `PDV_SESSAO_MANAGE` | `{skus}` → modelo inteiro. Dia fora de 1..7 → 400 `SALAO_DADOS_INVALIDOS` |
+| `POST` | `/salao/essencias-modelo/copiar?de=2&para=3,4` | `PDV_SESSAO_MANAGE` | Copia o modelo de um dia para outros → modelo inteiro |
 | `PUT` | `/salao/essencias-perfis` | `PDV_SESSAO_MANAGE` | `{itens:[{sku, perfis}]}` → 204 |
 | `GET` | `/pdv/solicitacoes-sessao?status=` | `PDV_READ` | Fila do QR; `proporcao`, `acompanhante` ("Acompanhante de …" em `cliente`) |
-| `POST` | `/pdv/solicitacoes-sessao/{id}/aceitar?sessionId=` | `PDV_COMANDA_MANAGE` | Lança a sessão; pago no final exige `PDV_SESSION_PAY_LATER` |
+| `POST` | `/pdv/solicitacoes-sessao/{id}/aceitar?sessionId=&pagarNoFinal=` | `PDV_COMANDA_MANAGE` | Lança a sessão. Pagar no final: qualquer cliente pede, o atendente confirma — `pagarNoFinal=false` aceita cobrando agora; omitido = como o lead pediu; nunca impõe a quem não pediu. Pago no final exige `PDV_SESSION_PAY_LATER`. Resposta com `pagarNoFinal` (pedido) e `pagarNoFinalAceito` (decidido) |
 | `POST` | `/pdv/solicitacoes-sessao/{id}/recusar` | `PDV_COMANDA_MANAGE` | `{motivo?}` |
 | `GET` | `/pdv/chamados-mesa?status=ABERTO` | `PDV_READ` | Fila de chamados |
 | `POST` | `/pdv/chamados-mesa/{id}/atender` | `PDV_COMANDA_MANAGE` | Idempotente |

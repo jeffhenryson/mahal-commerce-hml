@@ -15,6 +15,8 @@ Frente consumidora: `frontend-admin`, telas `features/autoatendimento` (QR públ
 | 1b | 2026-10-20 | V168 | Ocupação da mesa (código de 4 dígitos e acesso por aparelho), escolhas da sessão, carvão jumbo |
 | 2 | 2026-10-21 | V169 | Proporção da mescla, perfis de sabor, chamados da mesa, comandas abertas do cliente, entrar pela identificação |
 | 3 | 2026-10-21 | V170 | Pedido sem CPF de quem já está na mesa (acompanhante), pagar no final para todos, linha do tempo da sessão, `perfisConfigurados`, trava da confirmação |
+| 4 | 2026-10-22 | V171, V172 | Modelo semanal das essências, lata fechada no QR (`disponibilidade`), mesa ocupada já no envio do pedido, compras da loja ligadas à mesa, o atendente confirma o pagar no final |
+| — | 2026-10-22 | — | Performance e padronização (PDV-C056..C065): leituras em lote, sem carregar a comanda para saber se está aberta. Contrato inalterado, exceto a paginação de `EXPIRADA`, que passou a bater |
 
 ## Arquitetura
 
@@ -71,6 +73,9 @@ Campos novos nas respostas:
 | `GET` | `/salao/essencias-do-dia?data=` | `PDV_READ` | Essências disponíveis com `selecionada` (destaque do dia). Cada uma traz `perfis` e **`perfisConfigurados`**: true quando a casa já marcou os perfis do SKU; false quando `perfis` é a sugestão pelo nome |
 | `PUT` | `/salao/essencias-do-dia?data=` | `PDV_SESSAO_MANAGE` | `{skus[]}`: substitui os destaques da data |
 | `POST` | `/salao/essencias-do-dia/copiar?de=&para=` | `PDV_SESSAO_MANAGE` | O "copiar de ontem" |
+| `GET` | `/salao/essencias-modelo` | `PDV_READ` | O modelo semanal: dia (1 = segunda … 7 = domingo) → SKUs |
+| `PUT` | `/salao/essencias-modelo/{dia}` | `PDV_SESSAO_MANAGE` | `{skus[]}`: substitui o modelo do dia |
+| `POST` | `/salao/essencias-modelo/copiar?de=&para=` | `PDV_SESSAO_MANAGE` | Copia o modelo de um dia para outros (`para=3,4`) |
 | `PUT` | `/salao/essencias-perfis` | `PDV_SESSAO_MANAGE` | `{itens: [{sku, perfis[]}]}` → 204. Substitui os perfis de cada SKU; lista vazia limpa e desliga a sugestão |
 | `GET` | `/pdv/solicitacoes-sessao?status=PENDENTE&page&size` | `PDV_READ` | `PageResult`. Cada solicitação traz os rótulos dos sabores, `proporcao`, as escolhas, o `total` estimado e **`acompanhante`**. Com `acompanhante`, `cliente` já vem como "Acompanhante de &lt;titular&gt;" |
 | `POST` | `/pdv/solicitacoes-sessao/{id}/aceitar?sessionId=` | `PDV_COMANDA_MANAGE` | Lança a sessão (veja as regras). Pedido pago no final exige `PDV_SESSION_PAY_LATER` (403 `SESSION_PAY_LATER_NOT_ALLOWED`). 409 `SOLICITACAO_NAO_PENDENTE` |
@@ -83,8 +88,9 @@ O lançamento de sessão do PDV (`POST /pdv/comandas/{id}/sessoes`) também acei
 ## Regras
 
 **O que o QR oferece**
-- Oferece as essências com **lata aberta** no depósito das sessões (o Salão, se houver um ativo; senão o padrão) e com faixa ativa.
-- As essências do dia são **destaques**: aparecem no topo e não filtram nada (V168).
+- Oferece as essências com faixa ativa e **lata aberta** ou só **fechada** (saldo livre) no depósito das sessões (o Salão, se houver um ativo; senão o padrão). A fechada abre na 1ª sessão.
+- `disponibilidade`: `ABERTA`, `FECHADA` ou `SEM_FAIXA`. A sem faixa só o admin vê, com o `motivoFora`.
+- As essências do dia são **destaques**: aparecem no topo e não filtram nada (V168). A data sem seleção própria usa o **modelo do dia da semana** (V171); `origem` diz qual valeu (`DIA` ou `MODELO`).
 
 **Dados pessoais**
 - O lado público nunca devolve id de cliente, CPF, telefone ou e-mail. O nome vai mascarado ("Ma***").
@@ -92,7 +98,7 @@ O lançamento de sessão do PDV (`POST /pdv/comandas/{id}/sessoes`) também acei
 - O pedido não carrega id: o servidor resolve o cliente de novo.
 
 **Mesa ocupada**
-- O aceite da 1ª solicitação de uma mesa livre grava a `MesaOcupacao`, com um código de 4 dígitos, e dá acesso ao aparelho que pediu.
+- O **envio** da 1ª solicitação de uma mesa livre grava a `MesaOcupacao`, com um código de 4 dígitos, e dá acesso ao aparelho que pediu (V171). Sem comanda, a ocupação vale enquanto o pedido estiver pendente; recusado ou expirado sem nada lançado, a mesa fica livre. O aceite grava a comanda na mesma ocupação, e o código não muda.
 - Aparelho sem acesso não pede nem vê a mesa; entra com o código.
 - A ocupação termina quando a comanda deixa de estar ABERTA. Isso é derivado na leitura, sem job.
 - Comanda aberta pelo PDV **não** ocupa a mesa do QR.
@@ -108,9 +114,20 @@ O lançamento de sessão do PDV (`POST /pdv/comandas/{id}/sessoes`) também acei
 - O limite de um pedido pendente por pessoa conta **pelo aparelho** no caso do acompanhante (`existsPendenteDoAparelho`). Assim, o pedido pendente do titular não segura o do amigo.
 - Sem identificação e sem acesso → 404 `CLIENTE_NAO_IDENTIFICADO`.
 
-**Pagar no final (rodada 3)**
+**Pagar no final (rodadas 3 e 4)**
 - Qualquer cliente pode pedir; a trava de VIP saiu.
-- Quem decide é o atendente, no aceite, pela permissão `PDV_SESSION_PAY_LATER`.
+- Quem decide é o atendente, no aceite, pela permissão `PDV_SESSION_PAY_LATER`. Ele confirma ou aceita cobrando agora, mas nunca impõe a quem não pediu. `pagar_no_final_aceito` (V172) guarda o que valeu.
+
+**Compras da loja (rodada 4)**
+- A venda do balcão pode ser ligada à mesa (`comanda_compra_loja`, V171), várias por mesa. `/mesa-atual` e `/minhas-comandas` trazem `comprasLoja`; a cancelada ou reembolsada não aparece.
+
+**Leituras em lote (PDV-C056..C065, 2026-10-22)**
+- Saber se a mesa está ocupada lê só os **ids** das comandas abertas (`ComandaUseCase.findOpenComandaIds`), nunca a comanda inteira. Os GETs públicos são relidos a cada 10–12 s por aparelho.
+- `GET /salao/ocupacoes`: a última ocupação de cada mesa numa consulta (`DISTINCT ON`) e a validade de todas em lote.
+- Cardápio: o saldo livre só dos SKUs de sessão, numa consulta (`EstoqueUseCase.listSkusWithFreeStock`). Faixas lidas uma vez.
+- Filas do PDV (pedidos e chamados), `/minhas-comandas` e mesa-atual: mesas, clientes, comandas, rótulos dos sabores, chamados e compras da loja vêm em lote; não há uma consulta por linha.
+- `?status=EXPIRADA` filtra na consulta (`criado_em` antes da validade), e a página e o total batem.
+- O acesso do aparelho e a flag de acompanhante saem de uma leitura só. Os perfis de sabor são gravados em lote.
 
 **Mescla com proporção**
 - `MEIO_A_MEIO`, `SETENTA_TRINTA` ou `NOVENTA_DEZ`; o sabor 1 é o principal. Sem o 2º sabor, a proporção vira null.
@@ -158,15 +175,26 @@ O lançamento de sessão do PDV (`POST /pdv/comandas/{id}/sessoes`) também acei
 - **V170**:
   - `salao_mesa_acesso.acompanhante` e `salao_solicitacao.acompanhante`;
   - índice parcial `idx_audit_logs_salao_confirmacao_recusada`.
+- **V171**:
+  - tabela `salao_essencia_modelo (dia_semana, sku)`, com CHECK de 1 a 7;
+  - `salao_mesa_ocupacao.comanda_id` passa a aceitar nulo; nova coluna `solicitacao_id`; CHECK que exige uma das duas;
+  - tabela `comanda_compra_loja (comanda_id, order_id)`.
+- **V172**: `salao_solicitacao.pagar_no_final_aceito`.
+- As leituras em lote de 2026-10-22 usam os índices que já existiam: `idx_salao_mesa_ocupacao_mesa`, `idx_salao_chamado_comanda`, `idx_salao_solicitacao_status` e a PK de `comanda_compra_loja`. Sem migration nova.
 
 ## Testes
 
 - `SalaoAutoatendimentoServiceTest` cobre todas as regras acima: cardápio, identificação, pedido (com e sem CPF, acompanhante), aceite, código, mesa atual, timeline, perfis, chamados, mesas abertas, entrar e trava.
 - `ComandaSessaoServiceTest` cobre a proporção na linha da comanda.
 - Os ITs `SalaoEssenciasIT` e `SessaoMesclaIT` cobrem o banco.
+- `SalaoOcupacoesIT` cobre as consultas em lote: última ocupação por mesa, comandas abertas, expiradas, acesso, saldo livre e produtos por SKU.
+- O `SalaoAutoatendimentoServiceTest` confere que não há N+1: nenhum `getComanda`/`findCustomerById`/`findProductBySku` nas listas.
 
 ## Lacunas conhecidas
 
 - A sugestão de perfis é só por palavra-chave (a lista portada do front): sabor de nome fantasia fica sem perfil até a casa marcar.
 - Não há som nem prioridade diferente para o chamado de CONTA. O aviso é o mesmo `CHAMADO_MESA`.
 - A forma de pagamento escolhida no chamado de CONTA ainda não pré-seleciona nada no fechamento da comanda.
+- O cardápio ainda pagina os **produtos** de sessão a cada GET público. O saldo e as faixas já não são lidos assim. Um cache curto (30 s, invalidado na movimentação) seria o próximo passo, se o volume pedir.
+- Perfil `dev` (H2): `salao_mesa_acesso` não tem entity e faltava no `db/dev/dev-schema.sql`. Foi incluída em 2026-10-22. O upsert de `addAcesso` (`ON CONFLICT … DO UPDATE`) é sintaxe do Postgres; no H2 a gravação do acesso pode falhar. Teste esse fluxo no Postgres.
+- O `openapi.json` do front não tem as rotas do salão: os services do front usam `HttpClient` montado à mão (ver [`PROMPT_FRONT_SALAO_QR_MELHORIAS.md`](../../PROMPT_FRONT_SALAO_QR_MELHORIAS.md)).
