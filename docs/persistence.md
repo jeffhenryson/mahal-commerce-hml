@@ -576,6 +576,25 @@ marcados; o troco é do lote (`change_amount ≥ 0`), não do marcado.
 Índices `idx_receivable_payment_receivable` e `idx_receivable_payment_session_method
 (cash_session_id, method)` — este último é o que `payment-totals` lê (`receivableReceived`).
 
+### ReceivablePaymentBatchReversalEntity — tabela `receivable_payment_batch_reversal` (V173, CRM-F010)
+
+Estorno de um lote de quitação lançado por engano (caixa 62). **Append-only**: o lote e as linhas de
+`receivable_payment` ficam como foram gravados; a reversão é esta linha.
+
+| Coluna | Tipo | Restrição |
+|--------|------|-----------|
+| id | BIGSERIAL | PK |
+| batch_id | BIGINT | NOT NULL, **UNIQUE**, FK → `receivable_payment_batch` — um estorno por lote |
+| reason | VARCHAR(500) | NOT NULL, `ck_receivable_payment_batch_reversal_reason` (`length(trim(reason)) > 0`) |
+| reversed_by / reversed_at | VARCHAR(80) / TIMESTAMPTZ | NOT NULL |
+| session_open_at_reversal | BOOLEAN | NOT NULL — `false` quando o caixa já tinha fechado (esperado e diferença ficam como foram gravados) |
+
+As somas de sessão de `ReceivablePaymentJpaRepository` (`sumBySessionAndMethod`, `sumBySessionGroupByMethod`)
+têm `NOT EXISTS` nesta tabela: lote estornado sai do esperado, do teto da sangria e de `payment-totals`.
+`sumReversedBySession` é o complemento (`EXISTS`) e alimenta `summary.receivableReversed`. O estorno trava os
+marcados do lote com `CustomerReceivableJpaRepository.findByIdsForUpdate` (`PESSIMISTIC_WRITE`, por id), com
+os quitados inclusive. A V173 também cria a permissão `RECEIVABLE_PAYMENT_REVERSE` (`ROLE_ADMIN`, `ROLE_DEV`).
+
 **Mudanças em `order_payment` (V137):** coluna `due_date DATE`; `method` aceita `MARCADO`; `status`
 aceita `ON_ACCOUNT`; `ck_order_payment_on_account` amarra `MARCADO` ⇔ `ON_ACCOUNT` ⇔ `due_date`
 preenchido. A linha `ON_ACCOUNT` nunca é capturada e fica fora de toda soma de caixa.

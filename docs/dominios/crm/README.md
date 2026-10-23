@@ -74,8 +74,10 @@ duplica a checagem.
 O "Marcar" (CRM-F010) também tem controller e permissões próprios: `ReceivableController`, com
 `RECEIVABLE_READ` (leituras, ADMIN e ATENDENTE) e `RECEIVABLE_MANAGE` (vencimento, cancelamento e
 `PUT /crm/customers/{id}/credit-limit`, só ADMIN), ambas da V137. Marcar na venda exige
-`PDV_SALE_ON_ACCOUNT` (só ADMIN) e receber exige `PDV_SALE_MANAGE`. Nenhuma das três está em
-`SeedConfig`: em `dev`, com o Flyway desligado, os endpoints respondem 403 ao admin local.
+`PDV_SALE_ON_ACCOUNT` e receber exige `PDV_SALE_MANAGE`. Estornar uma quitação lançada por engano exige
+`RECEIVABLE_PAYMENT_REVERSE` (V173, `ROLE_ADMIN` e `ROLE_DEV`) — de propósito fora de `RECEIVABLE_MANAGE`.
+Todas estão em `SeedConfig` (as da V137 desde PLAT-C059; a da V173 entrou junto com ela), então o admin de
+`dev` não toma 403.
 
 **Granularidade:** `CRM_CUSTOMER_LOOKUP` resolveu o caso do balcão — quem atende ali agora pode
 achar **um** cliente por CPF/email/contato sem precisar de `CRM_CUSTOMER_READ`.
@@ -128,7 +130,9 @@ O `CrmController` publica `AuditEvent` em 12 operações:
 O "Marcar" (CRM-F010) publica `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha
 `MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante),
 `RECEIVABLE_DUE_DATE_CHANGED` (de/para e motivo), `RECEIVABLE_CANCELLED` (saldo e motivo) e
-`CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual).
+`CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual) e, desde a V173,
+`RECEIVABLE_PAYMENT_REVERSED` (`batchId`, cliente, sessão, `sessionOpenAtReversal`, marcados revertidos
+com o status depois, valores por método, saldo depois e motivo).
 
 É a melhor cobertura de auditoria entre os domínios de negócio. Nenhuma outra leitura gera
 evento — só o export, por expor a base inteira de PII em um único download (CRM-C002).
@@ -177,7 +181,17 @@ snapshot dos itens do pedido inteiro. A quitação entra no caixa de **quem rece
 `receivable_payment`, e aparece em `payment-totals` como `receivableReceived`. O cashback da parte
 marcada só é creditado na quitação, proporcional ao que foi pago.
 
-**Estados:** `ABERTO → PARCIAL → QUITADO`; `VENCIDO` (gravado pelo job às 00:05 de São Paulo; a
+**Quitação lançada por engano (caixa 62, V173).** O caixa 62 fechou com R$ 103,00 de falta: os lotes 4 e
+5 da cliente 24 foram gravados em `DINHEIRO` pelo "Receber marcado" sem o dinheiro entrar. O backend já
+recusava quitação sem método; o `DINHEIRO` veio explícito do diálogo. Duas defesas:
+- `POST /receivables/payments` com linha `DINHEIRO` exige `cashConfirmed: true` (400
+  `CASH_CONFIRMATION_REQUIRED`) — checado no `ReceivableController`, antes do service.
+- `POST /receivables/payment-batches/{batchId}/reverse` estorna o **lote inteiro**, append-only
+  (`receivable_payment_batch_reversal`): devolve o saldo aos marcados, reverte o cashback da quitação e tira
+  o lote das somas do caixa. Caixa já fechado é **anotado, não recalculado**.
+
+**Estados:** `ABERTO → PARCIAL → QUITADO`; o estorno volta `QUITADO`/`PARCIAL` para `ABERTO`, `PARCIAL` ou
+`VENCIDO` (pelo prazo); `VENCIDO` (gravado pelo job às 00:05 de São Paulo; a
 checagem de "tem vencido" calcula na leitura e não depende dele); `CANCELADO` (manual ou pelo
 reembolso do pedido).
 
@@ -193,10 +207,14 @@ reembolso do pedido).
 | Reembolso do pedido cancela o marcado em aberto | `ReceivableService.cancelOpenForOrder` | `cancelOpenForOrder_cancelsOnlyWhenOpen`; `ReceivableCycleIT.refundingTheOrder_cancelsTheOpenReceivable` |
 | Vencido pela data da loja (São Paulo) | `ReceivableService.markOverdue` | `markOverdue_usesTheStoreDate` |
 | `MARCADO` não vale na liquidação do app, na correção de pagamento nem na quitação → 400 `INVALID_PAYMENT_METHOD` | `OnAccountNotSupportedException` | — |
+| Quitação com `DINHEIRO` exige `cashConfirmed: true` (sem método padrão) | `ReceivableController.pay` | `ReceivableControllerSecurityTest.pay_in_cash_without_cash_confirmed_returns_400`, `pay_without_method_returns_400` |
+| Estorno devolve o que o lote abateu; status pelo que sobra pago e pelo prazo; `CANCELADO` não volta | `CustomerReceivable.revertPayment` | `CustomerReceivableTest.revertPayment_quitadoInteiro_voltaAAberto`, `revertPayment_sobraPago_ficaParcial`, `revertPayment_prazoJaPassou_voltaVencido`, `revertPayment_acimaDoPago_recusa`, `revertPayment_cancelado_recusa` |
+| Estorno do lote inteiro: um por lote (409), motivo obrigatório, marcado cancelado depois → 409 `RECEIVABLE_NOT_OPEN`, cashback revertido, caixa fechado só anotado | `ReceivableService.reverseBatch` | `ReceivableServiceTest.reverseBatch_*`; `ReceivableCycleIT.cashSettlementLaunchedByMistake_isReversed_andLeavesTheDrawer`, `reversalAfterClosing_keepsTheClosedExpected_andIsAnnotated` |
+| Lote estornado fora do esperado, do teto da sangria e de `payment-totals` | `ReceivablePaymentJpaRepository.sumBySessionAndMethod`/`sumBySessionGroupByMethod` (`NOT EXISTS`) | `ReceivableCycleIT.cashSettlementLaunchedByMistake_isReversed_andLeavesTheDrawer` |
 
 **Schema (V137):** `customer_credit_limit`, `customer_receivable` (único por pedido),
 `receivable_item`, `receivable_payment_batch`, `receivable_payment`; em `order_payment`, `due_date`,
-`MARCADO` e `ON_ACCOUNT`; `system_config` `pdv.on-account.default-due-days=30` e
+`MARCADO` e `ON_ACCOUNT`; V173: `receivable_payment_batch_reversal` (um estorno por lote); `system_config` `pdv.on-account.default-due-days=30` e
 `pdv.on-account.default-credit-limit=0` (sem tela: `/system/config` só aceita `auth.*`). Colunas
 em [`persistence.md`](../../persistence.md).
 
@@ -205,12 +223,14 @@ em [`persistence.md`](../../persistence.md).
 `PUT /crm/customers/{id}/credit-limit`, e `creditLimit`/`openBalance`/`overdueBalance` no
 `GET /crm/customers/{id}`. Contrato em [`api-reference.md`](../../api-reference.md).
 
-**Testes:** `ReceivableServiceTest`, `ReceivableControllerSecurityTest`, `ReceivableCycleIT`,
+**Testes:** `ReceivableServiceTest`, `CustomerReceivableTest`, `ReceivableControllerSecurityTest`, `ReceivableCycleIT`,
 `PagamentoPostgresIT` (V137 contra Postgres) e os casos de `CashbackServiceTest` do crédito
 proporcional.
 
 **Pendências:** os marcados não aparecem como "a receber" no Financeiro (o cash-flow é ledger manual
-e não lê `order_payment`); as permissões novas faltam no `SeedConfig` de `dev`.
+e não lê `order_payment`). O estorno acha o cashback da quitação por heurística (mesmo pedido, entrada sem
+item, até 5 minutos do lote, de preferência com o mesmo valor), porque `cashback_entry` não guarda o lote; se
+o cliente já usou o cashback, o saldo dele pode ficar negativo.
 
 ## Testes no Postman
 
@@ -259,6 +279,18 @@ Novas features e correções do CRM seguem as séries `CRM-F001+` e `CRM-C002+`.
 `F001–F009` está congelada (todos concluídos, ver histórico).
 
 ## Histórico de Implementações
+
+- **2026-10-23** — `estorno-de-quitacao-de-marcado` (CRM-F010, **V173**), a partir do caixa 62 (R$ 103,00 de
+  falta: lotes 4 e 5 da cliente 24 gravados em `DINHEIRO` sem o dinheiro entrar). `cashConfirmed` obrigatório
+  na quitação com `DINHEIRO` (400 `CASH_CONFIRMATION_REQUIRED`); `POST /receivables/payment-batches/{batchId}/reverse`
+  (`RECEIVABLE_PAYMENT_REVERSE`, ADMIN/DEV) estorna o lote inteiro, append-only, com o cashback revertido
+  (`CashbackUseCase.reverseEarnedForReceivablePayment`) e o evento `RECEIVABLE_PAYMENT_REVERSED`; caixa
+  fechado é anotado, não recalculado. As somas de sessão ignoram lote estornado; `summary` ganha
+  `receivableCashReceived` e `receivableReversed`; o histórico do marcado traz `reversedAt`/`reversedBy`/
+  `reversalReason`. Exceções novas: `ReceivablePaymentBatchNotFoundException` (404),
+  `ReceivablePaymentBatchAlreadyReversedException` (409), `CashDrawerConfirmationRequiredException` (400). A
+  correção dos dados do caixa 62 é pelo próprio endpoint, não por SQL. **O front precisa subir junto**: sem
+  `cashConfirmed`, a quitação em dinheiro passa a dar 400.
 
 - **2026-10-13** — `data-de-nascimento-do-cliente` (CRM-F012, **V153**). Pedido do `frontend-admin` em
   `PROMPT_BACKEND_SALAO.md` §3. `customers.data_nascimento` (opcional) + índice de expressão por mês/dia,

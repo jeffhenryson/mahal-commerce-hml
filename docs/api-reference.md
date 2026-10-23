@@ -89,6 +89,10 @@ Todos os erros retornam `ApiError`:
 | `SOLICITACAO_NAO_PENDENTE` | 409 | Solicitação já aceita, recusada ou expirada |
 | `CHAMADO_JA_ABERTO` | 409 | Já há chamado aberto do mesmo tipo na comanda |
 | `CHAMADO_NOT_FOUND` | 404 | Chamado inexistente |
+| `PEDIDO_APP_NOT_FOUND` | 404 | Pedido sem atendimento do app (não é pedido do app, ou é do fluxo do gateway) |
+| `PEDIDO_APP_TRANSICAO_INVALIDA` | 409 | Etapa do pedido do app fora de ordem (ex.: liquidar antes do aceite, aceitar duas vezes) |
+| `PEDIDO_APP_OUTRO_CAIXA` | 409 | O pedido do app está com outro caixa aberto |
+| `PEDIDO_APP_NAO_PAGO` | 409 | Entrega do app marcada como saída antes da liquidação |
 | `INTERNAL_ERROR` | 500 | Erro interno inesperado |
 
 ---
@@ -2182,11 +2186,23 @@ PDV-F038 — o total vendido do caixa, para a tela de fechamento (prévia) e par
 ```json
 { "totals": [ /* o mesmo de /payment-totals */ ],
   "totalReceived": 1250.00,
-  "totalOnAccount": 90.00 }
+  "totalOnAccount": 90.00,
+  "receivableCashReceived": 50.00,
+  "receivableReversed": 0.00 }
 ```
 
 `totalReceived` é a soma dos `netAmount` de todas as formas. `totalOnAccount` é o `MARCADO` vendido na
 sessão (linhas `ON_ACCOUNT`), à parte e fora do total. `404` se a sessão não existe.
+
+V173 (caixa 62), para a tela de fechamento separar o que é dinheiro de gaveta:
+
+| Campo | Descrição |
+|---|---|
+| `receivableCashReceived` | Quitações de marcado recebidas em `DINHEIRO` nesta sessão — o mesmo que `totals[DINHEIRO].receivableReceived`, já dentro do esperado |
+| `receivableReversed` | Quitações lançadas nesta sessão e estornadas depois, todos os métodos. Fora do esperado e de `totalReceived` |
+
+Lote estornado não conta em `payment-totals`, no esperado nem no teto da sangria (`receivable_payment`
+com reversão em `receivable_payment_batch_reversal` fica fora das somas).
 
 PDV-F037: a sessão (`GET /pdv/sessions/current`, `GET /pdv/sessions/{id}`) traz `horasAberto` e
 `fechamentoSugerido` (aberta há 12h ou mais). É só aviso: desde então não há corte de meia-noite, e o
@@ -2275,6 +2291,12 @@ A cobrança de gateway que o checkout deixou aberta (`PENDING`/`GATEWAY_PIX`) é
 
 `403 SESSION_NOT_OWNED` / `404` / `409 INVALID_STATUS_TRANSITION` se o pedido não estiver aguardando
 pagamento.
+
+> **ECM-F010.** O valor exato agora é o `totalPayable` (líquido + taxa de entrega definida no aceite),
+> não mais o `netAmount` — sem entrega os dois coincidem. Pedido do app com atendimento só é
+> liquidado depois de **aceito**, e **no caixa que o aceitou**: `409 PEDIDO_APP_TRANSICAO_INVALIDA` /
+> `409 PEDIDO_APP_OUTRO_CAIXA`. Na retirada, a liquidação fecha o atendimento (`RETIRADO`); na
+> entrega, ele continua `ACEITO` até `POST /pdv/app-orders/{id}/saiu`.
 
 ### POST /pdv/sessions/{id}/sales — Permissão: PDV_SALE_MANAGE (+ PDV_SALE_DISCOUNT se houver desconto)
 
@@ -2405,6 +2427,116 @@ Envia o comprovante da compra (balcão ou mesa) para o e-mail do **cliente vincu
 
 `PageResult<OrderResponseDTO>` dos pedidos da sessão, do mais recente para o mais antigo
 (`page` ≥ 0, `size` 1–100). `404 CASH_REGISTER_SESSION_NOT_FOUND`.
+
+## Pedidos do app pagos no caixa (ECM-F009 · F010 · F011) — `/shop/checkout`, `/pdv/app-orders`
+
+O cliente monta o pedido no `frontend-market` e **paga no caixa**: na retirada, crédito, débito, Pix
+ou dinheiro no balcão; na entrega, Pix que o operador cobra pelo WhatsApp e confere. O pedido chega
+numa fila com aviso em tempo real, o operador **aceita no próprio caixa aberto** (definindo a taxa da
+entrega), separa ou despacha e recebe pela liquidação de sempre.
+
+Configuração (`system_config`, V174):
+
+| Chave | Padrão | Efeito |
+|---|---|---|
+| `shop.checkout.modo-pagamento` | `BALCAO` | `BALCAO`: sem link de gateway, pedido vai para a fila. `GATEWAY`: fluxo InfinitePay de ECM-F004 |
+| `shop.pedido.hora-limite` | `22:00` | Até que horas (America/Sao_Paulo) o pedido segura o estoque sem pagamento. Depois, é cancelado pelo varredor (cron 5 min) |
+
+> Hoje `PUT /system/config/{key}` só aceita as chaves públicas de `SystemConfigService` — estas duas
+> (como `estoque.warehouse.default-code`) são trocadas direto no banco até o painel existir.
+
+### POST /shop/checkout — Permissão: SHOP_ORDER_OWN · Rate-limited (10 / 10 min por cliente)
+
+Corpo **opcional**; sem corpo é retirada com preferência Pix.
+
+```json
+{
+  "deliveryType": "ENTREGA",            // RETIRADA (padrão) | ENTREGA
+  "address": {                          // obrigatório na ENTREGA: street, number, city, state
+    "street": "Rua Amando de Barros", "number": "100", "district": "Centro",
+    "city": "Botucatu", "state": "SP", "zipCode": "18600-000", "complement": null, "reference": null
+  },
+  "method": "MOTOBOY_LOJA",             // ENTREGA: MOTOBOY_LOJA | APP_99 | UBER_FLASH (CORREIOS recusado)
+  "paymentPreference": "PIX",           // PIX | CREDITO | DEBITO | DINHEIRO — ENTREGA só PIX
+  "notes": "Interfone 12"               // até 500
+}
+// 201 → OrderResponseDTO: checkoutUrl null (modo BALCAO), delivery.fee 0 na entrega,
+//       atendimento { status: "PENDENTE", tipo, preferenciaPagamento, prazo, ... }
+// 400 INVALID_DELIVERY (entrega sem endereço/método, Correios, entrega com pagamento que não seja Pix)
+// 429 RATE_LIMIT_EXCEEDED
+```
+
+Taxa enviada pelo cliente é ignorada — quem define é o caixa. A reserva de estoque vale até o
+`prazo` + 30 min.
+
+### GET /shop/orders · GET /shop/orders/{id} — Permissão: SHOP_ORDER_OWN
+
+Cada pedido do app traz `atendimento` (sem `sessionId`/`atendidoPor`): `status`, `tipo`,
+`preferenciaPagamento`, `observacao`, `prazo`, `motivo` e os instantes `criadoEm`, `aceitoEm`,
+`prontoEm`, `saiuEm`, `concluidoEm`, `encerradoEm`. `totalPayable` já inclui a taxa depois do aceite.
+O pagamento confirmado aparece como `status: "CONCLUIDO"` do pedido.
+
+Etapas do atendimento:
+
+```
+retirada: PENDENTE → ACEITO → PRONTO → RETIRADO (na liquidação)
+entrega:  PENDENTE → ACEITO (taxa) → [liquidação do Pix] → SAIU_PARA_ENTREGA → ENTREGUE
+finais:   RECUSADO (loja) · CANCELADO (cliente, POST /shop/orders/{id}/cancel) · EXPIRADO (prazo)
+```
+
+### GET /pdv/app-orders — Permissão: PDV_READ
+
+`?status=PENDENTE,ACEITO&sessionId=&page=&size=`. Sem `status`: `PENDENTE`, `ACEITO`, `PRONTO`,
+`SAIU_PARA_ENTREGA`. Do mais antigo ao mais novo. `PageResult<PedidoAppResponse>`:
+
+```json
+{
+  "pedido": { /* OrderResponseDTO com items, delivery, totalPayable e atendimento (com sessionId/atendidoPor) */ },
+  "atendimento": { "status": "PENDENTE", "tipo": "ENTREGA", "preferenciaPagamento": "PIX", "prazo": "2026-10-24T01:00:00Z" },
+  "clienteId": 42, "clienteNome": "Maria", "clienteContato": "14999990000", "clienteEmail": "maria@x.com"
+}
+```
+
+Aviso em tempo real: notificação `PEDIDO_APP` pelo SSE de `/notifications/stream` (para quem tem
+`PDV_SALE_MANAGE`), no pedido novo e quando o cliente cancela um pedido já aceito. A tela relê a
+fila ao receber.
+
+### GET /pdv/sessions/{id}/app-orders — Permissão: PDV_READ
+
+Os pedidos do app que **este caixa** atende (aceitos ou assumidos por ele), em andamento.
+
+### GET /pdv/app-orders/{orderId} — Permissão: PDV_READ
+
+`PedidoAppResponse`. `404 PEDIDO_APP_NOT_FOUND`.
+
+### POST /pdv/app-orders/{orderId}/aceitar — Permissão: PDV_SALE_MANAGE
+
+```json
+{ "sessionId": 42, "deliveryFee": 8.00 }   // deliveryFee obrigatória na ENTREGA (0 vale), proibida na RETIRADA
+```
+
+Exige o **próprio** caixa aberto. A taxa entra em `delivery.fee`/`totalPayable` e o cliente recebe
+e-mail com o total. `400 INVALID_DELIVERY` · `403 SESSION_NOT_OWNED` · `409 CASH_REGISTER_SESSION_CLOSED`
+· `409 PEDIDO_APP_TRANSICAO_INVALIDA` (não está `PENDENTE`).
+
+### POST /pdv/app-orders/{orderId}/assumir — Permissão: PDV_SALE_MANAGE
+
+`{ "sessionId": 43 }`. Passa um pedido `ACEITO`/`PRONTO` para o próprio caixa — só quando o caixa
+que aceitou já fechou (ou é do mesmo operador). `409 PEDIDO_APP_OUTRO_CAIXA`.
+
+### POST /pdv/app-orders/{orderId}/recusar — Permissão: PDV_SALE_MANAGE
+
+`{ "motivo": "Essência Menta acabou" }` (até 255). Cancela o pedido e devolve a reserva; vale até o
+pagamento. O cliente recebe e-mail com o motivo. Pedido já aceito exige ser o dono daquele caixa.
+
+### POST /pdv/app-orders/{orderId}/pronto · /saiu · /entregue — Permissão: PDV_SALE_MANAGE
+
+Sem corpo. `pronto`: retirada separada (dono do caixa). `saiu`: entrega **já liquidada** (`409
+PEDIDO_APP_NAO_PAGO` antes disso; dono do caixa). `entregue`: fecha a entrega — não exige caixa
+aberto (o motoboy pode voltar depois do fechamento). Cada etapa vira e-mail ao cliente.
+
+O pagamento é a liquidação de sempre: `POST /pdv/sessions/{id}/orders/{orderId}/settle` com o valor
+exato de `totalPayable`.
 
 ## Comanda de mesa (PDV-F009) — `/pdv/comandas`
 
@@ -3400,8 +3532,11 @@ maiúsculas, ≤ 100), `page` (≥ 0), `size` (1–200, default 50).
   "settledAt": null, "cancelReason": null, "cancelledBy": null, "cancelledAt": null,
   "payments": [ { "id": 1, "batchId": 4, "amount": 10.00, "method": "PIX", "installments": null,
                   "channel": null, "provider": null, "cashSessionId": 7, "receivedBy": "caixa2",
-                  "receivedAt": "..." } ] }
+                  "receivedAt": "...", "reversedAt": null, "reversedBy": null, "reversalReason": null } ] }
 ```
+
+`reversedAt`/`reversedBy`/`reversalReason` (V173) vêm preenchidos quando o lote da linha foi estornado
+(`POST /receivables/payment-batches/{batchId}/reverse`): a linha fica no histórico, mas não abate mais o saldo.
 
 `items` é o pedido **inteiro** no momento do marcar, mesmo quando só parte foi marcada.
 
@@ -3453,7 +3588,8 @@ Recebe marcado no caixa de **quem recebe**. Exige a sessão `OPEN`, do operador 
 regras da venda).
 
 ```json
-{ "customerId": 42, "payments": [ { "method": "DINHEIRO", "amount": 50.00 } ], "receivableIds": [9, 12] }
+{ "customerId": 42, "payments": [ { "method": "DINHEIRO", "amount": 50.00 } ], "receivableIds": [9, 12],
+  "cashConfirmed": true }
 // 200 → { "batchId": 4, "applied": [ { "receivableId": 9, "amount": 20.00, "statusAfter": "QUITADO" } ],
 //         "changeAmount": 0.00, "openBalanceAfter": 0.00 }
 ```
@@ -3465,9 +3601,43 @@ regras da venda).
   `409 PAYMENT_EXCEEDS_BALANCE`. `MARCADO` aqui é `400 INVALID_PAYMENT_METHOD`.
 - O valor entra em `payment-totals` como `receivableReceived` e, em dinheiro, no esperado do
   fechamento. O cashback da parte marcada é creditado agora, proporcional.
+- **`cashConfirmed` (caixa 62, V173):** com qualquer linha `DINHEIRO`, é obrigatório e `true` — o operador
+  confirmou que o valor está na gaveta deste caixa. Sem ele, `400 CASH_CONFIRMATION_REQUIRED`, antes de
+  gravar qualquer coisa. Nos demais métodos é ignorado. Não há método padrão: `method` ausente ou inválido
+  é `400`.
 
-`403` sessão de outro operador; `409 RECEIVABLE_NOT_OPEN`, sessão fechada ou de dia anterior.
-`batchId` é numérico.
+`400 CASH_CONFIRMATION_REQUIRED`; `403` sessão de outro operador; `409 RECEIVABLE_NOT_OPEN`, sessão
+fechada ou de dia anterior. `batchId` é numérico.
+
+### POST /receivables/payment-batches/{batchId}/reverse — Permissão: RECEIVABLE_PAYMENT_REVERSE
+
+V173 — estorna um recebimento de marcado lançado por engano (o caso do caixa 62: R$ 103,00 em `DINHEIRO`
+gravados sem o dinheiro entrar). Estorna o **lote inteiro**, a unidade que o operador lançou.
+
+```json
+{ "reason": "Caixa 62 — DINHEIRO lançado por engano, a cliente não pagou" }   // @NotBlank, ≤ 500
+// 200 → { "batchId": 4, "customerId": 24, "sessionId": 62, "sessionOpenAtReversal": false,
+//         "reverted": [ { "receivableId": 9, "amount": 43.00, "statusAfter": "ABERTO" },
+//                       { "receivableId": 23, "amount": 60.00, "statusAfter": "ABERTO" } ],
+//         "amountsByMethod": { "DINHEIRO": 103.00 }, "openBalanceAfter": 203.00 }
+```
+
+- **Append-only:** nada em `receivable_payment` é apagado ou reescrito. O estorno é uma linha em
+  `receivable_payment_batch_reversal`, e as somas do caixa ignoram o lote estornado.
+- Cada marcado do lote volta a dever o que o lote abateu: `VENCIDO` se o prazo já passou, senão `PARCIAL`
+  (sobrou algo pago) ou `ABERTO`; `settledAt` é limpo.
+- O cashback creditado na quitação é revertido (lançamento `REVERSED` no ledger). A entrada de cashback não
+  guarda o lote: o estorno escolhe a entrada sem item do mesmo pedido lançada até 5 minutos do lote,
+  preferindo a de mesmo valor.
+- **Caixa aberto:** o lote sai do esperado, do teto da sangria e de `payment-totals` na hora.
+  **Caixa já fechado:** `expectedAmount`/`differenceAmount` gravados no fechamento **não** são
+  recalculados; o estorno fica anotado (`sessionOpenAtReversal: false`) e aparece em
+  `summary.receivableReversed`.
+- Publica `RECEIVABLE_PAYMENT_REVERSED`.
+
+`400` motivo ausente; `403` sem a permissão; `404 RECEIVABLE_PAYMENT_BATCH_NOT_FOUND`;
+`409 RECEIVABLE_PAYMENT_ALREADY_REVERSED` (um estorno por lote); `409 RECEIVABLE_NOT_OPEN` se um marcado
+do lote foi cancelado depois.
 
 ### PATCH /receivables/{id}/due-date — Permissão: RECEIVABLE_MANAGE
 
@@ -4232,6 +4402,7 @@ interface TotpConfirmResponse {
 | `ORDER_REFUND_OWN_SESSION` | `POST /orders/{id}/refund` só de pedido da própria sessão de caixa aberta (PED-F004). ATENDENTE |
 | `RECEIVABLE_READ` | Leituras de `/receivables/**` e `GET /crm/customers/{id}/receivables` (CRM-F010). ADMIN e ATENDENTE |
 | `RECEIVABLE_MANAGE` | Renegociar e cancelar marcado, `PUT /crm/customers/{id}/credit-limit` (CRM-F010). Só ADMIN |
+| `RECEIVABLE_PAYMENT_REVERSE` | `POST /receivables/payment-batches/{batchId}/reverse` — estornar quitação de marcado lançada por engano (V173). ADMIN e DEV |
 | `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto (PDV-F030). ADMIN e ATENDENTE |
 | `ORDER_PAYMENT_CORRECT_CLOSED` | A mesma correção com o caixa já fechado (PDV-F030). Só ADMIN |
 | `ECOMMERCE_READ` | Acesso ao endpoint stub `GET /ecommerce/carts` |
@@ -4436,3 +4607,4 @@ Swagger UI disponível em: `http://localhost:8080/swagger-ui.html`
 - Rate limiting em endpoints de auth: `429` com header `Retry-After: <segundos>`
 - Emails são enviados de forma **assíncrona** em HML/Prod — o HTTP response não espera a entrega
 - Soft delete: `DELETE /users/{id}` não remove o registro — apenas marca `deleted_at`
+- Valores monetários: 2 casas decimais. Nos **recebimentos** (`payments[].amount` de venda, fechamento de mesa, liquidação de pedido do app, correção de pagamento e quitação de marcado), no `discountAmount` do item e da comanda, no `surchargeAmount` e nos valores de caixa (abertura, contado, deixado na gaveta, sangria/suprimento) o servidor **arredonda** a 2 casas (HALF_UP) antes de qualquer regra — `76.28999999999999` vale `76.29`. Nos campos de cadastro (preços de sessão/adicional, `openRoshPrice`, lançamento de fluxo de caixa, além de pricing, frete e limite de crédito, que já eram assim) mais de 2 casas é `400 VALIDATION_ERROR`. Quantidades (3 casas) e percentuais (4 casas) nunca são arredondados. Um centavo de diferença real continua sendo pagamento insuficiente: o cliente deve exibir o `totalPayable` do servidor em vez de recalculá-lo

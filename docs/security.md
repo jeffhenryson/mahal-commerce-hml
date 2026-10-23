@@ -133,6 +133,7 @@ Permissões criadas em `V45__estoque_product_permissions.sql` (`ESTOQUE_PRODUCT_
 | `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda e no fechamento de mesa. Checada no controller (`OnAccountGuard`), antes do service | ADMIN |
 | `RECEIVABLE_READ` | Leituras de marcados | ADMIN, ATENDENTE |
 | `RECEIVABLE_MANAGE` | Renegociar, cancelar marcado e definir limite de crédito | ADMIN |
+| `RECEIVABLE_PAYMENT_REVERSE` | Estornar o lote de quitação de marcado lançado por engano (V173) | ADMIN, DEV |
 
 Não existe perfil "gerente" no banco; a alçada maior fica com `ROLE_ADMIN`. O histórico e os
 indicadores de mesas (PDV-F029) não criaram permissão: aceitam `PDV_READ` **ou** `ORDER_READ`.
@@ -402,7 +403,7 @@ Todos os eventos publicados via `ApplicationEventPublisher` e persistidos pelo `
 | Estoque | `PRODUCT_CREATED`, `WAREHOUSE_CREATED` |
 | CRM | `CUSTOMER_CREATED`, `CUSTOMER_NOTE_ADDED`, `CUSTOMER_STAGE_CHANGED`, `TAG_CREATED`, `TAG_DELETED`, `CUSTOMER_TAG_ADDED`, `CUSTOMER_TAG_REMOVED`, `CAMPAIGN_AUTOMATION_CREATED`, `CAMPAIGN_AUTOMATION_DELETED`, `CAMPAIGN_AUTOMATION_DISPATCHED` |
 | Pedido (PDV-F030) | `ORDER_PAYMENT_CORRECTED` — antes/depois por método, motivo, `correctionId` e `sessionWasClosed`. O `POST /orders/bulk-status` reaproveita `ORDER_STATUS_CHANGED`, um por pedido movido, com `"bulk": true` |
-| Marcados (CRM-F010) | `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha `MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante), `RECEIVABLE_DUE_DATE_CHANGED`, `RECEIVABLE_CANCELLED`, `CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual) |
+| Marcados (CRM-F010) | `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha `MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante), `RECEIVABLE_DUE_DATE_CHANGED`, `RECEIVABLE_CANCELLED`, `CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual), `RECEIVABLE_PAYMENT_REVERSED` (V173: `batchId`, cliente, sessão, `sessionOpenAtReversal`, marcados revertidos com status depois, valores por método, saldo depois e motivo) |
 
 `COMANDA_CANCELLED` passou a levar o `reason` opcional do cancelamento (PDV-F029).
 

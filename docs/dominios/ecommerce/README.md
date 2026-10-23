@@ -192,6 +192,43 @@ documentada abaixo, não é omissão.
   híbrido webhook+polling); `POST /shop/orders/{id}/cancel` não avisa o InfinitePay nem toca a
   linha de pagamento pendente.
 
+## Pedido do app pago no caixa (ECM-F009 · F010 · F011) — entregue 2026-10-23
+
+O `frontend-market` passou a ser a vitrine onde o **cliente monta o pedido sozinho e paga no caixa**.
+O link InfinitePay de ECM-F004 continua no código, desligado por configuração.
+
+- **Modo de pagamento** — `system_config.shop.checkout.modo-pagamento`: `BALCAO` (padrão, V174) ou
+  `GATEWAY`. No `BALCAO` o checkout não cria cobrança nem `OrderPayment.pending`, e `checkoutUrl`
+  volta nulo.
+- **Checkout com escolhas** — `POST /shop/checkout` aceita `ShopCheckoutRequest` (corpo opcional; sem
+  ele é retirada). Retirada aceita preferência PIX/CREDITO/DEBITO/DINHEIRO; entrega exige endereço e
+  método (`MOTOBOY_LOJA`, `APP_99`, `UBER_FLASH` — Correios recusado) e só Pix, que o operador cobra
+  pelo WhatsApp. A taxa nasce **zero**: quem define é o caixa, no aceite (`Order.withDeliveryFee`, só
+  em MARKETPLACE aguardando pagamento). `Order` passou a aceitar `delivery` no marketplace.
+- **Atendimento** — `pedido_app_atendimento` (V174), 1:1 com o pedido, ao lado de `OrderStatus` (que
+  continua dizendo só "foi pago?"). Estados em [`AtendimentoPedidoApp`](../../../src/main/java/com/cernecommerce/core/domain/model/ecommerce/AtendimentoPedidoApp.java):
+  `PENDENTE → ACEITO → PRONTO → RETIRADO` ou `ACEITO → SAIU_PARA_ENTREGA → ENTREGUE`, mais `RECUSADO`,
+  `CANCELADO`, `EXPIRADO`. `session_id` é o **caixa que atende**; o que liquidou continua em
+  `sales_order.session_id`.
+- **Fila no PDV** — `PedidoAppController` (`/pdv/app-orders`, ver [api-reference](../../api-reference.md)).
+  Aceitar exige o próprio caixa aberto; separar/despachar/recusar um pedido aceito exige ser o dono
+  daquele caixa; caixa fechado → outro operador **assume**. A liquidação é a de sempre
+  (`settleOnlineOrder`), que agora cobra `totalPayable` e exige o aceite no mesmo caixa.
+- **Aviso em tempo real** — `NotificationType.PEDIDO_APP` (notificação + SSE, depois do commit) para
+  `PDV_SALE_MANAGE` no pedido novo e no cancelamento de pedido já aceito. O helper
+  `AvisoOperadores` (`AvisoOperadoresUseCase`) foi extraído do Salão QR, que passou a usá-lo.
+- **Cliente acompanha** — `GET /shop/orders[/{id}]` traz `atendimento` (sem caixa/operador), e cada
+  etapa vira e-mail (`sendOrderStatusUpdate`). Recusa e cancelamento saem pelo `ORDER_CANCELLED`
+  publicado no controller; a expiração, que não passa por controller, manda do service.
+- **Prazo do dia** — `shop.pedido.hora-limite` (padrão `22:00`, America/Sao_Paulo). A reserva vale até
+  o prazo + 30 min, e `PedidoAppExpiryService` (cron 5 min, ShedLock, um pedido por transação) cancela
+  o não pago vencido antes de a reserva vencer — corrige o pedido órfão em `AGUARDANDO_PAGAMENTO`.
+- **Rate limit** — bucket `shop-checkout`, 10 checkouts / 10 min por cliente.
+- **Conhecido, fora desta entrega:** as duas chaves novas (como `estoque.warehouse.default-code`)
+  não passam por `PUT /system/config/{key}`, que só aceita as chaves públicas; o fechamento de caixa
+  não barra pedido do app aceito e ainda não pago (fica para assumir no próximo caixa); no modo
+  `GATEWAY` o pedido órfão de 30 min continua como antes.
+
 ## Estrutura hexagonal (criada)
 
 | Camada | Artefato |
@@ -271,6 +308,9 @@ Convenções, variáveis e o environment compartilhado estão em
 | ECM-F002 | 🟡 Média | Feature | catalogo-publico | `GET /shop/catalog` e `/shop/catalog/{sku}` públicos, expondo só produto ativo e precificado, com preço e disponível (booleano). Disponibilidade resolvida contra o novo "depósito padrão do marketplace" (`EstoqueUseCase.getDefaultWarehouse`, `system_config.estoque.warehouse.default-code`, V77) — reaproveitado depois pelo checkout (ECM-F003). Detalhe aceita SKU pai ou de variação e só devolve variações ativas; produto inativo/sem preço responde 404 mesmo existindo. Ramo `/shop/**` com regras próprias em `SecurityConfig` (já existe, criado por ECM-F001). Rate limit em `/shop/register` já resolvido (PLAT-C030 segue aberto para o restante do catálogo de endpoints de negócio). Fatia 8. | ✅ Concluído (2026-08-03) |
 | ECM-F003 | 🟡 Média | Feature | carrinho-e-checkout | `cart`/`cart_item` (V78 — a doc original estimava V72, número mudou porque `order_refund_permission` da Fatia 5 já tinha consumido V72) e checkout criando pedido + reserva de estoque. O carrinho **não guarda preço** — preço é resolvido do catálogo na exibição e congelado só no checkout. `customerId` **nunca** vem do request, sempre do principal autenticado (`ShopService.requireCustomerId`), e pedido de outro cliente responde **404, não 403** (`ShopService.requireOwnOrder`). Novo controller autenticado `ShopAccountController`. Reaproveita `Order.openMarketplace` (existia no domínio sem caller), `EstoqueUseCase.reserveStock`/`getDefaultWarehouse` (ECM-F002) e `OrderUseCase.cancelOrder` (Fatia 5) por inteiro. Fatia 9, §2.9. | ✅ Concluído (2026-08-03) |
 | ECM-F004 | 🟡 Média | Feature | gateway-de-pagamento-e-webhook | `PaymentGatewayPort` em `core/ports/out/ecommerce` + `InfinitePayAdapter` (**InfinitePay, não Mercado Pago** — pivot do dono do produto em relação ao plano original). `POST /shop/checkout` cria a cobrança e devolve `checkoutUrl` hospedada pelo gateway; `POST /webhooks/payments/{provider}` (público) confirma o pagamento. **Sem assinatura HMAC** (o InfinitePay não oferece — confirmado na doc pública dele, não omissão): a defesa é só reconsultar o gateway quando já existe um pagamento `PENDING` no nosso banco para o `order_nsu`, e nunca decidir a partir do corpo da notificação. **Idempotente por `gateway_ref`** (`uk_order_payment_gateway_ref`, já existia desde V68) — `OrderPayment.confirmCaptured` atualiza a mesma linha (única exceção documentada ao ledger append-only, pela mesma razão do índice único). Migration V79 só amplia o `CHECK` de método para `GATEWAY_PIX`. Fatia 10, §2.6 (design divergiu do plano original — ver seção própria acima). | ✅ Concluído (2026-08-03) |
+| ECM-F009 | 🔴 Alta | Feature | pedido-do-app-pago-no-caixa | Checkout com retirada/entrega, preferência de pagamento e modo `BALCAO` sem gateway (V174). Ver seção acima. | ✅ Concluído (2026-10-23) |
+| ECM-F010 | 🔴 Alta | Feature | fila-pedidos-do-app-no-caixa | `pedido_app_atendimento`, `/pdv/app-orders` (aceitar com taxa, assumir, recusar, pronto, saiu, entregue), liquidação exigindo aceite, aviso `PEDIDO_APP` por SSE. | ✅ Concluído (2026-10-23) |
+| ECM-F011 | 🟡 Média | Feature | prazo-do-dia-do-pedido-do-app | Reserva até `shop.pedido.hora-limite` e varredor que cancela o não pago vencido. | ✅ Concluído (2026-10-23) |
 | ECM-C001 | 🟡 Importante | Correção | auditar-e-documentar-o-modulo | README ainda no molde de esqueleto: faltam Modelo de Domínio, Regras de Negócio, API, Schema e Cobertura de Testes. Rode `/1-analise ecommerce`. Padrão: [`estoque`](../estoque/README.md). | Pendente |
 | ECM-C002 | 🟢 Melhoria | Correção | descartar-o-record-cart-atual | `core/domain/model/ecommerce/Cart.java` era um record sem comportamento e **sem itens**, e `EcommerceService.listCarts` devolvia página vazia com um `// TODO`. Não havia nada a aproveitar — descartado e substituído por um `Cart`/`CartItem` reais junto com ECM-F003. `EcommerceService`/`EcommerceUseCase`/`GET /ecommerce/carts` (visão do admin) permanecem esqueleto — não faziam parte do pedido. | ✅ Concluído (2026-08-03) |
 | ECM-C003 | 🟡 Importante | Correção | permissao-orfa-shop-cashback-own | `SHOP_CASHBACK_OWN` é criada e concedida a `ROLE_CUSTOMER` desde `V76__marketplace_customer_auth.sql:32,38` (ECM-F001) e semeada em `SeedConfig`, mas **nenhum endpoint a verifica** — `grep` em todo `adapter/in/controller` não encontra a permissão sendo usada. É exatamente a contrapartida de `ECM-F005` (saldo/extrato de cashback do cliente): implementar esse endpoint fecha o card; se a decisão for não implementar tão cedo, remover a permissão via migration, seguindo o precedente de `V84` em `estoque`. Achado em auditoria `analyze-domain`/RBAC de 2026-08-18. | Pendente |
