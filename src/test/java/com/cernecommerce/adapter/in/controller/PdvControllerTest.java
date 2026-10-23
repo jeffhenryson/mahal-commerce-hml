@@ -313,6 +313,31 @@ public class PdvControllerTest {
         verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any());
     }
 
+    /**
+     * O caso real, pelo Jackson de verdade: o front mandou a soma em {@code double}. O número chega
+     * ao BigDecimal sem perda (76.28999999999999) e o PaymentCommand o leva a 2 casas antes de
+     * qualquer regra.
+     */
+    @Test
+    void registerSale_amountWithFloatingPointNoise_reachesTheUseCaseRoundedToTwoPlaces() throws Exception {
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), anyString(), eq(false), isNull(), any(), any()))
+                .thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
+        when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
+
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"items":[{"sku":"CARV-001","quantity":2}],
+                                 "payments":[{"method":"PIX","amount":76.28999999999999}]}"""))
+                .andExpect(status().isCreated());
+
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(),
+                argThat(payments -> payments.size() == 1
+                        && payments.get(0).amount().equals(new BigDecimal("76.29"))),
+                anyString(), eq(false), isNull(), any(), any());
+    }
+
     @Test
     void registerSale_reserveForPickupTrue_repassaAoUseCaseEDevolveReservado() throws Exception {
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), anyString(), eq(true), isNull(), any(), any()))

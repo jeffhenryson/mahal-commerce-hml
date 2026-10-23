@@ -5,6 +5,7 @@ import com.cernecommerce.core.domain.model.financeiro.CashFlowEntry.Direction;
 import com.cernecommerce.core.domain.model.financeiro.CashFlowStatus;
 import com.cernecommerce.core.domain.model.financeiro.LinkedEntityType;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -30,6 +31,7 @@ public class CashFlowEntryPatchRequest {
     private Direction direction;
 
     @DecimalMin(value = "0.01")
+    @Digits(integer = 12, fraction = 2)
     private BigDecimal amount;
 
     private LocalDate dueDate;

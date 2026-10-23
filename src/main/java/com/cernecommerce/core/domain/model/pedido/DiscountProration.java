@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.pedido;
 
+import com.cernecommerce.core.domain.model.Money;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
@@ -38,7 +39,8 @@ public final class DiscountProration {
      *
      * @param lineAmounts valor bruto de cada linha, na ordem em que serão gravadas
      * @param totalDiscount desconto a ratear; zero ou nulo devolve uma lista de zeros
-     * @throws IllegalArgumentException se o desconto for negativo, maior que a soma das linhas, ou
+     * @throws IllegalArgumentException se o desconto for negativo, tiver mais de 2 casas, for maior
+     *         que a soma das linhas, ou
      *         se houver desconto a ratear sobre um total zero — abater de uma conta que não existe
      *         é erro de lançamento, não um rateio de resultado indefinido
      */
@@ -49,6 +51,11 @@ public final class DiscountProration {
         BigDecimal discount = totalDiscount == null ? BigDecimal.ZERO : totalDiscount;
         if (discount.signum() < 0) {
             throw new IllegalArgumentException("desconto não pode ser negativo: " + discount);
+        }
+        // A sobra é distribuída centavo a centavo: com uma fração de centavo (0,005) o laço passaria
+        // do desconto pedido. Quem chama normaliza antes (Money#of); aqui é a rede de segurança.
+        if (discount.stripTrailingZeros().scale() > Money.MONEY_SCALE) {
+            throw new IllegalArgumentException("desconto com mais de 2 casas decimais: " + discount);
         }
 
         List<BigDecimal> result = new ArrayList<>(lineAmounts.size());

@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.pdv;
 
+import com.cernecommerce.core.domain.model.Money;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -121,7 +122,7 @@ public record CashRegisterSession(
 
     /** Abre um caixa para o operador, com o fundo de troco informado. */
     public static CashRegisterSession open(String operator, BigDecimal openingAmount, String warehouseCode) {
-        return new CashRegisterSession(null, operator, Instant.now(), openingAmount, warehouseCode,
+        return new CashRegisterSession(null, operator, Instant.now(), Money.of(openingAmount), warehouseCode,
                 null, null, null, null, null, Status.OPEN, null);
     }
 

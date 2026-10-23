@@ -1045,6 +1045,20 @@ class OrderServiceTest {
         assertThat(result.order().changeAmount()).isNull();
     }
 
+    /** A correção exige soma exata: cru, qualquer ruído de ponto flutuante era PaymentTotalMismatch. */
+    @Test
+    void correctPayments_acceptsFloatingPointNoiseInTheSum() {
+        givenCorrectableOrder(concludedBalcao(), CashRegisterSession.Status.OPEN,
+                capturedLine(1L, PaymentMethod.PIX, "44.00"));
+
+        OrderUseCase.PaymentCorrectionResult result = orderService.correctPayments(7L,
+                List.of(new PaymentCommand(PaymentMethod.DEBITO, new BigDecimal("43.99999999999999"), null, null, null)),
+                "foi débito", "ana", false);
+
+        assertThat(result.after()).singleElement()
+                .satisfies(p -> assertThat(p.amount()).isEqualTo(new BigDecimal("44.00")));
+    }
+
     @Test
     void correctPayments_refusesASumDifferentFromTotalPayable_evenInCash() {
         givenCorrectableOrder(concludedBalcao(), CashRegisterSession.Status.OPEN,

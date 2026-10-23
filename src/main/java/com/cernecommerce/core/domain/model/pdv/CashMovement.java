@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.pdv;
 
+import com.cernecommerce.core.domain.model.Money;
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -43,7 +44,7 @@ public record CashMovement(Long id, Long sessionId, CashMovementType type, BigDe
     /** Registra um movimento novo, no instante atual. */
     public static CashMovement register(Long sessionId, CashMovementType type, BigDecimal amount,
             String reason, String username) {
-        return new CashMovement(null, sessionId, type, amount, reason, username, Instant.now());
+        return new CashMovement(null, sessionId, type, Money.of(amount), reason, username, Instant.now());
     }
 
     /** Reconstitui a partir de persistência. */

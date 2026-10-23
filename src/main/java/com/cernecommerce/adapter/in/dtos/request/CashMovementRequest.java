@@ -19,7 +19,8 @@ public class CashMovementRequest {
     private CashMovementType type;
 
     @NotNull
-    @DecimalMin(value = "0.0", inclusive = false)
+    // 0,005 e não "maior que zero": o valor é arredondado a 2 casas (Money#of), e 0,004 viraria 0,00.
+    @DecimalMin(value = "0.005")
     @Schema(description = "Sempre positivo — o sentido vem do type.", example = "150.00")
     private BigDecimal amount;
 

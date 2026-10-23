@@ -5,6 +5,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -144,6 +145,7 @@ public class ProductRequest {
      * trocas de sabor ilimitadas. Nulo quando o produto não oferece consumo livre.
      */
     @PositiveOrZero(message = "openRoshPrice não pode ser negativo")
+    @Digits(integer = 12, fraction = 2)
     private BigDecimal openRoshPrice;
 
     /** PDV-F048 — faixa da sessão sugerida no PDV para esta essência. Nulo = sem faixa. */

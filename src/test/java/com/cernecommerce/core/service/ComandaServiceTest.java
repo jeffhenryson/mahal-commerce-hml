@@ -468,6 +468,23 @@ class ComandaServiceTest {
         assertThat(order.netAmount()).isEqualByComparingTo("90.00");
     }
 
+    /**
+     * Desconto com fração de centavo (o front calculou um percentual em {@code double}) vai a 2 casas
+     * antes do rateio — cru, DiscountProration distribuiria 10,01 para um pedido de 10,005.
+     */
+    @Test
+    void closeComanda_roundsTheBillDiscountToTwoPlacesBeforeProrating() {
+        givenCloseablePara(comandaDeDuasLinhas());
+
+        Order order = comandaService.closeComanda(10L, dinheiro("90.00"), new BigDecimal("9.99999999999999"),
+                false, "caixa1");
+
+        assertThat(order.discountAmount()).isEqualByComparingTo("10.00");
+        assertThat(order.items().get(0).discountAmount().add(order.items().get(1).discountAmount()))
+                .isEqualByComparingTo("10.00");
+        assertThat(order.netAmount()).isEqualByComparingTo("90.00");
+    }
+
     /** Sem desconto, todo item entra com zero — o caminho de sempre não mudou. */
     @Test
     void closeComanda_withoutDiscount_keepsEveryItemAtZero() {

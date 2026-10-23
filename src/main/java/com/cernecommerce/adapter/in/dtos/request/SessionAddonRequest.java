@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -21,6 +22,7 @@ public class SessionAddonRequest {
 
     @NotNull
     @DecimalMin("0.00")
+    @Digits(integer = 10, fraction = 2)
     @Schema(example = "5.00")
     private BigDecimal preco;
 

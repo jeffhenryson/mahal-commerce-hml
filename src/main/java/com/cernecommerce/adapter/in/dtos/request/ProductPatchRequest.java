@@ -4,6 +4,7 @@ import com.cernecommerce.core.domain.model.estoque.MeasurementUnit;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -129,6 +130,7 @@ public class ProductPatchRequest {
 
     /** Preço do consumo livre (open rosh). Nulo mantém — mesma limitação de {@code sessionsPerUnit}. */
     @PositiveOrZero(message = "openRoshPrice não pode ser negativo")
+    @Digits(integer = 12, fraction = 2)
     private BigDecimal openRoshPrice;
 
     /** PDV-F048 — faixa da sessão sugerida no PDV. Nulo mantém; para apagar, {@code clearSessionTier}. */

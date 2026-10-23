@@ -153,4 +153,25 @@ class DiscountProrationTest {
         assertThatThrownBy(() -> DiscountProration.distribute(List.of(), BigDecimal.ONE))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    /**
+     * A sobra é distribuída centavo a centavo: com 10,005 o laço daria 0,01 a uma linha e fecharia
+     * em 10,01, mais que o desconto pedido. Quem chama normaliza antes (Money#of); aqui é recusado.
+     */
+    @Test
+    void distribute_refusesADiscountWithAFractionOfACent() {
+        assertThatThrownBy(() -> DiscountProration.distribute(
+                List.of(new BigDecimal("50.00"), new BigDecimal("50.00")), new BigDecimal("10.005")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2 casas");
+    }
+
+    /** Zeros à direita não são fração de centavo. */
+    @Test
+    void distribute_acceptsTrailingZerosBeyondTheSecondPlace() {
+        List<BigDecimal> result = DiscountProration.distribute(
+                List.of(new BigDecimal("50.00"), new BigDecimal("50.00")), new BigDecimal("10.000"));
+
+        assertThat(soma(result)).isEqualByComparingTo("10.00");
+    }
 }

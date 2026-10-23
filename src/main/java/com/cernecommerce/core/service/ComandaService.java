@@ -76,6 +76,7 @@ import com.cernecommerce.core.domain.exception.pdv.OpenRoshNotPricedException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeInvalidException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeNotApplicableException;
 import com.cernecommerce.core.domain.exception.pdv.SurchargeOnCourtesyException;
+import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
 import com.cernecommerce.core.domain.model.estoque.KitChannel;
@@ -316,6 +317,8 @@ public class ComandaService implements ComandaUseCase {
     @Transactional
     public Comanda addItem(Long comandaId, String sku, BigDecimal quantity, ConsumptionMode mode,
             boolean courtesy, Long linkedItemId, String notes, BigDecimal surchargeAmount, String username) {
+        // Acréscimo é dinheiro: 2 casas antes de somar ao preço (ver Money#of).
+        surchargeAmount = Money.of(surchargeAmount);
         // PDV-C008: leitura TRAVADA. Toda decisão abaixo — inclusive o requireOpen — é tomada
         // sobre este estado, e sem a trava o atendente A decidiria sobre uma mesa que B já fechou.
         Comanda comanda = getComandaForUpdate(comandaId);
@@ -1138,6 +1141,8 @@ public class ComandaService implements ComandaUseCase {
     @Transactional
     public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
             boolean applyServiceFee, List<Long> itemIds, String username) {
+        // 2 casas antes do rateio: DiscountProration fecha no centavo e não sabe distribuir 0,005.
+        discountAmount = Money.of(discountAmount);
         // PDV-C008 — ver getComandaForUpdate. É aqui que a trava mais importa: sem ela, dois
         // fechamentos concorrentes da mesma mesa gerariam dois pedidos concluídos dos mesmos itens.
         Comanda comanda = getComandaForUpdate(comandaId);

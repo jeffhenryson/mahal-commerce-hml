@@ -1,5 +1,6 @@
 package com.cernecommerce.core.ports.in;
 
+import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.exception.pdv.InvalidPaymentChannelException;
@@ -302,6 +303,11 @@ public interface PdvUseCase {
      */
     record SaleItemCommand(String sku, BigDecimal quantity, BigDecimal discountAmount, String note) {
 
+        /** O desconto é dinheiro e vai a 2 casas (ver {@link Money#of}); a quantidade, nunca. */
+        public SaleItemCommand {
+            discountAmount = Money.of(discountAmount);
+        }
+
         /** Sem observação — forma anterior a PDV-F022. */
         public SaleItemCommand(String sku, BigDecimal quantity, BigDecimal discountAmount) {
             this(sku, quantity, discountAmount, null);
@@ -321,6 +327,10 @@ public interface PdvUseCase {
          * DINHEIRO não passa por maquininha nem link, e operadora sem canal não diz por onde saiu.
          */
         public PaymentCommand {
+            // O valor vai a 2 casas aqui, e não em cada regra: todo fluxo de recebimento (venda,
+            // mesa, liquidação, correção, quitação de marcado) passa por este record, e o que é
+            // validado passa a ser exatamente o que é gravado. Ver Money#of.
+            amount = Money.of(amount);
             if (method == PaymentMethod.DINHEIRO && (channel != null || provider != null)) {
                 throw new InvalidPaymentChannelException("Pagamento em DINHEIRO não tem canal nem operadora");
             }
@@ -367,7 +377,18 @@ public interface PdvUseCase {
      * @param totalReceived soma dos {@code netAmount} de todas as formas: o total vendido e recebido
      * @param totalOnAccount o marcado vendido na sessão; fora de {@code totalReceived}
      */
-    record SessionSummary(List<PaymentTotal> totals, BigDecimal totalReceived, BigDecimal totalOnAccount) { }
+    /**
+     * @param totalOnAccount marcado vendido na sessão — informativo, nunca no esperado
+     * @param receivableCashReceived quitações de marcado recebidas em DINHEIRO na sessão — já no esperado
+     * @param receivableReversed quitações lançadas na sessão e estornadas depois (V173) — fora do esperado
+     */
+    record SessionSummary(List<PaymentTotal> totals, BigDecimal totalReceived, BigDecimal totalOnAccount,
+            BigDecimal receivableCashReceived, BigDecimal receivableReversed) {
+
+        public SessionSummary(List<PaymentTotal> totals, BigDecimal totalReceived, BigDecimal totalOnAccount) {
+            this(totals, totalReceived, totalOnAccount, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+    }
 
     /**
      * PDV-F056 — ver {@link #getOperatorStats}.

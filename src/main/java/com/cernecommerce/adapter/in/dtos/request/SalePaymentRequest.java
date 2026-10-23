@@ -25,7 +25,8 @@ public class SalePaymentRequest {
     private String method;
 
     @NotNull
-    @DecimalMin(value = "0.0", inclusive = false)
+    // 0,005 e não "maior que zero": o valor é arredondado a 2 casas (Money#of), e 0,004 viraria 0,00.
+    @DecimalMin(value = "0.005")
     @Schema(description = "Em DINHEIRO, é o quanto o cliente entregou — pode passar do total da "
             + "venda e virar troco. Nos demais métodos, é o valor exato cobrado: não pode, sozinho "
             + "ou somado a outras linhas não-DINHEIRO, passar do líquido do pedido.", example = "50.00")
