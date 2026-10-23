@@ -102,6 +102,54 @@ class ReceivableControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** Caixa 62 — DINHEIRO sem a confirmação de gaveta é recusado antes de qualquer escrita. */
+    @Test
+    void pay_in_cash_without_cash_confirmed_returns_400() throws Exception {
+        mockMvc.perform(post("/receivables/payments").param("sessionId", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":1,\"payments\":[{\"method\":\"DINHEIRO\",\"amount\":10}]}")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("CASH_CONFIRMATION_REQUIRED"));
+    }
+
+    @Test
+    void pay_without_method_returns_400() throws Exception {
+        mockMvc.perform(post("/receivables/payments").param("sessionId", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":1,\"cashConfirmed\":true,\"payments\":[{\"amount\":10}]}")
+                        .with(user("caixa").authorities(new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── V173: estorno de recebimento ─────────────────────────────────────────────────────────
+
+    @Test
+    void reverse_requires_receivable_payment_reverse() throws Exception {
+        mockMvc.perform(post("/receivables/payment-batches/1/reverse")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"engano\"}")
+                        .with(user("gerente").authorities(new SimpleGrantedAuthority("RECEIVABLE_MANAGE"),
+                                new SimpleGrantedAuthority("PDV_SALE_MANAGE"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void reverse_unknown_batch_returns_404() throws Exception {
+        mockMvc.perform(post("/receivables/payment-batches/999999/reverse")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"engano\"}")
+                        .with(user("admin").authorities(new SimpleGrantedAuthority("RECEIVABLE_PAYMENT_REVERSE"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("RECEIVABLE_PAYMENT_BATCH_NOT_FOUND"));
+    }
+
+    @Test
+    void reverse_without_reason_returns_400() throws Exception {
+        mockMvc.perform(post("/receivables/payment-batches/1/reverse")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\" \"}")
+                        .with(user("admin").authorities(new SimpleGrantedAuthority("RECEIVABLE_PAYMENT_REVERSE"))))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void eligibility_for_unknown_customer_returns_404() throws Exception {
         mockMvc.perform(get("/crm/customers/999999/on-account-eligibility")

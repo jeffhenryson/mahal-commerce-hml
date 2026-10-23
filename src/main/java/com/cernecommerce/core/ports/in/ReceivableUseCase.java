@@ -9,6 +9,7 @@ import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 
@@ -72,6 +73,20 @@ public interface ReceivableUseCase {
     SettlementResult pay(Long sessionId, String username, Long customerId, List<PaymentCommand> payments,
             List<Long> receivableIds);
 
+    /**
+     * V173 — estorna um recebimento lançado por engano, o lote inteiro: o abatido volta a ser devido em
+     * cada marcado do lote, o cashback creditado na quitação é revertido e o lote sai das somas do caixa
+     * (esperado, payment-totals). Append-only: as linhas de {@code receivable_payment} ficam. Caixa já
+     * fechado não é recalculado; o estorno fica anotado ({@code sessionOpenAtReversal = false}). A
+     * permissão ({@code RECEIVABLE_PAYMENT_REVERSE}) é checada na borda.
+     *
+     * @throws com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchNotFoundException
+     * @throws com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchAlreadyReversedException
+     * @throws com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException se um marcado
+     *         do lote foi cancelado depois
+     */
+    ReversalResult reverseBatch(Long batchId, String reason, String username);
+
     // ── Manutenção ───────────────────────────────────────────────────────────────────────────
 
     CustomerReceivable changeDueDate(Long id, LocalDate dueDate, String username);
@@ -124,10 +139,20 @@ public interface ReceivableUseCase {
     /** PDV-C051 — {@link #receivedInSession} de todos os métodos numa consulta; ausente é zero. */
     Map<PaymentMethod, BigDecimal> receivedInSessionByMethod(Long sessionId);
 
+    /** V173 — quitações lançadas na sessão e depois estornadas (todos os métodos); fora do esperado. */
+    BigDecimal reversedInSession(Long sessionId);
+
     // ── Tipos ────────────────────────────────────────────────────────────────────────────────
 
+    /** {@code reversals}: estorno de cada lote de {@code payments} que tiver um (V173), por batchId. */
     record ReceivableView(CustomerReceivable receivable, String customerName, String orderNumber,
-            String tableLabel, long daysOverdue, List<ReceivablePayment> payments) {
+            String tableLabel, long daysOverdue, List<ReceivablePayment> payments,
+            Map<Long, ReceivablePaymentBatchReversal> reversals) {
+
+        public ReceivableView(CustomerReceivable receivable, String customerName, String orderNumber,
+                String tableLabel, long daysOverdue, List<ReceivablePayment> payments) {
+            this(receivable, customerName, orderNumber, tableLabel, daysOverdue, payments, Map.of());
+        }
     }
 
     /** {@code creditLimit}: o teto total, se houver; senão, a soma dos limites efetivos dos canais. */
@@ -142,5 +167,17 @@ public interface ReceivableUseCase {
     }
 
     record CreditLimitChange(BigDecimal before, BigDecimal after) {
+    }
+
+    record RevertedPayment(Long receivableId, BigDecimal amount, ReceivableStatus statusAfter) {
+    }
+
+    /**
+     * @param amountsByMethod o estornado por método — o de DINHEIRO é o que saiu do esperado
+     * @param sessionOpenAtReversal falso: o caixa já tinha fechado e o esperado gravado não muda
+     */
+    record ReversalResult(Long batchId, Long customerId, Long sessionId, boolean sessionOpenAtReversal,
+            List<RevertedPayment> reverted, Map<PaymentMethod, BigDecimal> amountsByMethod,
+            BigDecimal openBalanceAfter) {
     }
 }

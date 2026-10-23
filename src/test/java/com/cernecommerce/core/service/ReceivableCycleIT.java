@@ -169,6 +169,89 @@ class ReceivableCycleIT {
         assertThat(closed.differenceAmount()).isEqualByComparingTo("0.00");
     }
 
+    /**
+     * Caixa 62 — a quitação em DINHEIRO lançada por engano infla o esperado; o estorno do lote devolve o
+     * saldo ao marcado e tira o valor do caixa, e o fechamento contando só o fundo bate. Um segundo
+     * estorno do mesmo lote é recusado, e o estorno depois do fechamento só anota.
+     */
+    @Test
+    void cashSettlementLaunchedByMistake_isReversed_andLeavesTheDrawer() {
+        String ana = "ana-" + suffix();
+        String[] stock = givenStock(ana);
+        Customer vip = givenCustomer(true, "100.00");
+        CashRegisterSession session = pdvUseCase.openSession(ana, new BigDecimal("56.95"), stock[0]);
+        Order sold = pdvUseCase.registerSale(session.id(), vip.id(),
+                List.of(new SaleItemCommand(stock[1], new BigDecimal("2.000"), null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("44.00"), TODAY.plusDays(10))), ana);
+        flushAndClear();
+        CustomerReceivable receivable = receivableUseCase.findByOrderId(sold.id()).orElseThrow();
+
+        // Marcado aberto: fora do esperado, que é só o fundo.
+        assertThat(pdvUseCase.getSessionSummary(session.id()).totalOnAccount()).isEqualByComparingTo("44.00");
+        assertThat(totalOf(pdvUseCase.getSessionPaymentTotals(session.id()), PaymentMethod.DINHEIRO,
+                PdvUseCase.PaymentTotal::netAmount)).isEqualByComparingTo("0.00");
+
+        ReceivableUseCase.SettlementResult paid = receivableUseCase.pay(session.id(), ana, vip.id(),
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("44.00"), null)), null);
+        flushAndClear();
+        assertThat(receivableUseCase.receivedInSession(session.id(), PaymentMethod.DINHEIRO))
+                .isEqualByComparingTo("44.00");
+
+        ReceivableUseCase.ReversalResult reversal = receivableUseCase.reverseBatch(paid.batchId(),
+                "DINHEIRO lançado por engano", "admin");
+        flushAndClear();
+
+        assertThat(reversal.sessionOpenAtReversal()).isTrue();
+        assertThat(reversal.openBalanceAfter()).isEqualByComparingTo("44.00");
+        ReceivableUseCase.ReceivableView view = receivableUseCase.get(receivable.id());
+        assertThat(view.receivable().status()).isEqualTo(ReceivableStatus.ABERTO);
+        assertThat(view.receivable().amountOpen()).isEqualByComparingTo("44.00");
+        // Append-only: a linha da quitação continua, marcada pelo estorno do lote.
+        assertThat(view.payments()).singleElement()
+                .satisfies(p -> assertThat(view.reversals()).containsKey(p.batchId()));
+        assertThat(receivableUseCase.receivedInSession(session.id(), PaymentMethod.DINHEIRO))
+                .isEqualByComparingTo("0");
+        PdvUseCase.SessionSummary summary = pdvUseCase.getSessionSummary(session.id());
+        assertThat(summary.receivableCashReceived()).isEqualByComparingTo("0");
+        assertThat(summary.receivableReversed()).isEqualByComparingTo("44.00");
+
+        assertThatThrownBy(() -> receivableUseCase.reverseBatch(paid.batchId(), "de novo", "admin"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.recebivel
+                        .ReceivablePaymentBatchAlreadyReversedException.class);
+
+        CashRegisterSession closed = pdvUseCase.closeSession(session.id(), new BigDecimal("56.95"), ana);
+        assertThat(closed.expectedAmount()).isEqualByComparingTo("56.95");
+        assertThat(closed.differenceAmount()).isEqualByComparingTo("0.00");
+    }
+
+    /** Estorno depois do fechamento: o esperado gravado não muda; o estorno fica anotado. */
+    @Test
+    void reversalAfterClosing_keepsTheClosedExpected_andIsAnnotated() {
+        String ana = "ana-" + suffix();
+        String[] stock = givenStock(ana);
+        Customer vip = givenCustomer(true, "100.00");
+        CashRegisterSession session = pdvUseCase.openSession(ana, new BigDecimal("10.00"), stock[0]);
+        pdvUseCase.registerSale(session.id(), vip.id(),
+                List.of(new SaleItemCommand(stock[1], new BigDecimal("1.000"), null)),
+                List.of(PaymentCommand.onAccount(new BigDecimal("22.00"), TODAY.plusDays(10))), ana);
+        ReceivableUseCase.SettlementResult paid = receivableUseCase.pay(session.id(), ana, vip.id(),
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("22.00"), null)), null);
+        CashRegisterSession closed = pdvUseCase.closeSession(session.id(), new BigDecimal("10.00"), ana);
+        flushAndClear();
+        assertThat(closed.expectedAmount()).isEqualByComparingTo("32.00");
+        assertThat(closed.differenceAmount()).isEqualByComparingTo("-22.00");
+
+        ReceivableUseCase.ReversalResult reversal = receivableUseCase.reverseBatch(paid.batchId(), "engano", "admin");
+        flushAndClear();
+
+        assertThat(reversal.sessionOpenAtReversal()).isFalse();
+        CashRegisterSession after = pdvUseCase.getSession(session.id());
+        assertThat(after.expectedAmount()).isEqualByComparingTo("32.00");
+        assertThat(after.differenceAmount()).isEqualByComparingTo("-22.00");
+        assertThat(pdvUseCase.getSessionSummary(session.id()).receivableReversed()).isEqualByComparingTo("22.00");
+        assertThat(receivableUseCase.balance(vip.id()).openBalance()).isEqualByComparingTo("22.00");
+    }
+
     @Test
     void nonVipAndOverLimit_areRefusedBeforeTheSale() {
         String ana = "ana-" + suffix();

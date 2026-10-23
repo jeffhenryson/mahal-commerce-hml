@@ -164,6 +164,8 @@ public class OrderDTOConverter {
         dto.setTotals(toPaymentTotalResponse(summary.totals()));
         dto.setTotalReceived(summary.totalReceived());
         dto.setTotalOnAccount(summary.totalOnAccount());
+        dto.setReceivableCashReceived(summary.receivableCashReceived());
+        dto.setReceivableReversed(summary.receivableReversed());
         return dto;
     }
 

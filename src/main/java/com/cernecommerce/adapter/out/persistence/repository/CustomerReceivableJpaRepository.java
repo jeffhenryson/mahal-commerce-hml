@@ -33,6 +33,11 @@ public interface CustomerReceivableJpaRepository extends JpaRepository<CustomerR
             """)
     List<CustomerReceivableEntity> findOpenByCustomerIdForUpdate(@Param("customerId") Long customerId);
 
+    /** V173 — o estorno trava os marcados do lote, quitados inclusive; dois estornos do mesmo lote se serializam. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM CustomerReceivableEntity r WHERE r.id IN :ids ORDER BY r.id ASC")
+    List<CustomerReceivableEntity> findByIdsForUpdate(@Param("ids") Collection<Long> ids);
+
     @Query("""
             SELECT COALESCE(SUM(r.amount - r.amountPaid), 0) FROM CustomerReceivableEntity r
             WHERE r.customerId = :customerId AND r.status IN ('ABERTO', 'PARCIAL', 'VENCIDO')

@@ -20,4 +20,12 @@ public class SessionSummaryResponseDTO {
     @Schema(description = "Marcado (fiado, CRM-F010) vendido na sessão. Fora de totalReceived: o dinheiro "
             + "ainda não entrou.")
     private BigDecimal totalOnAccount;
+
+    @Schema(description = "Quitações de marcado recebidas em DINHEIRO nesta sessão. Já estão no esperado da "
+            + "gaveta (e em totals[DINHEIRO].receivableReceived).")
+    private BigDecimal receivableCashReceived;
+
+    @Schema(description = "Quitações de marcado lançadas nesta sessão e estornadas depois (todos os métodos). "
+            + "Fora do esperado e de totalReceived.")
+    private BigDecimal receivableReversed;
 }

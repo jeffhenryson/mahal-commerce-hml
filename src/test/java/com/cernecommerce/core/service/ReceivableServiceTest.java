@@ -9,17 +9,21 @@ import com.cernecommerce.core.domain.exception.recebivel.DuplicateOnAccountPayme
 import com.cernecommerce.core.domain.exception.recebivel.InvalidDueDateException;
 import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchAlreadyReversedException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchNotFoundException;
 import com.cernecommerce.core.domain.model.config.SystemConfig;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import com.cernecommerce.core.domain.model.crm.Tag;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
+import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.recebivel.CreditLimits;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
@@ -415,6 +419,41 @@ class ReceivableServiceTest {
         assertThat(line.getValue().amount()).isEqualByComparingTo("28.00");
     }
 
+    /**
+     * Cru, 27,99999999999999 em dinheiro abatia menos que o saldo e o recebível ficava PARCIAL —
+     * enquanto o NUMERIC(14,2) gravava amount_paid = 28,00: PARCIAL com saldo zero, para sempre.
+     */
+    @Test
+    void pay_cashWithFloatingPointNoise_settlesTheReceivable() {
+        givenReceivingSession();
+        when(receivableRepository.findOpenByCustomerIdForUpdate(CUSTOMER)).thenReturn(List.of(
+                receivable(9L, "28.00", "0", TODAY)));
+        when(receivableRepository.sumOpenBalance(CUSTOMER)).thenReturn(BigDecimal.ZERO);
+
+        ReceivableUseCase.SettlementResult result = service.pay(45L, "bia", CUSTOMER,
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("27.99999999999999"), null)),
+                null);
+
+        assertThat(result.changeAmount()).isEqualByComparingTo("0");
+        assertThat(result.applied()).singleElement()
+                .satisfies(a -> assertThat(a.statusAfter()).isEqualTo(ReceivableStatus.QUITADO));
+    }
+
+    /** Ruído para cima num não-dinheiro não é "acima do saldo". */
+    @Test
+    void pay_nonCashNoiseAboveTheBalance_isNotRefused() {
+        givenReceivingSession();
+        when(receivableRepository.findOpenByCustomerIdForUpdate(CUSTOMER)).thenReturn(List.of(
+                receivable(9L, "28.00", "0", TODAY)));
+        when(receivableRepository.sumOpenBalance(CUSTOMER)).thenReturn(BigDecimal.ZERO);
+
+        ReceivableUseCase.SettlementResult result = service.pay(45L, "bia", CUSTOMER,
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("28.00000000000001"), null)), null);
+
+        assertThat(result.applied()).singleElement()
+                .satisfies(a -> assertThat(a.statusAfter()).isEqualTo(ReceivableStatus.QUITADO));
+    }
+
     @Test
     void pay_nonCashAboveTheBalance_isRefused() {
         givenReceivingSession();
@@ -611,5 +650,123 @@ class ReceivableServiceTest {
         when(receivableRepository.markOverdue(TODAY)).thenReturn(3);
 
         assertThat(service.markOverdue()).isEqualTo(3);
+    }
+
+    // ── V173: reverseBatch ───────────────────────────────────────────────────────────────────
+
+    private static final Instant RECEIVED_AT = NOW.minusSeconds(600);
+
+    private static CustomerReceivable settled(long id, String amount) {
+        return new CustomerReceivable(id, CUSTOMER, 900L + id, null, 1L, new BigDecimal(amount),
+                new BigDecimal(amount), TODAY.plusDays(5), ReceivableStatus.QUITADO, NOW, "ana", RECEIVED_AT,
+                null, null, null, 0L, List.of());
+    }
+
+    private static ReceivablePayment line(long receivableId, String amount, PaymentMethod method) {
+        return new ReceivablePayment(null, receivableId, 4L, CUSTOMER, new BigDecimal(amount), method, null, null,
+                null, 62L, "bia", RECEIVED_AT);
+    }
+
+    /** O lote 4 do caixa 62: R$ 103,00 em DINHEIRO abatidos de dois marcados. */
+    private void givenBatch4(CashRegisterSession.Status sessionStatus) {
+        when(receivableRepository.findBatchById(4L)).thenReturn(Optional.of(
+                new ReceivablePaymentBatch(4L, CUSTOMER, 62L, BigDecimal.ZERO, "bia", RECEIVED_AT)));
+        // Fechado como o caixa 62 real: esperado 176,95, contado 73,95, falta de 103,00.
+        boolean closed = sessionStatus == CashRegisterSession.Status.CLOSED;
+        CashRegisterSession session = closed
+                ? CashRegisterSession.of(62L, "bia", NOW.minusSeconds(7200), new BigDecimal("56.95"), "LOJA-01",
+                        NOW.minusSeconds(60), "bia", new BigDecimal("176.95"), new BigDecimal("73.95"),
+                        new BigDecimal("-103.00"), sessionStatus)
+                : CashRegisterSession.of(62L, "bia", NOW.minusSeconds(7200), new BigDecimal("56.95"), "LOJA-01",
+                        null, null, null, null, null, sessionStatus);
+        when(cashRegisterRepository.findById(62L)).thenReturn(Optional.of(session));
+        when(receivableRepository.findPaymentsByBatchId(4L)).thenReturn(List.of(
+                line(23L, "60.00", PaymentMethod.DINHEIRO), line(9L, "43.00", PaymentMethod.DINHEIRO)));
+        lenient().when(receivableRepository.findByIdsForUpdate(any())).thenReturn(List.of(
+                settled(9L, "43.00"), settled(23L, "60.00")));
+        lenient().when(receivableRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(receivableRepository.sumOpenBalance(CUSTOMER)).thenReturn(new BigDecimal("203.00"));
+    }
+
+    @Test
+    void reverseBatch_devolveOSaldoAosMarcados_revertCashback_eAnotaComCaixaAberto() {
+        givenBatch4(CashRegisterSession.Status.OPEN);
+        Order order23 = mock(Order.class);
+        when(orderRepository.findById(923L)).thenReturn(Optional.of(order23));
+        when(orderRepository.findById(909L)).thenReturn(Optional.empty());
+
+        ReceivableUseCase.ReversalResult result = service.reverseBatch(4L, " lançado por engano ", "admin");
+
+        assertThat(result.sessionOpenAtReversal()).isTrue();
+        assertThat(result.sessionId()).isEqualTo(62L);
+        assertThat(result.openBalanceAfter()).isEqualByComparingTo("203.00");
+        assertThat(result.amountsByMethod().get(PaymentMethod.DINHEIRO)).isEqualByComparingTo("103.00");
+        assertThat(result.reverted())
+                .extracting(ReceivableUseCase.RevertedPayment::receivableId, r -> r.amount().setScale(2),
+                        ReceivableUseCase.RevertedPayment::statusAfter)
+                .containsExactly(
+                        tuple(9L, new BigDecimal("43.00"), ReceivableStatus.ABERTO),
+                        tuple(23L, new BigDecimal("60.00"), ReceivableStatus.ABERTO));
+        verify(cashRegisterRepository).lockForShare(62L);
+        verify(cashbackUseCase).reverseEarnedForReceivablePayment(order23, new BigDecimal("60.00"), RECEIVED_AT);
+        ArgumentCaptor<ReceivablePaymentBatchReversal> reversal =
+                ArgumentCaptor.forClass(ReceivablePaymentBatchReversal.class);
+        verify(receivableRepository).saveBatchReversal(reversal.capture());
+        assertThat(reversal.getValue().batchId()).isEqualTo(4L);
+        assertThat(reversal.getValue().reason()).isEqualTo("lançado por engano");
+        assertThat(reversal.getValue().reversedBy()).isEqualTo("admin");
+        assertThat(reversal.getValue().sessionOpenAtReversal()).isTrue();
+        // Append-only: nenhuma linha de quitação nova nem regravada.
+        verify(receivableRepository, never()).savePayment(any());
+    }
+
+    @Test
+    void reverseBatch_caixaJaFechado_soAnota() {
+        givenBatch4(CashRegisterSession.Status.CLOSED);
+        when(orderRepository.findById(any())).thenReturn(Optional.empty());
+
+        ReceivableUseCase.ReversalResult result = service.reverseBatch(4L, "engano", "admin");
+
+        assertThat(result.sessionOpenAtReversal()).isFalse();
+        verify(cashRegisterRepository, never()).save(any());
+    }
+
+    @Test
+    void reverseBatch_loteJaEstornado_recusa() {
+        givenBatch4(CashRegisterSession.Status.CLOSED);
+        when(receivableRepository.isBatchReversed(4L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.reverseBatch(4L, "engano", "admin"))
+                .isInstanceOf(ReceivablePaymentBatchAlreadyReversedException.class);
+        verify(receivableRepository, never()).save(any());
+        verify(receivableRepository, never()).saveBatchReversal(any());
+    }
+
+    @Test
+    void reverseBatch_marcadoCanceladoDepois_recusa() {
+        givenBatch4(CashRegisterSession.Status.OPEN);
+        when(receivableRepository.findByIdsForUpdate(any())).thenReturn(List.of(
+                settled(9L, "43.00"), new CustomerReceivable(23L, CUSTOMER, 923L, null, 1L, new BigDecimal("60.00"),
+                        new BigDecimal("60.00"), TODAY, ReceivableStatus.CANCELADO, NOW, "ana", null, "perdão",
+                        "gerente", NOW, 0L, List.of())));
+
+        assertThatThrownBy(() -> service.reverseBatch(4L, "engano", "admin"))
+                .isInstanceOf(ReceivableNotOpenException.class);
+        verify(receivableRepository, never()).saveBatchReversal(any());
+    }
+
+    @Test
+    void reverseBatch_loteInexistente_404() {
+        when(receivableRepository.findBatchById(5L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.reverseBatch(5L, "engano", "admin"))
+                .isInstanceOf(ReceivablePaymentBatchNotFoundException.class);
+    }
+
+    @Test
+    void reverseBatch_semMotivo_recusa() {
+        assertThatThrownBy(() -> service.reverseBatch(4L, "  ", "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(receivableRepository);
     }
 }

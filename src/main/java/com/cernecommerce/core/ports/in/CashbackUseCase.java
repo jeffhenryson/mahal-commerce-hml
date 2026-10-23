@@ -82,6 +82,16 @@ public interface CashbackUseCase {
     void recordEarnedForReceivablePayment(Order order, java.math.BigDecimal settledAmount);
 
     /**
+     * V173 — desfaz {@link #recordEarnedForReceivablePayment} de uma quitação estornada: uma entrada
+     * {@code REVERSED} para o ganho sem item do pedido com o mesmo valor, lançado mais perto de
+     * {@code settledAt} (a entrada não guarda o lote). Sem ganho correspondente (cliente sem CPF, ou o
+     * reembolso do pedido já reverteu), não faz nada. Se o cliente já resgatou, o saldo pode ficar
+     * negativo — o ledger registra o débito em vez de escondê-lo.
+     */
+    void reverseEarnedForReceivablePayment(Order order, java.math.BigDecimal settledAmount,
+            java.time.Instant settledAt);
+
+    /**
      * Reverte os ganhos {@code EARNED} de um pedido reembolsado (PDV-F007): uma entrada
      * {@code REVERSED} por {@code EARNED} ainda não revertido. Não repete a checagem de
      * elegibilidade do cliente — se a entrada {@code EARNED} existe, ela já passou por essa

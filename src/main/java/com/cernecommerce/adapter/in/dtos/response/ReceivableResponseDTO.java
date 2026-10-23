@@ -68,5 +68,9 @@ public class ReceivableResponseDTO {
         private Long cashSessionId;
         private String receivedBy;
         private Instant receivedAt;
+        /** V173 — preenchidos quando o lote desta linha foi estornado: a linha não abate mais o saldo. */
+        private Instant reversedAt;
+        private String reversedBy;
+        private String reversalReason;
     }
 }

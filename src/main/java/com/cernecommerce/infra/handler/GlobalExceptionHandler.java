@@ -145,6 +145,9 @@ import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotSupportedEx
 import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotFoundException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
+import com.cernecommerce.core.domain.exception.recebivel.CashDrawerConfirmationRequiredException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchAlreadyReversedException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchNotFoundException;
 import com.cernecommerce.core.domain.exception.pagamento.CashSessionClosedForCorrectionException;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
 import com.cernecommerce.core.domain.exception.pagamento.CorrectionReasonRequiredException;
@@ -1231,6 +1234,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handlePaymentExceedsBalance(PaymentExceedsBalanceException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "PAYMENT_EXCEEDS_BALANCE", req);
+    }
+
+    @ExceptionHandler(CashDrawerConfirmationRequiredException.class)
+    public ResponseEntity<ApiError> handleCashDrawerConfirmationRequired(CashDrawerConfirmationRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "CASH_CONFIRMATION_REQUIRED", req);
+    }
+
+    @ExceptionHandler(ReceivablePaymentBatchNotFoundException.class)
+    public ResponseEntity<ApiError> handleReceivablePaymentBatchNotFound(ReceivablePaymentBatchNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "RECEIVABLE_PAYMENT_BATCH_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(ReceivablePaymentBatchAlreadyReversedException.class)
+    public ResponseEntity<ApiError> handleReceivablePaymentBatchAlreadyReversed(
+            ReceivablePaymentBatchAlreadyReversedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "RECEIVABLE_PAYMENT_ALREADY_REVERSED", req);
     }
 
     // ── PDV-F030: correção da forma de pagamento ────────────────────────────────────────────

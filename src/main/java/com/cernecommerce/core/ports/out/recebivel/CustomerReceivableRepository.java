@@ -7,6 +7,7 @@ import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 
 import java.util.Map;
@@ -37,6 +38,9 @@ public interface CustomerReceivableRepository {
      */
     List<CustomerReceivable> findOpenByCustomerIdForUpdate(Long customerId);
 
+    /** V173 — os recebíveis informados, em qualquer status, travados para escrita. */
+    List<CustomerReceivable> findByIdsForUpdate(Collection<Long> ids);
+
     PageResult<CustomerReceivable> findAll(ReceivableFilter filter, LocalDate today, int page, int size);
 
     BigDecimal sumOpenBalance(Long customerId);
@@ -58,11 +62,25 @@ public interface CustomerReceivableRepository {
 
     List<ReceivablePayment> findPaymentsByReceivableIds(Collection<Long> receivableIds);
 
-    /** Abatido por quitações recebidas na sessão, no método — já líquido do troco. */
+    Optional<ReceivablePaymentBatch> findBatchById(Long batchId);
+
+    List<ReceivablePayment> findPaymentsByBatchId(Long batchId);
+
+    boolean isBatchReversed(Long batchId);
+
+    /** V173 — dos lotes informados, os que têm estorno. */
+    List<ReceivablePaymentBatchReversal> findReversalsByBatchIds(Collection<Long> batchIds);
+
+    ReceivablePaymentBatchReversal saveBatchReversal(ReceivablePaymentBatchReversal reversal);
+
+    /** Abatido por quitações recebidas na sessão, no método — já líquido do troco e sem lote estornado. */
     BigDecimal sumReceivedBySessionAndMethod(Long sessionId, PaymentMethod method);
 
     /** PDV-C051 — {@link #sumReceivedBySessionAndMethod} de todos os métodos; ausente é zero. */
     Map<PaymentMethod, BigDecimal> sumReceivedBySessionGroupedByMethod(Long sessionId);
+
+    /** V173 — quitações lançadas na sessão e depois estornadas, todos os métodos. */
+    BigDecimal sumReversedBySession(Long sessionId);
 
     record CustomerBalanceRow(Long customerId, BigDecimal openBalance, BigDecimal overdueBalance,
             LocalDate nextDueDate, long count, BigDecimal openBalanceBalcao, BigDecimal openBalanceMesa) {

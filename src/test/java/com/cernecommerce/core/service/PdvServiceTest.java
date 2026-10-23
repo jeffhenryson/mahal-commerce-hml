@@ -612,6 +612,64 @@ class PdvServiceTest {
         assertThat(dinheiro.netAmount()).isEqualByComparingTo("118.00");
     }
 
+    // ── Caixa 62: marcado e quitação no esperado ─────────────────────────────────────────────
+
+    /** Marcado vendido no caixa é dinheiro que não entrou: o esperado é só o fundo. */
+    @Test
+    void closeSession_marcadoEmAbertoNaoEntraNoEsperado() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(BigDecimal.ZERO);
+        when(cashMovementRepository.sumSignedAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
+        givenNoCashOutflows();
+        lenient().when(orderPaymentRepository.sumOnAccountAmountBySessionId(1L)).thenReturn(new BigDecimal("103.00"));
+        when(cashRegisterRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CashRegisterSession closed = pdvService.closeSession(1L, BigDecimal.TEN, "gerente");
+
+        assertThat(closed.expectedAmount()).isEqualByComparingTo("10.00");
+        assertThat(closed.differenceAmount()).isEqualByComparingTo("0.00");
+        verify(orderPaymentRepository, never()).sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.MARCADO);
+    }
+
+    /** Quitação de marcado recebida em DINHEIRO neste caixa entra no esperado. */
+    @Test
+    void closeSession_quitacaoDeMarcadoEmDinheiroEntraNoEsperado() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderPaymentRepository.sumCapturedAmountBySessionIdAndMethod(1L, PaymentMethod.DINHEIRO))
+                .thenReturn(BigDecimal.ZERO);
+        when(cashMovementRepository.sumSignedAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
+        givenNoCashOutflows();
+        when(receivableUseCase.receivedInSession(1L, PaymentMethod.DINHEIRO)).thenReturn(new BigDecimal("103.00"));
+        when(cashRegisterRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CashRegisterSession closed = pdvService.closeSession(1L, new BigDecimal("113.00"), "gerente");
+
+        assertThat(closed.expectedAmount()).isEqualByComparingTo("113.00");
+        assertThat(closed.differenceAmount()).isEqualByComparingTo("0.00");
+        // Só a quitação em dinheiro: PIX/cartão da quitação não passam pela gaveta.
+        verify(receivableUseCase, never()).receivedInSession(1L, PaymentMethod.PIX);
+    }
+
+    /** O resumo separa a quitação em dinheiro (no esperado) do marcado vendido e do estornado (fora). */
+    @Test
+    void getSessionSummary_separaQuitacaoEmDinheiro_marcadoVendido_eEstornado() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderRepository.sumChangeAmountBySessionId(1L)).thenReturn(BigDecimal.ZERO);
+        when(receivableUseCase.receivedInSessionByMethod(1L))
+                .thenReturn(Map.of(PaymentMethod.DINHEIRO, new BigDecimal("28.00"), PaymentMethod.PIX,
+                        new BigDecimal("12.00")));
+        when(receivableUseCase.reversedInSession(1L)).thenReturn(new BigDecimal("103.00"));
+        when(orderPaymentRepository.sumOnAccountAmountBySessionId(1L)).thenReturn(new BigDecimal("60.00"));
+
+        PdvUseCase.SessionSummary summary = pdvService.getSessionSummary(1L);
+
+        assertThat(summary.receivableCashReceived()).isEqualByComparingTo("28.00");
+        assertThat(summary.receivableReversed()).isEqualByComparingTo("103.00");
+        assertThat(summary.totalOnAccount()).isEqualByComparingTo("60.00");
+        assertThat(summary.totalReceived()).isEqualByComparingTo("40.00");
+    }
+
     @Test
     void closeSession_refusesAnAlreadyClosedSession() {
         when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(closedSession()));
@@ -841,6 +899,27 @@ class PdvServiceTest {
         assertThat(captor.getValue().provider()).isEqualTo(PaymentProvider.INFINITYPAY);
     }
 
+    /** Todo fluxo de recebimento passa por PaymentCommand: é ali que o valor vai a 2 casas. */
+    @Test
+    void paymentCommand_normalizesTheAmountToTwoPlaces_includingTheOnAccountLine() {
+        assertThat(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("76.28999999999999"), null).amount())
+                .isEqualTo(new BigDecimal("76.29"));
+        assertThat(PaymentCommand.onAccount(new BigDecimal("76.28999999999999"),
+                java.time.LocalDate.now().plusDays(30)).amount())
+                .isEqualTo(new BigDecimal("76.29"));
+    }
+
+    /** O desconto do item é dinheiro; a quantidade (NUMERIC 14,3, fracionária) não pode ser tocada. */
+    @Test
+    void saleItemCommand_normalizesTheDiscountButNeverTheQuantity() {
+        SaleItemCommand item = new SaleItemCommand("CARV-001", new BigDecimal("0.333"),
+                new BigDecimal("1.28999999999999"));
+
+        assertThat(item.discountAmount()).isEqualTo(new BigDecimal("1.29"));
+        assertThat(item.quantity()).isEqualTo(new BigDecimal("0.333"));
+        assertThat(new SaleItemCommand("CARV-001", BigDecimal.ONE, null).discountAmount()).isNull();
+    }
+
     @Test
     void paymentCommand_cashWithChannelOrProviderWithoutChannel_isRefused() {
         assertThatThrownBy(() -> new PaymentCommand(PaymentMethod.DINHEIRO, BigDecimal.TEN, null,
@@ -909,6 +988,19 @@ class PdvServiceTest {
 
         verify(estoqueUseCase, never()).consumeReservationsByOwner(any(), any());
         verify(orderRepository, never()).save(any());
+    }
+
+    /** Aqui qualquer excedente é recusado — então o ruído para cima também era, antes de Money#of. */
+    @Test
+    void settleOnlineOrder_cashNoiseAboveTheNetAmount_isNotChange() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(pendingOnlineOrder()));
+        when(orderRepository.nextOrderNumber()).thenReturn("000001001");
+        when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Order settled = pdvService.settleOnlineOrder(1L, 7L, cash("44.00000000000001"), "caixa1");
+
+        assertThat(settled.changeAmount()).isNull();
     }
 
     @Test
@@ -1335,6 +1427,68 @@ class PdvServiceTest {
 
         verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
         verify(orderRepository, never()).save(any());
+    }
+
+    // ── Ruído de ponto flutuante no valor (Money#of) ─────────────────────────────────────────
+
+    /**
+     * O caso real: o front somou preço × quantidade em {@code double} e mandou 43,99999999999999
+     * querendo dizer 44,00. Comparado cru, era "Pagamento insuficiente". A linha gravada sai com o
+     * valor que foi validado, em 2 casas — e não com o cru, que o NUMERIC(14,2) arredondaria calado.
+     */
+    @Test
+    void registerSale_acceptsFloatingPointNoiseBelowTheTotal_andPersistsTheRoundedAmount() {
+        givenOpenSessionAndPersistence();
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+        when(estoqueUseCase.adjustStock(any(), any(), any(), any(), any(), any())).thenReturn(null);
+        when(orderPaymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Order order = pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                List.of(new PaymentCommand(PaymentMethod.DEBITO, new BigDecimal("43.99999999999999"), null)),
+                "caixa1");
+
+        assertThat(order.changeAmount()).isNull();
+        var captor = org.mockito.ArgumentCaptor.forClass(OrderPayment.class);
+        verify(orderPaymentRepository).save(captor.capture());
+        assertThat(captor.getValue().amount()).isEqualTo(new BigDecimal("44.00"));
+    }
+
+    /** Ruído para cima num não-dinheiro não é "débito acima do total". */
+    @Test
+    void registerSale_nonCashNoiseAboveTheTotal_isNotAnOverpayment() {
+        givenOpenSessionAndPersistence();
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+        when(estoqueUseCase.adjustStock(any(), any(), any(), any(), any(), any())).thenReturn(null);
+
+        Order order = pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("44.00000000000001"), null)),
+                "caixa1");
+
+        assertThat(order.changeAmount()).isNull();
+    }
+
+    /** Em dinheiro, o ruído para cima não vira um troco de fração de centavo. */
+    @Test
+    void registerSale_cashNoiseAboveTheTotal_givesNoChange() {
+        givenOpenSessionAndPersistence();
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+        when(estoqueUseCase.adjustStock(any(), any(), any(), any(), any(), any())).thenReturn(null);
+
+        Order order = pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                cash("44.00000000000001"), "caixa1");
+
+        assertThat(order.changeAmount()).isNull();
+    }
+
+    /** Um centavo de diferença real continua insuficiente: a normalização só tira o ruído. */
+    @Test
+    void registerSale_aRealCentShort_isStillInsufficient() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(openSession()));
+        when(estoqueUseCase.resolveSaleInfo("CARV-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo("Carvao Coco", CARVAO));
+
+        assertThatThrownBy(() -> pdvService.registerSale(1L, null, List.of(twoCharcoals(null)),
+                cash("43.99"), "caixa1"))
+                .isInstanceOf(InsufficientPaymentException.class);
     }
 
     @Test

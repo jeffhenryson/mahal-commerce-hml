@@ -23,4 +23,9 @@ public class ReceivablePaymentRequest {
     @Schema(description = "Abate só nestes, na ordem dada. Ausente: abate do mais antigo (FIFO por vencimento).",
             example = "[9, 12]")
     private List<Long> receivableIds;
+
+    @Schema(description = "Obrigatório (true) quando há linha DINHEIRO: o operador confirmou que o valor está na "
+            + "gaveta deste caixa. Sem ele, 400 CASH_CONFIRMATION_REQUIRED. Ignorado nos demais métodos.",
+            example = "true")
+    private Boolean cashConfirmed;
 }

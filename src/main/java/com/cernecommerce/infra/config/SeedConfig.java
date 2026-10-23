@@ -58,6 +58,8 @@ public class SeedConfig {
         // com o Flyway desligado, tomava 403 na venda a prazo, na correção e nos recebíveis.
         "PDV_SALE_ON_ACCOUNT", "ORDER_PAYMENT_CORRECT", "ORDER_PAYMENT_CORRECT_CLOSED",
         "RECEIVABLE_READ", "RECEIVABLE_MANAGE",
+        // CRM-F010 — estornar o lote de quitação lançado por engano (V173, caixa 62).
+        "RECEIVABLE_PAYMENT_REVERSE",
         // PDV-F034 — sessão que vai ao preparo antes de paga: risco de calote, decisão da casa (V139).
         "PDV_SESSION_PAY_LATER",
         // PDV-F011 — como a COURTESY, só no admin: acréscimo manual é decisão da casa (V117).

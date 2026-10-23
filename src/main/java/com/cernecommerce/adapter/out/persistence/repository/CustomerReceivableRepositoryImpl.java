@@ -5,6 +5,7 @@ import com.cernecommerce.adapter.out.persistence.entity.CustomerReceivableEntity
 import com.cernecommerce.adapter.out.persistence.entity.OrderEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivableItemEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivablePaymentBatchEntity;
+import com.cernecommerce.adapter.out.persistence.entity.ReceivablePaymentBatchReversalEntity;
 import com.cernecommerce.adapter.out.persistence.entity.ReceivablePaymentEntity;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pagamento.PaymentChannel;
@@ -16,6 +17,7 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableItem;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
 import jakarta.persistence.criteria.Predicate;
@@ -49,14 +51,16 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
     private final ReceivableItemJpaRepository itemJpa;
     private final ReceivablePaymentJpaRepository paymentJpa;
     private final ReceivablePaymentBatchJpaRepository batchJpa;
+    private final ReceivablePaymentBatchReversalJpaRepository reversalJpa;
 
     public CustomerReceivableRepositoryImpl(CustomerReceivableJpaRepository receivableJpa,
             ReceivableItemJpaRepository itemJpa, ReceivablePaymentJpaRepository paymentJpa,
-            ReceivablePaymentBatchJpaRepository batchJpa) {
+            ReceivablePaymentBatchJpaRepository batchJpa, ReceivablePaymentBatchReversalJpaRepository reversalJpa) {
         this.receivableJpa = receivableJpa;
         this.itemJpa = itemJpa;
         this.paymentJpa = paymentJpa;
         this.batchJpa = batchJpa;
+        this.reversalJpa = reversalJpa;
     }
 
     @Override
@@ -122,6 +126,14 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
     @Override
     public List<CustomerReceivable> findOpenByCustomerIdForUpdate(Long customerId) {
         return withItems(receivableJpa.findOpenByCustomerIdForUpdate(customerId));
+    }
+
+    @Override
+    public List<CustomerReceivable> findByIdsForUpdate(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return withItems(receivableJpa.findByIdsForUpdate(ids));
     }
 
     @Override
@@ -200,10 +212,42 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
 
     @Override
     public ReceivablePaymentBatch saveBatch(ReceivablePaymentBatch b) {
-        ReceivablePaymentBatchEntity e = batchJpa.save(new ReceivablePaymentBatchEntity(b.id(), b.customerId(),
-                b.cashSessionId(), b.changeAmount(), b.receivedBy(), b.receivedAt()));
-        return new ReceivablePaymentBatch(e.getId(), e.getCustomerId(), e.getCashSessionId(), e.getChangeAmount(),
-                e.getReceivedBy(), e.getReceivedAt());
+        return toDomain(batchJpa.save(new ReceivablePaymentBatchEntity(b.id(), b.customerId(),
+                b.cashSessionId(), b.changeAmount(), b.receivedBy(), b.receivedAt())));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<ReceivablePaymentBatch> findBatchById(Long batchId) {
+        return batchJpa.findById(batchId).map(CustomerReceivableRepositoryImpl::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReceivablePayment> findPaymentsByBatchId(Long batchId) {
+        return paymentJpa.findByBatchIdOrderByIdAsc(batchId).stream()
+                .map(CustomerReceivableRepositoryImpl::toDomain).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isBatchReversed(Long batchId) {
+        return reversalJpa.existsByBatchId(batchId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReceivablePaymentBatchReversal> findReversalsByBatchIds(Collection<Long> batchIds) {
+        if (batchIds == null || batchIds.isEmpty()) {
+            return List.of();
+        }
+        return reversalJpa.findByBatchIdIn(batchIds).stream().map(CustomerReceivableRepositoryImpl::toDomain).toList();
+    }
+
+    @Override
+    public ReceivablePaymentBatchReversal saveBatchReversal(ReceivablePaymentBatchReversal r) {
+        return toDomain(reversalJpa.save(new ReceivablePaymentBatchReversalEntity(r.id(), r.batchId(), r.reason(),
+                r.reversedBy(), r.reversedAt(), r.sessionOpenAtReversal())));
     }
 
     @Override
@@ -234,6 +278,12 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
     @Transactional(readOnly = true)
     public Map<PaymentMethod, BigDecimal> sumReceivedBySessionGroupedByMethod(Long sessionId) {
         return OrderPaymentRepositoryImpl.byMethod(paymentJpa.sumBySessionGroupByMethod(sessionId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BigDecimal sumReversedBySession(Long sessionId) {
+        return orZero(paymentJpa.sumReversedBySession(sessionId));
     }
 
     // ── Mapeamento ───────────────────────────────────────────────────────────────────────────
@@ -268,6 +318,16 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
                 e.getChannel() == null ? null : PaymentChannel.valueOf(e.getChannel()),
                 e.getProvider() == null ? null : PaymentProvider.valueOf(e.getProvider()),
                 e.getCashSessionId(), e.getReceivedBy(), e.getReceivedAt());
+    }
+
+    private static ReceivablePaymentBatch toDomain(ReceivablePaymentBatchEntity e) {
+        return new ReceivablePaymentBatch(e.getId(), e.getCustomerId(), e.getCashSessionId(), e.getChangeAmount(),
+                e.getReceivedBy(), e.getReceivedAt());
+    }
+
+    private static ReceivablePaymentBatchReversal toDomain(ReceivablePaymentBatchReversalEntity e) {
+        return new ReceivablePaymentBatchReversal(e.getId(), e.getBatchId(), e.getReason(), e.getReversedBy(),
+                e.getReversedAt(), e.isSessionOpenAtReversal());
     }
 
     private static BigDecimal orZero(BigDecimal value) {

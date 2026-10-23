@@ -29,6 +29,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -230,12 +231,7 @@ public class CashbackService implements CashbackUseCase {
         if (!customer.isOfficiallyRegistered()) {
             return;
         }
-        BigDecimal orderCashback = order.items().stream()
-                .map(OrderItem::cashbackAmount)
-                .filter(java.util.Objects::nonNull)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal amount = orderCashback.multiply(settledAmount)
-                .divide(order.totalPayable(), Money.MONEY_SCALE, Money.ROUNDING);
+        BigDecimal amount = receivablePaymentCashback(order, settledAmount);
         if (amount.signum() <= 0) {
             return;
         }
@@ -245,6 +241,40 @@ public class CashbackService implements CashbackUseCase {
         Instant availableAt = now.plus(carenciaDias, ChronoUnit.DAYS);
         cashbackEntryRepository.save(CashbackEntry.earned(order.customerId(), order.id(), null, amount, now,
                 availableAt, availableAt.plus(expiracaoDias, ChronoUnit.DAYS)));
+    }
+
+    /** A fração do cashback do pedido proporcional a {@code settledAmount / totalPayable}. */
+    private static BigDecimal receivablePaymentCashback(Order order, BigDecimal settledAmount) {
+        BigDecimal orderCashback = order.items().stream()
+                .map(OrderItem::cashbackAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return orderCashback.multiply(settledAmount)
+                .divide(order.totalPayable(), Money.MONEY_SCALE, Money.ROUNDING);
+    }
+
+    /** V173 — ganho de quitação mais distante que isto do lote não é dele. */
+    private static final java.time.Duration RECEIVABLE_EARNING_MATCH_WINDOW = java.time.Duration.ofMinutes(5);
+
+    @Override
+    @Transactional
+    public void reverseEarnedForReceivablePayment(Order order, BigDecimal settledAmount, Instant settledAt) {
+        if (order.customerId() == null || settledAmount == null || settledAmount.signum() <= 0
+                || order.totalPayable().signum() <= 0) {
+            return;
+        }
+        BigDecimal amount = receivablePaymentCashback(order, settledAmount);
+        // Mesmo valor primeiro; entre iguais, o lançado mais perto do lote — dois lotes do mesmo
+        // pedido podem sair com segundos de diferença.
+        Comparator<CashbackEntry> closest = Comparator
+                .comparing((CashbackEntry e) -> e.amount().compareTo(amount) == 0 ? 0 : 1)
+                .thenComparing(e -> java.time.Duration.between(e.createdAt(), settledAt).abs());
+        cashbackEntryRepository.findEarnedByOrderId(order.id()).stream()
+                .filter(e -> e.orderItemId() == null)
+                .filter(e -> java.time.Duration.between(e.createdAt(), settledAt).abs()
+                        .compareTo(RECEIVABLE_EARNING_MATCH_WINDOW) <= 0)
+                .min(closest)
+                .ifPresent(e -> cashbackEntryRepository.save(CashbackEntry.reversed(e, Instant.now())));
     }
 
     @Override

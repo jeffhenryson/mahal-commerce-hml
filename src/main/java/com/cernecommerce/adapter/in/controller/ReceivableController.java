@@ -6,10 +6,13 @@ import com.cernecommerce.adapter.in.dtos.request.CreditLimitRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivableCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivableDueDateRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivablePaymentRequest;
+import com.cernecommerce.adapter.in.dtos.request.ReceivablePaymentReversalRequest;
 import com.cernecommerce.adapter.in.dtos.response.CreditLimitCapResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ReceivableResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
+import com.cernecommerce.core.domain.exception.recebivel.CashDrawerConfirmationRequiredException;
+import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
@@ -17,10 +20,12 @@ import com.cernecommerce.core.domain.model.recebivel.OnAccountEligibility;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableCustomerSummary;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase.ReceivableView;
+import com.cernecommerce.core.ports.in.ReceivableUseCase.ReversalResult;
 import com.cernecommerce.core.ports.in.ReceivableUseCase.SettlementResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -164,6 +169,8 @@ public class ReceivableController {
                     + "esperado do fechamento. O cashback da parte marcada é creditado agora, proporcional.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Recebido"),
+            @ApiResponse(responseCode = "400", description = "CASH_CONFIRMATION_REQUIRED — linha DINHEIRO sem "
+                    + "cashConfirmed=true; INVALID_PAYMENT_METHOD — method ausente ou inválido", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sessão de outro operador", content = @Content),
             @ApiResponse(responseCode = "409", description = "PAYMENT_EXCEEDS_BALANCE, RECEIVABLE_NOT_OPEN, "
                     + "sessão fechada ou de dia anterior", content = @Content)
@@ -173,6 +180,11 @@ public class ReceivableController {
     public ResponseEntity<SettlementResult> pay(@RequestParam("sessionId") Long sessionId,
             @Valid @RequestBody ReceivablePaymentRequest request, Authentication authentication) {
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
+        // Caixa 62 — DINHEIRO só vale como dinheiro de gaveta com a confirmação explícita do operador.
+        if (payments.stream().anyMatch(p -> p.method() == PaymentMethod.DINHEIRO)
+                && !Boolean.TRUE.equals(request.getCashConfirmed())) {
+            throw new CashDrawerConfirmationRequiredException();
+        }
         SettlementResult result = receivableUseCase.pay(sessionId, authentication.getName(),
                 request.getCustomerId(), payments, request.getReceivableIds());
         publisher.publishEvent(AuditEvent.of(EventType.RECEIVABLE_PAID, authentication.getName(),
@@ -185,6 +197,41 @@ public class ReceivableController {
                                 .toList(),
                         "changeAmount", result.changeAmount(),
                         "openBalanceAfter", result.openBalanceAfter())));
+        return ResponseEntity.ok(result);
+    }
+
+    @Operation(summary = "Estorna um recebimento de marcado lançado por engano (o lote inteiro)",
+            description = "O abatido volta a ser devido em cada marcado do lote (ABERTO, PARCIAL ou VENCIDO pelo "
+                    + "prazo), o cashback creditado na quitação é revertido e o lote sai do caixa: do esperado e "
+                    + "de payment-totals. Nada é apagado — o lote e as linhas ficam, com o estorno anotado. Caixa "
+                    + "já fechado não é recalculado: o esperado e a diferença gravados no fechamento ficam, e o "
+                    + "estornado aparece em summary.receivableReversed (sessionOpenAtReversal=false).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Estornado"),
+            @ApiResponse(responseCode = "400", description = "Motivo ausente", content = @Content),
+            @ApiResponse(responseCode = "404", description = "RECEIVABLE_PAYMENT_BATCH_NOT_FOUND", content = @Content),
+            @ApiResponse(responseCode = "409", description = "RECEIVABLE_PAYMENT_ALREADY_REVERSED; RECEIVABLE_NOT_OPEN "
+                    + "— um marcado do lote foi cancelado depois", content = @Content)
+    })
+    @PostMapping("/receivables/payment-batches/{batchId}/reverse")
+    @PreAuthorize("hasAuthority('RECEIVABLE_PAYMENT_REVERSE')")
+    public ResponseEntity<ReversalResult> reverseBatch(@PathVariable("batchId") Long batchId,
+            @Valid @RequestBody ReceivablePaymentReversalRequest request, Authentication authentication) {
+        ReversalResult result = receivableUseCase.reverseBatch(batchId, request.getReason(), authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.RECEIVABLE_PAYMENT_REVERSED, authentication.getName(),
+                Map.of("batchId", batchId,
+                        "customerId", result.customerId(),
+                        "sessionId", result.sessionId(),
+                        "sessionOpenAtReversal", result.sessionOpenAtReversal(),
+                        "reverted", result.reverted().stream()
+                                .map(r -> Map.of("receivableId", r.receivableId(), "amount", r.amount(),
+                                        "statusAfter", r.statusAfter().name()))
+                                .toList(),
+                        "amountsByMethod", result.amountsByMethod().entrySet().stream()
+                                .collect(java.util.stream.Collectors.toMap(e -> e.getKey().name(),
+                                        Map.Entry::getValue)),
+                        "openBalanceAfter", result.openBalanceAfter(),
+                        "reason", request.getReason())));
         return ResponseEntity.ok(result);
     }
 
@@ -312,11 +359,13 @@ public class ReceivableController {
         dto.setCancelReason(r.cancelReason());
         dto.setCancelledBy(r.cancelledBy());
         dto.setCancelledAt(r.cancelledAt());
-        dto.setPayments(view.payments().stream().map(ReceivableController::toResponse).toList());
+        dto.setPayments(view.payments().stream()
+                .map(p -> toResponse(p, view.reversals().get(p.batchId()))).toList());
         return dto;
     }
 
-    private static ReceivableResponseDTO.Payment toResponse(ReceivablePayment p) {
+    private static ReceivableResponseDTO.Payment toResponse(ReceivablePayment p,
+            ReceivablePaymentBatchReversal reversal) {
         ReceivableResponseDTO.Payment dto = new ReceivableResponseDTO.Payment();
         dto.setId(p.id());
         dto.setBatchId(p.batchId());
@@ -328,6 +377,11 @@ public class ReceivableController {
         dto.setCashSessionId(p.cashSessionId());
         dto.setReceivedBy(p.receivedBy());
         dto.setReceivedAt(p.receivedAt());
+        if (reversal != null) {
+            dto.setReversedAt(reversal.reversedAt());
+            dto.setReversedBy(reversal.reversedBy());
+            dto.setReversalReason(reversal.reason());
+        }
         return dto;
     }
 }

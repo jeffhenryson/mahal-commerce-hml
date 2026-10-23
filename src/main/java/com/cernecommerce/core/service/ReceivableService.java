@@ -13,6 +13,8 @@ import com.cernecommerce.core.domain.exception.recebivel.DuplicateOnAccountPayme
 import com.cernecommerce.core.domain.exception.recebivel.InvalidDueDateException;
 import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotSupportedException;
 import com.cernecommerce.core.domain.exception.recebivel.PaymentExceedsBalanceException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchAlreadyReversedException;
+import com.cernecommerce.core.domain.exception.recebivel.ReceivablePaymentBatchNotFoundException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotFoundException;
 import com.cernecommerce.core.domain.exception.recebivel.ReceivableNotOpenException;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -34,6 +36,7 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableItem;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatch;
+import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
@@ -336,6 +339,55 @@ public class ReceivableService implements ReceivableUseCase {
         return new SettlementResult(batch.id(), result, change, receivableRepository.sumOpenBalance(customerId));
     }
 
+    @Override
+    @Transactional
+    public ReversalResult reverseBatch(Long batchId, String reason, String username) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("reason é obrigatório");
+        }
+        ReceivablePaymentBatch batch = receivableRepository.findBatchById(batchId)
+                .orElseThrow(() -> new ReceivablePaymentBatchNotFoundException(batchId));
+        // Caixa aberto: o estorno mexe no esperado, então espera o fechamento em curso (trava exclusiva
+        // dele) ou o segura, como a quitação. Fechado: a trava não custa nada e o status é o final.
+        cashRegisterRepository.lockForShare(batch.cashSessionId());
+        CashRegisterSession session = cashRegisterRepository.findById(batch.cashSessionId())
+                .orElseThrow(() -> new CashRegisterSessionNotFoundException(batch.cashSessionId()));
+
+        List<ReceivablePayment> lines = receivableRepository.findPaymentsByBatchId(batchId);
+        Map<Long, BigDecimal> amountByReceivable = new LinkedHashMap<>();
+        Map<PaymentMethod, BigDecimal> amountByMethod = new LinkedHashMap<>();
+        for (ReceivablePayment line : lines) {
+            amountByReceivable.merge(line.receivableId(), line.amount(), BigDecimal::add);
+            amountByMethod.merge(line.method(), line.amount(), BigDecimal::add);
+        }
+        // A trava nos marcados do lote serializa dois estornos do mesmo lote: o segundo relê já estornado.
+        List<CustomerReceivable> receivables = receivableRepository.findByIdsForUpdate(amountByReceivable.keySet());
+        if (receivableRepository.isBatchReversed(batchId)) {
+            throw new ReceivablePaymentBatchAlreadyReversedException(batchId);
+        }
+        for (CustomerReceivable receivable : receivables) {
+            if (receivable.status() == ReceivableStatus.CANCELADO) {
+                throw new ReceivableNotOpenException("O marcado " + receivable.id()
+                        + " foi cancelado depois do recebimento " + batchId + "; o estorno não se aplica");
+            }
+        }
+
+        Instant now = clock.instant();
+        LocalDate today = today();
+        List<RevertedPayment> reverted = new ArrayList<>(receivables.size());
+        for (CustomerReceivable receivable : receivables) {
+            BigDecimal amount = amountByReceivable.get(receivable.id());
+            CustomerReceivable saved = receivableRepository.save(receivable.revertPayment(amount, today));
+            orderRepository.findById(receivable.orderId()).ifPresent(order ->
+                    cashbackUseCase.reverseEarnedForReceivablePayment(order, amount, batch.receivedAt()));
+            reverted.add(new RevertedPayment(saved.id(), amount, saved.status()));
+        }
+        receivableRepository.saveBatchReversal(new ReceivablePaymentBatchReversal(null, batchId, reason.trim(),
+                username, now, session.isOpen()));
+        return new ReversalResult(batchId, batch.customerId(), session.id(), session.isOpen(), reverted,
+                amountByMethod, receivableRepository.sumOpenBalance(batch.customerId()));
+    }
+
     private List<CustomerReceivable> resolveTargets(Long customerId, List<Long> receivableIds) {
         List<CustomerReceivable> open = receivableRepository.findOpenByCustomerIdForUpdate(customerId);
         if (receivableIds == null || receivableIds.isEmpty()) {
@@ -482,6 +534,12 @@ public class ReceivableService implements ReceivableUseCase {
         return receivableRepository.sumReceivedBySessionGroupedByMethod(sessionId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public BigDecimal reversedInSession(Long sessionId) {
+        return receivableRepository.sumReversedBySession(sessionId);
+    }
+
     // ── Apoio ────────────────────────────────────────────────────────────────────────────────
 
     private LocalDate today() {
@@ -568,11 +626,16 @@ public class ReceivableService implements ReceivableUseCase {
         Map<Long, List<ReceivablePayment>> payments = receivableRepository.findPaymentsByReceivableIds(
                         receivables.stream().map(CustomerReceivable::id).toList()).stream()
                 .collect(Collectors.groupingBy(ReceivablePayment::receivableId));
+        Map<Long, ReceivablePaymentBatchReversal> reversals = receivableRepository.findReversalsByBatchIds(
+                        payments.values().stream().flatMap(List::stream).map(ReceivablePayment::batchId)
+                                .distinct().toList()).stream()
+                .collect(Collectors.toMap(ReceivablePaymentBatchReversal::batchId, Function.identity()));
         return receivables.stream().map(r -> {
             Order order = orders.get(r.orderId());
             long daysOverdue = r.isOverdue(today) ? ChronoUnit.DAYS.between(r.dueDate(), today) : 0;
             return new ReceivableView(r, names.get(r.customerId()), order == null ? null : order.orderNumber(),
-                    order == null ? null : order.tableLabel(), daysOverdue, payments.getOrDefault(r.id(), List.of()));
+                    order == null ? null : order.tableLabel(), daysOverdue, payments.getOrDefault(r.id(), List.of()),
+                    reversals);
         }).toList();
     }
 

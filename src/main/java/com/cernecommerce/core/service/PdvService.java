@@ -227,6 +227,9 @@ public class PdvService implements PdvUseCase {
     @Transactional
     public CashRegisterSession closeSession(Long sessionId, BigDecimal countedAmount, String notes,
             String username, boolean canCloseAny, BigDecimal leftInDrawerAmount) {
+        // Contado e troco deixado são dinheiro digitado ou somado pelo cliente: 2 casas (ver Money#of).
+        countedAmount = Money.of(countedAmount);
+        leftInDrawerAmount = Money.of(leftInDrawerAmount);
         // PDV-F056 — o troco deixado sai do contado. Antes da trava: é erro do pedido, não do caixa.
         if (leftInDrawerAmount != null && countedAmount != null && leftInDrawerAmount.compareTo(countedAmount) > 0) {
             throw new LeftInDrawerExceedsCountedException(leftInDrawerAmount, countedAmount);
@@ -336,7 +339,8 @@ public class PdvService implements PdvUseCase {
                 .subtract(orderRepository.sumChangeAmountBySessionId(sessionId))
                 .add(cashMovementRepository.sumSignedAmountBySessionId(sessionId))
                 // CRM-F010 — quitação de marcado em dinheiro recebida neste caixa. receivable_payment
-                // guarda o abatido, já líquido do troco devolvido.
+                // guarda o abatido, já líquido do troco devolvido. Lote estornado (V173) não conta. O
+                // marcado em si (ON_ACCOUNT) nunca entra: sumCaptured só lê CAPTURED.
                 .add(receivableUseCase.receivedInSession(sessionId, PaymentMethod.DINHEIRO));
     }
 
@@ -382,7 +386,12 @@ public class PdvService implements PdvUseCase {
     public SessionSummary getSessionSummary(Long sessionId) {
         List<PaymentTotal> totals = getSessionPaymentTotals(sessionId);
         BigDecimal received = totals.stream().map(PaymentTotal::netAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new SessionSummary(totals, received, orderPaymentRepository.sumOnAccountAmountBySessionId(sessionId));
+        // Caixa 62 — o operador vê de onde vem cada valor: a quitação em dinheiro (dentro do esperado)
+        // separada do marcado vendido e do estornado (os dois fora).
+        BigDecimal receivableCash = totals.stream().filter(t -> t.method() == PaymentMethod.DINHEIRO)
+                .map(PaymentTotal::receivableReceived).findFirst().orElse(BigDecimal.ZERO);
+        return new SessionSummary(totals, received, orderPaymentRepository.sumOnAccountAmountBySessionId(sessionId),
+                receivableCash, receivableUseCase.reversedInSession(sessionId));
     }
 
     // ── Venda ────────────────────────────────────────────────────────────────────────────────

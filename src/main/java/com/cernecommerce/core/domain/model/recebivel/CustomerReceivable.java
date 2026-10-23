@@ -67,6 +67,24 @@ public record CustomerReceivable(Long id, Long customerId, Long orderId, Long co
         return with(paid, dueDate, next, settled ? at : null, null, null, null);
     }
 
+    /**
+     * V173 — desfaz {@code value} de uma quitação estornada: o saldo volta a ser devido. O status sai do
+     * que sobra pago e do prazo (VENCIDO se já passou, senão PARCIAL ou ABERTO), inclusive a partir de
+     * QUITADO. CANCELADO não volta: o pedido de origem já saiu da conta.
+     */
+    public CustomerReceivable revertPayment(BigDecimal value, LocalDate today) {
+        if (status == ReceivableStatus.CANCELADO) {
+            throw new IllegalStateException("recebível " + id + " está cancelado");
+        }
+        if (value == null || value.signum() <= 0 || value.compareTo(amountPaid) > 0) {
+            throw new IllegalArgumentException("valor a estornar fora do pago: " + value);
+        }
+        BigDecimal paid = amountPaid.subtract(value);
+        ReceivableStatus next = dueDate.isBefore(today) ? ReceivableStatus.VENCIDO
+                : paid.signum() > 0 ? ReceivableStatus.PARCIAL : ReceivableStatus.ABERTO;
+        return with(paid, dueDate, next, null, null, null, null);
+    }
+
     /** Job diário: em aberto com o prazo vencido passa a VENCIDO. */
     public CustomerReceivable markOverdue() {
         return with(amountPaid, dueDate, ReceivableStatus.VENCIDO, settledAt, cancelReason, cancelledBy, cancelledAt);

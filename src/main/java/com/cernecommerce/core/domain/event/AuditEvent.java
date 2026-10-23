@@ -135,6 +135,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // PED-F006 — troca de item: devolve um item e entrega outro no mesmo pedido.
         ORDER_ITEM_EXCHANGED,
         RECEIVABLE_CREATED, RECEIVABLE_PAID, RECEIVABLE_DUE_DATE_CHANGED, RECEIVABLE_CANCELLED,
+        // V173 — estorno de um recebimento de marcado lançado por engano (caixa 62).
+        RECEIVABLE_PAYMENT_REVERSED,
         CUSTOMER_CREDIT_LIMIT_CHANGED,
         // PDV-F046 — o gerente trocou o teto do limite que o vendedor pode dar.
         ATTENDANT_CREDIT_LIMIT_CAP_CHANGED,

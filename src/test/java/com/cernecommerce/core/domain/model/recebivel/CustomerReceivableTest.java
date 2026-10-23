@@ -53,4 +53,51 @@ class CustomerReceivableTest {
         assertThatThrownBy(() -> open("50.00").reducedBy(new BigDecimal("50.01"), "estorno", "gerente", NOW))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ── V173: estorno de quitação ────────────────────────────────────────────────────────────
+
+    @Test
+    void revertPayment_quitadoInteiro_voltaAAberto() {
+        CustomerReceivable settled = open("50.00").applyPayment(new BigDecimal("50.00"), NOW, DUE.minusDays(1));
+
+        CustomerReceivable reverted = settled.revertPayment(new BigDecimal("50.00"), DUE.minusDays(1));
+
+        assertThat(reverted.status()).isEqualTo(ReceivableStatus.ABERTO);
+        assertThat(reverted.amountOpen()).isEqualByComparingTo("50.00");
+        assertThat(reverted.settledAt()).isNull();
+    }
+
+    @Test
+    void revertPayment_sobraPago_ficaParcial() {
+        CustomerReceivable settled = open("50.00").applyPayment(new BigDecimal("50.00"), NOW, DUE.minusDays(1));
+
+        CustomerReceivable reverted = settled.revertPayment(new BigDecimal("30.00"), DUE.minusDays(1));
+
+        assertThat(reverted.status()).isEqualTo(ReceivableStatus.PARCIAL);
+        assertThat(reverted.amountOpen()).isEqualByComparingTo("30.00");
+    }
+
+    @Test
+    void revertPayment_prazoJaPassou_voltaVencido() {
+        CustomerReceivable settled = open("50.00").applyPayment(new BigDecimal("50.00"), NOW, DUE.minusDays(1));
+
+        assertThat(settled.revertPayment(new BigDecimal("50.00"), DUE.plusDays(1)).status())
+                .isEqualTo(ReceivableStatus.VENCIDO);
+    }
+
+    @Test
+    void revertPayment_acimaDoPago_recusa() {
+        CustomerReceivable partlyPaid = open("50.00").applyPayment(new BigDecimal("20.00"), NOW, DUE.minusDays(1));
+
+        assertThatThrownBy(() -> partlyPaid.revertPayment(new BigDecimal("20.01"), DUE.minusDays(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void revertPayment_cancelado_recusa() {
+        CustomerReceivable cancelled = open("50.00").cancelled("perdão", "gerente", NOW);
+
+        assertThatThrownBy(() -> cancelled.revertPayment(new BigDecimal("1.00"), DUE))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }
