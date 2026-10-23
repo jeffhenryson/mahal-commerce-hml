@@ -85,6 +85,10 @@ public class OrderResponseDTO {
             + "POST /shop/checkout, que é o único momento em que ela existe.")
     private String checkoutUrl;
 
+    @Schema(description = "ECM-F010 — etapa do pedido do app no caixa. Só em pedido do app feito com pagamento "
+            + "no balcão; nulo nos demais.")
+    private AtendimentoResponseDTO atendimento;
+
     @Schema(description = "CRM-F010 — PAGO, PENDENTE (marcado sem nenhuma quitação) ou PARCIAL. Só nas "
             + "respostas que trazem payments.")
     private String paymentStatus;

@@ -122,8 +122,39 @@ class OrderDeliveryTest {
     }
 
     @Test
-    void order_deliveryOnlyOnBalcao() {
-        assertThatThrownBy(() -> Order.openMarketplace(42L, "LOJA-01", twoCharcoals()).withDelivery(entrega("0")))
+    void order_deliveryOnBalcaoAndMarketplace_neverOnMesa() {
+        // ECM-F009 — o app escolhe retirada ou entrega no checkout; a mesa consome no salão.
+        assertThat(Order.openMarketplace(42L, "LOJA-01", twoCharcoals(), entrega("0")).delivery().isEntrega())
+                .isTrue();
+        assertThatThrownBy(() -> Order.openMesa(1L, "LOJA-01", null, 10L, "Mesa 4", twoCharcoals())
+                .withDelivery(entrega("0")))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void withDeliveryFee_caixaDefineATaxaDoPedidoDoAppAntesDoPagamento() {
+        Order pedido = Order.openMarketplace(42L, "LOJA-01", twoCharcoals(), entrega("0"));
+
+        Order comTaxa = pedido.withDeliveryFee(new BigDecimal("8.00"));
+
+        assertThat(comTaxa.deliveryFee()).isEqualByComparingTo("8.00");
+        assertThat(comTaxa.netAmount()).isEqualByComparingTo("44.00");
+        assertThat(comTaxa.totalPayable()).isEqualByComparingTo("52.00");
+    }
+
+    @Test
+    void withDeliveryFee_recusaDepoisDoPagamentoForaDoMarketplaceENaRetirada() {
+        assertThatThrownBy(() -> Order.openMarketplace(42L, "LOJA-01", twoCharcoals(), entrega("0"))
+                .paid(Instant.now()).withDeliveryFee(BigDecimal.ONE))
+                .isInstanceOf(InvalidDeliveryException.class);
+        assertThatThrownBy(() -> Order.openBalcao(1L, "LOJA-01", null, twoCharcoals(), entrega("0"))
+                .withDeliveryFee(BigDecimal.ONE))
+                .isInstanceOf(InvalidDeliveryException.class);
+        assertThatThrownBy(() -> Order.openMarketplace(42L, "LOJA-01", twoCharcoals(),
+                        new OrderDelivery(DeliveryType.RETIRADA, null, null, null, null, null, null, null, null))
+                .withDeliveryFee(BigDecimal.ONE))
+                .isInstanceOf(InvalidDeliveryException.class);
+        assertThatThrownBy(() -> Order.openMarketplace(42L, "LOJA-01", twoCharcoals()).withDeliveryFee(BigDecimal.ONE))
+                .isInstanceOf(InvalidDeliveryException.class);
     }
 }

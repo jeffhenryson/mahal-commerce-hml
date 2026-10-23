@@ -31,7 +31,6 @@ import com.cernecommerce.core.domain.model.estoque.ProductSortField;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
-import com.cernecommerce.core.domain.model.notification.Notification;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
 import com.cernecommerce.core.domain.model.pdv.ComandaItem;
@@ -76,8 +75,6 @@ import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.NotificationSsePort;
 import com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository;
 import com.cernecommerce.core.ports.out.user.UserRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -153,7 +150,6 @@ import java.util.stream.Stream;
  */
 public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase {
 
-    private static final Logger log = LoggerFactory.getLogger(SalaoAutoatendimentoService.class);
     static final ZoneId ZONA_SALAO = ZoneId.of("America/Sao_Paulo");
     static final String ORIGEM_LEAD = "QR Salão";
     /** Quem recebe o aviso de pedido novo: quem opera mesa. */
@@ -180,10 +176,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private final SessionMenuUseCase sessionMenuUseCase;
     private final CrmUseCase crmUseCase;
     private final ComandaUseCase comandaUseCase;
-    private final NotificationUseCase notificationUseCase;
-    private final UserRepository userRepository;
-    private final NotificationSsePort ssePort;
-    private final AfterCommitExecutor afterCommit;
+    private final AvisoOperadores avisoOperadores;
     private final AuditEventPublisherPort auditEvents;
     private final AuditLogRepository auditLog;
     private final Clock clock;
@@ -199,10 +192,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         this.sessionMenuUseCase = sessionMenuUseCase;
         this.crmUseCase = crmUseCase;
         this.comandaUseCase = comandaUseCase;
-        this.notificationUseCase = notificationUseCase;
-        this.userRepository = userRepository;
-        this.ssePort = ssePort;
-        this.afterCommit = afterCommit;
+        this.avisoOperadores = new AvisoOperadores(notificationUseCase, userRepository, ssePort, afterCommit);
         this.auditEvents = auditEvents;
         this.auditLog = auditLog;
         this.clock = clock == null ? Clock.systemUTC() : clock;
@@ -1321,18 +1311,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
 
     /** Avisa quem opera mesa: todos com {@link #PERMISSAO_ATENDENTE}. */
     private void avisar(String chave, NotificationType tipo, String titulo, String corpo) {
-        // Depois do commit: a tela do PDV relê a fila ao receber o aviso, e o pedido tem de estar lá.
-        // Falha aqui não desfaz o pedido — o aviso é conveniência, e o PDV relê a fila sozinho.
-        afterCommit.accumulate(chave, titulo, avisos -> {
-            try {
-                for (String username : userRepository.findUsernamesByPermission(PERMISSAO_ATENDENTE)) {
-                    Notification salva = notificationUseCase.notify(username, tipo, titulo, corpo, DESTINO_AVISO);
-                    ssePort.send(username, salva);
-                }
-            } catch (RuntimeException e) {
-                log.warn("Aviso {} do Salão não enviado: {}", chave, e.getMessage(), e);
-            }
-        });
+        avisoOperadores.avisar(chave, PERMISSAO_ATENDENTE, tipo, titulo, corpo, DESTINO_AVISO);
     }
 
     private static String novoToken() {

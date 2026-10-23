@@ -122,6 +122,10 @@ import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.crm.CustomerUnderageException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
+import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoNotFoundException;
+import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoTransicaoInvalidaException;
+import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppNaoPagoException;
+import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppOutroCaixaException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
@@ -1299,6 +1303,29 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidDeliveryException.class)
     public ResponseEntity<ApiError> handleInvalidDelivery(InvalidDeliveryException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_DELIVERY", req);
+    }
+
+    // ── ECM-F010: pedidos do app no caixa ──
+
+    @ExceptionHandler(AtendimentoNotFoundException.class)
+    public ResponseEntity<ApiError> handleAtendimentoNotFound(AtendimentoNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "PEDIDO_APP_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(AtendimentoTransicaoInvalidaException.class)
+    public ResponseEntity<ApiError> handleAtendimentoTransicao(AtendimentoTransicaoInvalidaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PEDIDO_APP_TRANSICAO_INVALIDA", req);
+    }
+
+    @ExceptionHandler(PedidoAppOutroCaixaException.class)
+    public ResponseEntity<ApiError> handlePedidoAppOutroCaixa(PedidoAppOutroCaixaException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PEDIDO_APP_OUTRO_CAIXA", req);
+    }
+
+    @ExceptionHandler(PedidoAppNaoPagoException.class)
+    public ResponseEntity<ApiError> handlePedidoAppNaoPago(PedidoAppNaoPagoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PEDIDO_APP_NAO_PAGO", req);
     }
 
     @ExceptionHandler(OrderHasNoDeliveryException.class)

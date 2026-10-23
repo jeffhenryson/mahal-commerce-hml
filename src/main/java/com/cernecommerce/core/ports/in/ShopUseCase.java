@@ -3,10 +3,13 @@ package com.cernecommerce.core.ports.in;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.PreferenciaPagamento;
 import com.cernecommerce.core.domain.model.estoque.Category;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.estoque.ProductAttribute;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -174,8 +177,32 @@ public interface ShopUseCase {
      */
     CartView removeKitFromCart(String username, String kitBundleId);
 
-    /** Pedido criado e a URL de checkout hospedada pelo gateway para onde o cliente é redirecionado. */
-    record CheckoutResult(Order order, String checkoutUrl) {
+    /**
+     * Pedido criado, a URL do gateway (nula no modo {@code BALCAO}, ECM-F009) e o atendimento que
+     * entrou na fila do caixa.
+     */
+    record CheckoutResult(Order order, String checkoutUrl, AtendimentoPedidoApp atendimento) {
+
+        public CheckoutResult(Order order, String checkoutUrl) {
+            this(order, checkoutUrl, null);
+        }
+    }
+
+    /**
+     * ECM-F009 — o que o cliente escolhe no checkout. {@code delivery} nula é retirada; na entrega
+     * a taxa vem zerada (o caixa define no aceite) e a preferência tem de ser Pix.
+     */
+    record CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao) {
+
+        /** O checkout sem corpo, como o front antigo chama: retirada, pagando no balcão. */
+        public static CheckoutCommand retirada() {
+            return new CheckoutCommand(null, null, null);
+        }
+    }
+
+    /** Checkout sem escolhas — retirada no balcão. Ver {@link #checkout(String, CheckoutCommand)}. */
+    default CheckoutResult checkout(String username) {
+        return checkout(username, CheckoutCommand.retirada());
     }
 
     /**
@@ -184,6 +211,10 @@ public interface ShopUseCase {
      * marketplace e cria a cobrança no gateway de pagamento, tudo na mesma transação — se a
      * reserva de qualquer item ou a criação da cobrança falhar, nada é persistido. O carrinho só é
      * esvaziado se tudo suceder.
+     *
+     * <p>ECM-F009/F010/F011 — no modo {@code BALCAO} ({@code shop.checkout.modo-pagamento}, o
+     * padrão) não há cobrança no gateway: o pedido entra na fila do caixa com aviso em tempo real,
+     * e a reserva vale até o horário-limite do dia ({@code shop.pedido.hora-limite}).</p>
      *
      * <p>Preço, custo e taxa de cashback são resolvidos e carimbados aqui — nunca do que estava no
      * carrinho — porque é o único jeito de a numeração e o valor cobrado corresponderem ao
@@ -201,8 +232,10 @@ public interface ShopUseCase {
      *         se o depósito padrão do marketplace não estiver configurado
      * @throws com.cernecommerce.core.domain.exception.pagamento.PaymentGatewayException se o
      *         gateway falhar ao criar a cobrança
+     * @throws com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException se a entrega
+     *         vier sem endereço, ou com preferência de pagamento que não seja Pix
      */
-    CheckoutResult checkout(String username);
+    CheckoutResult checkout(String username, CheckoutCommand command);
 
     /** Pedidos do cliente autenticado, de qualquer canal, do mais recente para o mais antigo. */
     PageResult<Order> listMyOrders(String username, int page, int size);

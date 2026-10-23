@@ -9,6 +9,10 @@ import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionHasOpenCom
 import com.cernecommerce.core.domain.exception.pdv.CashWithdrawalExceedsDrawerException;
 import com.cernecommerce.core.domain.exception.pdv.SessionHasPendingOfflineSalesException;
 import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
+import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoTransicaoInvalidaException;
+import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppOutroCaixaException;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException;
@@ -72,6 +76,7 @@ public class PdvService implements PdvUseCase {
     private final ComandaRepository comandaRepository;
     /** PDV-F043 — nulo nos construtores antigos; ver o construtor completo. */
     private final OfflineSaleRejectionRepository offlineRejections;
+    private final AtendimentoPedidoAppRepository pedidoAppAtendimentos;
 
     /** Teto de desconto por pedido, em percentual sobre o bruto. */
     private final BigDecimal maxDiscountPercent;
@@ -115,6 +120,22 @@ public class PdvService implements PdvUseCase {
             CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
             BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase,
             OfflineSaleRejectionRepository offlineRejections) {
+        this(cashRegisterRepository, cashMovementRepository, orderRepository, orderPaymentRepository,
+                estoqueUseCase, cashbackUseCase, comandaRepository, maxDiscountPercent, clock, receivableUseCase,
+                offlineRejections, null);
+    }
+
+    /**
+     * Com o atendimento dos pedidos do app (ECM-F010) — a que o {@code CoreBeanConfig} usa. Sem ele
+     * a liquidação não exige aceite, como antes da V174.
+     */
+    public PdvService(CashRegisterRepository cashRegisterRepository,
+            CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
+            OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
+            CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
+            BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase,
+            OfflineSaleRejectionRepository offlineRejections, AtendimentoPedidoAppRepository pedidoAppAtendimentos) {
+        this.pedidoAppAtendimentos = pedidoAppAtendimentos;
         this.offlineRejections = offlineRejections;
         this.clock = clock;
         this.receivableUseCase = receivableUseCase;
@@ -589,6 +610,22 @@ public class PdvService implements PdvUseCase {
         CashRegisterSession session = requireOwnOpenSession(sessionId, username);
         Order order = getOrder(orderId);
 
+        // ECM-F010 — pedido do app pago no caixa: só depois do aceite, e no caixa que aceitou. É
+        // o aceite que fixa a taxa de entrega; liquidar antes cobraria sem ela. Pedido sem
+        // atendimento (o fluxo do gateway, ou anterior à V174) segue como sempre.
+        AtendimentoPedidoApp atendimento = pedidoAppAtendimentos == null ? null
+                : pedidoAppAtendimentos.findByOrderIdForUpdate(orderId).orElse(null);
+        if (atendimento != null) {
+            if (!atendimento.liquidavel()) {
+                throw new AtendimentoTransicaoInvalidaException(orderId,
+                        "pedido do app precisa ser aceito no caixa antes do pagamento (atual: "
+                                + atendimento.status() + ")");
+            }
+            if (!session.id().equals(atendimento.sessionId())) {
+                throw new PedidoAppOutroCaixaException(orderId, atendimento.sessionId());
+            }
+        }
+
         // PDV-C015 — o pagamento é validado ANTES de consumir a reserva, mesma ordem de
         // registerSale: um pagamento recusado não deveria custar uma reserva consumida que só o
         // rollback desfaz.
@@ -601,9 +638,12 @@ public class PdvService implements PdvUseCase {
         if (payments.stream().anyMatch(PaymentCommand::isOnAccount)) {
             throw new OnAccountNotSupportedException("liquidação de pedido do app");
         }
-        BigDecimal change = validatePaymentsAndComputeChange(payments, order.netAmount());
+        // ECM-F010 — contra totalPayable(), que inclui a taxa de entrega definida no aceite; sem
+        // entrega é o próprio líquido, como antes.
+        BigDecimal total = order.totalPayable();
+        BigDecimal change = validatePaymentsAndComputeChange(payments, total);
         if (change != null && change.signum() > 0) {
-            throw new ChangeNotSupportedException(order.netAmount().add(change), order.netAmount());
+            throw new ChangeNotSupportedException(total.add(change), total);
         }
 
         // A reserva já segurou a mercadoria desde o checkout: consumi-la converte o reservado em
@@ -632,6 +672,10 @@ public class PdvService implements PdvUseCase {
         cancelPendingGatewayCharges(saved.id());
 
         cashbackUseCase.recordEarnedForOrder(saved);
+        // A retirada termina aqui: pagou no balcão, levou. A entrega continua ACEITO até sair.
+        if (atendimento != null && !atendimento.isEntrega()) {
+            pedidoAppAtendimentos.save(atendimento.retirado(Instant.now(clock)));
+        }
         return saved;
     }
 

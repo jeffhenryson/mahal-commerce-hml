@@ -15,7 +15,7 @@ public class DeliveryResponseDTO {
     @Schema(description = "Endereço da ENTREGA; null na RETIRADA")
     private Address address;
 
-    @Schema(description = "MOTOBOY_LOJA, APP_99 ou CORREIOS")
+    @Schema(description = "MOTOBOY_LOJA, APP_99, UBER_FLASH ou CORREIOS")
     private String method;
 
     private String courierName;

@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Entrega ou retirada de uma venda de balcão (PDV-F022).
+ * Entrega ou retirada de uma venda de balcão (PDV-F022) ou de um pedido do app (ECM-F009).
  *
  * <p>Mora em tabela própria ({@code order_delivery}), fiel à regra do {@link Order} de que endereço
  * e frete ficam fora de {@code sales_order} — só a venda que tem entrega tem a linha.</p>
@@ -82,6 +82,19 @@ public record OrderDelivery(
                 DeliveryAddress.pick(patch.dropoffCode(), dropoffCode),
                 DeliveryAddress.pick(patch.trackingCode(), trackingCode),
                 fee);
+    }
+
+    /**
+     * ECM-F010 — a taxa que o caixa informa ao aceitar o pedido do app. Não é o {@link #withPatch}
+     * (que congela a taxa) porque aqui ela ainda não foi paga: quem garante isso é
+     * {@link Order#withDeliveryFee}, que só aceita pedido de marketplace aguardando pagamento.
+     */
+    public OrderDelivery withFee(BigDecimal newFee) {
+        if (!isEntrega()) {
+            throw new InvalidDeliveryException("RETIRADA não tem taxa de entrega");
+        }
+        return new OrderDelivery(type, address, method, courierName, courierPhone, pickupCode, dropoffCode,
+                trackingCode, newFee);
     }
 
     /** Edição parcial da entrega; {@code null} mantém o valor atual. */

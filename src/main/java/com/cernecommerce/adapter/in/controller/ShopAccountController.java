@@ -1,15 +1,22 @@
 package com.cernecommerce.adapter.in.controller;
 
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
+import com.cernecommerce.adapter.in.converter.PedidoAppDTOConverter;
 import com.cernecommerce.adapter.in.converter.ShopCartDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.CartItemRequest;
+import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderCancelRequest;
+import com.cernecommerce.adapter.in.dtos.request.ShopCheckoutRequest;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ShopCartResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
+import com.cernecommerce.core.ports.in.PedidoAppUseCase;
 import com.cernecommerce.core.ports.in.ShopUseCase;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,6 +45,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -61,13 +69,18 @@ public class ShopAccountController {
     private final ShopCartDTOConverter cartConverter;
     private final OrderDTOConverter orderConverter;
     private final ApplicationEventPublisher publisher;
+    private final PedidoAppUseCase pedidoAppUseCase;
+    private final PedidoAppDTOConverter pedidoAppConverter;
 
     public ShopAccountController(ShopUseCase shopUseCase, ShopCartDTOConverter cartConverter,
-            OrderDTOConverter orderConverter, ApplicationEventPublisher publisher) {
+            OrderDTOConverter orderConverter, ApplicationEventPublisher publisher,
+            PedidoAppUseCase pedidoAppUseCase, PedidoAppDTOConverter pedidoAppConverter) {
         this.shopUseCase = shopUseCase;
         this.cartConverter = cartConverter;
         this.orderConverter = orderConverter;
         this.publisher = publisher;
+        this.pedidoAppUseCase = pedidoAppUseCase;
+        this.pedidoAppConverter = pedidoAppConverter;
     }
 
     @Operation(summary = "Carrinho do cliente autenticado")
@@ -104,23 +117,26 @@ public class ShopAccountController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "Checkout: cria o pedido a partir do carrinho inteiro, reserva o estoque e cria a cobrança",
+    @Operation(summary = "Checkout: cria o pedido a partir do carrinho inteiro e reserva o estoque",
             description = "Preço, custo e taxa de cashback são resolvidos do catálogo agora, não do "
-                    + "que estava no carrinho. O carrinho só é esvaziado se tudo suceder — pedido, "
-                    + "reserva de estoque e cobrança no gateway (ECM-F004), na mesma transação. A "
-                    + "resposta traz checkoutUrl: a URL hospedada pelo gateway para onde o cliente é "
-                    + "redirecionado para pagar.")
+                    + "que estava no carrinho. O carrinho só é esvaziado se tudo suceder, na mesma transação. "
+                    + "**ECM-F009** — corpo opcional com retirada/entrega, endereço, método e preferência de "
+                    + "pagamento; sem corpo é retirada. No modo de pagamento BALCAO (padrão) não há cobrança "
+                    + "online: checkoutUrl vem nulo, o pedido entra na fila do caixa (atendimento PENDENTE) e "
+                    + "segura o estoque até o horário-limite do dia. A taxa de entrega é definida pelo caixa no "
+                    + "aceite. No modo GATEWAY, a resposta traz checkoutUrl do InfinitePay (ECM-F004).")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Pedido criado, AGUARDANDO_PAGAMENTO"),
-            @ApiResponse(responseCode = "400", description = "Estoque insuficiente", content = @Content),
+            @ApiResponse(responseCode = "400", description = "Estoque insuficiente, ou entrega sem endereço/método, ou entrega com pagamento que não seja Pix", content = @Content),
             @ApiResponse(responseCode = "409", description = "Carrinho vazio, ou item sem preço", content = @Content),
             @ApiResponse(responseCode = "502", description = "Falha ao criar cobrança no gateway", content = @Content),
             @ApiResponse(responseCode = "503", description = "Depósito padrão do marketplace não configurado", content = @Content)
     })
     @PostMapping("/checkout")
     @PreAuthorize("hasAuthority('SHOP_ORDER_OWN')")
-    public ResponseEntity<OrderResponseDTO> checkout(Authentication authentication) {
-        ShopUseCase.CheckoutResult result = shopUseCase.checkout(authentication.getName());
+    public ResponseEntity<OrderResponseDTO> checkout(@Valid @RequestBody(required = false) ShopCheckoutRequest request,
+            Authentication authentication) {
+        ShopUseCase.CheckoutResult result = shopUseCase.checkout(authentication.getName(), toCommand(request));
         // Depois do commit (o use case já retornou): dispara as automações de PEDIDO_CRIADO.
         Map<String, Object> details = new HashMap<>();
         details.put("orderId", result.order().id());
@@ -129,7 +145,23 @@ public class ShopAccountController {
             details.put("customerId", result.order().customerId());
         }
         publisher.publishEvent(AuditEvent.of(EventType.ORDER_CREATED, authentication.getName(), details));
-        return ResponseEntity.status(201).body(orderConverter.toCheckoutResponse(result.order(), result.checkoutUrl()));
+        return ResponseEntity.status(201).body(pedidoAppConverter.toShopCheckoutResponse(result.order(),
+                result.checkoutUrl(), result.atendimento()));
+    }
+
+    private ShopUseCase.CheckoutCommand toCommand(ShopCheckoutRequest request) {
+        if (request == null) {
+            return ShopUseCase.CheckoutCommand.retirada();
+        }
+        OrderDelivery delivery = null;
+        if (request.getDeliveryType() == DeliveryType.ENTREGA) {
+            DeliveryRequest entrega = new DeliveryRequest();
+            entrega.setType(DeliveryType.ENTREGA);
+            entrega.setAddress(request.getAddress());
+            entrega.setMethod(request.getMethod());
+            delivery = orderConverter.toDelivery(entrega);
+        }
+        return new ShopUseCase.CheckoutCommand(delivery, request.getPaymentPreference(), request.getNotes());
     }
 
     @Operation(summary = "Pedidos do cliente autenticado, de qualquer canal, do mais recente para o mais antigo")
@@ -140,10 +172,8 @@ public class ShopAccountController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             Authentication authentication) {
         PageResult<Order> result = shopUseCase.listMyOrders(authentication.getName(), page, size);
-        PageResult<OrderResponseDTO> response = new PageResult<>(
-                result.content().stream().map(orderConverter::toResponse).toList(),
-                result.page(), result.size(), result.totalElements(), result.totalPages());
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(pedidoAppConverter.toShopResponse(result,
+                pedidoAppUseCase.atendimentosDe(result.content().stream().map(Order::id).toList())));
     }
 
     @Operation(summary = "Um pedido do cliente autenticado")
@@ -156,7 +186,7 @@ public class ShopAccountController {
     public ResponseEntity<OrderResponseDTO> getMyOrder(@PathVariable("id") Long orderId,
             Authentication authentication) {
         Order order = shopUseCase.getMyOrder(authentication.getName(), orderId);
-        return ResponseEntity.ok(orderConverter.toResponse(order));
+        return ResponseEntity.ok(toShopResponse(order));
     }
 
     @Operation(summary = "Cancela um pedido do cliente ANTES de pagamento confirmado",
@@ -179,6 +209,12 @@ public class ShopAccountController {
         details.put("statusBefore", before.status().name());
         details.put("reason", request.getReason());
         publisher.publishEvent(AuditEvent.of(EventType.ORDER_CANCELLED, authentication.getName(), details));
-        return ResponseEntity.ok(orderConverter.toResponse(order));
+        return ResponseEntity.ok(toShopResponse(order));
+    }
+
+    /** O pedido com a etapa no caixa, quando é pedido do app (ECM-F010). */
+    private OrderResponseDTO toShopResponse(Order order) {
+        List<AtendimentoPedidoApp> atendimento = pedidoAppUseCase.atendimentosDe(List.of(order.id()));
+        return pedidoAppConverter.toShopResponse(order, atendimento.isEmpty() ? null : atendimento.get(0));
     }
 }

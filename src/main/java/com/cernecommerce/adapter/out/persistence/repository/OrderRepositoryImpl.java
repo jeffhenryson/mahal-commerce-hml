@@ -151,6 +151,16 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public List<Order> findByIds(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return InClauseBatches.fetch(ids, orderJpaRepository::findAllByIdsWithItems).stream()
+                .map(this::toDomain).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<Order> findByComandaIds(java.util.Collection<Long> comandaIds) {
         if (comandaIds == null || comandaIds.isEmpty()) {
             return List.of();

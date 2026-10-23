@@ -14,10 +14,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
+import com.cernecommerce.adapter.in.converter.PedidoAppDTOConverter;
 import com.cernecommerce.adapter.in.converter.ShopCartDTOConverter;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
+import com.cernecommerce.core.ports.in.PedidoAppUseCase;
 import com.cernecommerce.core.ports.in.ShopUseCase;
 import com.cernecommerce.infra.handler.GlobalExceptionHandler;
 
@@ -47,7 +49,8 @@ public class ShopAccountControllerTest {
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new ShopAccountController(shopUseCase, new ShopCartDTOConverter(),
-                        new OrderDTOConverter(), publisher))
+                        new OrderDTOConverter(), publisher, mock(PedidoAppUseCase.class),
+                        new PedidoAppDTOConverter(new OrderDTOConverter())))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

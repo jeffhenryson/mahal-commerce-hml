@@ -32,6 +32,9 @@ public class RedisResourceRateLimiterAdapter implements ResourceRateLimiterPort 
             "estoque-movements", new BucketPolicy(60, 60),
             "notifications-stream", new BucketPolicy(60, 30),
             "shop-catalog", new BucketPolicy(60, 120),
+            // ECM-F010 — checkout do app, por cliente: cada pedido segura estoque até o fim do dia
+            // e avisa o caixa. Folgado para quem erra e refaz, apertado para quem trava a vitrine.
+            "shop-checkout", new BucketPolicy(600, 10),
             // Página do QR da mesa (pública, por IP). A escrita é o identificar/cadastrar/pedir:
             // apertada o bastante para não servir de oráculo de CPF, folgada para uma mesa cheia.
             "salao-publico-leitura", new BucketPolicy(60, 120),

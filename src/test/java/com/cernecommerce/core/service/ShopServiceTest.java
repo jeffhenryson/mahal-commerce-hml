@@ -1,6 +1,22 @@
 package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.crm.DuplicateCustomerEmailException;
+import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
+import com.cernecommerce.core.domain.model.config.SystemConfig;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus;
+import com.cernecommerce.core.domain.model.ecommerce.PreferenciaPagamento;
+import com.cernecommerce.core.domain.model.notification.NotificationType;
+import com.cernecommerce.core.domain.model.pedido.DeliveryAddress;
+import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
+import com.cernecommerce.core.domain.model.pedido.DeliveryType;
+import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
+import com.cernecommerce.core.ports.in.AvisoOperadoresUseCase;
+import com.cernecommerce.core.ports.out.SystemConfigPort;
+import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.ZoneOffset;
 import com.cernecommerce.core.domain.exception.ecommerce.CartEmptyException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartItemNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.DefaultWarehouseNotConfiguredException;
@@ -86,6 +102,12 @@ class ShopServiceTest {
     @Mock OrderPaymentRepository orderPaymentRepository;
     @Mock EmailPort emailPort;
     @Mock KitBuilderUseCase kitBuilderUseCase;
+    @Mock AtendimentoPedidoAppRepository atendimentoRepository;
+    @Mock SystemConfigPort systemConfigPort;
+    @Mock AvisoOperadoresUseCase avisoOperadores;
+
+    /** 12h em Botucatu (UTC-3): o prazo padrão de 22h cai às 01h UTC do dia seguinte. */
+    private static final Instant AGORA = Instant.parse("2026-10-23T15:00:00Z");
 
     ShopService shopService;
 
@@ -98,7 +120,13 @@ class ShopServiceTest {
     void setUp() {
         shopService = new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository,
                 orderRepository, orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository,
-                emailPort, kitBuilderUseCase, immediateExecutor);
+                emailPort, kitBuilderUseCase, immediateExecutor, atendimentoRepository, systemConfigPort,
+                avisoOperadores, Clock.fixed(AGORA, ZoneOffset.UTC));
+    }
+
+    private void stubModoGateway() {
+        when(systemConfigPort.findByKey(ShopService.MODO_PAGAMENTO_KEY))
+                .thenReturn(Optional.of(new SystemConfig(ShopService.MODO_PAGAMENTO_KEY, "GATEWAY", Instant.now(), "dev")));
     }
 
     /** Sem transação real nestes testes, o executor despacha na hora (como a implementação sem sincronização). */
@@ -409,6 +437,7 @@ class ShopServiceTest {
 
     @Test
     void checkout_createsMarketplaceOrderReservesStockCreatesChargeAndClearsCart() {
+        stubModoGateway();
         stubAuthenticatedCustomer();
         stubCustomerLookup();
         Cart cart = Cart.of(1L, CUSTOMER_ID, List.of(
@@ -536,8 +565,6 @@ class ShopServiceTest {
         when(estoqueUseCase.resolveSaleInfo("SEDA-01")).thenReturn(new EstoqueUseCase.CatalogSaleInfo(
                 "Seda", Pricing.of(null, null, new BigDecimal("10.00"))));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> withId(invocation.getArgument(0), 99L));
-        when(paymentGatewayPort.createCheckoutLink(eq("99"), any(), any(), any(), any()))
-                .thenReturn(new PaymentGatewayPort.CheckoutLink("https://checkout"));
 
         ShopUseCase.CheckoutResult result = shopService.checkout(USERNAME);
 
@@ -547,7 +574,139 @@ class ShopServiceTest {
                         tuple("SEDA-01", new BigDecimal("1.00")));
         assertThat(result.order().netAmount()).isEqualByComparingTo("75.00");
         verify(estoqueUseCase).reserveStock(eq("BAG-01"), eq("LOJA-01"), eq(BigDecimal.ONE), eq("ORDER:99"),
-                isNull(), eq(USERNAME));
+                notNull(), eq(USERNAME));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // ECM-F009/F010/F011 — pedido do app pago no caixa
+    // ---------------------------------------------------------------------------------------
+
+    private void stubCarrinhoDeUmItem() {
+        Cart cart = Cart.of(1L, CUSTOMER_ID, List.of(new CartItem("ESS-001", new BigDecimal("2"))), Instant.now());
+        when(cartRepository.findByCustomerId(CUSTOMER_ID)).thenReturn(Optional.of(cart));
+        when(estoqueUseCase.getDefaultWarehouse()).thenReturn(WAREHOUSE);
+        when(estoqueUseCase.resolveSaleInfo("ESS-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo(
+                "Essência", Pricing.of(new BigDecimal("15.00"), null, new BigDecimal("30.00"))));
+        when(cashbackUseCase.resolveApplicableRate(anyString())).thenReturn(null);
+        when(orderRepository.save(any(Order.class)))
+                .thenAnswer(invocation -> withIdKeepingDelivery(invocation.getArgument(0), 99L));
+        when(atendimentoRepository.save(any(AtendimentoPedidoApp.class))).thenAnswer(i -> i.getArgument(0));
+    }
+
+    @Test
+    void checkout_balcao_retiradaEntraNaFilaSemGatewayEReservaAteAHoraLimite() {
+        stubAuthenticatedCustomer();
+        stubCustomerLookup();
+        stubCarrinhoDeUmItem();
+
+        ShopUseCase.CheckoutResult result = shopService.checkout(USERNAME,
+                new ShopUseCase.CheckoutCommand(null, PreferenciaPagamento.DEBITO, "  vou buscar às 19h "));
+
+        assertThat(result.checkoutUrl()).isNull();
+        assertThat(result.order().delivery().type()).isEqualTo(DeliveryType.RETIRADA);
+        assertThat(result.atendimento().status()).isEqualTo(AtendimentoStatus.PENDENTE);
+        assertThat(result.atendimento().preferenciaPagamento()).isEqualTo(PreferenciaPagamento.DEBITO);
+        assertThat(result.atendimento().observacao()).isEqualTo("vou buscar às 19h");
+        assertThat(result.atendimento().prazo()).isEqualTo(Instant.parse("2026-10-24T01:00:00Z"));
+        // A reserva vence 30 min depois do prazo: quem devolve o saldo é o varredor do pedido.
+        verify(estoqueUseCase).reserveStock(eq("ESS-001"), eq("LOJA-01"), eq(new BigDecimal("2")), eq("ORDER:99"),
+                eq(Duration.ofHours(10).plusMinutes(30)), eq(USERNAME));
+        verifyNoInteractions(paymentGatewayPort);
+        verify(orderPaymentRepository, never()).save(any());
+        verify(cartRepository).clear(CUSTOMER_ID);
+        verify(avisoOperadores).avisar(eq("shop.pedido-app.novo:99"), eq("PDV_SALE_MANAGE"),
+                eq(NotificationType.PEDIDO_APP), any(), any(), eq("/pdv"));
+        verify(emailPort).sendOrderConfirmation(eq(USERNAME), any(), isNull());
+    }
+
+    @Test
+    void checkout_balcao_entregaDescartaTaxaDoClienteEExigeMetodo() {
+        stubAuthenticatedCustomer();
+        stubCustomerLookup();
+        stubCarrinhoDeUmItem();
+        OrderDelivery escolhida = new OrderDelivery(DeliveryType.ENTREGA, endereco(), DeliveryMethod.UBER_FLASH,
+                "fulano", null, null, null, null, new BigDecimal("1.00"));
+
+        ShopUseCase.CheckoutResult result = shopService.checkout(USERNAME,
+                new ShopUseCase.CheckoutCommand(escolhida, null, null));
+
+        assertThat(result.order().delivery().fee()).isEqualByComparingTo("0");
+        assertThat(result.order().delivery().courierName()).isNull();
+        assertThat(result.order().delivery().method()).isEqualTo(DeliveryMethod.UBER_FLASH);
+        assertThat(result.atendimento().tipo()).isEqualTo(DeliveryType.ENTREGA);
+        assertThat(result.atendimento().preferenciaPagamento()).isEqualTo(PreferenciaPagamento.PIX);
+    }
+
+    @Test
+    void checkout_balcao_entregaQueNaoSejaPixRecusaAntesDeTocarNoCarrinho() {
+        OrderDelivery escolhida = new OrderDelivery(DeliveryType.ENTREGA, endereco(), DeliveryMethod.MOTOBOY_LOJA,
+                null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> shopService.checkout(USERNAME,
+                new ShopUseCase.CheckoutCommand(escolhida, PreferenciaPagamento.CREDITO, null)))
+                .isInstanceOf(InvalidDeliveryException.class);
+        verifyNoInteractions(cartRepository, orderRepository, estoqueUseCase);
+    }
+
+    @Test
+    void checkout_balcao_entregaSemMetodoOuPelosCorreiosRecusa() {
+        OrderDelivery semMetodo = new OrderDelivery(DeliveryType.ENTREGA, endereco(), null, null, null, null, null,
+                null, null);
+        OrderDelivery correios = new OrderDelivery(DeliveryType.ENTREGA, endereco(), DeliveryMethod.CORREIOS, null,
+                null, null, null, null, null);
+
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, new ShopUseCase.CheckoutCommand(semMetodo, null, null)))
+                .isInstanceOf(InvalidDeliveryException.class);
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, new ShopUseCase.CheckoutCommand(correios, null, null)))
+                .isInstanceOf(InvalidDeliveryException.class);
+    }
+
+    @Test
+    void prazoDoDia_depoisDaHoraLimiteVaiParaAmanhaEValorIlegivelCaiNoPadrao() {
+        when(systemConfigPort.findByKey(ShopService.HORA_LIMITE_KEY))
+                .thenReturn(Optional.of(new SystemConfig(ShopService.HORA_LIMITE_KEY, "20:30", Instant.now(), "dev")));
+        // 21h em Botucatu, depois das 20h30: o prazo é amanhã às 20h30.
+        assertThat(shopService.prazoDoDia(Instant.parse("2026-10-24T00:00:00Z")))
+                .isEqualTo(Instant.parse("2026-10-24T23:30:00Z"));
+
+        when(systemConfigPort.findByKey(ShopService.HORA_LIMITE_KEY))
+                .thenReturn(Optional.of(new SystemConfig(ShopService.HORA_LIMITE_KEY, "às dez", Instant.now(), "dev")));
+        assertThat(shopService.prazoDoDia(AGORA)).isEqualTo(Instant.parse("2026-10-24T01:00:00Z"));
+    }
+
+    @Test
+    void cancelMyOrder_tiraDaFilaEAvisaOCaixaQuandoJaAceito() {
+        stubAuthenticatedCustomer();
+        Order order = marketplaceOrder(10L, CUSTOMER_ID);
+        when(orderUseCase.getOrder(10L)).thenReturn(order);
+        when(orderUseCase.cancelOrder(10L, "desisti", USERNAME)).thenReturn(order);
+        AtendimentoPedidoApp aceito = AtendimentoPedidoApp.novo(10L, DeliveryType.RETIRADA, PreferenciaPagamento.PIX,
+                null, AGORA.plusSeconds(3600), AGORA).aceito(5L, "caixa1", AGORA);
+        when(atendimentoRepository.findByOrderIdForUpdate(10L)).thenReturn(Optional.of(aceito));
+
+        shopService.cancelMyOrder(USERNAME, 10L, "desisti");
+
+        ArgumentCaptor<AtendimentoPedidoApp> captor = ArgumentCaptor.forClass(AtendimentoPedidoApp.class);
+        verify(atendimentoRepository).save(captor.capture());
+        assertThat(captor.getValue().status()).isEqualTo(AtendimentoStatus.CANCELADO);
+        assertThat(captor.getValue().motivo()).isEqualTo("desisti");
+        verify(avisoOperadores).avisar(eq("shop.pedido-app.cancelado:10"), eq("PDV_SALE_MANAGE"),
+                eq(NotificationType.PEDIDO_APP), any(), any(), eq("/pdv"));
+    }
+
+    private static DeliveryAddress endereco() {
+        return new DeliveryAddress("Rua Amando de Barros", "100", null, "18600-000", "Centro", "Botucatu", "SP",
+                null, null);
+    }
+
+    /** Como o repositório real: devolve o pedido com id e com a entrega gravada. */
+    private Order withIdKeepingDelivery(Order order, Long id) {
+        return new Order(id, order.orderNumber(), order.channel(), order.status(), order.customerId(),
+                order.sessionId(), order.warehouseCode(), order.items(), order.grossAmount(), order.discountAmount(),
+                order.cashbackRedeemed(), order.netAmount(), order.changeAmount(), order.cancelReason(),
+                order.createdAt(), order.paidAt(), order.concludedAt(), order.cancelledAt(), order.refundedAt(),
+                order.reservedAt(), order.separatedAt(), order.shippedAt(), order.deliveredAt(), order.version(),
+                order.comandaId(), order.tableLabel(), order.serviceFeeAmount(), order.delivery());
     }
 
     @Test
@@ -590,6 +749,7 @@ class ShopServiceTest {
 
     @Test
     void checkout_propagatesPaymentGatewayExceptionAndNeverClearsCart() {
+        stubModoGateway();
         stubAuthenticatedCustomer();
         stubCustomerLookup();
         Cart cart = Cart.of(1L, CUSTOMER_ID, List.of(new CartItem("ESS-001", new BigDecimal("2"))), Instant.now());

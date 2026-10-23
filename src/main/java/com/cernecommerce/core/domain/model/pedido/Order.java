@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.pedido;
 
+import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
 
 import java.math.BigDecimal;
@@ -149,10 +150,10 @@ public record Order(
             }
         }
 
-        // PDV-F022 — entrega/retirada é do balcão. A mesa consome no salão, e o marketplace ainda
-        // não tem frete modelado (quando tiver, esta regra é o lugar de abrir).
-        if (delivery != null && channel != SalesChannel.BALCAO) {
-            throw new IllegalArgumentException("delivery só existe em pedido de BALCAO: channel=" + channel);
+        // PDV-F022 — entrega/retirada é do balcão; ECM-F009 abriu para o marketplace, onde o
+        // cliente escolhe no checkout. A mesa consome no salão e continua sem.
+        if (delivery != null && channel == SalesChannel.MESA) {
+            throw new IllegalArgumentException("delivery não existe em pedido de MESA");
         }
 
         // Estado e carimbo de tempo não podem discordar: é a invariante que o CHECK do schema
@@ -238,11 +239,20 @@ public record Order(
      * estoque já está reservado e a janela de pagamento está correndo.
      */
     public static Order openMarketplace(Long customerId, String warehouseCode, List<OrderItem> items) {
+        return openMarketplace(customerId, warehouseCode, items, null);
+    }
+
+    /**
+     * ECM-F009 — com a retirada ou entrega escolhida no checkout. A taxa de uma entrega chega zerada:
+     * quem a define é o caixa, no aceite ({@link #withDeliveryFee}).
+     */
+    public static Order openMarketplace(Long customerId, String warehouseCode, List<OrderItem> items,
+            OrderDelivery delivery) {
         Totals totals = Totals.from(items);
         return new Order(null, null, SalesChannel.MARKETPLACE, OrderStatus.AGUARDANDO_PAGAMENTO, customerId,
                 null, warehouseCode, items, totals.gross(), totals.discount(), BigDecimal.ZERO, totals.net(),
                 null, null, Instant.now(), null, null, null, null, null, null, null, null, 0L, null, null,
-                BigDecimal.ZERO, null);
+                BigDecimal.ZERO, delivery);
     }
 
     /**
@@ -563,6 +573,22 @@ public record Order(
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
                 deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, newDelivery);
+    }
+
+    /**
+     * ECM-F010 — a taxa de entrega que o caixa define ao aceitar o pedido do app. Só antes do
+     * pagamento: depois dele a taxa já entrou no valor cobrado e volta a ser congelada, como na
+     * venda de balcão.
+     */
+    public Order withDeliveryFee(BigDecimal fee) {
+        if (channel != SalesChannel.MARKETPLACE || status != OrderStatus.AGUARDANDO_PAGAMENTO) {
+            throw new InvalidDeliveryException(
+                    "taxa de entrega só é definida em pedido do app aguardando pagamento: pedido " + id);
+        }
+        if (delivery == null) {
+            throw new InvalidDeliveryException("pedido " + id + " não tem entrega");
+        }
+        return withDelivery(delivery.withFee(fee));
     }
 
     /**

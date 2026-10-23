@@ -53,6 +53,8 @@ public class ResourceRateLimitingFilter extends OncePerRequestFilter {
         String method = request.getMethod();
         // Página do QR da mesa: pública, leitura e escrita, por IP.
         if (path.startsWith("/public/salao/")) return false;
+        // ECM-F010 — cada checkout do app reserva estoque até o fim do dia e toca o aviso no caixa.
+        if ("/shop/checkout".equals(path) && "POST".equalsIgnoreCase(method)) return false;
         if (!"GET".equalsIgnoreCase(method)) return true;
 
         return !"/crm/customers/export".equals(path)
@@ -98,6 +100,7 @@ public class ResourceRateLimitingFilter extends OncePerRequestFilter {
         if ("/crm/customers/export".equals(path)) return "crm-export";
         if ("/estoque/movements".equals(path)) return "estoque-movements";
         if ("/notifications/stream".equals(path)) return "notifications-stream";
+        if ("/shop/checkout".equals(path)) return "shop-checkout";
         if (path.startsWith("/public/salao/")) {
             // O código da mesa tem 4 dígitos: tentativas contadas à parte e bem apertadas.
             if (path.endsWith("/acesso")) return "salao-publico-acesso";

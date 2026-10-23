@@ -44,6 +44,9 @@ public interface OrderRepository {
      */
     Optional<Order> findByIdForUpdate(Long id);
 
+    /** ECM-F010 — pedidos por id, com itens, numa consulta só (a fila de pedidos do app). Sem ordem garantida. */
+    java.util.List<Order> findByIds(java.util.Collection<Long> ids);
+
     /** PDV-F029 — os pedidos MESA gerados pelas comandas, com itens, numa consulta só. */
     java.util.List<Order> findByComandaIds(java.util.Collection<Long> comandaIds);
 

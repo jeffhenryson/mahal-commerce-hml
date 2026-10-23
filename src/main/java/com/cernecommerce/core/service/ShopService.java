@@ -5,6 +5,7 @@ import com.cernecommerce.core.domain.exception.ecommerce.CartEmptyException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartItemNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidKitSelectionException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException;
+import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
@@ -12,7 +13,10 @@ import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
+import com.cernecommerce.core.domain.model.config.SystemConfig;
 import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.PreferenciaPagamento;
 import com.cernecommerce.core.domain.model.ecommerce.Cart;
 import com.cernecommerce.core.domain.model.ecommerce.CartItem;
 import com.cernecommerce.core.domain.model.estoque.Category;
@@ -25,8 +29,13 @@ import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
+import com.cernecommerce.core.domain.model.notification.NotificationType;
+import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
+import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
+import com.cernecommerce.core.ports.in.AvisoOperadoresUseCase;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -34,6 +43,8 @@ import com.cernecommerce.core.ports.in.KitBuilderUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
 import com.cernecommerce.core.ports.in.ShopUseCase;
 import com.cernecommerce.core.ports.in.UserUseCase;
+import com.cernecommerce.core.ports.out.SystemConfigPort;
+import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import com.cernecommerce.core.ports.out.ecommerce.CartRepository;
 import com.cernecommerce.core.ports.out.ecommerce.PaymentGatewayPort;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
@@ -44,6 +55,13 @@ import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -55,6 +73,23 @@ import java.util.UUID;
 public class ShopService implements ShopUseCase {
 
     private static final String MARKETPLACE_ORIGIN = "MARKETPLACE";
+
+    // ECM-F009 — BALCAO: o pedido do app é pago no caixa, sem link de gateway. GATEWAY: o fluxo
+    // InfinitePay de ECM-F004, intacto para quando a loja voltar a cobrar online.
+    static final String MODO_PAGAMENTO_KEY = "shop.checkout.modo-pagamento";
+    static final String MODO_GATEWAY = "GATEWAY";
+    // ECM-F011 — até que horas do dia o pedido do app segura o estoque sem pagamento.
+    static final String HORA_LIMITE_KEY = "shop.pedido.hora-limite";
+    static final LocalTime HORA_LIMITE_PADRAO = LocalTime.of(22, 0);
+    static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
+    /**
+     * A reserva vence um pouco DEPOIS do prazo do pedido: quem devolve o saldo é o varredor do
+     * pedido, que cancela junto. Se a reserva vencesse antes, o pedido ficaria de pé sem estoque.
+     */
+    static final Duration FOLGA_RESERVA = Duration.ofMinutes(30);
+    /** Quem recebe o aviso de pedido do app: quem vende no caixa. */
+    static final String PERMISSAO_CAIXA = "PDV_SALE_MANAGE";
+    private static final String DESTINO_AVISO = "/pdv";
 
     private final CrmUseCase crmUseCase;
     private final UserUseCase userUseCase;
@@ -68,12 +103,22 @@ public class ShopService implements ShopUseCase {
     private final EmailPort emailPort;
     private final KitBuilderUseCase kitBuilderUseCase;
     private final AfterCommitExecutor afterCommitExecutor;
+    private final AtendimentoPedidoAppRepository atendimentoRepository;
+    private final SystemConfigPort systemConfigPort;
+    private final AvisoOperadoresUseCase avisoOperadores;
+    private final Clock clock;
 
     public ShopService(CrmUseCase crmUseCase, UserUseCase userUseCase, EstoqueUseCase estoqueUseCase,
             CartRepository cartRepository, OrderRepository orderRepository, OrderUseCase orderUseCase,
             CashbackUseCase cashbackUseCase, PaymentGatewayPort paymentGatewayPort,
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
-            KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor) {
+            KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor,
+            AtendimentoPedidoAppRepository atendimentoRepository, SystemConfigPort systemConfigPort,
+            AvisoOperadoresUseCase avisoOperadores, Clock clock) {
+        this.atendimentoRepository = atendimentoRepository;
+        this.systemConfigPort = systemConfigPort;
+        this.avisoOperadores = avisoOperadores;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
         this.kitBuilderUseCase = kitBuilderUseCase;
         this.afterCommitExecutor = afterCommitExecutor;
         this.crmUseCase = crmUseCase;
@@ -232,7 +277,13 @@ public class ShopService implements ShopUseCase {
 
     @Override
     @Transactional
-    public CheckoutResult checkout(String username) {
+    public CheckoutResult checkout(String username, CheckoutCommand command) {
+        CheckoutCommand escolha = command == null ? CheckoutCommand.retirada() : command;
+        boolean balcao = !MODO_GATEWAY.equalsIgnoreCase(config(MODO_PAGAMENTO_KEY));
+        // Validado antes de tocar no carrinho: escolha inválida não custa reserva nem pedido.
+        OrderDelivery delivery = balcao ? entregaDoCheckout(escolha.delivery()) : null;
+        PreferenciaPagamento preferencia = balcao ? preferenciaDoCheckout(delivery, escolha.preferenciaPagamento()) : null;
+
         Long customerId = requireCustomerId(username);
         Cart cart = cartRepository.findByCustomerId(customerId).orElse(Cart.empty(customerId));
         if (cart.isEmpty()) {
@@ -269,19 +320,34 @@ public class ShopService implements ShopUseCase {
             orderItems.add(item);
         }
 
-        Order order = Order.openMarketplace(customerId, warehouse.code(), orderItems);
+        Order order = Order.openMarketplace(customerId, warehouse.code(), orderItems, delivery);
         Order saved = orderRepository.save(order);
+
+        // ECM-F011 — no balcão a reserva segura o estoque até o fim do dia; no gateway, a janela
+        // curta padrão do pagamento online.
+        Instant agora = clock.instant();
+        Instant prazo = balcao ? prazoDoDia(agora) : null;
+        Duration ttl = prazo == null ? null : Duration.between(agora, prazo).plus(FOLGA_RESERVA);
 
         // Se a reserva de qualquer item falhar (InsufficientStockException), a transação inteira
         // desfaz o pedido recém-criado — não fica um AGUARDANDO_PAGAMENTO com reserva pela metade.
         for (OrderItem item : orderItems) {
             estoqueUseCase.reserveStock(item.sku(), warehouse.code(), item.quantity(),
-                    Order.reservationOwnerReference(saved.id()), null, username);
+                    Order.reservationOwnerReference(saved.id()), ttl, username);
+        }
+
+        Customer customer = crmUseCase.findCustomerById(customerId);
+        if (balcao) {
+            AtendimentoPedidoApp atendimento = atendimentoRepository.save(AtendimentoPedidoApp.novo(saved.id(),
+                    delivery.type(), preferencia, escolha.observacao(), prazo, agora));
+            cartRepository.clear(customerId);
+            avisarPedidoNovo(saved, customer.nome());
+            enviarConfirmacao(saved, customer, null);
+            return new CheckoutResult(saved, null, atendimento);
         }
 
         // ECM-F004: orderNsu é sempre o nosso Order.id — o InfinitePay não devolve identificador
         // de transação na criação do link, só no webhook; a correlação de volta é por este valor.
-        Customer customer = crmUseCase.findCustomerById(customerId);
         PaymentGatewayPort.CheckoutLink link = paymentGatewayPort.createCheckoutLink(
                 saved.id().toString(), saved.netAmount(), "Pedido " + saved.id(),
                 customer.nome(), customer.email());
@@ -289,13 +355,83 @@ public class ShopService implements ShopUseCase {
                 OrderPayment.pending(saved.id(), PaymentMethod.GATEWAY_PIX, saved.netAmount()));
 
         cartRepository.clear(customerId);
+        enviarConfirmacao(saved, customer, link.checkoutUrl());
+        return new CheckoutResult(saved, link.checkoutUrl());
+    }
+
+    private void enviarConfirmacao(Order saved, Customer customer, String checkoutUrl) {
         if (customer.email() != null && !customer.email().isBlank()) {
             // Depois do commit: confirmação de um pedido que acabou revertido não pode sair.
             OrderEmailView view = OrderEmailView.of(saved, customer.nome());
             afterCommitExecutor.accumulate("shop.order-confirmation:" + saved.id(), saved, orders ->
-                    emailPort.sendOrderConfirmation(customer.email(), view, link.checkoutUrl()));
+                    emailPort.sendOrderConfirmation(customer.email(), view, checkoutUrl));
         }
-        return new CheckoutResult(saved, link.checkoutUrl());
+    }
+
+    /**
+     * ECM-F009 — retirada quando o cliente não escolhe nada. Na entrega, a taxa que porventura
+     * venha do cliente é descartada: quem a define é o caixa, no aceite.
+     */
+    private static OrderDelivery entregaDoCheckout(OrderDelivery escolhida) {
+        if (escolhida == null || escolhida.type() == DeliveryType.RETIRADA) {
+            return new OrderDelivery(DeliveryType.RETIRADA, null, null, null, null, null, null, null, null);
+        }
+        if (escolhida.method() == null) {
+            throw new InvalidDeliveryException("entrega do app exige o método (MOTOBOY_LOJA, APP_99 ou UBER_FLASH)");
+        }
+        if (escolhida.method() == DeliveryMethod.CORREIOS) {
+            throw new InvalidDeliveryException("o app não entrega pelos Correios");
+        }
+        // Entregador e códigos são do operador; do cliente só vêm endereço e método.
+        return new OrderDelivery(DeliveryType.ENTREGA, escolhida.address(), escolhida.method(), null, null, null,
+                null, null, BigDecimal.ZERO);
+    }
+
+    /** Entrega é Pix, cobrado pelo operador antes de despachar; retirada aceita o que a loja aceita. */
+    private static PreferenciaPagamento preferenciaDoCheckout(OrderDelivery delivery, PreferenciaPagamento escolhida) {
+        if (delivery.isEntrega()) {
+            if (escolhida != null && escolhida != PreferenciaPagamento.PIX) {
+                throw new InvalidDeliveryException("pedido com entrega é pago por Pix");
+            }
+            return PreferenciaPagamento.PIX;
+        }
+        return escolhida == null ? PreferenciaPagamento.PIX : escolhida;
+    }
+
+    /**
+     * ECM-F011 — o horário-limite de hoje no fuso da loja; se já passou, o de amanhã. Valor
+     * ilegível na configuração cai no padrão, em vez de derrubar o checkout.
+     */
+    Instant prazoDoDia(Instant agora) {
+        LocalTime limite = HORA_LIMITE_PADRAO;
+        String configurado = config(HORA_LIMITE_KEY);
+        if (configurado != null && !configurado.isBlank()) {
+            try {
+                limite = LocalTime.parse(configurado.strip());
+            } catch (DateTimeParseException e) {
+                limite = HORA_LIMITE_PADRAO;
+            }
+        }
+        ZonedDateTime local = agora.atZone(ZONA_LOJA);
+        ZonedDateTime prazo = local.toLocalDate().atTime(limite).atZone(ZONA_LOJA);
+        if (!prazo.isAfter(local)) {
+            prazo = prazo.plusDays(1);
+        }
+        return prazo.toInstant();
+    }
+
+    private void avisarPedidoNovo(Order order, String cliente) {
+        String tipo = order.delivery() != null && order.delivery().isEntrega() ? "Entrega" : "Retirada";
+        avisoOperadores.avisar("shop.pedido-app.novo:" + order.id(), PERMISSAO_CAIXA, NotificationType.PEDIDO_APP,
+                "Pedido do app #" + order.id(),
+                cliente + " — " + order.items().size() + " item(ns), R$ " + order.netAmount().toPlainString()
+                        + " — " + tipo,
+                DESTINO_AVISO);
+    }
+
+    private String config(String key) {
+        return systemConfigPort.findByKey(key).map(SystemConfig::value)
+                .orElse(null);
     }
 
     @Override
@@ -317,7 +453,21 @@ public class ShopService implements ShopUseCase {
     public Order cancelMyOrder(String username, Long orderId, String reason) {
         Long customerId = requireCustomerId(username);
         requireOwnOrder(orderId, customerId);
-        return orderUseCase.cancelOrder(orderId, reason, username);
+        Order cancelled = orderUseCase.cancelOrder(orderId, reason, username);
+        // ECM-F010 — sai da fila do caixa. Se um operador já tinha pegado, ele é avisado: pode estar
+        // separando o pedido agora.
+        atendimentoRepository.findByOrderIdForUpdate(orderId)
+                .filter(AtendimentoPedidoApp::emAndamento)
+                .ifPresent(atendimento -> {
+                    atendimentoRepository.save(atendimento.cancelado(reason, clock.instant()));
+                    if (atendimento.sessionId() != null) {
+                        avisoOperadores.avisar("shop.pedido-app.cancelado:" + orderId, PERMISSAO_CAIXA,
+                                NotificationType.PEDIDO_APP, "Pedido do app #" + orderId + " cancelado",
+                                "O cliente cancelou pelo app" + (reason == null || reason.isBlank() ? "." : ": " + reason),
+                                DESTINO_AVISO);
+                    }
+                });
+        return cancelled;
     }
 
     /**

@@ -22,6 +22,8 @@ public enum NotificationType {
     SOLICITACAO_SESSAO,
     /** Chamado da mesa pelo QR (conta, recolher, carvão, atendente) — para quem tem PDV_COMANDA_MANAGE. */
     CHAMADO_MESA,
+    /** Pedido novo ou cancelado pelo app do cliente (ECM-F010) — para quem tem PDV_SALE_MANAGE. */
+    PEDIDO_APP,
     /** Alertas técnicos (bug report, falha de integração, erro 500, segurança) — para a ROLE_DEV. */
     DEV
 }
