@@ -545,4 +545,31 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(resp.getBody().errorCode()).isEqualTo("CUSTOMER_ACCOUNT_ROLES_IMMUTABLE");
     }
+
+    // ── EST-F054 · exclusão lógica ────────────────────────────────────────────
+
+    @Test
+    void productIsDraft_returns409_withCode() {
+        ResponseEntity<ApiError> resp = handler.handleProductIsDraft(
+                new com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException("SKU-1"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("PRODUCT_IS_DRAFT");
+    }
+
+    @Test
+    void productArchived_returns409_withCodeEMensagemLegivel() {
+        ResponseEntity<ApiError> resp = handler.handleProductArchived(
+                new com.cernecommerce.core.domain.exception.estoque.ProductArchivedException("SKU-1"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("PRODUCT_ARCHIVED");
+        assertThat(resp.getBody().message()).contains("restaure");
+    }
+
+    @Test
+    void skuArchived_returns409_withCode() {
+        ResponseEntity<ApiError> resp = handler.handleSkuArchived(
+                new com.cernecommerce.core.domain.exception.estoque.SkuArchivedException("SKU-1"), req);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().errorCode()).isEqualTo("SKU_ARCHIVED");
+    }
 }

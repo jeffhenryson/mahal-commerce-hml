@@ -3072,7 +3072,7 @@ public class EstoqueControllerTest {
         verify(estoqueUseCase).deleteProduct("SKU-DRAFT");
     }
 
-    /** O 409 tem que instruir: a mensagem do domínio aponta o caminho do active:false. */
+    /** O 409 tem que instruir: a mensagem do domínio aponta o caminho do archive (EST-F054). */
     @Test
     void deleteProduct_comProdutoPublicado_responde409ComOCaminhoCerto() throws Exception {
         when(estoqueUseCase.findProductBySku("SKU-001")).thenReturn(product("SKU-001"));
@@ -3082,6 +3082,103 @@ public class EstoqueControllerTest {
         mockMvc.perform(delete("/estoque/products/SKU-001").principal(AUTH))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("PRODUCT_NOT_DRAFT"))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("active")));
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("/archive")));
+    }
+
+    // ── EST-F054 · exclusão lógica (arquivar/restaurar) ──────────────────────────────────────
+
+    @Test
+    void archiveProduct_responde204_ePublicaAuditoriaComNome() throws Exception {
+        when(estoqueUseCase.archiveProduct("SKU-001", "admin")).thenReturn(product("SKU-001"));
+
+        mockMvc.perform(post("/estoque/products/SKU-001/archive").principal(AUTH))
+                .andExpect(status().isNoContent());
+
+        verify(estoqueUseCase).archiveProduct("SKU-001", "admin");
+        verify(publisher).publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(e ->
+                e instanceof com.cernecommerce.core.domain.event.AuditEvent a
+                        && a.type() == com.cernecommerce.core.domain.event.AuditEvent.EventType.PRODUCT_ARCHIVED
+                        && "SKU-001".equals(a.details().get("sku"))
+                        && a.details().get("name") != null));
+    }
+
+    @Test
+    void archiveProduct_comRascunho_responde409ProductIsDraft() throws Exception {
+        when(estoqueUseCase.archiveProduct("SKU-DRAFT", "admin"))
+                .thenThrow(new com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException("SKU-DRAFT"));
+
+        mockMvc.perform(post("/estoque/products/SKU-DRAFT/archive").principal(AUTH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("PRODUCT_IS_DRAFT"));
+
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void archiveProduct_skuInexistente_responde404() throws Exception {
+        when(estoqueUseCase.archiveProduct("NAO-EXISTE", "admin"))
+                .thenThrow(new com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException("NAO-EXISTE"));
+
+        mockMvc.perform(post("/estoque/products/NAO-EXISTE/archive").principal(AUTH))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void restoreProduct_responde204_ePublicaAuditoria() throws Exception {
+        when(estoqueUseCase.restoreProduct("SKU-001")).thenReturn(product("SKU-001"));
+
+        mockMvc.perform(post("/estoque/products/SKU-001/restore").principal(AUTH))
+                .andExpect(status().isNoContent());
+
+        verify(publisher).publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(e ->
+                e instanceof com.cernecommerce.core.domain.event.AuditEvent a
+                        && a.type() == com.cernecommerce.core.domain.event.AuditEvent.EventType.PRODUCT_RESTORED));
+    }
+
+    @Test
+    void list_semArchived_naoPedeArquivados_eComArchivedTrue_pede() throws Exception {
+        when(estoqueUseCase.listProducts(anyInt(), anyInt(), any(), any(), any()))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        mockMvc.perform(get("/estoque/products")).andExpect(status().isOk());
+        mockMvc.perform(get("/estoque/products").param("archived", "true")).andExpect(status().isOk());
+
+        ArgumentCaptor<ProductFilter> filter = ArgumentCaptor.forClass(ProductFilter.class);
+        verify(estoqueUseCase, times(2)).listProducts(anyInt(), anyInt(), filter.capture(), any(), any());
+        assertThat(filter.getAllValues().get(0).archived()).isNull();
+        assertThat(filter.getAllValues().get(1).archived()).isTrue();
+    }
+
+    @Test
+    void registerMovement_entradaDeArquivado_responde409SemMovimentar() throws Exception {
+        doThrow(new com.cernecommerce.core.domain.exception.estoque.ProductArchivedException("NARG-001"))
+                .when(estoqueUseCase).requireNotArchived("NARG-001");
+
+        mockMvc.perform(post("/estoque/movements")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sku\":\"NARG-001\",\"warehouseCode\":\"LOJA-01\",\"type\":\"ENTRADA\","
+                                + "\"quantity\":5.000,\"reason\":\"Recebimento\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("PRODUCT_ARCHIVED"));
+
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+    }
+
+    /** Saída manual passa: é como o operador dá baixa no que sobrou de um produto excluído. */
+    @Test
+    void registerMovement_saidaNaoConsultaArquivamento() throws Exception {
+        when(estoqueUseCase.adjustStock(eq("NARG-001"), eq("LOJA-01"), eq(MovementType.SAIDA),
+                any(), any(), eq("admin")))
+                .thenReturn(StockBalance.of(1L, "NARG-001", 1L, BigDecimal.ZERO, 1L));
+
+        mockMvc.perform(post("/estoque/movements")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sku\":\"NARG-001\",\"warehouseCode\":\"LOJA-01\",\"type\":\"SAIDA\","
+                                + "\"quantity\":5.000,\"reason\":\"Perda\"}"))
+                .andExpect(status().isCreated());
+
+        verify(estoqueUseCase, never()).requireNotArchived(any());
     }
 }

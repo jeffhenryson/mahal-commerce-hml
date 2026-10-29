@@ -5178,4 +5178,163 @@ class EstoqueServiceTest {
         assertThatThrownBy(() -> estoqueService.deleteProduct("SUMIU"))
                 .isInstanceOf(ProductNotFoundException.class);
     }
+
+    // ── EST-F054 · exclusão lógica (arquivar/restaurar) ──────────────────────────────────────
+
+    private static Product arquivado(String sku) {
+        return Product.of(1L, sku, "Excluído", "essencia", true, List.of()).withStatus(ProductStatus.ARQUIVADO);
+    }
+
+    @Test
+    void archiveProduct_publicado_arquivaComAutorENaoMexeEmActive() {
+        Product ativo = Product.of(1L, "SKU-001", "Produto", "essencia", true, List.of());
+        when(productRepository.findBySku("SKU-001")).thenReturn(Optional.of(ativo));
+
+        Product result = estoqueService.archiveProduct("SKU-001", "admin");
+
+        assertThat(result.name()).isEqualTo("Produto");
+        verify(productRepository).archive(eq("SKU-001"), any(Instant.class), eq("admin"));
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void archiveProduct_jaArquivado_eIdempotente() {
+        when(productRepository.findBySku("SKU-001")).thenReturn(Optional.of(arquivado("SKU-001")));
+
+        estoqueService.archiveProduct("SKU-001", "admin");
+
+        verify(productRepository, never()).archive(any(), any(), any());
+    }
+
+    @Test
+    void archiveProduct_rascunho_eRecusadoComOCaminhoDoDelete() {
+        Product rascunho = Product.of(1L, "SKU-DRAFT", "Rascunho", "essencia", true, List.of())
+                .withStatus(ProductStatus.RASCUNHO);
+        when(productRepository.findBySku("SKU-DRAFT")).thenReturn(Optional.of(rascunho));
+
+        assertThatThrownBy(() -> estoqueService.archiveProduct("SKU-DRAFT", "admin"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException.class);
+        verify(productRepository, never()).archive(any(), any(), any());
+    }
+
+    @Test
+    void archiveProduct_skuInexistente_lanca404() {
+        when(productRepository.findBySku("SUMIU")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> estoqueService.archiveProduct("SUMIU", "admin"))
+                .isInstanceOf(ProductNotFoundException.class);
+    }
+
+    @Test
+    void restoreProduct_arquivado_restaura_eNaoArquivado_eIdempotente() {
+        when(productRepository.findBySku("SKU-ARQ")).thenReturn(Optional.of(arquivado("SKU-ARQ")));
+        when(productRepository.findBySku("SKU-001")).thenReturn(Optional.of(
+                Product.of(2L, "SKU-001", "Produto", "essencia", true, List.of())));
+
+        estoqueService.restoreProduct("SKU-ARQ");
+        estoqueService.restoreProduct("SKU-001");
+
+        verify(productRepository).restore("SKU-ARQ");
+        verify(productRepository, never()).restore("SKU-001");
+    }
+
+    @Test
+    void resolveSaleInfo_deArquivado_eRecusado() {
+        when(productRepository.findByAnySku("SKU-ARQ")).thenReturn(Optional.of(arquivado("SKU-ARQ")));
+
+        assertThatThrownBy(() -> estoqueService.resolveSaleInfo("SKU-ARQ"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.ProductArchivedException.class);
+    }
+
+    @Test
+    void findProductByBarcode_deArquivado_responde404() {
+        when(productRepository.findByBarcode("7890000000001")).thenReturn(Optional.of(arquivado("SKU-ARQ")));
+
+        assertThatThrownBy(() -> estoqueService.findProductByBarcode("7890000000001"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException.class);
+    }
+
+    /** GET /products/{sku} continua respondendo: as telas de histórico abrem o produto por ele. */
+    @Test
+    void findProductBySku_deArquivado_continuaRespondendo() {
+        when(productRepository.findByAnySku("SKU-ARQ")).thenReturn(Optional.of(arquivado("SKU-ARQ")));
+
+        assertThat(estoqueService.findProductBySku("SKU-ARQ").isArchived()).isTrue();
+    }
+
+    @Test
+    void requireNotArchived_soRecusaArquivado() {
+        when(productRepository.isArchived("SKU-ARQ")).thenReturn(true);
+
+        assertThatThrownBy(() -> estoqueService.requireNotArchived("SKU-ARQ"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.ProductArchivedException.class);
+        assertThatCode(() -> estoqueService.requireNotArchived("SKU-001")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProduct_comSkuDeArquivado_lancaSkuArchived() {
+        when(productRepository.existsBySku("NARG-001")).thenReturn(true);
+        when(productRepository.isArchived("NARG-001")).thenReturn(true);
+
+        assertThatThrownBy(() -> estoqueService.createProduct("NARG-001", "Narguile Aladin", "narguile", oneVariant()))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.SkuArchivedException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void createProduct_comStatusArquivado_eRecusado() {
+        assertThatThrownBy(() -> estoqueService.createProduct("EST54-001", "Produto", null, List.of(), null,
+                null, null, false, false, null, null, List.of(), List.of(), null,
+                null, null, false, false, null, null, null, null, null, null, ProductStatus.ARQUIVADO, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void updateProduct_naoArquivaNemRestauraPorPatch() {
+        when(productRepository.findBySku("SKU-001")).thenReturn(Optional.of(
+                Product.of(1L, "SKU-001", "Produto", "essencia", true, List.of())));
+        when(productRepository.findBySku("SKU-ARQ")).thenReturn(Optional.of(arquivado("SKU-ARQ")));
+
+        assertThatThrownBy(() -> estoqueService.updateProduct("SKU-001", null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, ProductStatus.ARQUIVADO, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> estoqueService.updateProduct("SKU-ARQ", null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, null, ProductStatus.ATIVO, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void defineKitRecipe_comComponenteArquivado_eRecusado() {
+        when(productRepository.findBySku("KIT-001")).thenReturn(Optional.of(
+                Product.of(1L, "KIT-001", "Kit Narguile", "combo", true, List.of())));
+        when(kitComponentRepository.isUsedAsComponent("KIT-001")).thenReturn(false);
+        when(productRepository.findByAnySku("CARV-001")).thenReturn(Optional.of(
+                simpleProduct("CARV-001", "20.00").withStatus(ProductStatus.ARQUIVADO)));
+
+        assertThatThrownBy(() -> estoqueService.defineKitRecipe("KIT-001",
+                List.of(new KitComponentCommand("CARV-001", BigDecimal.ONE))))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.ProductArchivedException.class);
+    }
+
+    /** Componente arquivado conta como inexistente: o saldo continua lá, mas o kit fica bloqueado. */
+    @Test
+    void getStockBalance_kitComComponenteArquivado_ficaZerado() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(productRepository.findByAnySku("KIT-001")).thenReturn(Optional.of(kitProduct("KIT-001", "80.00")));
+        when(kitComponentRepository.findByKitSku("KIT-001")).thenReturn(List.of(
+                KitComponent.create("KIT-001", "CARV-001", new BigDecimal("2")),
+                KitComponent.create("KIT-001", "ESS-001", new BigDecimal("3"))));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("CARV-001", 1L))
+                .thenReturn(Optional.of(StockBalance.of(10L, "CARV-001", 1L, new BigDecimal("10"), 0L)));
+        when(productRepository.isArchived("CARV-001")).thenReturn(false);
+        when(productRepository.isArchived("ESS-001")).thenReturn(true);
+
+        StockBalance result = estoqueService.getStockBalance("KIT-001", "LOJA-01");
+
+        assertThat(result.quantity()).isEqualByComparingTo("0");
+        verify(stockBalanceRepository, never()).findBySkuAndWarehouseId("ESS-001", 1L);
+    }
 }

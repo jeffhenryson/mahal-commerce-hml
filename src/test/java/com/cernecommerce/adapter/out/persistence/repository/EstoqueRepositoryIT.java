@@ -2182,4 +2182,104 @@ class EstoqueRepositoryIT {
 
         assertThat(replenishmentListRepository.findByWarehouseId(deposito.id())).isEmpty();
     }
+
+    // ── EST-F054 · exclusão lógica ───────────────────────────────────────────────────────────
+
+    @Test
+    void findAll_excluiArquivadoPorPadrao_eArchivedTrueDevolveSoEle() {
+        productRepository.save(Product.create("ARQ-FLT-ATIVO", "Produto", "arq-flt", List.of()));
+        productRepository.save(Product.create("ARQ-FLT-ARQ", "Excluído", "arq-flt", List.of()));
+        flushAndClear();
+        productRepository.archive("ARQ-FLT-ARQ", Instant.now(), "admin");
+        flushAndClear();
+
+        ProductFilter base = new ProductFilter(null, "arq-flt", null, null);
+        assertThat(skus(filtrar(base))).containsExactly("ARQ-FLT-ATIVO");
+        assertThat(skus(filtrar(new ProductFilter(null, "arq-flt", null, null, null, null, null, null, false))))
+                .containsExactly("ARQ-FLT-ATIVO");
+        assertThat(skus(filtrar(new ProductFilter(null, "arq-flt", null, null, null, null, null, null, true))))
+                .containsExactly("ARQ-FLT-ARQ");
+        // A busca (caminho do PDV) usa a mesma query.
+        assertThat(skus(filtrar(new ProductFilter("arq-flt-arq", null, null, null)))).isEmpty();
+    }
+
+    @Test
+    void archive_eRestore_gravamStatusEAuditoria_eIsArchivedResolveVariacao() {
+        productRepository.save(Product.create("ARQ-VAR", "Essência", "arq-var",
+                List.of(ProductVariant.create("ARQ-VAR-A", List.of(new ProductAttribute("Sabor", "Menta"))))));
+        flushAndClear();
+
+        productRepository.archive("ARQ-VAR", Instant.parse("2026-10-29T12:00:00Z"), "admin");
+        flushAndClear();
+
+        assertThat(productRepository.findBySku("ARQ-VAR").orElseThrow().status()).isEqualTo(ProductStatus.ARQUIVADO);
+        assertThat(productRepository.isArchived("ARQ-VAR")).isTrue();
+        assertThat(productRepository.isArchived("ARQ-VAR-A")).isTrue();
+        assertThat(productRepository.isArchived("NAO-EXISTE")).isFalse();
+        // Arquivado continua ocupando o SKU e o código de barras.
+        assertThat(productRepository.existsBySku("ARQ-VAR-A")).isTrue();
+
+        productRepository.restore("ARQ-VAR");
+        flushAndClear();
+
+        assertThat(productRepository.findBySku("ARQ-VAR").orElseThrow().status()).isEqualTo(ProductStatus.ATIVO);
+        assertThat(productRepository.isArchived("ARQ-VAR-A")).isFalse();
+    }
+
+    /** save() remonta a entidade do zero: editar um arquivado não pode apagar quando/por quem. */
+    @Test
+    void save_deArquivado_preservaArchivedAtEBy() {
+        productRepository.save(Product.create("ARQ-SAVE", "Produto", "arq-save", List.of()));
+        flushAndClear();
+        productRepository.archive("ARQ-SAVE", Instant.parse("2026-10-29T12:00:00Z"), "admin");
+        flushAndClear();
+
+        Product arquivado = productRepository.findBySku("ARQ-SAVE").orElseThrow();
+        productRepository.save(arquivado.withActive(false));
+        flushAndClear();
+
+        Object[] row = (Object[]) em.createNativeQuery(
+                        "SELECT status, archived_by FROM product WHERE sku = 'ARQ-SAVE'").getSingleResult();
+        assertThat(row[0]).isEqualTo("ARQUIVADO");
+        assertThat(row[1]).isEqualTo("admin");
+    }
+
+    @Test
+    void catalogoPublico_excluiRascunhoEArquivado() {
+        Pricing precificado = Pricing.of(null, null, new BigDecimal("10.00"));
+        productRepository.save(Product.create("ARQ-VIT-ATIVO", "Arq Vitrine", "arq-vit", List.of(), precificado));
+        productRepository.save(Product.create("ARQ-VIT-RASC", "Arq Vitrine", "arq-vit", List.of(), precificado)
+                .withStatus(ProductStatus.RASCUNHO));
+        productRepository.save(Product.create("ARQ-VIT-ARQ", "Arq Vitrine", "arq-vit", List.of(), precificado));
+        flushAndClear();
+        productRepository.archive("ARQ-VIT-ARQ", Instant.now(), "admin");
+        flushAndClear();
+
+        assertThat(skus(productRepository.findAllActiveAndPriced(0, 100, null, null, "arq-vit")))
+                .containsExactly("ARQ-VIT-ATIVO");
+    }
+
+    @Test
+    void saldoEAlertas_ignoramArquivado() {
+        Warehouse deposito = givenWarehouse("ARQ-SALDO-WH-" + System.nanoTime());
+        productRepository.save(Product.create("ARQ-SALDO", "Produto", "arq-saldo", List.of(),
+                Pricing.of(new BigDecimal("5.00"), null, new BigDecimal("9.90"))));
+        stockBalanceRepository.save(StockBalance.of(null, "ARQ-SALDO", deposito.id(), new BigDecimal("10"), 0L));
+        reorderPointRepository.save(ReorderPoint.create("ARQ-SALDO", deposito.id(), new BigDecimal("20")));
+        flushAndClear();
+        BigDecimal valorAntes = stockBalanceRepository.sumInventoryValueAtCost();
+        ReorderAlertCounts alertasAntes = reorderPointRepository.countAlerts();
+        assertThat(stockBalanceRepository.findByWarehouseId(deposito.id(), 0, 10).content()).hasSize(1);
+        assertThat(reorderPointRepository.findByWarehouseId(deposito.id(), 0, 10).content()).hasSize(1);
+
+        productRepository.archive("ARQ-SALDO", Instant.now(), "admin");
+        flushAndClear();
+
+        assertThat(valorAntes.subtract(stockBalanceRepository.sumInventoryValueAtCost())).isEqualByComparingTo("50.00");
+        assertThat(reorderPointRepository.countAlerts().criticos()).isEqualTo(alertasAntes.criticos() - 1);
+        assertThat(stockBalanceRepository.findByWarehouseId(deposito.id(), 0, 10).content()).isEmpty();
+        assertThat(reorderPointRepository.findByWarehouseId(deposito.id(), 0, 10).content()).isEmpty();
+        // O saldo não foi tocado: continua lá para quando o produto for restaurado.
+        assertThat(stockBalanceRepository.findBySkuAndWarehouseId("ARQ-SALDO", deposito.id())).isPresent();
+    }
 }

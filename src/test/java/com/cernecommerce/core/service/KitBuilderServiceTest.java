@@ -199,10 +199,12 @@ class KitBuilderServiceTest {
                         Pricing.of(null, null, new BigDecimal("7.00")), ProductType.SIMPLES, false)
                 .withCategory(CAT_SEDA, "cat").withVisibleInPos(true).withVisibleInMarketplace(true);
         Product rascunho = product("SEDA-R", "Rascunho", CAT_SEDA, "5.00").withStatus(ProductStatus.RASCUNHO);
+        // EST-F054 — arquivado também não é opção de kit.
+        Product arquivado = product("SEDA-A", "Excluído", CAT_SEDA, "5.00").withStatus(ProductStatus.ARQUIVADO);
         Product kit = product("SEDA-K", "Kit fixo", CAT_SEDA, "5.00").withType(ProductType.KIT);
         when(estoqueUseCase.listActivePricedProducts(0, KitBuilderService.MAX_OPTIONS_PER_STEP, null, CAT_SEDA, null))
-                .thenReturn(new PageResult<>(List.of(sedaComGrade, rascunho, kit,
-                        product("SEDA-01", "Seda Alfafa", CAT_SEDA, "5.00")), 0, 100, 4L, 1));
+                .thenReturn(new PageResult<>(List.of(sedaComGrade, rascunho, arquivado, kit,
+                        product("SEDA-01", "Seda Alfafa", CAT_SEDA, "5.00")), 0, 100, 5L, 1));
 
         List<StepOption> options = service.listStepOptions(7L, SEDA, KitChannel.MARKETPLACE, null);
 
