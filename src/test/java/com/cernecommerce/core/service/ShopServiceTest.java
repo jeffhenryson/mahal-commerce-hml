@@ -12,6 +12,9 @@ import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
 import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.ports.in.AvisoOperadoresUseCase;
+import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppIndisponivelException;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository;
+import com.cernecommerce.core.domain.model.ecommerce.CentralPedidosConfig;
 import com.cernecommerce.core.ports.out.SystemConfigPort;
 import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import java.time.Clock;
@@ -80,6 +83,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.time.LocalTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -110,6 +114,20 @@ class ShopServiceTest {
     private static final Instant AGORA = Instant.parse("2026-10-23T15:00:00Z");
 
     ShopService shopService;
+    /** ECM-F013 — configuração da Central de Pedidos que o teste troca; começa no padrão (sempre aberto). */
+    CentralPedidosConfig recebimento = CentralPedidosConfig.padrao();
+    final CentralPedidosConfigRepository centralConfig = new CentralPedidosConfigRepository() {
+        @Override
+        public Optional<CentralPedidosConfig> find() {
+            return Optional.of(recebimento);
+        }
+
+        @Override
+        public CentralPedidosConfig save(CentralPedidosConfig config, String updatedBy) {
+            recebimento = config;
+            return config;
+        }
+    };
 
     private static final Warehouse WAREHOUSE =
             Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
@@ -121,7 +139,7 @@ class ShopServiceTest {
         shopService = new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository,
                 orderRepository, orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository,
                 emailPort, kitBuilderUseCase, immediateExecutor, atendimentoRepository, systemConfigPort,
-                avisoOperadores, Clock.fixed(AGORA, ZoneOffset.UTC));
+                avisoOperadores, centralConfig, Clock.fixed(AGORA, ZoneOffset.UTC));
     }
 
     private void stubModoGateway() {
@@ -206,7 +224,7 @@ class ShopServiceTest {
         Product product = Product.of(1L, "ESS-001", "Essência Maçã", "essencia", true, List.of(),
                 Pricing.of(new BigDecimal("15.00"), null, new BigDecimal("30.00")));
         when(estoqueUseCase.getDefaultWarehouse()).thenReturn(WAREHOUSE);
-        when(estoqueUseCase.listActivePricedProducts(0, 20, null, null, null))
+        when(estoqueUseCase.listMarketplaceCatalog(0, 20, null, null, null))
                 .thenReturn(new PageResult<>(List.of(product), 0, 20, 1L, 1));
         when(estoqueUseCase.getStockBalance("ESS-001", "LOJA-01"))
                 .thenReturn(StockBalance.of(1L, "ESS-001", 1L, BigDecimal.TEN, BigDecimal.ZERO, 0L));
@@ -225,7 +243,7 @@ class ShopServiceTest {
         Product product = Product.of(1L, "ESS-001", "Essência Maçã", "essencia", true, List.of(),
                 Pricing.of(new BigDecimal("15.00"), null, new BigDecimal("30.00")));
         when(estoqueUseCase.getDefaultWarehouse()).thenReturn(WAREHOUSE);
-        when(estoqueUseCase.listActivePricedProducts(0, 20, null, null, null))
+        when(estoqueUseCase.listMarketplaceCatalog(0, 20, null, null, null))
                 .thenReturn(new PageResult<>(List.of(product), 0, 20, 1L, 1));
         when(estoqueUseCase.getStockBalance("ESS-001", "LOJA-01"))
                 .thenReturn(StockBalance.of(1L, "ESS-001", 1L, BigDecimal.ZERO, BigDecimal.ZERO, 0L));
@@ -241,7 +259,7 @@ class ShopServiceTest {
 
         assertThatThrownBy(() -> shopService.listCatalog(0, 20, null))
                 .isInstanceOf(DefaultWarehouseNotConfiguredException.class);
-        verify(estoqueUseCase, never()).listActivePricedProducts(anyInt(), anyInt(), any(), any(), any());
+        verify(estoqueUseCase, never()).listMarketplaceCatalog(anyInt(), anyInt(), any(), any(), any());
     }
 
     @Test
@@ -299,7 +317,7 @@ class ShopServiceTest {
                 ProductType.SIMPLES, false, null, null, false, true, "Descrição", "http://video.mp4",
                 List.of("http://img1.png"));
         when(estoqueUseCase.getDefaultWarehouse()).thenReturn(WAREHOUSE);
-        when(estoqueUseCase.listActivePricedProducts(0, 20, null, null, null))
+        when(estoqueUseCase.listMarketplaceCatalog(0, 20, null, null, null))
                 .thenReturn(new PageResult<>(List.of(product), 0, 20, 1L, 1));
         when(estoqueUseCase.getStockBalance("ESS-001", "LOJA-01"))
                 .thenReturn(StockBalance.of(1L, "ESS-001", 1L, BigDecimal.TEN, BigDecimal.ZERO, 0L));
@@ -614,7 +632,7 @@ class ShopServiceTest {
         verifyNoInteractions(paymentGatewayPort);
         verify(orderPaymentRepository, never()).save(any());
         verify(cartRepository).clear(CUSTOMER_ID);
-        verify(avisoOperadores).avisar(eq("shop.pedido-app.novo:99"), eq("PDV_SALE_MANAGE"),
+        verify(avisoOperadores).avisar(eq("shop.pedido-app.novo:99"), eq(List.of("PDV_SALE_MANAGE", "ONLINE_ORDER_READ")),
                 eq(NotificationType.PEDIDO_APP), any(), any(), eq("/pdv"));
         verify(emailPort).sendOrderConfirmation(eq(USERNAME), any(), isNull());
     }
@@ -635,6 +653,58 @@ class ShopServiceTest {
         assertThat(result.order().delivery().method()).isEqualTo(DeliveryMethod.UBER_FLASH);
         assertThat(result.atendimento().tipo()).isEqualTo(DeliveryType.ENTREGA);
         assertThat(result.atendimento().preferenciaPagamento()).isEqualTo(PreferenciaPagamento.PIX);
+    }
+
+    @Test
+    void checkout_comOAppPausadoOuForaDoHorario_recusaAntesDeTocarNoCarrinho() {
+        recebimento = new CentralPedidosConfig(false, true, List.of(), false, 20, 40, 30, null, true, null);
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, null))
+                .isInstanceOf(PedidoAppIndisponivelException.class)
+                .extracting(e -> ((PedidoAppIndisponivelException) e).codigo()).isEqualTo("LOJA_FECHADA");
+
+        // 12h de sexta em Botucatu; a loja só abre às 18h.
+        recebimento = new CentralPedidosConfig(true, true,
+                List.of(new CentralPedidosConfig.Horario(5, LocalTime.of(18, 0), LocalTime.of(2, 0))), false, 20, 40,
+                30, null, true, null);
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, null))
+                .isInstanceOf(PedidoAppIndisponivelException.class);
+        verifyNoInteractions(cartRepository, orderRepository, estoqueUseCase);
+    }
+
+    @Test
+    void checkout_modalidadeDesligadaOuBairroForaDaListaRecusa() {
+        recebimento = new CentralPedidosConfig(true, true, List.of(), false, 20, 40, 30,
+                new CentralPedidosConfig.Entrega(true, BigDecimal.ZERO, BigDecimal.ZERO, null,
+                        List.of(new CentralPedidosConfig.TaxaBairro("Vila Nova", new BigDecimal("5.00")))),
+                false, null);
+        OrderDelivery entrega = new OrderDelivery(DeliveryType.ENTREGA, endereco(), DeliveryMethod.MOTOBOY_LOJA,
+                null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, null))
+                .extracting(e -> ((PedidoAppIndisponivelException) e).codigo()).isEqualTo("MODALIDADE_INDISPONIVEL");
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, new ShopUseCase.CheckoutCommand(entrega, null, null)))
+                .extracting(e -> ((PedidoAppIndisponivelException) e).codigo()).isEqualTo("FORA_DA_AREA");
+        verifyNoInteractions(cartRepository, orderRepository, estoqueUseCase);
+    }
+
+    @Test
+    void checkout_entregaAbaixoDoPedidoMinimoRecusaSemReservar() {
+        stubAuthenticatedCustomer();
+        Cart cart = Cart.of(1L, CUSTOMER_ID, List.of(new CartItem("ESS-001", new BigDecimal("2"))), Instant.now());
+        when(cartRepository.findByCustomerId(CUSTOMER_ID)).thenReturn(Optional.of(cart));
+        when(estoqueUseCase.getDefaultWarehouse()).thenReturn(WAREHOUSE);
+        when(estoqueUseCase.resolveSaleInfo("ESS-001")).thenReturn(new EstoqueUseCase.CatalogSaleInfo(
+                "Essência", Pricing.of(new BigDecimal("15.00"), null, new BigDecimal("30.00"))));
+        recebimento = new CentralPedidosConfig(true, true, List.of(), false, 20, 40, 30,
+                new CentralPedidosConfig.Entrega(true, BigDecimal.ZERO, new BigDecimal("1000.00"), null, List.of()),
+                true, null);
+        OrderDelivery entrega = new OrderDelivery(DeliveryType.ENTREGA, endereco(), DeliveryMethod.MOTOBOY_LOJA,
+                null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> shopService.checkout(USERNAME, new ShopUseCase.CheckoutCommand(entrega, null, null)))
+                .extracting(e -> ((PedidoAppIndisponivelException) e).codigo()).isEqualTo("PEDIDO_MINIMO");
+        verify(orderRepository, never()).save(any());
+        verify(estoqueUseCase, never()).reserveStock(any(), any(), any(), any(), any(), any());
     }
 
     @Test

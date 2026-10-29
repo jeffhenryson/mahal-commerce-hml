@@ -52,7 +52,8 @@ class ShopControllerTest {
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new ShopController(shopUseCase, publisher,
                         new com.cernecommerce.adapter.in.converter.ShopCatalogDTOConverter(),
-                        new com.cernecommerce.adapter.in.converter.CategoryDTOConverter()))
+                        new com.cernecommerce.adapter.in.converter.CategoryDTOConverter(),
+                        mock(com.cernecommerce.core.ports.in.CentralPedidosUseCase.class)))
                 .setControllerAdvice(exceptionHandler)
                 .build();
     }

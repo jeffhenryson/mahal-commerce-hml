@@ -36,6 +36,9 @@ import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.ports.in.AvisoOperadoresUseCase;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository;
+import com.cernecommerce.core.domain.model.ecommerce.CentralPedidosConfig;
+import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppIndisponivelException;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
@@ -89,6 +92,8 @@ public class ShopService implements ShopUseCase {
     static final Duration FOLGA_RESERVA = Duration.ofMinutes(30);
     /** Quem recebe o aviso de pedido do app: quem vende no caixa. */
     static final String PERMISSAO_CAIXA = "PDV_SALE_MANAGE";
+    /** ...e quem acompanha a Central de Pedidos (ECM-F012), que pode não vender no caixa. */
+    static final String PERMISSAO_CENTRAL = "ONLINE_ORDER_READ";
     private static final String DESTINO_AVISO = "/pdv";
 
     private final CrmUseCase crmUseCase;
@@ -106,6 +111,8 @@ public class ShopService implements ShopUseCase {
     private final AtendimentoPedidoAppRepository atendimentoRepository;
     private final SystemConfigPort systemConfigPort;
     private final AvisoOperadoresUseCase avisoOperadores;
+    /** ECM-F013 — se o app está recebendo, horários, entrega e retirada, da Central de Pedidos. */
+    private final CentralPedidosConfigRepository centralConfig;
     private final Clock clock;
 
     public ShopService(CrmUseCase crmUseCase, UserUseCase userUseCase, EstoqueUseCase estoqueUseCase,
@@ -114,7 +121,8 @@ public class ShopService implements ShopUseCase {
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
             KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor,
             AtendimentoPedidoAppRepository atendimentoRepository, SystemConfigPort systemConfigPort,
-            AvisoOperadoresUseCase avisoOperadores, Clock clock) {
+            AvisoOperadoresUseCase avisoOperadores, CentralPedidosConfigRepository centralConfig, Clock clock) {
+        this.centralConfig = centralConfig;
         this.atendimentoRepository = atendimentoRepository;
         this.systemConfigPort = systemConfigPort;
         this.avisoOperadores = avisoOperadores;
@@ -154,7 +162,7 @@ public class ShopService implements ShopUseCase {
     public PageResult<CatalogItem> listCatalog(int page, int size, Boolean onSale, Long categoryId,
             String search) {
         Warehouse warehouse = estoqueUseCase.getDefaultWarehouse();
-        PageResult<Product> products = estoqueUseCase.listActivePricedProducts(page, size, onSale, categoryId,
+        PageResult<Product> products = estoqueUseCase.listMarketplaceCatalog(page, size, onSale, categoryId,
                 search);
         return new PageResult<>(
                 products.content().stream().map(p -> toCatalogItem(p, warehouse.code())).toList(),
@@ -171,7 +179,8 @@ public class ShopService implements ShopUseCase {
     @Transactional(readOnly = true)
     public CatalogItemDetail getCatalogItem(String sku) {
         Product product = estoqueUseCase.findProductBySku(sku);
-        if (!product.active() || !product.pricing().isPriced()) {
+        // ECM-F013 — fora do app (Central de Pedidos/Estoque) é como não existir para o público.
+        if (!product.active() || !product.pricing().isPriced() || !product.visibleInMarketplace()) {
             // Mesmo raciocínio de pedido de outro cliente (plano §5.4): o público não deve
             // conseguir distinguir "não existe" de "existe, mas não está à venda".
             throw new ProductNotFoundException(sku);
@@ -280,8 +289,16 @@ public class ShopService implements ShopUseCase {
     public CheckoutResult checkout(String username, CheckoutCommand command) {
         CheckoutCommand escolha = command == null ? CheckoutCommand.retirada() : command;
         boolean balcao = !MODO_GATEWAY.equalsIgnoreCase(config(MODO_PAGAMENTO_KEY));
+        // ECM-F013 — a Central de Pedidos diz se o app recebe agora e o quê.
+        CentralPedidosConfig recebimento = centralConfig.atual();
+        if (!recebimento.appAbertoEm(clock.instant().atZone(ZONA_LOJA))) {
+            throw PedidoAppIndisponivelException.lojaFechada();
+        }
         // Validado antes de tocar no carrinho: escolha inválida não custa reserva nem pedido.
         OrderDelivery delivery = balcao ? entregaDoCheckout(escolha.delivery()) : null;
+        if (delivery != null) {
+            exigirModalidade(delivery, recebimento);
+        }
         PreferenciaPagamento preferencia = balcao ? preferenciaDoCheckout(delivery, escolha.preferenciaPagamento()) : null;
 
         Long customerId = requireCustomerId(username);
@@ -321,6 +338,10 @@ public class ShopService implements ShopUseCase {
         }
 
         Order order = Order.openMarketplace(customerId, warehouse.code(), orderItems, delivery);
+        if (delivery != null && delivery.isEntrega()
+                && order.netAmount().compareTo(recebimento.entrega().pedidoMinimo()) < 0) {
+            throw PedidoAppIndisponivelException.pedidoMinimo(recebimento.entrega().pedidoMinimo());
+        }
         Order saved = orderRepository.save(order);
 
         // ECM-F011 — no balcão a reserva segura o estoque até o fim do dia; no gateway, a janela
@@ -387,6 +408,21 @@ public class ShopService implements ShopUseCase {
                 null, null, BigDecimal.ZERO);
     }
 
+    /** ECM-F013 — a modalidade escolhida está ligada e, na entrega, o bairro é atendido. */
+    private static void exigirModalidade(OrderDelivery delivery, CentralPedidosConfig recebimento) {
+        if (delivery.isEntrega()) {
+            if (!recebimento.entrega().habilitada()) {
+                throw PedidoAppIndisponivelException.modalidadeIndisponivel("Entrega");
+            }
+            String bairro = delivery.address() == null ? null : delivery.address().district();
+            if (!recebimento.atendeBairro(bairro)) {
+                throw PedidoAppIndisponivelException.foraDaArea(bairro);
+            }
+        } else if (!recebimento.retiradaHabilitada()) {
+            throw PedidoAppIndisponivelException.modalidadeIndisponivel("Retirada");
+        }
+    }
+
     /** Entrega é Pix, cobrado pelo operador antes de despachar; retirada aceita o que a loja aceita. */
     private static PreferenciaPagamento preferenciaDoCheckout(OrderDelivery delivery, PreferenciaPagamento escolhida) {
         if (delivery.isEntrega()) {
@@ -422,7 +458,8 @@ public class ShopService implements ShopUseCase {
 
     private void avisarPedidoNovo(Order order, String cliente) {
         String tipo = order.delivery() != null && order.delivery().isEntrega() ? "Entrega" : "Retirada";
-        avisoOperadores.avisar("shop.pedido-app.novo:" + order.id(), PERMISSAO_CAIXA, NotificationType.PEDIDO_APP,
+        avisoOperadores.avisar("shop.pedido-app.novo:" + order.id(), List.of(PERMISSAO_CAIXA, PERMISSAO_CENTRAL),
+                NotificationType.PEDIDO_APP,
                 "Pedido do app #" + order.id(),
                 cliente + " — " + order.items().size() + " item(ns), R$ " + order.netAmount().toPlainString()
                         + " — " + tipo,

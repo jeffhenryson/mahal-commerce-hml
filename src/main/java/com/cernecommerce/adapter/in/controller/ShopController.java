@@ -13,7 +13,10 @@ import com.cernecommerce.adapter.in.dtos.response.ShopRegisterResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
+import com.cernecommerce.core.ports.in.CentralPedidosUseCase;
 import com.cernecommerce.core.ports.in.ShopUseCase;
+import com.cernecommerce.adapter.in.converter.CentralPedidosDTOConverter;
+import com.cernecommerce.adapter.in.dtos.response.LojaStatusResponseDTO;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -51,9 +54,12 @@ public class ShopController {
     private final ApplicationEventPublisher publisher;
     private final ShopCatalogDTOConverter catalogConverter;
     private final CategoryDTOConverter categoryConverter;
+    private final CentralPedidosUseCase centralPedidos;
 
     public ShopController(ShopUseCase shopUseCase, ApplicationEventPublisher publisher,
-            ShopCatalogDTOConverter catalogConverter, CategoryDTOConverter categoryConverter) {
+            ShopCatalogDTOConverter catalogConverter, CategoryDTOConverter categoryConverter,
+            CentralPedidosUseCase centralPedidos) {
+        this.centralPedidos = centralPedidos;
         this.shopUseCase = shopUseCase;
         this.publisher = publisher;
         this.catalogConverter = catalogConverter;
@@ -129,5 +135,13 @@ public class ShopController {
     @GetMapping("/catalog/{sku}")
     public ResponseEntity<ShopCatalogItemDetailResponseDTO> getCatalogItem(@PathVariable String sku) {
         return ResponseEntity.ok(catalogConverter.toResponse(shopUseCase.getCatalogItem(sku)));
+    }
+
+    @Operation(summary = "A loja está recebendo pedidos pelo app?",
+            description = "ECM-F013 — pública. O app consulta antes do checkout: aberto, modalidades, tempos "
+                    + "estimados, pedido mínimo e bairros atendidos, da configuração da Central de Pedidos.")
+    @GetMapping("/store-status")
+    public ResponseEntity<LojaStatusResponseDTO> storeStatus() {
+        return ResponseEntity.ok(CentralPedidosDTOConverter.toDto(centralPedidos.statusLoja()));
     }
 }
