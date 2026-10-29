@@ -874,6 +874,7 @@ Query: page, size
 ```
 Query: page (default 0, >= 0), size (default 20, 1..100)
        search — nome, SKU, categoria ou marca, sem caixa nem acento (EST-F029: "alfafa" traz a categoria Alfafa inteira)
+       archived — EST-F054: omitido/false exclui os arquivados; true devolve SÓ os arquivados (filtro Excluídos)
 // Response 200 → PageResult<ProductResponse> / 400 VALIDATION_ERROR
 ```
 
@@ -1532,7 +1533,7 @@ Descarta um **rascunho** de produto ou kit (EST-F026).
 ```
 DELETE /estoque/products/SKU-DRAFT
 // Response 204
-// 409 PRODUCT_NOT_DRAFT — produto publicado; use PATCH /estoque/products/{sku}/active
+// 409 PRODUCT_NOT_DRAFT — produto publicado; use POST /estoque/products/{sku}/archive (EST-F054)
 // 409 PRODUCT_HAS_STOCK_HISTORY — há saldo ou movimentação no SKU pai ou em alguma variação
 // 404 PRODUCT_NOT_FOUND
 ```
@@ -1547,6 +1548,53 @@ tenant inteiro.
 `stock_balance`, `stock_movement`, `order_item` e `comanda_item`, **sem FK** (EST-C011), e apagar o
 produto deixaria esse histórico órfão. Pelo mesmo motivo, rascunho que chegou a movimentar estoque
 também é recusado.
+
+### POST /estoque/products/{sku}/archive — Permissão: ESTOQUE_PRODUCT_MANAGE
+
+Exclusão **lógica** de produto publicado (EST-F054). `{sku}` é o SKU **pai**; as variações vão junto.
+
+```
+POST /estoque/products/NARG-001/archive
+// Response 204 — também quando já estava arquivado (idempotente)
+// 409 PRODUCT_IS_DRAFT — rascunho; o caminho dele é o DELETE acima
+// 404 PRODUCT_NOT_FOUND
+```
+
+`status` vira `ARQUIVADO` e grava `archived_at`/`archived_by` (V179, fora do response por ora). Não
+mexe em `active` nem no saldo — produto com saldo pode ser arquivado. Auditoria `PRODUCT_ARCHIVED`
+com `sku` e `name`.
+
+| Onde | Efeito |
+|---|---|
+| `GET /estoque/products` (inclusive `search`, `kitComponentEligible`) | fora por padrão; `archived=true` traz só eles |
+| `GET /estoque/products/by-barcode/{barcode}` | 404 (PDV e NF-e não encontram) |
+| `GET /shop/catalog`, `/shop/catalog/{sku}`, opções do kit builder, salão | fora (404 no detalhe) |
+| Receita de kit (EST-F015) | componente arquivado → 409 `PRODUCT_ARCHIVED`; kit que já o usa fica com disponibilidade 0 |
+| `/estoque/summary`, `/estoque/stock-balance`, pontos de reposição, lista de reposição | fora; notificação de reposição não dispara |
+| Venda nova (PDV, comanda, loja, troca), carrinho, `ENTRADA` manual, recebimento de Compras/NF-e, lista de reposição | 409 `PRODUCT_ARCHIVED` |
+| Criar produto/variação ou trocar SKU para o SKU dele | 409 `SKU_ARCHIVED`; código de barras continua `BARCODE_ALREADY_EXISTS` |
+| `GET /estoque/products/{sku}`, histórico, relatórios | **sem mudança** (`status: "ARQUIVADO"` no response) |
+
+`SAIDA` e `AJUSTE` continuam livres — manuais e internos (consumo de reserva, contagem, abertura de
+embalagem) —, e estorno/transferência também (chegam como `ENTRADA`, mas não pelos caminhos acima): o
+saldo que já existe não pode ficar preso, mesma régua do produto inativo (EST-F018). `status:
+ARQUIVADO` não é aceito no `POST`/`PATCH` de produto (400): só se entra e sai por `/archive` e
+`/restore`.
+
+> **Rascunho no mesmo pacote:** vitrine, salão, receita de kit, resumo e reposição passaram a filtrar
+> `status = 'ATIVO'`, o que também tira de lá os rascunhos — antes só o kit builder e o valor do
+> estoque os excluíam.
+
+### POST /estoque/products/{sku}/restore — Permissão: ESTOQUE_PRODUCT_MANAGE
+
+```
+POST /estoque/products/NARG-001/restore
+// Response 204 — também quando não estava arquivado (idempotente)
+// 404 PRODUCT_NOT_FOUND
+```
+
+Volta para `ATIVO`, limpa `archived_at/by` e o produto reaparece em todos os lugares com o mesmo
+saldo. Auditoria `PRODUCT_RESTORED`.
 
 ---
 
