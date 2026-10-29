@@ -516,8 +516,8 @@ public interface EstoqueUseCase {
      * produto que o operador não queria publicar. Cinco rascunhos abandonados desligavam o recurso
      * para o tenant inteiro.</p>
      *
-     * <p><b>Só rascunho.</b> Produto publicado responde 409 e continua saindo de circulação por
-     * {@code active:false}: exclusão de catálogo deixaria órfão o histórico que referencia o SKU
+     * <p><b>Só rascunho.</b> Produto publicado responde 409 e é excluído por
+     * {@link #archiveProduct}: exclusão de catálogo deixaria órfão o histórico que referencia o SKU
      * como texto livre, sem FK (EST-C011).</p>
      *
      * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException se o SKU
@@ -528,6 +528,41 @@ public interface EstoqueUseCase {
      *         houver saldo ou movimentação gravados para o SKU — ou para qualquer SKU da grade.
      */
     void deleteProduct(String sku);
+
+    /**
+     * Exclusão lógica de produto publicado (EST-F054): {@code status → ARQUIVADO}, com a grade de
+     * variações junto. Some de listagens, busca, leitor, vitrine, kits e reposição; o histórico e
+     * {@link #findProductBySku} continuam respondendo. Não mexe em {@code active} nem no saldo.
+     * Idempotente — já arquivado não faz nada.
+     *
+     * @param sku SKU do produto <b>pai</b>.
+     * @return o produto como estava antes de arquivar (para a auditoria ler o nome).
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException se o SKU
+     *         pai não existir.
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException se for
+     *         rascunho — o caminho dele é {@link #deleteProduct}.
+     */
+    Product archiveProduct(String sku, String username);
+
+    /**
+     * Desfaz {@link #archiveProduct}: volta para {@code ATIVO}, com o mesmo saldo. Idempotente —
+     * produto não arquivado não muda.
+     *
+     * @return o produto como estava antes de restaurar.
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException se o SKU
+     *         pai não existir.
+     */
+    Product restoreProduct(String sku);
+
+    /**
+     * Recusa movimento originado fora do sistema (entrada manual, recebimento de Compras/NF-e)
+     * para SKU de produto arquivado (EST-F054). Estorno, transferência, reserva e ajuste não
+     * chamam: o saldo que já existe não pode ficar preso.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductArchivedException se o SKU
+     *         (pai ou variação) pertencer a um produto arquivado.
+     */
+    void requireNotArchived(String sku);
 
     // ── Categorias do catálogo ───────────────────────────────────────────────
     //

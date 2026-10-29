@@ -13,6 +13,6 @@ package com.cernecommerce.core.domain.exception.estoque;
 public class ProductNotDraftException extends RuntimeException {
     public ProductNotDraftException(String sku) {
         super("Produto " + sku + " não é um rascunho e não pode ser excluído: "
-                + "use PATCH /estoque/products/" + sku + "/active com active:false para retirá-lo de circulação");
+                + "use POST /estoque/products/" + sku + "/archive para excluí-lo preservando o histórico");
     }
 }

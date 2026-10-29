@@ -236,7 +236,8 @@ public class KitBuilderService implements KitBuilderUseCase {
      * ele explodiria em componentes que o cliente não escolheu.
      */
     private static boolean isSellableInKit(Product product, KitChannel channel) {
-        if (!product.active() || product.status() == ProductStatus.RASCUNHO || product.type() == ProductType.KIT) {
+        // EST-F054 — status != ATIVO cobre rascunho e arquivado.
+        if (!product.active() || product.status() != ProductStatus.ATIVO || product.type() == ProductType.KIT) {
             return false;
         }
         return channel == KitChannel.PDV ? product.visibleInPos() : product.visibleInMarketplace();

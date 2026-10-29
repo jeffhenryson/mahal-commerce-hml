@@ -102,6 +102,6 @@ public class ProductResponseDTO {
     /** PDV-F048 — faixa da sessão sugerida no PDV para esta essência. Nulo = sem faixa. */
     private Long sessionTierId;
 
-    /** {@code RASCUNHO} ou {@code ATIVO} (EST-F023). */
+    /** {@code RASCUNHO}, {@code ATIVO} ou {@code ARQUIVADO} (EST-F023, EST-F054). */
     private String status;
 }

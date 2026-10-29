@@ -24,6 +24,7 @@ import com.cernecommerce.core.domain.model.estoque.KitChannel;
 import com.cernecommerce.core.domain.model.estoque.KitQuote;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.estoque.Product;
+import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
@@ -180,7 +181,9 @@ public class ShopService implements ShopUseCase {
     public CatalogItemDetail getCatalogItem(String sku) {
         Product product = estoqueUseCase.findProductBySku(sku);
         // ECM-F013 — fora do app (Central de Pedidos/Estoque) é como não existir para o público.
-        if (!product.active() || !product.pricing().isPriced() || !product.visibleInMarketplace()) {
+        // EST-F054 — rascunho e arquivado também: só produto publicado está na vitrine.
+        if (product.status() != ProductStatus.ATIVO || !product.active() || !product.pricing().isPriced()
+                || !product.visibleInMarketplace()) {
             // Mesmo raciocínio de pedido de outro cliente (plano §5.4): o público não deve
             // conseguir distinguir "não existe" de "existe, mas não está à venda".
             throw new ProductNotFoundException(sku);
@@ -567,6 +570,8 @@ public class ShopService implements ShopUseCase {
 
     /** Mesma validação que {@link OrderItem#fromCatalog} faria no checkout — só descarta o resultado. */
     private void requirePriced(String sku) {
+        // EST-F054 — produto excluído não entra no carrinho (o checkout recusaria do mesmo jeito).
+        estoqueUseCase.requireNotArchived(sku);
         OrderItem.fromCatalog(sku, BigDecimal.ONE, estoqueUseCase.findPricingBySku(sku), BigDecimal.ZERO, null);
     }
 

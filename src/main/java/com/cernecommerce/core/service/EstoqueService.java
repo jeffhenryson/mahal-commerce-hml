@@ -61,6 +61,9 @@ import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
+import com.cernecommerce.core.domain.exception.estoque.ProductArchivedException;
+import com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException;
+import com.cernecommerce.core.domain.exception.estoque.SkuArchivedException;
 import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -138,6 +141,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -285,6 +289,10 @@ public class EstoqueService implements EstoqueUseCase {
         List<ProductVariant> safeVariants = variants == null ? List.of() : variants;
         ProductType resolvedType = type == null ? ProductType.SIMPLES : type;
         ProductStatus resolvedStatus = status == null ? ProductStatus.ATIVO : status;
+        // EST-F054 — ARQUIVADO só se alcança por archiveProduct, que é quem grava quando e por quem.
+        if (resolvedStatus == ProductStatus.ARQUIVADO) {
+            throw new IllegalArgumentException("status ARQUIVADO não é aceito na criação");
+        }
         // EST-F023: teto de 5 rascunhos, validado no servidor — o frontend também valida, mas em
         // memória, e duas abas do mesmo operador furariam o limite sem esta checagem aqui.
         if (resolvedStatus == ProductStatus.RASCUNHO && productRepository.countByStatus(ProductStatus.RASCUNHO) >= 5) {
@@ -319,9 +327,7 @@ public class EstoqueService implements EstoqueUseCase {
             }
         }
         for (String candidate : candidates) {
-            if (productRepository.existsBySku(candidate)) {
-                throw new DuplicateSkuException(candidate);
-            }
+            requireSkuFree(candidate);
         }
         // Mesmo raciocínio acima, para o espaço de nomes de código de barras (pai + variações).
         Set<String> barcodeCandidates = new LinkedHashSet<>();
@@ -426,6 +432,12 @@ public class EstoqueService implements EstoqueUseCase {
         TableSessionCommand mesa = TableSessionCommand.orEmpty(tableSession);
         Product current = productRepository.findBySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
+        // EST-F054 — entrar ou sair de ARQUIVADO é archive/restore, nunca PATCH: são eles que gravam e
+        // limpam archived_at/by. Repetir o status atual (o form reenvia tudo) passa.
+        if (status != null && status != current.status()
+                && (status == ProductStatus.ARQUIVADO || current.isArchived())) {
+            throw new IllegalArgumentException("status ARQUIVADO só muda por /archive e /restore");
+        }
         // EST-F023: só conta contra o teto quem está ENTRANDO em RASCUNHO agora — editar um
         // rascunho que já era rascunho não pode contar duas vezes contra o próprio teto.
         if (status == ProductStatus.RASCUNHO && current.status() != ProductStatus.RASCUNHO
@@ -542,9 +554,7 @@ public class EstoqueService implements EstoqueUseCase {
             }
         }
         for (String candidate : skuCandidates) {
-            if (productRepository.existsBySku(candidate)) {
-                throw new DuplicateSkuException(candidate);
-            }
+            requireSkuFree(candidate);
         }
         Set<String> barcodeCandidates = new LinkedHashSet<>();
         for (ProductVariant variant : safeNewVariants) {
@@ -646,6 +656,53 @@ public class EstoqueService implements EstoqueUseCase {
 
     private boolean hasStockHistory(String sku) {
         return stockBalanceRepository.existsBySku(sku) || stockMovementRepository.existsBySku(sku);
+    }
+
+    /**
+     * SKU livre para um cadastro novo, de pai ou variação. O de produto arquivado (EST-F054) sai
+     * com erro próprio: não está em uso, está reservado — a saída é restaurar, não renomear.
+     */
+    private void requireSkuFree(String sku) {
+        if (productRepository.existsBySku(sku)) {
+            if (productRepository.isArchived(sku)) {
+                throw new SkuArchivedException(sku);
+            }
+            throw new DuplicateSkuException(sku);
+        }
+    }
+
+    @Override
+    @Transactional
+    public Product archiveProduct(String sku, String username) {
+        Product current = productRepository.findBySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        // Rascunho não tem histórico a preservar: a exclusão dele é a de verdade (deleteProduct).
+        if (current.isDraft()) {
+            throw new ProductIsDraftException(sku);
+        }
+        if (!current.isArchived()) {
+            productRepository.archive(sku, Instant.now(), username);
+        }
+        return current;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public void requireNotArchived(String sku) {
+        if (productRepository.isArchived(sku)) {
+            throw new ProductArchivedException(sku);
+        }
+    }
+
+    @Override
+    @Transactional
+    public Product restoreProduct(String sku) {
+        Product current = productRepository.findBySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (current.isArchived()) {
+            productRepository.restore(sku);
+        }
+        return current;
     }
 
     // ── Categorias do catálogo ───────────────────────────────────────────────
@@ -907,6 +964,10 @@ public class EstoqueService implements EstoqueUseCase {
         Warehouse warehouse = requireWarehouse(warehouseCode);
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
+        // EST-F054 — produto excluído não se repõe.
+        if (product.isArchived()) {
+            throw new ProductArchivedException(sku);
+        }
         BigDecimal currentStock = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
                 .map(StockBalance::quantity)
                 .orElse(BigDecimal.ZERO);
@@ -962,7 +1023,26 @@ public class EstoqueService implements EstoqueUseCase {
     @Transactional(readOnly = true)
     public List<ReplenishmentListItem> listReplenishmentItems(String warehouseCode) {
         Warehouse warehouse = requireWarehouse(warehouseCode);
-        return replenishmentListRepository.findByWarehouseId(warehouse.id());
+        List<ReplenishmentListItem> items = replenishmentListRepository.findByWarehouseId(warehouse.id());
+        // EST-F054 — item que já estava na lista quando o produto foi arquivado some dela (a linha
+        // fica, e volta se o produto for restaurado). Lista curta: uma consulta em lote resolve.
+        Set<String> archived = archivedSkusAmong(items.stream().map(ReplenishmentListItem::sku).toList());
+        return archived.isEmpty() ? items : items.stream().filter(i -> !archived.contains(i.sku())).toList();
+    }
+
+    /** Dos SKUs informados (pai ou variação), os que pertencem a produto arquivado (EST-F054). */
+    private Set<String> archivedSkusAmong(Collection<String> skus) {
+        if (skus.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> archived = new HashSet<>();
+        for (Product product : productRepository.findByAnySkuIn(skus)) {
+            if (product.isArchived()) {
+                archived.add(product.sku());
+                product.variants().forEach(v -> archived.add(v.sku()));
+            }
+        }
+        return archived;
     }
 
     @Override
@@ -983,6 +1063,11 @@ public class EstoqueService implements EstoqueUseCase {
         // (mora sempre no pai, kit ou não), só a precificação precisa.
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
+        // EST-F054 — produto excluído não entra em venda nova. Mesmo ponto único do EST-F036: todo
+        // caminho de venda (PDV, comanda, loja, troca) passa por aqui antes de gravar.
+        if (product.isArchived()) {
+            throw new ProductArchivedException(sku);
+        }
         // EST-F036 — a base de um produto com variações não se vende (PDV, mesa, checkout): todos os
         // caminhos de venda resolvem o item por aqui, e a recusa sai antes de qualquer gravação.
         if (!product.isSellable(sku)) {
@@ -1045,9 +1130,7 @@ public class EstoqueService implements EstoqueUseCase {
         if (!target.equals(currentSku)) {
             // Pai e variações dividem o espaço de nomes (uk_product_sku e uk_product_variant_sku),
             // e existsBySku olha os dois — mesma checagem do createProduct.
-            if (productRepository.existsBySku(target)) {
-                throw new DuplicateSkuException(target);
-            }
+            requireSkuFree(target);
             productRepository.renameSku(currentSku, target);
         }
         return productRepository.findByAnySku(target)
@@ -1084,7 +1167,10 @@ public class EstoqueService implements EstoqueUseCase {
     @Override
     @Transactional(readOnly = true)
     public Product findProductByBarcode(String barcode) {
+        // EST-F054 — arquivado some do leitor (PDV, conferência de recebimento). O código de barras
+        // continua reservado: existsByBarcode ainda o enxerga.
         return productRepository.findByBarcode(barcode)
+                .filter(product -> !product.isArchived())
                 .orElseThrow(() -> new BarcodeNotFoundException(barcode));
     }
 
@@ -1265,9 +1351,12 @@ public class EstoqueService implements EstoqueUseCase {
         List<KitComponentAvailability> components = new ArrayList<>();
         BigDecimal minKits = null;
         for (KitComponent component : recipe) {
-            StockBalance componentBalance = stockBalanceRepository
-                    .findBySkuAndWarehouseId(component.componentSku(), warehouseId)
-                    .orElseGet(() -> StockBalance.zero(component.componentSku(), warehouseId));
+            // EST-F054 — componente arquivado conta como inexistente: o saldo dele continua na
+            // prateleira, mas não sai mais como parte de kit, então o kit fica bloqueado.
+            StockBalance componentBalance = productRepository.isArchived(component.componentSku())
+                    ? StockBalance.zero(component.componentSku(), warehouseId)
+                    : stockBalanceRepository.findBySkuAndWarehouseId(component.componentSku(), warehouseId)
+                            .orElseGet(() -> StockBalance.zero(component.componentSku(), warehouseId));
             BigDecimal possibleKits = componentBalance.availableQuantity()
                     .divide(component.quantity(), 0, RoundingMode.FLOOR);
             components.add(new KitComponentAvailability(component.componentSku(), component.quantity(),
@@ -2550,7 +2639,11 @@ public class EstoqueService implements EstoqueUseCase {
             if (!component.kitComponentEligible()) {
                 throw new KitComponentNotEligibleException(kitSku, componentSku);
             }
-            if (!component.active()) {
+            if (component.isArchived()) {
+                throw new ProductArchivedException(componentSku);
+            }
+            // EST-F054 — rascunho também não entra: não é mercadoria publicada.
+            if (!component.active() || component.isDraft()) {
                 throw new KitComponentInactiveException(kitSku, componentSku);
             }
             recipe.add(KitComponent.create(kitSku, componentSku, command.quantity()));
@@ -2655,6 +2748,10 @@ public class EstoqueService implements EstoqueUseCase {
      * significa "não reponho mais", e bloquear a saída deixaria preso o saldo que ainda existe na
      * prateleira. {@code AJUSTE} também passa: é o caminho de correção de inventário, e um
      * produto desativado com contagem errada precisa poder ser acertado.</p>
+     *
+     * <p>Produto arquivado (EST-F054) <b>não</b> é barrado aqui: estorno de venda e transferência
+     * também chegam como {@code ENTRADA} e precisam continuar. A recusa dele mora em
+     * {@link #requireNotArchived}, chamada só pelas entradas de origem externa.</p>
      */
     private void requireActiveForInbound(String sku, Warehouse warehouse, MovementType type) {
         if (type != MovementType.ENTRADA) {
@@ -2680,8 +2777,11 @@ public class EstoqueService implements EstoqueUseCase {
         // tempo de separação. Enquanto não houver reserva, disponível == físico e o comportamento
         // anterior fica idêntico.
         BigDecimal available = balance.availableQuantity();
+        // EST-F054 — baixa do que sobrou de um produto arquivado não pede reposição. O isArchived
+        // só roda quando o saldo de fato caiu abaixo do ponto, não em toda movimentação.
         reorderPointRepository.findBySkuAndWarehouseId(balance.sku(), balance.warehouseId())
                 .filter(reorderPoint -> reorderPoint.isBelow(available))
+                .filter(reorderPoint -> !productRepository.isArchived(balance.sku()))
                 .ifPresent(reorderPoint -> afterCommitExecutor.accumulate(REORDER_ALERT_BATCH,
                         new ReorderAlert(balance.sku(), available, reorderPoint.minQuantity()),
                         this::dispatchReorderAlerts));

@@ -70,6 +70,11 @@ public class ComprasService implements ComprasUseCase {
             String username) {
         supplierRepository.findById(supplierId)
                 .orElseThrow(() -> new SupplierNotFoundException(supplierId));
+        // EST-F054 — produto excluído não recebe mercadoria (cobre a NF-e, que chega por aqui).
+        // Checado antes de gravar o recebimento, para a recusa não deixar nada pela metade.
+        for (GoodsReceiptItem item : items) {
+            estoqueUseCase.requireNotArchived(item.sku());
+        }
 
         // Salva o recebimento ANTES do loop de itens, para ter o id disponível e linkar cada
         // ENTRADA de volta a ele (item 2 do pedido do frontend — histórico de compras por SKU

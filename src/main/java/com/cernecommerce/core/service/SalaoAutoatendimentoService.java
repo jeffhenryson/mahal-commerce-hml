@@ -29,6 +29,7 @@ import com.cernecommerce.core.domain.model.estoque.Product;
 import com.cernecommerce.core.domain.model.estoque.ProductAttribute;
 import com.cernecommerce.core.domain.model.estoque.ProductFilter;
 import com.cernecommerce.core.domain.model.estoque.ProductSortField;
+import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.Warehouse;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
@@ -834,7 +835,8 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     }
 
     private List<Product> produtosDeSessao() {
-        ProductFilter filtro = new ProductFilter(null, null, null, true, null, null, null, true);
+        // EST-F054 — só publicado: rascunho não é cardápio (o arquivado o filtro já exclui).
+        ProductFilter filtro = new ProductFilter(null, null, null, true, null, null, ProductStatus.ATIVO, true);
         List<Product> todos = new ArrayList<>();
         for (int page = 0; ; page++) {
             PageResult<Product> pagina = estoqueUseCase.listProducts(page, PAGINA_CATALOGO, filtro,
