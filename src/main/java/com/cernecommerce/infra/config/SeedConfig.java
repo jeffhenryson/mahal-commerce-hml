@@ -70,6 +70,8 @@ public class SeedConfig {
         // de turno (V119). Separada de PDV_SALE_DISCOUNT, que é a alçada do balcão.
         "PDV_COMANDA_DISCOUNT",
         "ORDER_READ", "ORDER_FULFILL", "ORDER_CANCEL", "ORDER_REFUND",
+        // ECM-F012 — Central de Pedidos: pedidos do app e do QR da mesa (V176).
+        "ONLINE_ORDER_READ", "ONLINE_ORDER_MANAGE", "ONLINE_CONFIG_MANAGE",
         // Perfil da loja impresso no cupom (V131).
         "STORE_PROFILE_MANAGE",
         // Tokens de integração da loja — e-mail/Resend (V140), WhatsApp e n8n/Make (V143).
@@ -96,7 +98,9 @@ public class SeedConfig {
         "CASHBACK_READ",
         "ORDER_READ",
         // PLAT-C059 — a V137 concede a leitura de recebíveis também ao atendente.
-        "RECEIVABLE_READ"
+        "RECEIVABLE_READ",
+        // ECM-F012 — a V176 dá a Central de Pedidos também ao atendente.
+        "ONLINE_ORDER_READ", "ONLINE_ORDER_MANAGE"
     };
 
     // DEV_ONLY_PERMISSIONS e ROLE_DEV são gerenciados pelo DevRoleBootstrapConfig (todos os profiles).

@@ -26,6 +26,7 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
@@ -107,7 +108,19 @@ import com.cernecommerce.core.ports.in.AvisoOperadoresUseCase;
 import com.cernecommerce.core.ports.in.PedidoAppUseCase;
 import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import com.cernecommerce.core.service.AvisoOperadores;
+import com.cernecommerce.core.service.AtendimentoPedidoAppRepositoryComEventos;
+import com.cernecommerce.core.service.CentralPedidosEventos;
+import com.cernecommerce.core.service.OrderRepositoryComEventos;
+import com.cernecommerce.core.ports.in.CentralPedidosEventosUseCase;
+import com.cernecommerce.adapter.out.persistence.repository.OrderRepositoryImpl;
+import com.cernecommerce.adapter.out.persistence.repository.PedidoAppAtendimentoRepositoryImpl;
 import com.cernecommerce.core.service.PedidoAppService;
+import com.cernecommerce.core.service.AvisoClientePedidoApp;
+import com.cernecommerce.core.service.CentralPedidosService;
+import com.cernecommerce.core.ports.in.CentralPedidosUseCase;
+import com.cernecommerce.core.ports.in.AvisoClientePedidoAppUseCase;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosIndicadoresQuery;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.KitBuilderUseCase;
@@ -330,11 +343,31 @@ class CoreBeanConfig {
             // PDV-F043 — o fechamento recusa caixa com venda offline recusada esperando revisão.
             OfflineSaleRejectionRepository offlineSaleRejectionRepository,
             // ECM-F010 — a liquidação do pedido do app exige o aceite no caixa.
-            AtendimentoPedidoAppRepository atendimentoPedidoAppRepository) {
+            AtendimentoPedidoAppRepository atendimentoPedidoAppRepository,
+            // ECM-F013 — "pagamento confirmado" ao cliente do app na liquidação.
+            AvisoClientePedidoAppUseCase avisoClientePedidoApp) {
         return new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
                 maxDiscountPercent, Clock.systemUTC(), receivableUseCase, offlineSaleRejectionRepository,
-                atendimentoPedidoAppRepository);
+                atendimentoPedidoAppRepository, avisoClientePedidoApp);
+    }
+
+    /** ECM-F013 — avisa o cliente do app de cada etapa do pedido: e-mail e notificação no app. */
+    @Bean
+    AvisoClientePedidoAppUseCase avisoClientePedidoApp(CrmUseCase crmUseCase, UserRepository userRepository,
+            NotificationUseCase notificationUseCase,
+            com.cernecommerce.core.ports.out.notification.NotificationSsePort ssePort, EmailPort emailPort,
+            AfterCommitExecutor afterCommitExecutor) {
+        return new AvisoClientePedidoApp(crmUseCase, userRepository, notificationUseCase, ssePort, emailPort,
+                afterCommitExecutor);
+    }
+
+    /** ECM-F013 — configuração do recebimento e indicadores da Central de Pedidos. */
+    @Bean
+    CentralPedidosUseCase centralPedidosUseCase(CentralPedidosConfigRepository centralPedidosConfigRepository,
+            CentralPedidosIndicadoresQuery centralPedidosIndicadoresQuery) {
+        return new CentralPedidosService(centralPedidosConfigRepository, centralPedidosIndicadoresQuery,
+                Clock.systemUTC());
     }
 
     /** ECM-F010 — aviso em tempo real a quem opera o PDV (notificação + SSE, depois do commit). */
@@ -345,13 +378,42 @@ class CoreBeanConfig {
         return new AvisoOperadores(notificationUseCase, userRepository, ssePort, afterCommitExecutor);
     }
 
+    /** ECM-F012 — eventos em tempo real da Central de Pedidos (SSE, depois do commit). */
+    @Bean
+    CentralPedidosEventosUseCase centralPedidosEventos(UserRepository userRepository,
+            com.cernecommerce.core.ports.out.notification.NotificationSsePort ssePort,
+            AfterCommitExecutor afterCommitExecutor) {
+        return new CentralPedidosEventos(userRepository, ssePort, afterCommitExecutor);
+    }
+
+    /**
+     * ECM-F012 — todo save de pedido passa pela Central de Pedidos. {@code @Primary}: quem injeta
+     * {@link OrderRepository} recebe o decorador; só ele conhece o adapter concreto.
+     */
+    @Bean
+    @Primary
+    OrderRepository orderRepositoryComEventos(OrderRepositoryImpl orderRepositoryImpl,
+            CentralPedidosEventosUseCase centralPedidosEventos) {
+        return new OrderRepositoryComEventos(orderRepositoryImpl, centralPedidosEventos);
+    }
+
+    /** ECM-F012 — idem para a etapa do atendimento do pedido do app. */
+    @Bean
+    @Primary
+    AtendimentoPedidoAppRepository atendimentoPedidoAppRepositoryComEventos(
+            PedidoAppAtendimentoRepositoryImpl atendimentoRepositoryImpl,
+            CentralPedidosEventosUseCase centralPedidosEventos) {
+        return new AtendimentoPedidoAppRepositoryComEventos(atendimentoRepositoryImpl, centralPedidosEventos);
+    }
+
     /** ECM-F010/F011 — fila "Pedidos do app" do caixa e o prazo do dia. */
     @Bean
     PedidoAppUseCase pedidoAppUseCase(AtendimentoPedidoAppRepository atendimentoPedidoAppRepository,
             OrderRepository orderRepository, OrderUseCase orderUseCase, PdvService pdvService,
-            CrmUseCase crmUseCase, EmailPort emailPort, AfterCommitExecutor afterCommitExecutor) {
+            CrmUseCase crmUseCase, AvisoClientePedidoAppUseCase avisoClientePedidoApp,
+            CentralPedidosConfigRepository centralPedidosConfigRepository) {
         return new PedidoAppService(atendimentoPedidoAppRepository, orderRepository, orderUseCase, pdvService,
-                crmUseCase, emailPort, afterCommitExecutor, Clock.systemUTC());
+                crmUseCase, avisoClientePedidoApp, centralPedidosConfigRepository, Clock.systemUTC());
     }
 
     /** PDV-F047 — atividades do operador na sessão de caixa. */
@@ -433,11 +495,12 @@ class CoreBeanConfig {
             com.cernecommerce.core.ports.in.NotificationUseCase notificationUseCase, UserRepository userRepository,
             com.cernecommerce.core.ports.out.notification.NotificationSsePort ssePort,
             AfterCommitExecutor afterCommitExecutor, AuditEventPublisherPort auditEventPublisherPort,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            CentralPedidosConfigRepository centralPedidosConfigRepository) {
         return new com.cernecommerce.core.service.SalaoAutoatendimentoService(repository, estoqueUseCase,
                 warehouseRepository, sessionMenuService, crmUseCase, comandaUseCase,
                 notificationUseCase, userRepository, ssePort, afterCommitExecutor, auditEventPublisherPort,
-                auditLogRepository, Clock.systemUTC());
+                auditLogRepository, centralPedidosConfigRepository, Clock.systemUTC());
     }
 
     /** PDV-F021 — bean concreto: o ComandaService usa as regras de lançamento, como faz com o PdvService. */
@@ -530,11 +593,11 @@ class CoreBeanConfig {
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
             KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor,
             AtendimentoPedidoAppRepository atendimentoPedidoAppRepository, SystemConfigPort systemConfigPort,
-            AvisoOperadoresUseCase avisoOperadores) {
+            AvisoOperadoresUseCase avisoOperadores, CentralPedidosConfigRepository centralPedidosConfigRepository) {
         return new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository, orderRepository,
                 orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository, emailPort,
                 kitBuilderUseCase, afterCommitExecutor, atendimentoPedidoAppRepository, systemConfigPort,
-                avisoOperadores, Clock.systemUTC());
+                avisoOperadores, centralPedidosConfigRepository, Clock.systemUTC());
     }
 
     @Bean

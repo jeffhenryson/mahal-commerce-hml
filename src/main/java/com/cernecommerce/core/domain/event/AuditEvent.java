@@ -120,6 +120,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         COMANDA_ROSH_FLAVOR_SET,
         // PDV-F055 — o "Tornar duplo" desfeito enquanto o 2º rosh ainda estava na fila.
         COMANDA_ROSH_EXTRA_REMOVED,
+        // PDV-F058 — sessão editada antes da entrega, com o antes e o depois; PDV-F059 — sessão que
+        // passou a pagar no final depois de lançada.
+        COMANDA_SESSION_EDITED, COMANDA_SESSION_PAY_LATER,
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,

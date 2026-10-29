@@ -122,6 +122,8 @@ public class SecurityConfig {
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/shop/catalog", "/shop/catalog/*").permitAll()
                 // Mesma natureza do catálogo: é a navegação da vitrine, lida sem login.
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/shop/categories").permitAll()
+                // ECM-F013: o app consulta se a loja está recebendo antes do checkout.
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/shop/store-status").permitAll()
                 // ECM-F008: montador de kit da vitrine — mesma natureza do catálogo. Pôr o kit no
                 // carrinho (/shop/cart/kits) continua exigindo SHOP_CART_OWN via @PreAuthorize.
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/shop/kits", "/shop/kits/*",

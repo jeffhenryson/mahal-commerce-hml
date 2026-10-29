@@ -148,8 +148,9 @@ class ConverterBeanConfig {
     }
 
     @Bean
-    PedidoAppDTOConverter pedidoAppDTOConverter(OrderDTOConverter orderDTOConverter) {
-        return new PedidoAppDTOConverter(orderDTOConverter);
+    PedidoAppDTOConverter pedidoAppDTOConverter(OrderDTOConverter orderDTOConverter,
+            com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository centralPedidosConfig) {
+        return new PedidoAppDTOConverter(orderDTOConverter, () -> centralPedidosConfig.atual().pixChave());
     }
 
     @Bean

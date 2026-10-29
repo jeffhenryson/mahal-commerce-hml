@@ -126,6 +126,10 @@ import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoNotFoundExce
 import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoTransicaoInvalidaException;
 import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppNaoPagoException;
 import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppOutroCaixaException;
+import com.cernecommerce.core.domain.exception.ecommerce.OrderAlreadyAcceptedException;
+import com.cernecommerce.core.domain.exception.ecommerce.OrderNotMarketplaceException;
+import com.cernecommerce.core.domain.exception.ecommerce.OrderNotPendingAcceptException;
+import com.cernecommerce.core.domain.exception.ecommerce.RecusaInvalidaException;
 import com.cernecommerce.core.domain.exception.pedido.OrderDeliveryNotEditableException;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
@@ -193,6 +197,10 @@ import com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundExcep
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
 import com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
+import com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotAwaitingPaymentException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotEditableException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPaidPriceChangeException;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.NotAvailableForTableException;
 import com.cernecommerce.core.domain.exception.pdv.NotesTooLongException;
@@ -1328,6 +1336,58 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "PEDIDO_APP_NAO_PAGO", req);
     }
 
+    // ── ECM-F012: aceite e recusa pela Central de Pedidos ──
+
+    @ExceptionHandler(OrderNotMarketplaceException.class)
+    public ResponseEntity<ApiError> handleOrderNotMarketplace(OrderNotMarketplaceException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "ORDER_NOT_MARKETPLACE", req);
+    }
+
+    @ExceptionHandler(OrderNotPendingAcceptException.class)
+    public ResponseEntity<ApiError> handleOrderNotPendingAccept(OrderNotPendingAcceptException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_NOT_PENDING_ACCEPT", req);
+    }
+
+    @ExceptionHandler(OrderAlreadyAcceptedException.class)
+    public ResponseEntity<ApiError> handleOrderAlreadyAccepted(OrderAlreadyAcceptedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_ALREADY_ACCEPTED", req);
+    }
+
+    @ExceptionHandler(RecusaInvalidaException.class)
+    public ResponseEntity<ApiError> handleRecusaInvalida(RecusaInvalidaException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_REJECTION", req);
+    }
+
+    // ── ECM-F013: configuração do recebimento e fluxo do card da Central de Pedidos ──
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosConfigInvalidaException.class)
+    public ResponseEntity<ApiError> handleCentralPedidosConfigInvalida(
+            com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosConfigInvalidaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_CENTRAL_CONFIG", req);
+    }
+
+    /** LOJA_FECHADA, MODALIDADE_INDISPONIVEL, PEDIDO_MINIMO ou FORA_DA_AREA — o código vem da exceção. */
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.ecommerce.PedidoAppIndisponivelException.class)
+    public ResponseEntity<ApiError> handlePedidoAppIndisponivel(
+            com.cernecommerce.core.domain.exception.ecommerce.PedidoAppIndisponivelException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), ex.codigo(), req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pedido.InvalidTrackingUrlException.class)
+    public ResponseEntity<ApiError> handleInvalidTrackingUrl(
+            com.cernecommerce.core.domain.exception.pedido.InvalidTrackingUrlException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_TRACKING_URL", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.salao.QrPausadoException.class)
+    public ResponseEntity<ApiError> handleQrPausado(com.cernecommerce.core.domain.exception.salao.QrPausadoException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "QR_PAUSADO", req);
+    }
+
     @ExceptionHandler(OrderHasNoDeliveryException.class)
     public ResponseEntity<ApiError> handleOrderHasNoDelivery(OrderHasNoDeliveryException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_HAS_NO_DELIVERY", req);
@@ -1579,6 +1639,32 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotASessionLineException.class)
     public ResponseEntity<ApiError> handleNotASessionLine(NotASessionLineException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "NOT_A_SESSION_LINE", req);
+    }
+
+    /** PDV-F058 — editar sessão entregue ou recolhida. */
+    @ExceptionHandler(SessionNotEditableException.class)
+    public ResponseEntity<ApiError> handleSessionNotEditable(SessionNotEditableException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_EDITABLE", req);
+    }
+
+    /** PDV-F058 — editar sessão já paga mudando o valor. */
+    @ExceptionHandler(SessionPaidPriceChangeException.class)
+    public ResponseEntity<ApiError> handleSessionPaidPriceChange(SessionPaidPriceChangeException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_PAID_PRICE_CHANGE", req);
+    }
+
+    /** PDV-F059 — passar para pagar no final a sessão que não aguarda pagamento. */
+    @ExceptionHandler(SessionNotAwaitingPaymentException.class)
+    public ResponseEntity<ApiError> handleSessionNotAwaitingPayment(SessionNotAwaitingPaymentException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_NOT_AWAITING_PAYMENT", req);
+    }
+
+    /** PDV-F060 — compra na loja na conta de mesa sem sessão paga no final. */
+    @ExceptionHandler(NoPayLaterSessionException.class)
+    public ResponseEntity<ApiError> handleNoPayLaterSession(NoPayLaterSessionException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "NO_PAY_LATER_SESSION", req);
     }
 
     /** PDV-F053 — converter em duplo uma sessão que já tem rosh ligado. */
