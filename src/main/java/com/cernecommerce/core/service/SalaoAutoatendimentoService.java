@@ -14,6 +14,7 @@ import com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelExcepti
 import com.cernecommerce.core.domain.exception.salao.MesaOcupadaException;
 import com.cernecommerce.core.domain.exception.salao.SalaoMesaNomeDuplicadoException;
 import com.cernecommerce.core.domain.exception.salao.SalaoMesaNotFoundException;
+import com.cernecommerce.core.domain.exception.salao.QrPausadoException;
 import com.cernecommerce.core.domain.exception.salao.SolicitacaoJaPendenteException;
 import com.cernecommerce.core.domain.exception.salao.SolicitacaoNaoPendenteException;
 import com.cernecommerce.core.domain.exception.salao.SolicitacaoNotFoundException;
@@ -69,6 +70,7 @@ import com.cernecommerce.core.ports.in.NotificationUseCase;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository;
 import com.cernecommerce.core.ports.out.audit.AuditLogRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
@@ -177,15 +179,19 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private final CrmUseCase crmUseCase;
     private final ComandaUseCase comandaUseCase;
     private final AvisoOperadores avisoOperadores;
+    /** ECM-F012 — os mesmos eventos vão para a Central de Pedidos, que relê a fila do QR. */
+    private final CentralPedidosEventos centralPedidos;
     private final AuditEventPublisherPort auditEvents;
     private final AuditLogRepository auditLog;
+    /** ECM-F013 — pausa do QR e validade da solicitação, da configuração da Central de Pedidos. */
+    private final CentralPedidosConfigRepository centralConfig;
     private final Clock clock;
 
     public SalaoAutoatendimentoService(SalaoAutoatendimentoRepository repository, EstoqueUseCase estoqueUseCase,
             WarehouseRepository warehouseRepository, SessionMenuUseCase sessionMenuUseCase, CrmUseCase crmUseCase, ComandaUseCase comandaUseCase,
             NotificationUseCase notificationUseCase, UserRepository userRepository, NotificationSsePort ssePort,
             AfterCommitExecutor afterCommit, AuditEventPublisherPort auditEvents, AuditLogRepository auditLog,
-            Clock clock) {
+            CentralPedidosConfigRepository centralConfig, Clock clock) {
         this.repository = repository;
         this.estoqueUseCase = estoqueUseCase;
         this.warehouseRepository = warehouseRepository;
@@ -193,8 +199,10 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         this.crmUseCase = crmUseCase;
         this.comandaUseCase = comandaUseCase;
         this.avisoOperadores = new AvisoOperadores(notificationUseCase, userRepository, ssePort, afterCommit);
+        this.centralPedidos = new CentralPedidosEventos(userRepository, ssePort, afterCommit);
         this.auditEvents = auditEvents;
         this.auditLog = auditLog;
+        this.centralConfig = centralConfig;
         this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
@@ -416,6 +424,9 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional
     public SolicitacaoSessao solicitarPorToken(String token, Pedido pedido) {
         SalaoMesa mesa = mesaPorToken(token);
+        if (!centralConfig.atual().qrRecebendo()) {
+            throw new QrPausadoException();
+        }
         String device = deviceObrigatorio(pedido.deviceToken());
         // Dois aparelhos pedindo na mesma mesa livre: o segundo espera e já a encontra ocupada.
         repository.findMesaByIdForUpdate(mesa.id());
@@ -459,10 +470,11 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         // A proporção é da mescla: um sabor só não tem.
         escolhas = escolhas.withProporcao(sabor2 == null ? null : escolhas.proporcao());
         Instant agora = clock.instant();
+        Instant validade = agora.minus(validadeSolicitacao());
         // Um pendente por pessoa: o acompanhante pede no titular, então conta pelo aparelho dele.
         if (acompanhante
-                ? repository.existsPendenteDoAparelho(mesa.id(), device, agora.minus(SolicitacaoSessao.VALIDADE))
-                : repository.existsPendente(mesa.id(), cliente.id(), agora.minus(SolicitacaoSessao.VALIDADE))) {
+                ? repository.existsPendenteDoAparelho(mesa.id(), device, validade)
+                : repository.existsPendente(mesa.id(), cliente.id(), validade)) {
             throw new SolicitacaoJaPendenteException(
                     "Você já tem um pedido aguardando o atendente nesta mesa.");
         }
@@ -478,6 +490,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
             repository.addAcesso(nova.id(), device, false);
         }
         avisarAtendentes(mesa, quemPediu(cliente.nome(), acompanhante), sabor, sabor2);
+        centralPedidos.solicitacaoCriada(salva.id(), mesa.nome());
         return salva;
     }
 
@@ -492,7 +505,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
 
     @Override
     public SolicitacaoStatus statusPublico(SolicitacaoSessao solicitacao) {
-        return solicitacao.statusEm(clock.instant());
+        return solicitacao.statusEm(clock.instant(), validadeSolicitacao());
     }
 
     @Override
@@ -586,6 +599,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 : crmUseCase.findCustomerById(comanda.customerId()).nome();
         avisar("salao.chamado.aviso", NotificationType.CHAMADO_MESA, tituloDoChamado(salvo, onde),
                 nome + " chamou pelo QR.");
+        centralPedidos.chamadoCriado(salvo.id(), onde, salvo.tipo().name());
         return salvo;
     }
 
@@ -624,7 +638,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     @Transactional(readOnly = true)
     public PageResult<SolicitacaoResumo> listSolicitacoes(SolicitacaoStatus status, int page, int size) {
         Instant agora = clock.instant();
-        Instant validade = agora.minus(SolicitacaoSessao.VALIDADE);
+        Instant validade = agora.minus(validadeSolicitacao());
         // EXPIRADA não é gravada: são as PENDENTE anteriores à validade — filtradas na consulta, para a
         // página e o total baterem (PDV-C061).
         PageResult<SolicitacaoSessao> pagina = switch (status) {
@@ -675,6 +689,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
         }
         SolicitacaoSessao aceita = repository.saveSolicitacao(
                 solicitacao.aceita(comandaId, username, pagaNoFinal, agora));
+        centralPedidos.solicitacaoAtualizada(aceita.id(), aceita.status().name());
         return resumir(List.of(aceita), agora).get(0);
     }
 
@@ -683,6 +698,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public SolicitacaoResumo recusar(Long id, String motivo, String username) {
         Instant agora = clock.instant();
         SolicitacaoSessao recusada = repository.saveSolicitacao(pendente(id).recusada(motivo, username, agora));
+        centralPedidos.solicitacaoAtualizada(recusada.id(), recusada.status().name());
         return resumir(List.of(recusada), agora).get(0);
     }
 
@@ -708,8 +724,11 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     public ChamadoResumo atenderChamado(Long id, String username) {
         ChamadoMesa chamado = repository.findChamadoByIdForUpdate(id)
                 .orElseThrow(() -> new ChamadoNotFoundException("Chamado não encontrado: " + id));
-        ChamadoMesa atendido = chamado.status() == StatusChamado.ATENDIDO ? chamado
-                : repository.saveChamado(chamado.atendido(username, clock.instant()));
+        if (chamado.status() == StatusChamado.ATENDIDO) {
+            return resumirChamados(List.of(chamado)).get(0);
+        }
+        ChamadoMesa atendido = repository.saveChamado(chamado.atendido(username, clock.instant()));
+        centralPedidos.chamadoAtualizado(atendido.id(), atendido.status().name());
         return resumirChamados(List.of(atendido)).get(0);
     }
 
@@ -1060,7 +1079,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     private SolicitacaoSessao pendente(Long id) {
         SolicitacaoSessao s = repository.findSolicitacaoByIdForUpdate(id)
                 .orElseThrow(() -> new SolicitacaoNotFoundException("Solicitação não encontrada: " + id));
-        SolicitacaoStatus status = s.statusEm(clock.instant());
+        SolicitacaoStatus status = s.statusEm(clock.instant(), validadeSolicitacao());
         if (status != SolicitacaoStatus.PENDENTE) {
             throw new SolicitacaoNaoPendenteException(status == SolicitacaoStatus.EXPIRADA
                     ? "O pedido expirou — confirme com o cliente e lance pelo PDV."
@@ -1089,9 +1108,10 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 .map(MesaOcupacao::solicitacaoId).filter(Objects::nonNull).toList();
         Set<Long> abertas = comandaIds.isEmpty() ? Set.of() : comandaUseCase.findOpenComandaIds(comandaIds);
         Instant agora = clock.instant();
+        Duration validade = validadeSolicitacao();
         Set<Long> pendentes = solicitacaoIds.isEmpty() ? Set.of()
                 : repository.findSolicitacoesByIds(solicitacaoIds).stream()
-                        .filter(s -> s.statusEm(agora) == SolicitacaoStatus.PENDENTE)
+                        .filter(s -> s.statusEm(agora, validade) == SolicitacaoStatus.PENDENTE)
                         .map(SolicitacaoSessao::id).collect(Collectors.toSet());
         return ocupacoes.stream()
                 .filter(o -> o.pendente() ? pendentes.contains(o.solicitacaoId()) : abertas.contains(o.comandaId()))
@@ -1201,6 +1221,11 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                 o.netAmount());
     }
 
+    /** Validade da solicitação pelo QR: a da Central de Pedidos (ECM-F013), 30 min de padrão. */
+    private Duration validadeSolicitacao() {
+        return Duration.ofMinutes(centralConfig.atual().expiracaoSolicitacaoMin());
+    }
+
     /** Dos chamados da comanda, os que a tela do cliente mostra ({@link ChamadoMesa#recenteEm}). */
     private List<ChamadoMesa> recentes(List<ChamadoMesa> chamados) {
         Instant agora = clock.instant();
@@ -1241,6 +1266,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
     }
 
     private List<SolicitacaoResumo> resumir(List<SolicitacaoSessao> linhas, Instant agora) {
+        Duration validade = validadeSolicitacao();
         if (linhas.isEmpty()) return List.of();
         // Mesas, clientes e rótulos dos sabores em lote: uma consulta de cada, não uma por linha (PDV-C059).
         Map<Long, String> mesas = repository.findMesasByIds(linhas.stream().map(SolicitacaoSessao::mesaId)
@@ -1266,7 +1292,7 @@ public class SalaoAutoatendimentoService implements SalaoAutoatendimentoUseCase 
                     .add(x.vasoGrande() ? settings.upgradeVasoGrandePreco() : BigDecimal.ZERO)
                     .add(settings.charcoalSurcharge(x.carvao()))
                     .add(escolhidos.stream().map(SessionAddon::preco).reduce(BigDecimal.ZERO, BigDecimal::add));
-            resumos.add(new SolicitacaoResumo(s, s.statusEm(agora), mesas.getOrDefault(s.mesaId(), "Mesa"),
+            resumos.add(new SolicitacaoResumo(s, s.statusEm(agora, validade), mesas.getOrDefault(s.mesaId(), "Mesa"),
                     quemPediu(c == null ? "Cliente" : c.nome(), s.acompanhante()), c == null ? null : c.contato(),
                     faixa == null ? null : faixa.nome(), faixa == null ? null : faixa.preco(),
                     rotulos.getOrDefault(s.essenciaSku(), s.essenciaSku()),

@@ -70,7 +70,7 @@ public class SalaoAutoatendimentoController {
     // ── Mesas ─────────────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/salao/mesas")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<List<SalaoMesaResponseDTO>> listMesas() {
         return ResponseEntity.ok(useCase.listMesas().stream().map(SalaoMesaResponseDTO::of).toList());
     }
@@ -103,7 +103,7 @@ public class SalaoAutoatendimentoController {
     @Operation(summary = "Mesas do QR ocupadas", description = "Uma por mesa com comanda aberta, com o código de 4 "
             + "dígitos que o cliente pode pedir ao atendente.")
     @GetMapping("/salao/ocupacoes")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<List<MesaOcupacaoResponseDTO>> ocupacoes() {
         return ResponseEntity.ok(useCase.ocupacoesAbertas().stream().map(MesaOcupacaoResponseDTO::of).toList());
     }
@@ -203,7 +203,7 @@ public class SalaoAutoatendimentoController {
     @Operation(summary = "Sessões pedidas pelo QR",
             description = "PENDENTE = as que o atendente ainda pode aceitar (há menos de 30 min). EXPIRADA é derivada.")
     @GetMapping("/pdv/solicitacoes-sessao")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PageResult<SolicitacaoSessaoResponseDTO>> listSolicitacoes(
             @RequestParam(defaultValue = "PENDENTE") SolicitacaoStatus status,
             @RequestParam(defaultValue = "0") @Min(0) int page,
@@ -247,7 +247,7 @@ public class SalaoAutoatendimentoController {
     }
 
     @PostMapping("/pdv/solicitacoes-sessao/{id}/recusar")
-    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_COMANDA_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<SolicitacaoSessaoResponseDTO> recusar(@PathVariable Long id,
             @Valid @RequestBody(required = false) RecusarSolicitacaoRequest request, Authentication authentication) {
         return ResponseEntity.ok(SolicitacaoSessaoResponseDTO.of(
@@ -260,7 +260,7 @@ public class SalaoAutoatendimentoController {
             description = "ABERTO = os de menos de 30 min das comandas ainda abertas, mais antigos primeiro. "
                     + "ATENDIDO = os das últimas 12 h.")
     @GetMapping("/pdv/chamados-mesa")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<List<ChamadoMesaResponseDTO>> listChamados(
             @RequestParam(defaultValue = "ABERTO") StatusChamado status) {
         return ResponseEntity.ok(useCase.listChamados(status).stream().map(ChamadoMesaResponseDTO::of).toList());
@@ -272,7 +272,7 @@ public class SalaoAutoatendimentoController {
             @ApiResponse(responseCode = "404", description = "Chamado não encontrado (CHAMADO_NOT_FOUND)", content = @Content)
     })
     @PostMapping("/pdv/chamados-mesa/{id}/atender")
-    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_COMANDA_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<ChamadoMesaResponseDTO> atenderChamado(@PathVariable Long id, Authentication authentication) {
         return ResponseEntity.ok(ChamadoMesaResponseDTO.of(useCase.atenderChamado(id, authentication.getName())));
     }

@@ -26,7 +26,10 @@ public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customer
         Long comandaId, Instant criadoEm, Instant decididoEm, String decididoPor, EscolhasSessao escolhas,
         String deviceToken, boolean acompanhante, Boolean pagarNoFinalAceito) {
 
-    /** Depois disso a pendente vira {@link SolicitacaoStatus#EXPIRADA} na leitura. */
+    /**
+     * Depois disso a pendente vira {@link SolicitacaoStatus#EXPIRADA} na leitura. É o padrão: a loja
+     * ajusta em {@code expiracaoSolicitacaoMin} da Central de Pedidos (ECM-F013).
+     */
     public static final Duration VALIDADE = Duration.ofMinutes(30);
     public static final int TEXTO_MAX = 200;
 
@@ -65,8 +68,13 @@ public record SolicitacaoSessao(Long id, UUID codigo, Long mesaId, Long customer
 
     /** O status como o mundo o vê: a pendente vencida é {@link SolicitacaoStatus#EXPIRADA}. */
     public SolicitacaoStatus statusEm(Instant agora) {
+        return statusEm(agora, VALIDADE);
+    }
+
+    /** Idem, com a validade da configuração da Central de Pedidos (ECM-F013). */
+    public SolicitacaoStatus statusEm(Instant agora, Duration validade) {
         if (status == SolicitacaoStatus.PENDENTE && criadoEm != null
-                && criadoEm.plus(VALIDADE).isBefore(agora)) {
+                && criadoEm.plus(validade).isBefore(agora)) {
             return SolicitacaoStatus.EXPIRADA;
         }
         return status;

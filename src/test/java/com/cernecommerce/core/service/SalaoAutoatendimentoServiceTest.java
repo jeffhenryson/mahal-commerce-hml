@@ -12,6 +12,7 @@ import com.cernecommerce.core.domain.exception.salao.ConfirmacaoInvalidaExceptio
 import com.cernecommerce.core.domain.exception.salao.EssenciaIndisponivelException;
 import com.cernecommerce.core.domain.exception.salao.MesaOcupadaException;
 import com.cernecommerce.core.domain.exception.salao.SalaoMesaNotFoundException;
+import com.cernecommerce.core.domain.exception.salao.QrPausadoException;
 import com.cernecommerce.core.domain.exception.salao.SolicitacaoJaPendenteException;
 import com.cernecommerce.core.domain.exception.salao.SolicitacaoNaoPendenteException;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -74,6 +75,8 @@ import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.PerfisDoSku;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.Pedido;
 import com.cernecommerce.core.ports.in.SessionMenuUseCase;
 import com.cernecommerce.core.ports.out.AfterCommitExecutor;
+import com.cernecommerce.core.ports.out.ecommerce.CentralPedidosConfigRepository;
+import com.cernecommerce.core.domain.model.ecommerce.CentralPedidosConfig;
 import com.cernecommerce.core.ports.out.audit.AuditLogRepository;
 import com.cernecommerce.core.ports.out.estoque.WarehouseRepository;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
@@ -145,6 +148,20 @@ class SalaoAutoatendimentoServiceTest {
     @Mock AuditLogRepository auditLog;
 
     SalaoAutoatendimentoService service;
+    /** ECM-F013 — a configuração da Central de Pedidos que o teste troca; começa no padrão. */
+    CentralPedidosConfig centralConfig = CentralPedidosConfig.padrao();
+    final CentralPedidosConfigRepository centralConfigRepository = new CentralPedidosConfigRepository() {
+        @Override
+        public Optional<CentralPedidosConfig> find() {
+            return Optional.of(centralConfig);
+        }
+
+        @Override
+        public CentralPedidosConfig save(CentralPedidosConfig config, String updatedBy) {
+            centralConfig = config;
+            return config;
+        }
+    };
 
     private static final SalaoMesa MESA = new SalaoMesa(7L, "Mesa 4", "tok-mesa-4", true, AGORA);
     private static final Warehouse SALAO = new Warehouse(10L, "SALAO", "Salão", WarehouseType.SALAO, true);
@@ -160,7 +177,8 @@ class SalaoAutoatendimentoServiceTest {
     void setUp() {
         service = new SalaoAutoatendimentoService(repository, estoqueUseCase, warehouseRepository,
                 sessionMenuUseCase, crmUseCase, comandaUseCase, notificationUseCase,
-                userRepository, ssePort, afterCommit, auditEvents, auditLog, Clock.fixed(AGORA, ZoneOffset.UTC));
+                userRepository, ssePort, afterCommit, auditEvents, auditLog, centralConfigRepository,
+                Clock.fixed(AGORA, ZoneOffset.UTC));
 
         when(repository.findMesaByToken("tok-mesa-4")).thenReturn(Optional.of(MESA));
         when(repository.findMesaById(7L)).thenReturn(Optional.of(MESA));
@@ -461,7 +479,9 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(s.observacao()).isEqualTo("sem gelo");
         assertThat(s.escolhas()).isEqualTo(new EscolhasSessao(true, Charcoal.JUMBO, List.of(5L), false));
         assertThat(s.deviceToken()).isEqualTo(APARELHO);
-        verify(afterCommit).accumulate(anyString(), any(), any());
+        verify(afterCommit).accumulate(eq("salao.solicitacao.aviso"), any(), any());
+        // ECM-F012 — e a Central de Pedidos fica sabendo, no mesmo flush pós-commit.
+        verify(afterCommit).accumulate(eq("central-pedidos.eventos"), any(), any());
         // Mesa livre: ocupada já no envio, pelo aparelho que pediu, ainda sem comanda.
         ArgumentCaptor<MesaOcupacao> ocupacao = ArgumentCaptor.forClass(MesaOcupacao.class);
         verify(repository).findMesaByIdForUpdate(7L);
@@ -470,6 +490,18 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(ocupacao.getValue().solicitacaoId()).isEqualTo(99L);
         assertThat(ocupacao.getValue().customerId()).isEqualTo(50L);
         verify(repository).addAcesso(70L, APARELHO, false);
+    }
+
+    @Test
+    void solicitar_comOQrPausadoNaCentral_recusaSemGravarNemOcuparAMesa() {
+        identificaMaria();
+        centralConfig = new CentralPedidosConfig(true, false, List.of(), false, 20, 40, 30,
+                null, true, null);
+
+        assertThatThrownBy(() -> service.solicitarPorToken("tok-mesa-4", new Pedido(new Identificacao("12345678901", null),
+                "ZOMO-MENTA", null, null, NO_CAIXA, APARELHO)))
+                .isInstanceOf(QrPausadoException.class);
+        verify(repository, never()).saveOcupacao(any());
     }
 
     @Test
@@ -1168,6 +1200,18 @@ class SalaoAutoatendimentoServiceTest {
         assertThat(pagina.content()).extracting(SolicitacaoResumo::cliente).containsOnly("Maria Luiza");
         verify(crmUseCase, never()).findCustomerById(any());
         verify(estoqueUseCase, times(1)).findProductsByAnySku(Set.of("ZOMO-MENTA", "ZOMO-UVA"));
+    }
+
+    @Test
+    void listSolicitacoes_expiradas_usamAValidadeDaCentral() {
+        centralConfig = new CentralPedidosConfig(true, true, List.of(), false, 20, 40, 10, null, true, null);
+        SolicitacaoSessao vencida = pendente(AGORA.minus(Duration.ofMinutes(15)));
+        when(repository.findSolicitacoesAntesDe(SolicitacaoStatus.PENDENTE, AGORA.minus(Duration.ofMinutes(10)),
+                0, 20)).thenReturn(new PageResult<>(List.of(vencida), 0, 20, 1, 1));
+
+        var pagina = service.listSolicitacoes(SolicitacaoStatus.EXPIRADA, 0, 20);
+
+        assertThat(pagina.content()).extracting(SolicitacaoResumo::status).containsExactly(SolicitacaoStatus.EXPIRADA);
     }
 
     @Test
