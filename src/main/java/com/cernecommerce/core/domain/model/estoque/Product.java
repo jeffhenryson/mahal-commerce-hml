@@ -677,4 +677,9 @@ public record Product(
     public boolean isDraft() {
         return status == ProductStatus.RASCUNHO;
     }
+
+    /** Indica se este produto foi excluído logicamente — fora de tudo, exceto do histórico (EST-F054). */
+    public boolean isArchived() {
+        return status == ProductStatus.ARQUIVADO;
+    }
 }
