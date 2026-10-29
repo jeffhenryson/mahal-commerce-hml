@@ -345,6 +345,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setKitBundleId(item.kitBundleId());
             itemEntity.setKitTemplateId(item.kitTemplateId());
             itemEntity.setKitDiscountAmount(item.kitDiscountAmount());
+            itemEntity.setCompraNaLoja(item.storePurchase());
+            itemEntity.setStoreDiscountAmount(item.storeDiscountAmount());
             SessionProgress session = item.session();
             itemEntity.setSessionStatus(session == null ? null : session.status().name());
             itemEntity.setStartedAt(session == null ? null : session.startedAt());
@@ -353,11 +355,17 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setPayLater(session != null && session.payLater());
             itemEntity.setWithdrawnReason(session == null ? null : session.withdrawnReason());
             itemEntity.setWithdrawnBy(session == null ? null : session.withdrawnBy());
-            // PDV-F024 — carvão e adicionais nascem com a linha e não mudam: os adicionais só são
-            // gravados na primeira vez, e o snapshot fica como foi cobrado.
+            // PDV-F024 — o snapshot dos adicionais fica como foi cobrado. PDV-F058: a edição da sessão
+            // troca o snapshot inteiro; sem edição os ids não mudam e as linhas gravadas ficam.
             SessionSetup setup = item.setup();
             itemEntity.setCharcoal(setup == null || setup.charcoal() == null ? null : setup.charcoal().name());
             itemEntity.setVasoGrande(setup != null && setup.vasoGrande());
+            itemEntity.setCarvaoCortesia(setup != null && setup.charcoalCourtesy());
+            List<Long> addonIds = setup == null ? List.of()
+                    : setup.addons().stream().map(SessionSetup.Addon::addonId).toList();
+            if (!addonIds.equals(itemEntity.getAddons().stream().map(ComandaItemAddonEntity::getAddonId).toList())) {
+                itemEntity.getAddons().clear();
+            }
             if (setup != null && itemEntity.getAddons().isEmpty()) {
                 for (SessionSetup.Addon addon : setup.addons()) {
                     ComandaItemAddonEntity addonEntity = new ComandaItemAddonEntity();
@@ -392,7 +400,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                         e.getStartedAt(), e.getDeliveredAt(), e.getCollectedAt(), e.isPayLater(),
                         e.getWithdrawnReason(), e.getWithdrawnBy()),
                 toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package(),
-                e.getEssenceRatio() == null ? null : ProporcaoMistura.valueOf(e.getEssenceRatio()));
+                e.getEssenceRatio() == null ? null : ProporcaoMistura.valueOf(e.getEssenceRatio()),
+                e.isCompraNaLoja(), e.getStoreDiscountAmount());
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {
@@ -403,6 +412,6 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.getAddons().stream()
                         .map(a -> new SessionSetup.Addon(a.getAddonId(), a.getNome(), a.getPreco()))
                         .toList(),
-                e.isVasoGrande());
+                e.isVasoGrande(), e.isCarvaoCortesia());
     }
 }

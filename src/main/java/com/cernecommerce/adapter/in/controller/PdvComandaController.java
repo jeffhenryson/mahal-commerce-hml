@@ -4,6 +4,7 @@ import java.time.Instant;
 import org.springframework.format.annotation.DateTimeFormat;
 import com.cernecommerce.adapter.in.dtos.request.ComandaCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.StorePurchaseRequest;
+import com.cernecommerce.adapter.in.dtos.request.StorePurchaseOnTabRequest;
 import com.cernecommerce.adapter.in.dtos.response.ComandaSessionTimelineDTO;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
@@ -35,6 +36,7 @@ import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -95,6 +97,9 @@ public class PdvComandaController {
      * salão e alçada de caixa são concedidas a pessoas diferentes. O teto, esse, é compartilhado.
      */
     private static final String COMANDA_DISCOUNT_AUTHORITY = "PDV_COMANDA_DISCOUNT";
+
+    /** PDV-F060 — o desconto da compra na loja na mesa é o desconto de linha do caixa. */
+    private static final String SALE_DISCOUNT_AUTHORITY = "PDV_SALE_DISCOUNT";
 
     /** PDV-F020 — cadastrar o lead da mesa é a mesma alçada do cadastro rápido do balcão. */
     private static final String LEAD_CREATE_AUTHORITY = "CRM_LEAD_CREATE";
@@ -508,6 +513,41 @@ public class PdvComandaController {
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_STORE_PURCHASE_RECORDED, authentication.getName(),
                 auditPayload(comandaId, "boughtInStore", bought, "orderId", request.getOrderId())));
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Lança a compra na loja na conta da mesa (PDV-F060)",
+            description = "Na mesa com sessão paga no final ainda em aberto, a compra na loja entra na conta em "
+                    + "vez de ser cobrada no caixa. Os itens são os do SaleRequest do caixa: preço resolvido "
+                    + "pelo servidor, discountAmount na linha com as mesmas regras e o mesmo teto. Cada item "
+                    + "vira uma linha NORMAL com compraNaLoja=true, baixa o estoque agora e fica fora da taxa "
+                    + "de serviço. Marca a mesa como \"comprou na loja\" (PDV-F036). Cobrada no close parcial "
+                    + "junto com a sessão, ou no fechamento total.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Lançada, com a comanda atualizada"),
+            @ApiResponse(responseCode = "400", description = "Sem itens, ou desconto maior que o item (ITEM_DISCOUNT_EXCEEDS_GROSS)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Desconto sem PDV_SALE_DISCOUNT", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda ou produto não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); mesa sem sessão paga no final (NO_PAY_LATER_SESSION); desconto acima do teto (DISCOUNT_LIMIT_EXCEEDED); sem saldo", content = @Content)
+    })
+    @PostMapping("/{id}/compra-na-loja")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> addStorePurchaseToTab(@PathVariable("id") Long comandaId,
+            @Valid @RequestBody StorePurchaseOnTabRequest request, Authentication authentication) {
+        List<SaleItemCommand> items = request.getItems().stream()
+                .map(i -> new SaleItemCommand(i.getSku(), i.getQuantity(), i.getDiscountAmount(), i.getNote()))
+                .toList();
+        // Mesma alçada do desconto de linha do caixa: é a mesma venda, só cobrada na mesa.
+        if (items.stream().anyMatch(i -> i.discountAmount() != null && i.discountAmount().signum() > 0)) {
+            requireAuthority(SALE_DISCOUNT_AUTHORITY, authentication, () -> new AccessDeniedException(
+                    "Conceder desconto exige a permissão " + SALE_DISCOUNT_AUTHORITY + "."));
+        }
+        Comanda comanda = comandaUseCase.addStorePurchaseToTab(comandaId, items, authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_STORE_PURCHASE_RECORDED, authentication.getName(),
+                auditPayload(comandaId, "boughtInStore", true, "naContaDaMesa", true,
+                        "skus", items.stream().map(SaleItemCommand::sku).toList())));
+        ComandaResponseDTO dto = comandaConverter.toResponse(comanda);
+        enrichCustomerNames(List.of(dto));
+        return ResponseEntity.status(201).body(dto);
     }
 
     @Operation(summary = "Lista as comandas abertas — as \"mesas ocupadas\"",

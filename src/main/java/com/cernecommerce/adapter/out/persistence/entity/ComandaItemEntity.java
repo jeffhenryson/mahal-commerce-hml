@@ -131,6 +131,13 @@ public class ComandaItemEntity {
     @Column(name = "kit_discount_amount", precision = 14, scale = 2)
     private BigDecimal kitDiscountAmount;
 
+    // PDV-F060 — compra na loja lançada na conta da mesa, e o desconto dela (V178).
+    @Column(name = "compra_na_loja", nullable = false)
+    private boolean compraNaLoja;
+
+    @Column(name = "store_discount_amount", precision = 14, scale = 2)
+    private BigDecimal storeDiscountAmount;
+
     // PDV-F023 — status e tempo de mesa da sessão. Nulos em linha de catálogo.
     @Column(name = "session_status", length = 20)
     private String sessionStatus;
@@ -162,6 +169,10 @@ public class ComandaItemEntity {
     // PDV-F027 — sessão no vaso grande, para "repetir sessão" refazer a mesma configuração.
     @Column(name = "vaso_grande", nullable = false)
     private boolean vasoGrande;
+
+    // PDV-F057 — o carvão jumbo saiu de cortesia, sem o acréscimo (V178).
+    @Column(name = "carvao_cortesia", nullable = false)
+    private boolean carvaoCortesia;
 
     @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
     @BatchSize(size = 100)

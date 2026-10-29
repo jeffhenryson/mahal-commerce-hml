@@ -6,6 +6,7 @@ import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
+import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionTimeline;
 import com.cernecommerce.core.domain.model.pdv.StorePurchase;
@@ -13,6 +14,7 @@ import com.cernecommerce.core.domain.model.pdv.SessionStatus;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
+import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -483,9 +485,18 @@ public interface ComandaUseCase {
      * @param essenciaRoshSku PDV-F042 — sabor do catálogo do 2º rosh, no duplo
      * @param essenciaSku2 PDV-F051 — 2º sabor da mescla. Sem sabor novo, a mescla da origem se repete;
      *        com {@code essenciaSku} novo e este nulo, a sessão sai com um sabor só
+     * @param carvaoCortesia PDV-F057 — o jumbo da origem sai de cortesia. Não herda da origem: sem o
+     *        campo o jumbo vai cobrado. Quem chama confere {@code PDV_COMANDA_COURTESY}
      */
     record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
-            boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2) {
+            boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2,
+            boolean carvaoCortesia) {
+
+        public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
+                boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2) {
+            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, essenciaSku, essenciaRoshSku, essenciaSku2,
+                    false);
+        }
 
         public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
                 boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku) {
@@ -519,14 +530,25 @@ public interface ComandaUseCase {
      * @param tierId PDV-F050 — faixa do pedido: só vale para sessão em texto e essência sem faixa na
      *        ficha; com faixa na ficha, é a dela (a maior, na mescla)
      * @param essenciaProporcao quanto de cada sabor vai na mescla; ignorada sem {@code essenciaSku2}
+     * @param carvaoCortesia PDV-F057 — o acréscimo do jumbo não entra no subtotal. Só vale com
+     *        {@code JUMBO}; com outro carvão é ignorado. Quem chama confere {@code PDV_COMANDA_COURTESY}
      */
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
             List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
             String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
-            ProporcaoMistura essenciaProporcao) {
+            ProporcaoMistura essenciaProporcao, boolean carvaoCortesia) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+            carvaoCortesia = carvaoCortesia && carvao == Charcoal.JUMBO;
+        }
+
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+                String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
+                ProporcaoMistura essenciaProporcao) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    essenciaSku, essenciaRoshSku, essenciaSku2, essenciaRoshSku2, essenciaProporcao, false);
         }
 
         public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
@@ -609,6 +631,60 @@ public interface ComandaUseCase {
     /** Resultado de {@link #undoDuplo}: a comanda salva e a linha de rosh removida (para a auditoria). */
     record DuploUndone(Comanda comanda, Long roshItemId) {
     }
+
+    /**
+     * PDV-F058 — edita a sessão enquanto ela não foi entregue ({@code AGUARDANDO_PAGAMENTO},
+     * {@code NA_FILA} ou {@code PREPARANDO}): faixa, sabores, vaso, carvão e adicionais, recalculando o
+     * subtotal com as regras do lançamento. Sabor trocado devolve o uso da lata antiga e consome a nova;
+     * vaso trocado libera um utensílio e aloca o outro. O 2º rosh ligado e o "pagar no final" não mudam.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.NotASessionLineException linha que não é
+     *         sessão desta comanda, ou desistida
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionNotEditableException sessão entregue
+     *         ou recolhida
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionPaidPriceChangeException sessão já
+     *         paga cujo subtotal mudaria
+     */
+    SessionEdited editSession(Long comandaId, Long sessionItemId, EditSessionCommand command, String username);
+
+    /**
+     * O pedido de edição da sessão (PDV-F058): a configuração completa, como no lançamento, sem modo,
+     * duplo e pagar no final.
+     */
+    record EditSessionCommand(Long tierId, String essencia, String essenciaSku, String essenciaSku2,
+            ProporcaoMistura essenciaProporcao, boolean vasoGrande, Charcoal carvao, boolean carvaoCortesia,
+            List<Long> adicionalIds) {
+
+        public EditSessionCommand {
+            adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
+            carvaoCortesia = carvaoCortesia && carvao == Charcoal.JUMBO;
+        }
+    }
+
+    /** Resultado de {@link #editSession}: a comanda salva e a linha antes e depois (para a auditoria). */
+    record SessionEdited(Comanda comanda, ComandaItem before, ComandaItem after) {
+    }
+
+    /**
+     * PDV-F059 — passa para "pagar no final" a sessão lançada para pagar agora e ainda não paga: o
+     * mesmo efeito de lançá-la com {@code pagarNoFinal} — vai ao preparo, o tempo começa, e o 2º rosh
+     * ligado herda a marca. Quem chama confere {@code PDV_SESSION_PAY_LATER}.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionNotAwaitingPaymentException sessão
+     *         fora de {@code AGUARDANDO_PAGAMENTO} ou já num pedido
+     */
+    Comanda convertSessionToPayLater(Long comandaId, Long sessionItemId, String username);
+
+    /**
+     * PDV-F060 — lança na conta da mesa a compra na loja de quem tem sessão paga no final em aberto: cada
+     * item vira uma linha {@code NORMAL} marcada como compra na loja, com o preço do catálogo e o
+     * desconto da linha sob o teto do caixa. Baixa o estoque agora, do depósito da comanda, e marca a
+     * mesa como "comprou na loja" (PDV-F036). As linhas ficam fora da taxa de serviço.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException mesa sem sessão
+     *         paga no final ainda em aberto
+     */
+    Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username);
 
     /**
      * Encerra a mesa cujas linhas já foram todas cobradas em fechamentos parciais (PDV-F023). Não

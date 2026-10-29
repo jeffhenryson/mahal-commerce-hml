@@ -114,6 +114,94 @@ public class PdvSessaoControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * PDV-F057 — o jumbo de cortesia é cortesia: sem PDV_COMANDA_COURTESY, 403 antes de ler a mesa. Com
+     * a permissão, passa da checagem e cai no 404 da comanda inexistente.
+     */
+    @Test
+    void session_jumbo_courtesy_without_permission_returns_403() throws Exception {
+        String body = "{\"tierId\":1,\"essencia\":\"Zomo\",\"carvao\":\"JUMBO\",\"carvaoCortesia\":true}";
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("gerente").authorities(COMANDA,
+                                new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    /** PDV-F057 — com CUBO o campo é ignorado, e não pede alçada: passa e cai no 404. */
+    @Test
+    void session_cubo_with_courtesy_flag_is_ignored() throws Exception {
+        String body = "{\"tierId\":1,\"essencia\":\"Zomo\",\"carvao\":\"CUBO\",\"carvaoCortesia\":true}";
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void repeat_session_jumbo_courtesy_without_permission_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/repetir").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"carvaoCortesia\":true}").with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+    }
+
+    /** PDV-F058 — editar com jumbo de cortesia exige a alçada; sem ela 403, com ela o 404 da mesa. */
+    @Test
+    void edit_session_jumbo_courtesy_without_permission_returns_403() throws Exception {
+        String body = "{\"tierId\":1,\"essencia\":\"Zomo\",\"carvao\":\"JUMBO\",\"carvaoCortesia\":true}";
+        mockMvc.perform(put("/pdv/comandas/987654321/sessoes/1").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COURTESY_NOT_ALLOWED"));
+        mockMvc.perform(put("/pdv/comandas/987654321/sessoes/1").contentType(MediaType.APPLICATION_JSON)
+                        .content(body).with(user("gerente").authorities(COMANDA,
+                                new SimpleGrantedAuthority("PDV_COMANDA_COURTESY"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void edit_session_without_comanda_manage_returns_403() throws Exception {
+        mockMvc.perform(put("/pdv/comandas/987654321/sessoes/1").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tierId\":1,\"essencia\":\"Zomo\"}")
+                        .with(user("bob").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    /** PDV-F059 — passar para pagar no final exige PDV_SESSION_PAY_LATER, como o lançamento. */
+    @Test
+    void convert_to_pay_later_without_permission_returns_403() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/pagar-no-final")
+                        .with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("SESSION_PAY_LATER_NOT_ALLOWED"));
+        mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/pagar-no-final")
+                        .with(user("gerente").authorities(COMANDA, new SimpleGrantedAuthority("PDV_SESSION_PAY_LATER"))))
+                .andExpect(status().isNotFound());
+    }
+
+    /** PDV-F060 — compra na loja na mesa: PDV_COMANDA_MANAGE, e desconto exige PDV_SALE_DISCOUNT. */
+    @Test
+    void store_purchase_on_tab_requires_comanda_manage_and_sale_discount() throws Exception {
+        String semDesconto = "{\"items\":[{\"sku\":\"AGUA-500\",\"quantity\":2}]}";
+        String comDesconto = "{\"items\":[{\"sku\":\"ISQ-01\",\"quantity\":1,\"discountAmount\":1.5}]}";
+        mockMvc.perform(post("/pdv/comandas/987654321/compra-na-loja").contentType(MediaType.APPLICATION_JSON)
+                        .content(semDesconto).with(user("bob").authorities(new SimpleGrantedAuthority("PDV_READ"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/pdv/comandas/987654321/compra-na-loja").contentType(MediaType.APPLICATION_JSON)
+                        .content(semDesconto).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/pdv/comandas/987654321/compra-na-loja").contentType(MediaType.APPLICATION_JSON)
+                        .content(comDesconto).with(user("atendente").authorities(COMANDA)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/pdv/comandas/987654321/compra-na-loja").contentType(MediaType.APPLICATION_JSON)
+                        .content(comDesconto).with(user("gerente").authorities(COMANDA,
+                                new SimpleGrantedAuthority("PDV_SALE_DISCOUNT"))))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void repeat_session_pay_later_without_permission_returns_403() throws Exception {
         mockMvc.perform(post("/pdv/comandas/987654321/sessoes/1/repetir").contentType(MediaType.APPLICATION_JSON)

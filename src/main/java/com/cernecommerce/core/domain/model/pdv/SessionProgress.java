@@ -70,6 +70,22 @@ public record SessionProgress(SessionStatus status, Instant startedAt, Instant d
         return new SessionProgress(SessionStatus.PREPARANDO, at, null, null, true);
     }
 
+    /**
+     * PDV-F059 — a sessão lançada para pagar agora passa a pagar no final: o efeito é o mesmo de ter
+     * sido lançada com {@code pagarNoFinal}, e o tempo de mesa começa aqui.
+     */
+    public SessionProgress convertedToPayLater(Instant at) {
+        if (status != SessionStatus.AGUARDANDO_PAGAMENTO) {
+            throw new IllegalStateException("sessão " + status + " não está aguardando pagamento");
+        }
+        return preparingPayLater(at);
+    }
+
+    /** PDV-F059 — o 2º rosh herda a marca de pagar no final da sessão convertida; o status não muda. */
+    public SessionProgress withPayLater() {
+        return new SessionProgress(status, startedAt, deliveredAt, collectedAt, true, withdrawnReason, withdrawnBy);
+    }
+
     /** 2º rosh do duplo: espera o 1º ser recolhido para começar. */
     public static SessionProgress queued() {
         return queued(false);

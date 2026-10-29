@@ -45,8 +45,13 @@ public class AddSessionRequest {
     @Schema(description = "Upgrade para o vaso grande (acréscimo da configuração).")
     private boolean vasoGrande;
 
-    @Schema(description = "Carvão da sessão, só registro, sem efeito em preço (PDV-F024).")
+    @Schema(description = "Carvão da sessão (PDV-F024). JUMBO soma upgradeCarvaoJumboPreco ao preço.")
     private Charcoal carvao;
+
+    @Schema(description = "PDV-F057 — o jumbo sai de cortesia: o acréscimo não entra no subtotal. Só vale "
+            + "com carvao=JUMBO (com outro carvão é ignorado). Exige PDV_COMANDA_COURTESY (403 "
+            + "COURTESY_NOT_ALLOWED).")
+    private boolean carvaoCortesia;
 
     @Schema(description = "Adicionais pagos (GET /pdv/sessao/cardapio → adicionais). Somados ao preço "
             + "da sessão; id repetido cobra duas vezes (PDV-F024).")

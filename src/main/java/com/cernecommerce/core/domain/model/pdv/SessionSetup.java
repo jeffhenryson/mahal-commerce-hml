@@ -10,11 +10,19 @@ import java.util.List;
  * <p>Os adicionais são <b>snapshot</b> (nome e preço no lançamento), não referência ao cadastro:
  * mudar o preço do filtro amanhã não pode reescrever o que a mesa de hoje pagou, e é por eles que o
  * relatório conta quantos filtros saíram.</p>
+ *
+ * <p>PDV-F057: {@code charcoalCourtesy} — o jumbo saiu de cortesia, sem o acréscimo. Só existe com
+ * {@link Charcoal#JUMBO}; com outro carvão é normalizado para {@code false}.</p>
  */
-public record SessionSetup(Charcoal charcoal, List<Addon> addons, boolean vasoGrande) {
+public record SessionSetup(Charcoal charcoal, List<Addon> addons, boolean vasoGrande, boolean charcoalCourtesy) {
 
     public SessionSetup {
         addons = addons == null ? List.of() : List.copyOf(addons);
+        charcoalCourtesy = charcoalCourtesy && charcoal == Charcoal.JUMBO;
+    }
+
+    public SessionSetup(Charcoal charcoal, List<Addon> addons, boolean vasoGrande) {
+        this(charcoal, addons, vasoGrande, false);
     }
 
     public SessionSetup(Charcoal charcoal, List<Addon> addons) {
@@ -26,8 +34,14 @@ public record SessionSetup(Charcoal charcoal, List<Addon> addons, boolean vasoGr
     }
 
     public static SessionSetup of(Charcoal charcoal, List<SessionAddon> chosen, boolean vasoGrande) {
+        return of(charcoal, chosen, vasoGrande, false);
+    }
+
+    public static SessionSetup of(Charcoal charcoal, List<SessionAddon> chosen, boolean vasoGrande,
+            boolean charcoalCourtesy) {
         return new SessionSetup(charcoal, chosen == null ? List.of()
-                : chosen.stream().map(a -> new Addon(a.id(), a.nome(), a.preco())).toList(), vasoGrande);
+                : chosen.stream().map(a -> new Addon(a.id(), a.nome(), a.preco())).toList(), vasoGrande,
+                charcoalCourtesy);
     }
 
     public BigDecimal addonsTotal() {

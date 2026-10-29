@@ -15,6 +15,7 @@ import com.cernecommerce.adapter.in.dtos.request.SessionAddonRequest;
 import com.cernecommerce.adapter.in.dtos.response.SessionAddonResponseDTO;
 import com.cernecommerce.adapter.in.dtos.request.UpdateSessionStatusRequest;
 import com.cernecommerce.adapter.in.dtos.request.AddSessionRequest;
+import com.cernecommerce.adapter.in.dtos.request.EditSessionRequest;
 import com.cernecommerce.adapter.in.dtos.request.SessionAssetTypeRequest;
 import com.cernecommerce.adapter.in.dtos.request.SessionSettingsRequest;
 import com.cernecommerce.adapter.in.dtos.request.SessionTierRequest;
@@ -25,7 +26,10 @@ import com.cernecommerce.adapter.in.dtos.response.SessionSettingsResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.SessionTierResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
+import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.Comanda;
+import com.cernecommerce.core.domain.model.pdv.ComandaItem;
+import com.cernecommerce.core.domain.model.pdv.SessionSetup;
 import com.cernecommerce.core.domain.model.pdv.SessionAddon;
 import com.cernecommerce.core.domain.model.pdv.SessionAssetType;
 import com.cernecommerce.core.domain.model.pdv.SessionSettings;
@@ -122,11 +126,15 @@ public class PdvSessaoController {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
         requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
         requireDuploAllowed(request.isDuplo(), authentication);
+        // PDV-F057 — com CUBO (ou sem carvão) o campo é ignorado, e não pede alçada.
+        requireCharcoalCourtesyAllowed(request.getCarvao() == Charcoal.JUMBO && request.isCarvaoCortesia(),
+                authentication);
         Comanda comanda = comandaUseCase.addSession(comandaId, new ComandaUseCase.AddSessionCommand(
                 request.getTierId(), request.getEssencia(), request.isVasoGrande(), request.getCarvao(),
                 request.getAdicionalIds(), request.isDuplo(), request.getEssenciaRosh(), request.getTierIdRosh(),
                 request.isPagarNoFinal(), request.getEssenciaSku(), request.getEssenciaRoshSku(),
-                request.getEssenciaSku2(), request.getEssenciaRoshSku2(), request.getProporcao()),
+                request.getEssenciaSku2(), request.getEssenciaRoshSku2(), request.getProporcao(),
+                request.isCarvaoCortesia()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
@@ -136,6 +144,8 @@ public class PdvSessaoController {
         payload.put("vasoGrande", request.isVasoGrande());
         payload.put("duplo", request.isDuplo());
         payload.put("pagarNoFinal", request.isPagarNoFinal());
+        // PDV-F057 — a cortesia do jumbo fica na trilha, como o 2º rosh do duplo.
+        payload.put("carvaoCortesia", request.getCarvao() == Charcoal.JUMBO && request.isCarvaoCortesia());
         if (request.getAdicionalIds() != null && !request.getAdicionalIds().isEmpty()) {
             payload.put("adicionalIds", request.getAdicionalIds());
         }
@@ -161,18 +171,82 @@ public class PdvSessaoController {
             Authentication authentication) {
         requirePayLaterAllowed(request.isPagarNoFinal(), authentication);
         requireDuploAllowed(request.isDuplo(), authentication);
+        requireCharcoalCourtesyAllowed(request.isCarvaoCortesia(), authentication);
         Comanda comanda = comandaUseCase.repeatSession(comandaId, sourceItemId,
                 new ComandaUseCase.RepeatSessionCommand(request.getEssencia(), request.isDuplo(),
                         request.getEssenciaRosh(), request.getTierIdRosh(), request.isPagarNoFinal(),
-                        request.getEssenciaSku(), request.getEssenciaRoshSku(), request.getEssenciaSku2()),
+                        request.getEssenciaSku(), request.getEssenciaRoshSku(), request.getEssenciaSku2(),
+                        request.isCarvaoCortesia()),
                 authentication.getName());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("comandaId", comandaId);
         payload.put("repeatedFromItemId", sourceItemId);
         payload.put("duplo", request.isDuplo());
         payload.put("pagarNoFinal", request.isPagarNoFinal());
+        payload.put("carvaoCortesia", request.isCarvaoCortesia());
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_ADDED, authentication.getName(), payload));
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(comanda));
+    }
+
+    @Operation(summary = "Edita uma sessão ainda não entregue",
+            description = "PDV-F058 — troca faixa, sabores, vaso, carvão e adicionais da sessão {itemId} enquanto "
+                    + "ela está AGUARDANDO_PAGAMENTO, NA_FILA ou PREPARANDO. O corpo é a configuração completa "
+                    + "(PUT). Recalcula o subtotal como no lançamento. Sabor trocado devolve o uso da lata "
+                    + "antiga e consome o novo; mesmo SKU não mexe no estoque. Vaso trocado libera um e aloca "
+                    + "o outro. O 2º rosh ligado e o pagar no final não mudam. Sessão já paga só aceita "
+                    + "edição com o mesmo valor.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Editada, com a comanda atualizada"),
+            @ApiResponse(responseCode = "400", description = "Sem essencia e sem essenciaSku (SESSION_ESSENCE_REQUIRED); sem faixa (SESSION_TIER_REQUIRED); mescla com o mesmo sabor (SAME_FLAVOR_MIX)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "carvaoCortesia sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda, faixa ou adicional não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); a linha não é sessão desta comanda ou está desistida (NOT_A_SESSION_LINE); sessão entregue ou recolhida (SESSION_NOT_EDITABLE); sessão paga mudando o valor (SESSION_PAID_PRICE_CHANGE); sem utensílio livre (SESSION_ASSET_UNAVAILABLE); sem lata do sabor (SALAO_SEM_ESTOQUE)", content = @Content)
+    })
+    @PutMapping("/pdv/comandas/{id}/sessoes/{itemId}")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> editSession(@PathVariable("id") Long comandaId,
+            @PathVariable("itemId") Long itemId, @Valid @RequestBody EditSessionRequest request,
+            Authentication authentication) {
+        requireEssence("essencia", request.getEssencia(), request.getEssenciaSku());
+        requireCharcoalCourtesyAllowed(request.isCarvaoCortesia(), authentication);
+        ComandaUseCase.SessionEdited edited = comandaUseCase.editSession(comandaId, itemId,
+                new ComandaUseCase.EditSessionCommand(request.getTierId(), request.getEssencia(),
+                        request.getEssenciaSku(), request.getEssenciaSku2(), request.getProporcao(),
+                        request.isVasoGrande(), request.getCarvao(), request.isCarvaoCortesia(),
+                        request.getAdicionalIds()),
+                authentication.getName());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("comandaId", comandaId);
+        payload.put("itemId", itemId);
+        payload.put("antes", sessionSnapshot(edited.before()));
+        payload.put("depois", sessionSnapshot(edited.after()));
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_EDITED, authentication.getName(), payload));
+        return ResponseEntity.ok(toResponse(edited.comanda()));
+    }
+
+    @Operation(summary = "Passa a sessão para pagar no final",
+            description = "PDV-F059 — a sessão {itemId} lançada para pagar agora, ainda AGUARDANDO_PAGAMENTO e "
+                    + "sem pedido, passa a pagar no final: o mesmo efeito de lançá-la com pagarNoFinal=true — "
+                    + "vai a PREPARANDO, o tempo começa, e o 2º rosh ligado herda a marca. Recolher continua "
+                    + "exigindo o pagamento (SESSION_NOT_PAID_FOR_COLLECT).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Convertida, com a comanda atualizada"),
+            @ApiResponse(responseCode = "403", description = "Sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); a linha não é sessão desta comanda (NOT_A_SESSION_LINE); sessão fora de AGUARDANDO_PAGAMENTO ou já num pedido (SESSION_NOT_AWAITING_PAYMENT)", content = @Content)
+    })
+    @PostMapping("/pdv/comandas/{id}/sessoes/{itemId}/pagar-no-final")
+    @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
+    public ResponseEntity<ComandaResponseDTO> convertToPayLater(@PathVariable("id") Long comandaId,
+            @PathVariable("itemId") Long itemId, Authentication authentication) {
+        requirePayLaterAllowed(true, authentication);
+        Comanda comanda = comandaUseCase.convertSessionToPayLater(comandaId, itemId, authentication.getName());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("comandaId", comandaId);
+        payload.put("itemId", itemId);
+        payload.put("convertido", true);
+        publisher.publishEvent(AuditEvent.of(EventType.COMANDA_SESSION_PAY_LATER, authentication.getName(), payload));
+        return ResponseEntity.ok(toResponse(comanda));
     }
 
     @Operation(summary = "Lança o 2º rosh de uma sessão (duplo rosh)",
@@ -499,6 +573,31 @@ public class PdvSessaoController {
         if (!allowed) {
             throw new CourtesyNotAllowedException(authentication.getName());
         }
+    }
+
+    /**
+     * PDV-F057 — o jumbo de cortesia tira o acréscimo do subtotal: é cortesia como o 2º rosh do duplo,
+     * com a mesma alçada.
+     */
+    private void requireCharcoalCourtesyAllowed(boolean carvaoCortesia, Authentication authentication) {
+        requireDuploAllowed(carvaoCortesia, authentication);
+    }
+
+    /** PDV-F058 — o que a trilha guarda da sessão antes e depois da edição. */
+    private static Map<String, Object> sessionSnapshot(ComandaItem item) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        putIfPresent(snapshot, "tierId", item.sessionTierId());
+        putIfPresent(snapshot, "essencia", item.sessionEssencia());
+        putIfPresent(snapshot, "essenciaSku", item.essenceSku());
+        putIfPresent(snapshot, "essenciaSku2", item.essenceSku2());
+        SessionSetup setup = item.setup();
+        snapshot.put("vasoGrande", setup != null && setup.vasoGrande());
+        putIfPresent(snapshot, "carvao", setup == null || setup.charcoal() == null ? null : setup.charcoal().name());
+        snapshot.put("carvaoCortesia", setup != null && setup.charcoalCourtesy());
+        snapshot.put("adicionalIds", setup == null ? List.of()
+                : setup.addons().stream().map(SessionSetup.Addon::addonId).toList());
+        snapshot.put("subtotal", item.subtotal());
+        return snapshot;
     }
 
     /**

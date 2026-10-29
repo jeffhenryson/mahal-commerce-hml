@@ -12,6 +12,7 @@ import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
 import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoTransicaoInvalidaException;
 import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppOutroCaixaException;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.MensagemCliente;
 import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
@@ -37,6 +38,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.domain.model.pedido.SalesChannel;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
+import com.cernecommerce.core.ports.in.AvisoClientePedidoAppUseCase;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
@@ -77,6 +79,8 @@ public class PdvService implements PdvUseCase {
     /** PDV-F043 — nulo nos construtores antigos; ver o construtor completo. */
     private final OfflineSaleRejectionRepository offlineRejections;
     private final AtendimentoPedidoAppRepository pedidoAppAtendimentos;
+    /** ECM-F013 — avisa o cliente do app que o pagamento foi confirmado; nulo nos testes antigos. */
+    private final AvisoClientePedidoAppUseCase avisoCliente;
 
     /** Teto de desconto por pedido, em percentual sobre o bruto. */
     private final BigDecimal maxDiscountPercent;
@@ -126,8 +130,8 @@ public class PdvService implements PdvUseCase {
     }
 
     /**
-     * Com o atendimento dos pedidos do app (ECM-F010) — a que o {@code CoreBeanConfig} usa. Sem ele
-     * a liquidação não exige aceite, como antes da V174.
+     * Com o atendimento dos pedidos do app (ECM-F010). Sem ele a liquidação não exige aceite, como
+     * antes da V174.
      */
     public PdvService(CashRegisterRepository cashRegisterRepository,
             CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
@@ -135,6 +139,23 @@ public class PdvService implements PdvUseCase {
             CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
             BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase,
             OfflineSaleRejectionRepository offlineRejections, AtendimentoPedidoAppRepository pedidoAppAtendimentos) {
+        this(cashRegisterRepository, cashMovementRepository, orderRepository, orderPaymentRepository,
+                estoqueUseCase, cashbackUseCase, comandaRepository, maxDiscountPercent, clock, receivableUseCase,
+                offlineRejections, pedidoAppAtendimentos, null);
+    }
+
+    /**
+     * Com o aviso ao cliente do pedido do app (ECM-F013) — "pagamento confirmado" na liquidação. É a
+     * que o {@code CoreBeanConfig} usa; sem ele a liquidação não avisa.
+     */
+    public PdvService(CashRegisterRepository cashRegisterRepository,
+            CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
+            OrderPaymentRepository orderPaymentRepository, EstoqueUseCase estoqueUseCase,
+            CashbackUseCase cashbackUseCase, ComandaRepository comandaRepository,
+            BigDecimal maxDiscountPercent, Clock clock, ReceivableUseCase receivableUseCase,
+            OfflineSaleRejectionRepository offlineRejections, AtendimentoPedidoAppRepository pedidoAppAtendimentos,
+            AvisoClientePedidoAppUseCase avisoCliente) {
+        this.avisoCliente = avisoCliente;
         this.pedidoAppAtendimentos = pedidoAppAtendimentos;
         this.offlineRejections = offlineRejections;
         this.clock = clock;
@@ -675,6 +696,9 @@ public class PdvService implements PdvUseCase {
         // A retirada termina aqui: pagou no balcão, levou. A entrega continua ACEITO até sair.
         if (atendimento != null && !atendimento.isEntrega()) {
             pedidoAppAtendimentos.save(atendimento.retirado(Instant.now(clock)));
+        }
+        if (atendimento != null && avisoCliente != null) {
+            avisoCliente.etapa(saved, MensagemCliente.pagamentoConfirmado(atendimento));
         }
         return saved;
     }

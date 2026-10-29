@@ -15,6 +15,7 @@ import java.util.TreeMap;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Comparator;
 import java.time.Duration;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
@@ -24,6 +25,10 @@ import com.cernecommerce.core.domain.model.pdv.ComandaHistoryFilter;
 import com.cernecommerce.core.domain.model.pdv.ClosedComanda;
 import com.cernecommerce.core.domain.exception.pdv.LegacySessionDisabledException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
+import com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotAwaitingPaymentException;
+import com.cernecommerce.core.domain.exception.pdv.SessionNotEditableException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPaidPriceChangeException;
 import com.cernecommerce.core.domain.exception.pdv.SameFlavorMixException;
 import com.cernecommerce.core.domain.exception.pdv.SessionTierRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.ItemNotRoshExtraException;
@@ -97,6 +102,7 @@ import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.recebivel.OnAccountChannel;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
+import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.KitBuilderUseCase;
 import com.cernecommerce.core.ports.in.NotificationUseCase;
@@ -599,23 +605,16 @@ public class ComandaService implements ComandaUseCase {
         // Trava e confere os utensílios ANTES de gravar a linha: sem vaso livre não há sessão.
         List<SessionAssetType> assets = menu.reserveAssetsForSession(settings, command.vasoGrande());
 
-        SessionSetup setup = SessionSetup.of(command.carvao(), addons, command.vasoGrande());
-        BigDecimal price = (command.vasoGrande() ? tier.preco().add(settings.upgradeVasoGrandePreco()) : tier.preco())
-                .add(setup.addonsTotal()).add(settings.charcoalSurcharge(command.carvao()));
-        StringBuilder productName = new StringBuilder("Sessão ").append(tier.nome());
-        if (command.vasoGrande()) {
-            productName.append(" + vaso grande");
-        }
-        if (settings.charcoalSurcharge(command.carvao()).signum() > 0) {
-            productName.append(" + carvão jumbo");
-        }
-        addons.forEach(a -> productName.append(" + ").append(a.nome()));
+        SessionSetup setup = SessionSetup.of(command.carvao(), addons, command.vasoGrande(),
+                command.carvaoCortesia());
+        BigDecimal price = sessionPrice(tier, settings, setup);
         // PDV-F034 — paga no final vai direto ao preparo; o resto espera o pagamento (PDV-F027).
         SessionProgress progress = command.pagarNoFinal()
                 ? SessionProgress.preparingPayLater(Instant.now())
                 : SessionProgress.awaitingPayment();
-        ComandaItem item = consumeEssence(ComandaItem.forMenuSession(tier.sku(), price, productName.toString(),
-                ConsumptionMode.SESSAO, false, null, notes, progress, setup), sabores, comanda, username)
+        ComandaItem item = consumeEssence(ComandaItem.forMenuSession(tier.sku(), price,
+                sessionProductName(tier, settings, setup), ConsumptionMode.SESSAO, false, null, notes, progress, setup),
+                sabores, comanda, username)
                 .withEssenceRatio(command.essenciaProporcao());
 
         Comanda saved = comandaRepository.save(comanda.withAddedItem(item));
@@ -631,6 +630,31 @@ public class ComandaService implements ComandaUseCase {
         ComandaItem rosh = consumeEssence(duploRosh(tierRosh, sessionItemId, notesRosh, command.pagarNoFinal(),
                 command.carvao()), saboresRosh, comanda, username);
         return comandaRepository.save(saved.withAddedItem(rosh));
+    }
+
+    /**
+     * O preço da sessão do cardápio: a faixa, o upgrade de vaso grande, os adicionais e o acréscimo do
+     * jumbo — que não entra quando o jumbo é cortesia (PDV-F057). Lançamento e edição (PDV-F058) usam
+     * a mesma conta.
+     */
+    private static BigDecimal sessionPrice(SessionTier tier, SessionSettings settings, SessionSetup setup) {
+        return (setup.vasoGrande() ? tier.preco().add(settings.upgradeVasoGrandePreco()) : tier.preco())
+                .add(setup.addonsTotal()).add(settings.charcoalSurcharge(setup.charcoal(), setup.charcoalCourtesy()));
+    }
+
+    /** O nome da linha de sessão: a faixa e o que soma a ela, para o cupom e o histórico. */
+    private static String sessionProductName(SessionTier tier, SessionSettings settings, SessionSetup setup) {
+        StringBuilder productName = new StringBuilder("Sessão ").append(tier.nome());
+        if (setup.vasoGrande()) {
+            productName.append(" + vaso grande");
+        }
+        if (setup.charcoalCourtesy()) {
+            productName.append(" + carvão jumbo (cortesia)");
+        } else if (settings.charcoalSurcharge(setup.charcoal()).signum() > 0) {
+            productName.append(" + carvão jumbo");
+        }
+        setup.addons().forEach(a -> productName.append(" + ").append(a.nome()));
+        return productName.toString();
     }
 
     /**
@@ -739,10 +763,161 @@ public class ComandaService implements ComandaUseCase {
                 setup == null ? List.of() : setup.addons().stream().map(SessionSetup.Addon::addonId).toList(),
                 command.duplo(), command.essenciaRosh(), command.tierIdRosh(), command.pagarNoFinal(),
                 essenciaSku, command.essenciaRoshSku(), essenciaSku2, null,
-                saborNovo ? null : origem.essenceRatio());
+                saborNovo ? null : origem.essenceRatio(),
+                // PDV-F057 — a cortesia do jumbo é decisão de quem repete, não herança da origem.
+                command.carvaoCortesia());
         // PDV-F050 — trocando o sabor, a faixa é a da nova essência (a da origem só cobre o sabor sem
         // faixa); sem sabor novo, é cópia da origem.
         return addSession(comandaId, add, !saborNovo, username);
+    }
+
+    /** PDV-F058 — edita a sessão ainda não entregue. Ver {@link ComandaUseCase#editSession}. */
+    @Override
+    @Transactional
+    public SessionEdited editSession(Long comandaId, Long sessionItemId, EditSessionCommand command,
+            String username) {
+        Comanda comanda = getComandaForUpdate(comandaId);
+        pdvService.requireOpenSession(comanda.sessionId());
+        requireOpen(comanda);
+        SessionMenuService menu = requireSessionMenu();
+        ComandaItem antes = requireSessionLine(comanda, sessionItemId);
+        // Entregue, o narguilé está com o cliente; recolhida, já voltou. Nos dois, nada muda mais.
+        if (antes.sessionStatus() == SessionStatus.ENTREGUE || antes.sessionStatus() == SessionStatus.RECOLHIDO) {
+            throw new SessionNotEditableException(sessionItemId, antes.sessionStatus());
+        }
+
+        // Mesmas validações e mesma conta do lançamento, todas antes de qualquer escrita.
+        List<Map.Entry<String, EstoqueUseCase.CatalogSaleInfo>> sabores =
+                resolveFlavors(command.essenciaSku(), command.essenciaSku2());
+        SessionTier tier = tierFor(menu, command.tierId(), null, sabores);
+        SessionSettings settings = menu.settings();
+        String notes = sessionNotes(essenceText(command.essencia(), sabores), command.vasoGrande());
+        List<SessionAddon> addons = menu.requireActiveAddons(command.adicionalIds());
+        SessionSetup setup = SessionSetup.of(command.carvao(), addons, command.vasoGrande(), command.carvaoCortesia());
+        BigDecimal price = sessionPrice(tier, settings, setup);
+        // O pedido que cobrou a sessão não muda: paga, a edição só vale com o mesmo valor.
+        if (!antes.isOpen() && price.compareTo(antes.unitPrice()) != 0) {
+            throw new SessionPaidPriceChangeException(sessionItemId, antes.unitPrice(), price);
+        }
+
+        ComandaItem depois = antes.withSessionConfig(tier.sku(), price, sessionProductName(tier, settings, setup),
+                notes, setup);
+        boolean saborMudou = !Objects.equals(antes.essenceSku(), sabores.isEmpty() ? null : sabores.get(0).getKey())
+                || !Objects.equals(antes.essenceSku2(), sabores.size() > 1 ? sabores.get(1).getKey() : null);
+        if (saborMudou) {
+            // Devolve o uso da lata antiga mesmo em preparo: a troca é de quem ainda não recebeu o
+            // narguilé, e a essência antiga não chegou a ser queimada. Não passa por undoStock, cuja
+            // guarda (essenceBurned) é a da remoção, não a da troca.
+            String motivo = "Troca de sabor da sessão da comanda #" + comandaId;
+            if (antes.essenceSku() != null) {
+                undoOne(antes.essenceSku(), antes.consumedPackage(), antes.quantity(), comanda.warehouseCode(),
+                        motivo, username);
+            }
+            if (antes.essenceSku2() != null) {
+                undoOne(antes.essenceSku2(), antes.essence2Package(), antes.quantity(), comanda.warehouseCode(),
+                        motivo, username);
+            }
+            depois = consumeEssence(depois, sabores, comanda, username);
+        } else {
+            depois = depois.withEssenceStampFrom(antes);
+        }
+        depois = depois.withEssenceRatio(command.essenciaProporcao());
+
+        boolean vasoAntes = antes.setup() != null && antes.setup().vasoGrande();
+        if (vasoAntes != command.vasoGrande()) {
+            // Libera antes de reservar: os inclusos desta mesma sessão voltam a contar como livres.
+            // Sem peça do vaso novo, a exceção desfaz a liberação junto com o resto.
+            menu.release(List.of(sessionItemId));
+            menu.allocate(sessionItemId, menu.reserveAssetsForSession(settings, command.vasoGrande()));
+        }
+
+        Comanda saved = comandaRepository.save(comanda.withUpdatedItem(depois));
+        return new SessionEdited(saved, antes, depois);
+    }
+
+    /** PDV-F059 — ver {@link ComandaUseCase#convertSessionToPayLater}. */
+    @Override
+    @Transactional
+    public Comanda convertSessionToPayLater(Long comandaId, Long sessionItemId, String username) {
+        Comanda comanda = getComandaForUpdate(comandaId);
+        pdvService.requireOpenSession(comanda.sessionId());
+        requireOpen(comanda);
+        ComandaItem sessao = requireSessionLine(comanda, sessionItemId);
+        if (sessao.sessionStatus() != SessionStatus.AGUARDANDO_PAGAMENTO || !sessao.isOpen()) {
+            throw new SessionNotAwaitingPaymentException(sessionItemId);
+        }
+        Comanda convertida = comanda.withUpdatedItem(sessao.convertedToPayLater(Instant.now()));
+        // O 2º rosh ligado (duplo ou extra) herda a marca, como no lançamento com pagarNoFinal.
+        for (ComandaItem rosh : comanda.items()) {
+            if (rosh.mode() == ConsumptionMode.ROSH_EXTRA && sessionItemId.equals(rosh.linkedItemId())
+                    && rosh.isOpen()) {
+                convertida = convertida.withUpdatedItem(rosh.withPayLaterInherited());
+            }
+        }
+        return comandaRepository.save(convertida);
+    }
+
+    /** A linha de sessão {@code itemId} desta comanda, que não seja desistida. */
+    private static ComandaItem requireSessionLine(Comanda comanda, Long itemId) {
+        return comanda.items().stream()
+                .filter(i -> itemId != null && itemId.equals(i.id()) && i.mode() == ConsumptionMode.SESSAO)
+                .filter(i -> i.session() != null && !i.isWithdrawn())
+                .findFirst()
+                .orElseThrow(() -> new NotASessionLineException(itemId, comanda.id()));
+    }
+
+    /** PDV-F060 — ver {@link ComandaUseCase#addStorePurchaseToTab}. */
+    @Override
+    @Transactional
+    public Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username) {
+        Comanda comanda = getComandaForUpdate(comandaId);
+        pdvService.requireOpenSession(comanda.sessionId());
+        requireOpen(comanda);
+        // Sem sessão paga no final em aberto não há cobrança no fim da mesa a que juntar a compra.
+        boolean temPagarNoFinal = comanda.items().stream()
+                .anyMatch(i -> i.mode() == ConsumptionMode.SESSAO && i.isPayLater() && i.isOpen() && !i.isWithdrawn());
+        if (!temPagarNoFinal) {
+            throw new NoPayLaterSessionException(comandaId);
+        }
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("a compra na loja precisa de ao menos um item");
+        }
+
+        // Todas as validações antes de qualquer baixa, como no registerSale. Não passa pela trava de
+        // itens de catálogo na mesa nem por availableForTable: é compra de loja, não consumo do salão.
+        List<ComandaItem> linhas = new ArrayList<>(items.size());
+        List<OrderItem> conferencia = new ArrayList<>(items.size());
+        for (SaleItemCommand command : items) {
+            EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(command.sku());
+            BigDecimal discount = Money.of(command.discountAmount());
+            validateNotes(command.note());
+            // Mesma checagem de desconto da linha do caixa (não passa do bruto) e mesmo teto, abaixo.
+            conferencia.add(OrderItem.fromCatalog(command.sku(), command.quantity(), saleInfo.pricing(), discount,
+                    saleInfo.productName()));
+            ComandaItem linha = command.note() == null
+                    ? ComandaItem.fromCatalog(command.sku(), command.quantity(), saleInfo.pricing(),
+                            saleInfo.productName())
+                    : ComandaItem.forSession(command.sku(), command.quantity(), saleInfo.pricing().effectivePrice(),
+                            saleInfo.pricing(), saleInfo.productName(), ConsumptionMode.NORMAL, false, null,
+                            command.note(), null);
+            linhas.add(linha.asStorePurchase(discount));
+        }
+        pdvService.requireDiscountWithinLimit(Order.openMesa(comanda.sessionId(), comanda.warehouseCode(),
+                comanda.customerId(), comandaId, comanda.tableOrCustomerLabel(), conferencia));
+
+        // Baixa agora, do depósito da comanda — o da sessão de caixa, o mesmo da venda do balcão. E como
+        // no balcão, sempre a unidade inteira: a lata de essência vendida na loja sai fechada, não é uso
+        // de lata aberta do salão. Sem contador na linha, a remoção devolve com ENTRADA.
+        Comanda comCompra = comanda;
+        for (ComandaItem linha : linhas) {
+            estoqueUseCase.adjustStock(linha.sku(), comanda.warehouseCode(), MovementType.SAIDA, linha.quantity(),
+                    "Compra na loja — comanda #" + comandaId, username);
+            comCompra = comCompra.withAddedItem(linha);
+        }
+        Comanda saved = comandaRepository.save(comCompra);
+        // PDV-F036 — depois do save da comanda: a mesa "comprou na loja".
+        comandaRepository.recordStorePurchase(comandaId, true, username, Instant.now());
+        return saved;
     }
 
     /**
@@ -1233,7 +1408,7 @@ public class ComandaService implements ComandaUseCase {
             // "qual pinça saiu com aquela mesa" é pergunta feita DEPOIS do fechamento; o acréscimo
             // porque não dá para reconstruí-lo do unitPrice, que já é a soma.
             orderItems.add(OrderItem.of(null, item.sku(), item.quantity(), item.unitPrice(), item.costPrice(),
-                    lineDiscounts.get(i).add(item.kitDiscount()), rate == null ? null : rate.percent(),
+                    lineDiscounts.get(i).add(item.lineDiscount()), rate == null ? null : rate.percent(),
                     item.productName(), item.mode(),
                     item.courtesy(), item.notes(), item.surchargeAmount(),
                     // PDV-F024 — o carvão atravessa como o notes: só registro.
@@ -1249,8 +1424,9 @@ public class ComandaService implements ComandaUseCase {
         // Mesmo teto do balcão, e de propósito: o limite é política comercial da casa, não
         // característica do canal. Checado DEPOIS de montar o pedido porque a regra é percentual
         // sobre o bruto, e é o pedido que sabe o bruto.
-        // PDV-F019 — desconto de kit montável não conta para o teto (ver PdvService).
-        BigDecimal kitDiscountTotal = escopo.stream().map(ComandaItem::kitDiscount)
+        // PDV-F019 — desconto de kit montável não conta para o teto (ver PdvService). PDV-F060 — nem o
+        // da compra na loja, que já passou pelo teto no lançamento.
+        BigDecimal kitDiscountTotal = escopo.stream().map(ComandaItem::lineDiscount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         if (kitDiscountTotal.signum() > 0) {
             pdvService.requireDiscountWithinLimit(order, kitDiscountTotal);
@@ -1262,8 +1438,15 @@ public class ComandaService implements ComandaUseCase {
         // de fato vai pagar pela mercadoria, não sobre o valor antes do abatimento. Cobrar serviço
         // sobre um desconto que a casa acabou de conceder seria devolver parte dele com a outra mão.
         // PDV-F023 — a sessão de narguilé nunca leva taxa: a base são só as linhas de catálogo.
+        // PDV-F060 — a compra na loja também não: é compra de loja, não consumo de salão.
         if (applyServiceFee) {
-            order = order.withServiceFeeOnCatalogLines(serviceFeePercent);
+            Set<Integer> semTaxa = new HashSet<>();
+            for (int i = 0; i < escopo.size(); i++) {
+                if (escopo.get(i).storePurchase()) {
+                    semTaxa.add(i);
+                }
+            }
+            order = order.withServiceFeeOnCatalogLines(serviceFeePercent, semTaxa);
         }
 
         // Valida contra totalPayable, não contra netAmount: o cliente paga a mercadoria MAIS a

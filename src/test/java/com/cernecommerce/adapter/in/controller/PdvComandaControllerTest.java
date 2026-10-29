@@ -34,6 +34,7 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaMergeNotAllowedExcepti
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.DiscountExceedsBillException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemIsChargedException;
+import com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
@@ -970,5 +971,44 @@ class PdvComandaControllerTest {
                                 + "\"itemIds\":[1]}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("LINKED_ITEM_MUST_CLOSE_TOGETHER"));
+    }
+
+    // ── PDV-F060 — compra na loja na conta da mesa ─────────────────────────────────────────
+
+    @Test
+    void addStorePurchaseToTab_returns_201_withTheStorePurchaseLines() throws Exception {
+        Comanda withPurchase = abertaComanda().withAddedItem(ComandaItem.fromCatalog("AGUA-500", new BigDecimal("2"),
+                Pricing.of(new BigDecimal("1.00"), null, new BigDecimal("5.00")), "Água").asStorePurchase(null));
+        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString())).thenReturn(withPurchase);
+
+        mockMvc.perform(post("/pdv/comandas/10/compra-na-loja")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":5,\"items\":[{\"sku\":\"AGUA-500\",\"quantity\":2}]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].compraNaLoja").value(true))
+                .andExpect(jsonPath("$.runningTotal").value(10.00));
+    }
+
+    @Test
+    void addStorePurchaseToTab_withoutPayLaterSession_returns_409() throws Exception {
+        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString()))
+                .thenThrow(new NoPayLaterSessionException(10L));
+
+        mockMvc.perform(post("/pdv/comandas/10/compra-na-loja")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[{\"sku\":\"AGUA-500\",\"quantity\":1}]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("NO_PAY_LATER_SESSION"));
+    }
+
+    @Test
+    void addStorePurchaseToTab_withoutItems_returns_400() throws Exception {
+        mockMvc.perform(post("/pdv/comandas/10/compra-na-loja")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":[]}"))
+                .andExpect(status().isBadRequest());
     }
 }

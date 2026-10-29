@@ -116,8 +116,19 @@ public class ComandaItemResponseDTO {
     @Schema(description = "Sessão no vaso grande (PDV-F027). Base do \"repetir sessão\".")
     private boolean vasoGrande;
 
-    @Schema(description = "Carvão da sessão (CUBO ou JUMBO), só registro (PDV-F024).")
+    @Schema(description = "Carvão da sessão (CUBO ou JUMBO) (PDV-F024).")
     private Charcoal carvao;
+
+    @Schema(description = "PDV-F057 — o jumbo saiu de cortesia, sem o acréscimo. Sempre false fora de JUMBO.")
+    private boolean carvaoCortesia;
+
+    @Schema(description = "PDV-F060 — compra na loja lançada na conta da mesa: cobrada junto com a sessão "
+            + "paga no final e fora da base da taxa de serviço.")
+    private boolean compraNaLoja;
+
+    @Schema(description = "PDV-F060 — desconto da linha de compra na loja (kit montável do caixa). Nulo sem "
+            + "desconto.")
+    private BigDecimal storeDiscountAmount;
 
     @Schema(description = "Adicionais pagos cobrados nesta sessão, com o preço da época (PDV-F024). "
             + "Vazio fora de sessão do cardápio.")

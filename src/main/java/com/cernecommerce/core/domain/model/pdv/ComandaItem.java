@@ -44,7 +44,9 @@ public record ComandaItem(
         String essenceSku,
         String essenceSku2,
         boolean essence2Package,
-        ProporcaoMistura essenceRatio) {
+        ProporcaoMistura essenceRatio,
+        boolean storePurchase,
+        BigDecimal storeDiscountAmount) {
 
     /** Sufixo que a sessão de vaso grande leva na {@link #notes}, depois da essência (PDV-F021). */
     public static final String VASO_GRANDE_NOTE_SUFFIX = " · Vaso grande";
@@ -146,6 +148,15 @@ public record ComandaItem(
         if (essenceRatio != null && essenceSku2 == null) {
             throw new IllegalArgumentException("essenceRatio sem essenceSku2");
         }
+        // PDV-F060 — espelha ck_comanda_item_store_purchase (V178): compra na loja é linha de catálogo
+        // comum, e o desconto dela só existe nela, dentro do valor da linha.
+        if (storePurchase && mode != ConsumptionMode.NORMAL) {
+            throw new IllegalArgumentException("compra na loja só existe em linha NORMAL: mode=" + mode);
+        }
+        if (storeDiscountAmount != null && (!storePurchase || storeDiscountAmount.signum() < 0
+                || storeDiscountAmount.compareTo(quantity.multiply(unitPrice)) > 0)) {
+            throw new IllegalArgumentException("storeDiscountAmount inválido: " + storeDiscountAmount);
+        }
     }
 
     /**
@@ -160,7 +171,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, false, null);
+                null, null, null, null, null, false, null, false, null);
     }
 
     /**
@@ -193,7 +204,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, unitPrice, pricing.costPrice(), productName,
                 Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null,
-                null, false, null);
+                null, false, null, false, null);
     }
 
     /**
@@ -215,7 +226,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, BigDecimal.ONE, unitPrice, null, productName, Instant.now(), mode,
                 courtesy, linkedItemId, notes, null, null, null, null, null, null, null, session,
-                setup == null || setup.isEmpty() ? null : setup, null, null, false, null);
+                setup == null || setup.isEmpty() ? null : setup, null, null, false, null, false, null);
     }
 
     /** Reconstitui um item a partir de persistência. */
@@ -342,10 +353,27 @@ public record ComandaItem(
             Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
             BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
             String essenceSku2, boolean essence2Package, ProporcaoMistura essenceRatio) {
+        return of(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy, linkedItemId,
+                notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit, kitBundleId,
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package,
+                essenceRatio, false, null);
+    }
+
+    /**
+     * Reconstitui um item a partir de persistência, com a marca de compra na loja e o desconto dela
+     * (PDV-F060, V178). Linha anterior lê {@code false}/{@code null}: consumo do salão.
+     */
+    public static ComandaItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, String productName, Instant addedAt, ConsumptionMode mode, boolean courtesy,
+            Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
+            Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
+            BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
+            String essenceSku2, boolean essence2Package, ProporcaoMistura essenceRatio, boolean storePurchase,
+            BigDecimal storeDiscountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                essence2Package, essenceRatio);
+                essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -374,7 +402,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, tierSku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -398,7 +426,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, orderId, packageUses, packageSessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -413,7 +441,7 @@ public record ComandaItem(
     public ComandaItem withPackageCounter(int uses, int sessionsPerUnit) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, uses, sessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -424,7 +452,7 @@ public record ComandaItem(
     public ComandaItem withEssence(String essenceSku) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -435,7 +463,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                fromPackage, essenceRatio);
+                fromPackage, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -446,7 +474,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                essence2Package, essenceSku2 == null ? null : ratio);
+                essence2Package, essenceSku2 == null ? null : ratio, storePurchase, storeDiscountAmount);
     }
 
     /** PDV-F051 — a sessão tem dois sabores mesclados. */
@@ -487,7 +515,73 @@ public record ComandaItem(
     public ComandaItem withKit(String bundleId, Long templateId, BigDecimal discountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
+    }
+
+    /**
+     * PDV-F060 — a linha é compra na loja lançada na conta da mesa: cobrada junto com a sessão paga no
+     * final e fora da base da taxa de serviço. O desconto (do kit montável do caixa) vai na linha, como
+     * na venda do caixa; nulo ou zero é sem desconto.
+     */
+    public ComandaItem asStorePurchase(BigDecimal discountAmount) {
+        BigDecimal discount = discountAmount == null || discountAmount.signum() == 0 ? null : discountAmount;
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                essence2Package, essenceRatio, true, discount);
+    }
+
+    /**
+     * PDV-F058 — a sessão editada: faixa, preço, nome, nota (essência e vaso) e o setup mudam; id,
+     * status, ligação, cobrança e a marca de pagar no final ficam. Os sabores do catálogo e o contador
+     * da lata são zerados aqui e recarimbados pelo service com a baixa nova (ou repostos, se não mudaram).
+     */
+    public ComandaItem withSessionConfig(String tierSku, BigDecimal newUnitPrice, String newProductName,
+            String newNotes, SessionSetup newSetup) {
+        if (mode != ConsumptionMode.SESSAO || session == null) {
+            throw new IllegalStateException("item " + id + " não é uma linha de sessão");
+        }
+        return new ComandaItem(id, tierSku, quantity, newUnitPrice, costPrice, newProductName, addedAt, mode,
+                courtesy, linkedItemId, newNotes, surchargeAmount, closedInOrderId, null, null, kitBundleId,
+                kitTemplateId, kitDiscountAmount, session, newSetup == null || newSetup.isEmpty() ? null : newSetup,
+                null, null, false, null, storePurchase, storeDiscountAmount);
+    }
+
+    /**
+     * PDV-F058 — repõe na linha editada o carimbo de essência e lata de antes, quando os sabores não
+     * mudaram: nada de estoque se mexeu, e o desfazimento continua precisando saber o que ela queimou.
+     */
+    public ComandaItem withEssenceStampFrom(ComandaItem before) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, before.packageUses,
+                before.packageSessionsPerUnit, kitBundleId, kitTemplateId, kitDiscountAmount, session, setup,
+                before.essenceSku, before.essenceSku2, before.essence2Package, essenceRatio, storePurchase,
+                storeDiscountAmount);
+    }
+
+    /**
+     * PDV-F059 — a sessão aguardando pagamento passa a pagar no final: vai ao preparo e o tempo começa.
+     * O rosh ligado herda a marca por {@link #withPayLaterInherited()}.
+     */
+    public ComandaItem convertedToPayLater(Instant at) {
+        if (session == null) {
+            throw new IllegalStateException("item " + id + " não tem status de sessão");
+        }
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.convertedToPayLater(at), setup, essenceSku,
+                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
+    }
+
+    /** PDV-F059 — o 2º rosh herda a marca de pagar no final; o status dele não muda. */
+    public ComandaItem withPayLaterInherited() {
+        if (session == null || session.payLater() || session.isAwaitingPayment()) {
+            return this;
+        }
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withPayLater(), setup, essenceSku,
+                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -501,7 +595,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -556,7 +650,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, BigDecimal.ZERO, costPrice, productName, addedAt, mode, true,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     public ComandaItem withSessionPaid(Instant at) {
@@ -565,7 +659,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount);
     }
 
     /**
@@ -594,9 +688,22 @@ public record ComandaItem(
         return kitDiscountAmount == null ? BigDecimal.ZERO : kitDiscountAmount;
     }
 
-    /** {@link #subtotal()} menos o desconto do kit — o que a linha cobra antes do desconto de conta. */
+    /** PDV-F060 — desconto da compra na loja nesta linha; zero fora dela. */
+    public BigDecimal storeDiscount() {
+        return storeDiscountAmount == null ? BigDecimal.ZERO : storeDiscountAmount;
+    }
+
+    /**
+     * O desconto que a linha já trouxe do lançamento — kit montável (PDV-F019) ou compra na loja
+     * (PDV-F060) — e que o fechamento soma ao rateio do desconto de conta.
+     */
+    public BigDecimal lineDiscount() {
+        return kitDiscount().add(storeDiscount());
+    }
+
+    /** {@link #subtotal()} menos o desconto da linha — o que ela cobra antes do desconto de conta. */
     public BigDecimal netSubtotal() {
-        return subtotal().subtract(kitDiscount());
+        return subtotal().subtract(lineDiscount());
     }
 
     /**

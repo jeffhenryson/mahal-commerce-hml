@@ -41,4 +41,8 @@ public class RepeatSessionRequest {
     @Schema(description = "PDV-F034 — paga no final, como em POST /sessoes. Não herda da origem; exige "
             + "PDV_SESSION_PAY_LATER.")
     private boolean pagarNoFinal;
+
+    @Schema(description = "PDV-F057 — o jumbo da origem sai de cortesia. Não herda da origem: sem o campo o "
+            + "jumbo vai cobrado. Exige PDV_COMANDA_COURTESY.")
+    private boolean carvaoCortesia;
 }

@@ -42,7 +42,12 @@ public record SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, 
 
     /** Quanto o carvão soma ao preço da sessão: só o jumbo tem acréscimo. */
     public BigDecimal charcoalSurcharge(Charcoal carvao) {
-        return carvao == Charcoal.JUMBO ? upgradeCarvaoJumboPreco : BigDecimal.ZERO;
+        return charcoalSurcharge(carvao, false);
+    }
+
+    /** PDV-F057 — idem, mas o jumbo de cortesia não soma nada. */
+    public BigDecimal charcoalSurcharge(Charcoal carvao, boolean courtesy) {
+        return carvao == Charcoal.JUMBO && !courtesy ? upgradeCarvaoJumboPreco : BigDecimal.ZERO;
     }
 
     public static SessionSettings defaults() {

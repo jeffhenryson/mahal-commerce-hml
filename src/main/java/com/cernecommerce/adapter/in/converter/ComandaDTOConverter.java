@@ -55,6 +55,8 @@ public class ComandaDTOConverter {
         dto.setKitBundleId(item.kitBundleId());
         dto.setKitTemplateId(item.kitTemplateId());
         dto.setKitDiscountAmount(item.kitDiscountAmount());
+        dto.setCompraNaLoja(item.storePurchase());
+        dto.setStoreDiscountAmount(item.storeDiscountAmount());
         if (item.session() != null) {
             dto.setSessionStatus(item.session().status());
             dto.setStartedAt(item.session().startedAt());
@@ -70,6 +72,7 @@ public class ComandaDTOConverter {
         if (item.setup() != null) {
             dto.setVasoGrande(item.setup().vasoGrande());
             dto.setCarvao(item.setup().charcoal());
+            dto.setCarvaoCortesia(item.setup().charcoalCourtesy());
             dto.setAdicionais(item.setup().addons().stream()
                     .map(a -> new ComandaItemAddonResponseDTO(a.addonId(), a.nome(), a.preco()))
                     .toList());
