@@ -74,7 +74,14 @@ services:
       # Sem fallback: um default hardcoded aqui vira uma chave AES versionada no repositório
       # (PLAT-C028, regressão de C002). Gere com `openssl rand -base64 32` e defina no .env.
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY}
-      AVATAR_BASE_URL: ${AVATAR_BASE_URL:-https://mahaltabacaria.com.br}
+      # Uploads em volume local (VPS de instância única). Quem serve /avatars e
+      # /product-images é a própria API, então a base das URLs é o host da API.
+      AVATAR_STORAGE_TYPE: local
+      PRODUCT_IMAGE_STORAGE_TYPE: local
+      AVATAR_BASE_URL: ${AVATAR_BASE_URL:-https://api.mahaltabacaria.com.br}
+      PRODUCT_IMAGE_BASE_URL: ${PRODUCT_IMAGE_BASE_URL:-https://api.mahaltabacaria.com.br}
+      # XMLs de NF-e importados ficam no mesmo volume (default ./data/nfe-imports não persiste).
+      NFE_IMPORT_STORAGE_DIR: /app/uploads/nfe-imports
       EMAIL_VERIFICATION_FRONTEND_URL: ${EMAIL_VERIFICATION_FRONTEND_URL:-https://mahaltabacaria.com.br/verify}
       EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-https://mahaltabacaria.com.br}
       REDIS_HOST: redis
@@ -89,12 +96,17 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM: ${RESEND_FROM}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      # InfinitePay desligado: o market paga no caixa (modo BALCAO). Sem isso o default
+      # do perfil prod (infinitepay) exige INFINITEPAY_HANDLE e o boot falha.
+      PAYMENT_GATEWAY_PROVIDER: ${PAYMENT_GATEWAY_PROVIDER:-stub}
       JAVA_OPTS: >-
         -XX:MaxRAMPercentage=75.0
         -XX:+UseG1GC
         -Djava.security.egd=file:/dev/./urandom
     ports:
       - "8082:8082"
+    volumes:
+      - uploads_prod:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP || exit 1"]
       interval: 30s
@@ -165,3 +177,4 @@ networks:
 volumes:
   pgdata_prod:
   redisdata_prod:
+  uploads_prod:
