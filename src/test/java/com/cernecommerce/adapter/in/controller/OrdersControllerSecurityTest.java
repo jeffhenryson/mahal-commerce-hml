@@ -235,4 +235,76 @@ public class OrdersControllerSecurityTest {
                 .with(user("gerente").authorities(new SimpleGrantedAuthority("ORDER_REFUND"))))
                 .andExpect(status().isBadRequest());
     }
+
+    // ── ECM-F012: Central de Pedidos ──
+
+    @Test
+    void list_orders_with_online_order_read_and_marketplace_channel_returns_200() throws Exception {
+        mockMvc.perform(get("/orders").param("channel", "MARKETPLACE")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void list_orders_with_online_order_read_and_mesa_channel_returns_200() throws Exception {
+        mockMvc.perform(get("/orders").param("channel", "MESA")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void list_orders_with_online_order_read_and_balcao_channel_returns_403() throws Exception {
+        mockMvc.perform(get("/orders").param("channel", "BALCAO")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void list_orders_with_online_order_read_without_channel_returns_403() throws Exception {
+        mockMvc.perform(get("/orders")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void accept_order_without_online_order_manage_returns_403() throws Exception {
+        mockMvc.perform(post("/orders/999999/accept")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void accept_order_with_online_order_manage_reaches_the_service() throws Exception {
+        mockMvc.perform(post("/orders/999999/accept")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_MANAGE"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("ORDER_NOT_FOUND"));
+    }
+
+    @Test
+    void reject_order_with_online_order_manage_reaches_the_service() throws Exception {
+        mockMvc.perform(post("/orders/999999/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reasonCode\":\"SEM_ESTOQUE\"}")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void reject_order_without_reason_code_returns_400() throws Exception {
+        mockMvc.perform(post("/orders/999999/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"note\":\"x\"}")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_MANAGE"))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void reject_order_without_online_order_manage_returns_403() throws Exception {
+        mockMvc.perform(post("/orders/999999/reject")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reasonCode\":\"SEM_ESTOQUE\"}")
+                .with(user("central").authorities(new SimpleGrantedAuthority("ONLINE_ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
 }

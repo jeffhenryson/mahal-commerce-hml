@@ -638,10 +638,20 @@ public record Order(
      * HTTP. A base é o líquido de cada linha, então o desconto já rateado continua abatido dela.
      */
     public Order withServiceFeeOnCatalogLines(BigDecimal percent) {
+        return withServiceFeeOnCatalogLines(percent, Set.of());
+    }
+
+    /**
+     * PDV-F060 — idem, deixando fora da base também as linhas nas posições {@code exemptLineIndexes}
+     * de {@link #items()}: a compra na loja lançada na conta da mesa é de loja, não consumo de salão.
+     */
+    public Order withServiceFeeOnCatalogLines(BigDecimal percent, Set<Integer> exemptLineIndexes) {
         if (percent == null || percent.signum() <= 0) {
             return this;
         }
-        BigDecimal base = items.stream()
+        BigDecimal base = java.util.stream.IntStream.range(0, items.size())
+                .filter(i -> !exemptLineIndexes.contains(i))
+                .mapToObj(items::get)
                 .filter(i -> i.mode() == null || i.mode().isCatalogLine())
                 .map(OrderItem::netAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

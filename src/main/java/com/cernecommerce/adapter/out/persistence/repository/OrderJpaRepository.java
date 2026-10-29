@@ -72,6 +72,9 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
      * <p>{@code nextval} é nativo porque a sequência não pertence a nenhuma entidade — ela existe
      * justamente para <b>não</b> derivar do {@code BIGSERIAL} do id, que deixa buracos em rollback.</p>
      */
+    @Query("SELECT o.status FROM OrderEntity o WHERE o.id = :id")
+    Optional<String> findStatusById(@Param("id") Long id);
+
     @Query(value = "SELECT nextval('order_number_seq')", nativeQuery = true)
     Long nextOrderNumber();
 

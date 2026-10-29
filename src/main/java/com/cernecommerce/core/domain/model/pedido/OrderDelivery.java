@@ -1,6 +1,7 @@
 package com.cernecommerce.core.domain.model.pedido;
 
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
+import com.cernecommerce.core.domain.exception.pedido.InvalidTrackingUrlException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -20,6 +21,9 @@ import java.math.RoundingMode;
  * <p>Os campos de cada método ({@code courier*} para motoboy, {@code pickupCode}/
  * {@code dropoffCode} para a 99, {@code trackingCode} para os Correios) são todos opcionais e
  * podem chegar depois, pelo {@code PATCH /orders/{id}/delivery}.</p>
+ *
+ * @param trackingUrl ECM-F013 — link para acompanhar a corrida (Uber, 99…), mandado ao cliente na saída.
+ *                    Só http(s), até {@value #TRACKING_URL_MAX} caracteres.
  */
 public record OrderDelivery(
         DeliveryType type,
@@ -30,7 +34,16 @@ public record OrderDelivery(
         String pickupCode,
         String dropoffCode,
         String trackingCode,
-        BigDecimal fee) {
+        BigDecimal fee,
+        String trackingUrl) {
+
+    public static final int TRACKING_URL_MAX = 500;
+
+    /** Sem link da corrida — a forma de antes do ECM-F013. */
+    public OrderDelivery(DeliveryType type, DeliveryAddress address, DeliveryMethod method, String courierName,
+            String courierPhone, String pickupCode, String dropoffCode, String trackingCode, BigDecimal fee) {
+        this(type, address, method, courierName, courierPhone, pickupCode, dropoffCode, trackingCode, fee, null);
+    }
 
     public OrderDelivery {
         if (type == null) {
@@ -41,13 +54,15 @@ public record OrderDelivery(
         pickupCode = DeliveryAddress.blankToNull(pickupCode);
         dropoffCode = DeliveryAddress.blankToNull(dropoffCode);
         trackingCode = DeliveryAddress.blankToNull(trackingCode);
+        trackingUrl = validarTrackingUrl(DeliveryAddress.blankToNull(trackingUrl));
         fee = fee == null ? BigDecimal.ZERO.setScale(2) : fee.setScale(2, RoundingMode.HALF_UP);
         if (fee.signum() < 0) {
             throw new InvalidDeliveryException("taxa de entrega não pode ser negativa");
         }
         if (type == DeliveryType.RETIRADA) {
             if (address != null || method != null || fee.signum() > 0 || courierName != null
-                    || courierPhone != null || pickupCode != null || dropoffCode != null || trackingCode != null) {
+                    || courierPhone != null || pickupCode != null || dropoffCode != null || trackingCode != null
+                    || trackingUrl != null) {
                 throw new InvalidDeliveryException(
                         "RETIRADA não tem endereço, método, entregador, códigos nem taxa");
             }
@@ -81,7 +96,32 @@ public record OrderDelivery(
                 DeliveryAddress.pick(patch.pickupCode(), pickupCode),
                 DeliveryAddress.pick(patch.dropoffCode(), dropoffCode),
                 DeliveryAddress.pick(patch.trackingCode(), trackingCode),
-                fee);
+                fee,
+                DeliveryAddress.pick(patch.trackingUrl(), trackingUrl));
+    }
+
+    /** ECM-F013 — o link da corrida, gravado quando o pedido sai para entrega. Nulo mantém o atual. */
+    public OrderDelivery withTrackingUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return this;
+        }
+        return new OrderDelivery(type, address, method, courierName, courierPhone, pickupCode, dropoffCode,
+                trackingCode, fee, url);
+    }
+
+    private static String validarTrackingUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        String limpo = url.strip();
+        if (limpo.length() > TRACKING_URL_MAX) {
+            throw new InvalidTrackingUrlException("link da viagem passa de " + TRACKING_URL_MAX + " caracteres");
+        }
+        String minusculo = limpo.toLowerCase(java.util.Locale.ROOT);
+        if (!(minusculo.startsWith("https://") || minusculo.startsWith("http://")) || limpo.contains(" ")) {
+            throw new InvalidTrackingUrlException("link da viagem precisa começar com http:// ou https://");
+        }
+        return limpo;
     }
 
     /**
@@ -94,12 +134,18 @@ public record OrderDelivery(
             throw new InvalidDeliveryException("RETIRADA não tem taxa de entrega");
         }
         return new OrderDelivery(type, address, method, courierName, courierPhone, pickupCode, dropoffCode,
-                trackingCode, newFee);
+                trackingCode, newFee, trackingUrl);
     }
 
     /** Edição parcial da entrega; {@code null} mantém o valor atual. */
     public record Patch(DeliveryType type, DeliveryAddress.Patch address, DeliveryMethod method,
             String courierName, String courierPhone, String pickupCode, String dropoffCode,
-            String trackingCode, BigDecimal fee) {
+            String trackingCode, BigDecimal fee, String trackingUrl) {
+
+        /** Sem link da corrida — a forma de antes do ECM-F013. */
+        public Patch(DeliveryType type, DeliveryAddress.Patch address, DeliveryMethod method, String courierName,
+                String courierPhone, String pickupCode, String dropoffCode, String trackingCode, BigDecimal fee) {
+            this(type, address, method, courierName, courierPhone, pickupCode, dropoffCode, trackingCode, fee, null);
+        }
     }
 }

@@ -24,6 +24,9 @@ public class DeliveryResponseDTO {
     private String dropoffCode;
     private String trackingCode;
 
+    @Schema(description = "ECM-F013 — link para acompanhar a corrida (Uber, 99…), gravado na saída para entrega.")
+    private String trackingUrl;
+
     @Schema(description = "Taxa de entrega cobrada do cliente — incluída em totalPayable, fora de netAmount")
     private BigDecimal fee;
 

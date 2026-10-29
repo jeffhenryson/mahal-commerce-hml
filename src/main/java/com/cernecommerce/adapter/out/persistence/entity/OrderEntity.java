@@ -190,6 +190,10 @@ public class OrderEntity {
     @Column(table = DELIVERY_TABLE, name = "fee", precision = 14, scale = 2)
     private BigDecimal deliveryFee;
 
+    /** ECM-F013 — link da corrida (Uber, 99…), V177. */
+    @Column(table = DELIVERY_TABLE, name = "tracking_url", length = 500)
+    private String deliveryTrackingUrl;
+
     /**
      * Bloqueio otimista. A {@code Sale} anterior não tinha — era irrelevante numa tabela
      * insert-only, e passa a importar quando o pedido ganha transição de estado.

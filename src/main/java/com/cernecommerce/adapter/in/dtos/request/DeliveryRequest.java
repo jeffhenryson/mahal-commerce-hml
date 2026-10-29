@@ -50,6 +50,11 @@ public class DeliveryRequest {
     @Schema(description = "CORREIOS — código de rastreio.")
     private String trackingCode;
 
+    @Size(max = 500)
+    @Schema(description = "ECM-F013 — link para acompanhar a corrida (só http/https). Em branco apaga.",
+            example = "https://99app.com/tracking/abc")
+    private String trackingUrl;
+
     @DecimalMin("0.0")
     @Digits(integer = 12, fraction = 2)
     @Schema(description = "Taxa de entrega cobrada do cliente. Somada ao total a pagar (fora do "

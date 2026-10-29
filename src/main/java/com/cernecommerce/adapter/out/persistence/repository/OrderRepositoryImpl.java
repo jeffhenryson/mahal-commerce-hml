@@ -131,6 +131,11 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public Optional<OrderStatus> findStatusById(Long id) {
+        return orderJpaRepository.findStatusById(id).map(OrderStatus::valueOf);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public List<Order> findAllByIds(java.util.Collection<Long> ids) {
         return InClauseBatches.fetch(ids, orderJpaRepository::findAllByIdsWithItems).stream()
@@ -298,6 +303,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         entity.setDeliveryDropoffCode(delivery == null ? null : delivery.dropoffCode());
         entity.setDeliveryTrackingCode(delivery == null ? null : delivery.trackingCode());
         entity.setDeliveryFee(delivery == null ? null : delivery.fee());
+        entity.setDeliveryTrackingUrl(delivery == null ? null : delivery.trackingUrl());
     }
 
     private static OrderDelivery readDelivery(OrderEntity e) {
@@ -311,7 +317,8 @@ public class OrderRepositoryImpl implements OrderRepository {
         return new OrderDelivery(DeliveryType.valueOf(e.getDeliveryType()), address,
                 e.getDeliveryMethod() == null ? null : DeliveryMethod.valueOf(e.getDeliveryMethod()),
                 e.getDeliveryCourierName(), e.getDeliveryCourierPhone(), e.getDeliveryPickupCode(),
-                e.getDeliveryDropoffCode(), e.getDeliveryTrackingCode(), e.getDeliveryFee());
+                e.getDeliveryDropoffCode(), e.getDeliveryTrackingCode(), e.getDeliveryFee(),
+                e.getDeliveryTrackingUrl());
     }
 
     private OrderItem toDomain(OrderItemEntity e) {

@@ -105,4 +105,21 @@ public class OrderAdminResponseDTO {
 
     @Schema(description = "CRM-F010 — o marcado do pedido, se houver. Só em GET /orders/{id}.")
     private Long receivableId;
+
+    @Schema(description = "ECM-F012 — etapa do atendimento do pedido do app (PENDENTE, ACEITO, PRONTO, "
+            + "SAIU_PARA_ENTREGA, RETIRADO, ENTREGUE, RECUSADO, CANCELADO, EXPIRADO). É ela que diz em que "
+            + "coluna da Central o pedido está: o status só diz se foi pago. Nula fora do MARKETPLACE.")
+    private String fulfillmentStatus;
+
+    @Schema(description = "ECM-F012 — quando o caixa aceitou o pedido do app.")
+    private Instant acceptedAt;
+
+    @Schema(description = "ECM-F012 — quem aceitou (ou assumiu) o pedido do app.")
+    private String acceptedBy;
+
+    @Schema(description = "ECM-F012 — quando a loja recusou o pedido do app.")
+    private Instant rejectedAt;
+
+    @Schema(description = "ECM-F012 — motivo padronizado da recusa. Nulo nas recusas anteriores ao ECM-F012.")
+    private String rejectionReasonCode;
 }

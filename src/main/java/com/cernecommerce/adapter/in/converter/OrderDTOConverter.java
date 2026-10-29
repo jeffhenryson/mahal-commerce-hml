@@ -1,5 +1,7 @@
 package com.cernecommerce.adapter.in.converter;
 
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryAddressRequest;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
 import com.cernecommerce.adapter.in.dtos.request.SaleItemRequest;
@@ -272,6 +274,20 @@ public class OrderDTOConverter {
         return dto;
     }
 
+    /** ECM-F012 — a etapa do atendimento do pedido do app, que posiciona o pedido na Central. */
+    public static void applyAtendimento(OrderAdminResponseDTO dto, AtendimentoPedidoApp a) {
+        if (a == null) {
+            return;
+        }
+        dto.setFulfillmentStatus(a.status().name());
+        dto.setAcceptedAt(a.aceitoEm());
+        dto.setAcceptedBy(a.aceitoEm() == null ? null : a.atendidoPor());
+        if (a.status() == AtendimentoStatus.RECUSADO) {
+            dto.setRejectedAt(a.encerradoEm());
+            dto.setRejectionReasonCode(a.motivoCodigo() == null ? null : a.motivoCodigo().name());
+        }
+    }
+
     public PageResult<OrderAdminResponseDTO> toAdminResponse(PageResult<Order> page) {
         return new PageResult<>(page.content().stream().map(this::toAdminResponse).toList(),
                 page.page(), page.size(), page.totalElements(), page.totalPages());
@@ -345,7 +361,7 @@ public class OrderDTOConverter {
                 a.getReference());
         return new OrderDelivery(request.getType(), address, request.getMethod(), request.getCourierName(),
                 request.getCourierPhone(), request.getPickupCode(), request.getDropoffCode(),
-                request.getTrackingCode(), request.getFee());
+                request.getTrackingCode(), request.getFee(), request.getTrackingUrl());
     }
 
     /** Edição parcial da entrega — {@code PATCH /orders/{id}/delivery}. */
@@ -356,7 +372,7 @@ public class OrderDTOConverter {
                 a.getReference());
         return new OrderDelivery.Patch(request.getType(), address, request.getMethod(), request.getCourierName(),
                 request.getCourierPhone(), request.getPickupCode(), request.getDropoffCode(),
-                request.getTrackingCode(), request.getFee());
+                request.getTrackingCode(), request.getFee(), request.getTrackingUrl());
     }
 
     private DeliveryResponseDTO toDeliveryResponse(OrderDelivery delivery) {
@@ -371,6 +387,7 @@ public class OrderDTOConverter {
         dto.setPickupCode(delivery.pickupCode());
         dto.setDropoffCode(delivery.dropoffCode());
         dto.setTrackingCode(delivery.trackingCode());
+        dto.setTrackingUrl(delivery.trackingUrl());
         dto.setFee(delivery.fee());
         DeliveryAddress a = delivery.address();
         if (a != null) {

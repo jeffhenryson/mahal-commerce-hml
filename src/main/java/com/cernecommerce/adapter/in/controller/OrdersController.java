@@ -1,7 +1,9 @@
 package com.cernecommerce.adapter.in.controller;
 
 import com.cernecommerce.adapter.in.converter.OrderDTOConverter;
+import com.cernecommerce.adapter.in.dtos.request.OrderAcceptRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderCancelRequest;
+import com.cernecommerce.adapter.in.dtos.request.OrderRejectRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderRefundRequest;
 import com.cernecommerce.adapter.in.dtos.request.OrderItemExchangeRequest;
 import com.cernecommerce.adapter.in.dtos.request.DeliveryRequest;
@@ -31,6 +33,8 @@ import com.cernecommerce.core.ports.in.CrmUseCase;
 import com.cernecommerce.core.ports.in.OrderReportUseCase;
 import com.cernecommerce.core.ports.in.OrderUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
+import com.cernecommerce.core.ports.in.PedidoAppUseCase;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,6 +52,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -63,10 +68,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Visão de <b>pedidos do administrador</b> — atravessa canais.
@@ -84,6 +93,10 @@ import java.util.Objects;
 public class OrdersController {
 
     private static final String REFUND_AUTHORITY = "ORDER_REFUND";
+    /** ECM-F012 — quem só opera a Central de Pedidos vê e mexe em pedido do app e da mesa, não do balcão. */
+    private static final String READ_AUTHORITY = "ORDER_READ";
+    private static final String FULFILL_AUTHORITY = "ORDER_FULFILL";
+    private static final Set<SalesChannel> CENTRAL_CHANNELS = EnumSet.of(SalesChannel.MARKETPLACE, SalesChannel.MESA);
 
     private final OrderUseCase orderUseCase;
     private final OrderReportUseCase orderReportUseCase;
@@ -92,11 +105,14 @@ public class OrdersController {
     private final OrderDTOConverter orderConverter;
     private final ApplicationEventPublisher publisher;
     private final ReceivableUseCase receivableUseCase;
+    private final PedidoAppUseCase pedidoAppUseCase;
 
     public OrdersController(OrderUseCase orderUseCase, OrderReportUseCase orderReportUseCase,
             CrmUseCase crmUseCase, PdvUseCase pdvUseCase, OrderDTOConverter orderConverter,
-            ApplicationEventPublisher publisher, ReceivableUseCase receivableUseCase) {
+            ApplicationEventPublisher publisher, ReceivableUseCase receivableUseCase,
+            PedidoAppUseCase pedidoAppUseCase) {
         this.receivableUseCase = receivableUseCase;
+        this.pedidoAppUseCase = pedidoAppUseCase;
         this.orderUseCase = orderUseCase;
         this.orderReportUseCase = orderReportUseCase;
         this.crmUseCase = crmUseCase;
@@ -126,9 +142,10 @@ public class OrdersController {
     @Operation(summary = "Lista pedidos com filtros, do mais recente para o mais antigo",
             description = "Todo filtro é opcional. O período incide sobre a data de criação. PDV-F026: "
                     + "sessionId (caixa), comandaId (mesa) e orderNumber (exato); cada linha traz "
-                    + "paymentMethods, os métodos CAPTURED do pedido.")
+                    + "paymentMethods, os métodos CAPTURED do pedido. ECM-F012: com só ONLINE_ORDER_READ, "
+                    + "channel é obrigatório e só MARKETPLACE ou MESA (403 no resto).")
     @GetMapping
-    @PreAuthorize("hasAuthority('ORDER_READ')")
+    @PreAuthorize("hasAnyAuthority('ORDER_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PageResult<OrderAdminResponseDTO>> listOrders(
             @RequestParam(required = false) SalesChannel channel,
             @RequestParam(required = false) OrderStatus status,
@@ -139,13 +156,44 @@ public class OrdersController {
             @RequestParam(required = false) Long comandaId,
             @RequestParam(required = false) String orderNumber,
             @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            Authentication authentication) {
+        if (!AuthUtils.hasAuthority(authentication, READ_AUTHORITY)
+                && (channel == null || !CENTRAL_CHANNELS.contains(channel))) {
+            throw new AccessDeniedException("Com ONLINE_ORDER_READ, filtre channel por MARKETPLACE ou MESA");
+        }
         PageResult<OrderAdminResponseDTO> result = orderConverter.toAdminResponse(orderUseCase.listOrders(
                 new OrderFilter(channel, status, customerId, from, to, sessionId, comandaId, orderNumber), page, size));
         enrichCustomerNames(result.content());
         enrichPaymentMethods(result.content());
         enrichOperatorNames(result.content());
+        enrichAtendimentos(result.content());
         return ResponseEntity.ok(result);
+    }
+
+    /** ECM-F012 — a etapa do atendimento dos pedidos do app da página; uma consulta só. */
+    private void enrichAtendimentos(List<OrderAdminResponseDTO> content) {
+        List<Long> ids = content.stream()
+                .filter(dto -> SalesChannel.MARKETPLACE.name().equals(dto.getChannel()))
+                .map(OrderAdminResponseDTO::getId)
+                .toList();
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, AtendimentoPedidoApp> atendimentos = pedidoAppUseCase.atendimentosDe(ids).stream()
+                .collect(Collectors.toMap(AtendimentoPedidoApp::orderId, Function.identity()));
+        content.forEach(dto -> OrderDTOConverter.applyAtendimento(dto, atendimentos.get(dto.getId())));
+    }
+
+    /**
+     * ECM-F012 — sem a permissão ampla ({@code ORDER_READ}/{@code ORDER_FULFILL}), só os canais da
+     * Central de Pedidos. O {@code @PreAuthorize} já garantiu uma das duas.
+     */
+    private static void requireCentralChannel(Authentication authentication, String broadAuthority, Order order,
+            Set<SalesChannel> allowed) {
+        if (!AuthUtils.hasAuthority(authentication, broadAuthority) && !allowed.contains(order.channel())) {
+            throw new AccessDeniedException("Pedido " + order.id() + " não é da Central de Pedidos");
+        }
     }
 
     /** PED-F003 — o operador vem do caixa que liquidou o pedido; uma consulta por página. */
@@ -223,11 +271,15 @@ public class OrdersController {
             @ApiResponse(responseCode = "404", description = "Pedido não encontrado", content = @Content)
     })
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('ORDER_READ')")
-    public ResponseEntity<OrderAdminResponseDTO> getOrder(@PathVariable("id") Long orderId) {
-        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(orderUseCase.getOrder(orderId));
+    @PreAuthorize("hasAnyAuthority('ORDER_READ','ONLINE_ORDER_READ')")
+    public ResponseEntity<OrderAdminResponseDTO> getOrder(@PathVariable("id") Long orderId,
+            Authentication authentication) {
+        Order order = orderUseCase.getOrder(orderId);
+        requireCentralChannel(authentication, READ_AUTHORITY, order, CENTRAL_CHANNELS);
+        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(order);
         enrichCustomerNames(List.of(dto));
         enrichOperatorNames(List.of(dto));
+        enrichAtendimentos(List.of(dto));
         // PDV-F026 — o detalhe deixa de precisar do recibo só para saber como o pedido foi pago.
         dto.setPayments(orderUseCase.getOrderPayments(orderId).stream().map(orderConverter::toResponse).toList());
         fillRefundedQuantities(dto, orderId);
@@ -353,10 +405,11 @@ public class OrdersController {
             @ApiResponse(responseCode = "409", description = "Transição não permitida", content = @Content)
     })
     @PostMapping("/{id}/status")
-    @PreAuthorize("hasAuthority('ORDER_FULFILL')")
+    @PreAuthorize("hasAnyAuthority('ORDER_FULFILL','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<OrderAdminResponseDTO> changeStatus(@PathVariable("id") Long orderId,
             @Valid @RequestBody OrderStatusRequest request, Authentication authentication) {
         Order before = orderUseCase.getOrder(orderId);
+        requireCentralChannel(authentication, FULFILL_AUTHORITY, before, Set.of(SalesChannel.MARKETPLACE));
         Order order = orderUseCase.changeStatus(orderId, request.getStatus(), authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.ORDER_STATUS_CHANGED, authentication.getName(),
                 Map.of("orderId", orderId,
@@ -427,14 +480,76 @@ public class OrdersController {
             @ApiResponse(responseCode = "409", description = "ORDER_HAS_NO_DELIVERY, ou ORDER_DELIVERY_NOT_EDITABLE (cancelado/reembolsado)", content = @Content)
     })
     @PatchMapping("/{id}/delivery")
-    @PreAuthorize("hasAuthority('ORDER_FULFILL')")
+    @PreAuthorize("hasAnyAuthority('ORDER_FULFILL','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<OrderAdminResponseDTO> updateDelivery(@PathVariable("id") Long orderId,
             @Valid @RequestBody DeliveryRequest request, Authentication authentication) {
+        requireCentralChannel(authentication, FULFILL_AUTHORITY, orderUseCase.getOrder(orderId),
+                Set.of(SalesChannel.MARKETPLACE));
         Order order = orderUseCase.updateDelivery(orderId, orderConverter.toDeliveryPatch(request),
                 authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.ORDER_DELIVERY_UPDATED, authentication.getName(),
                 Map.of("orderId", orderId, "orderNumber", String.valueOf(order.orderNumber()))));
         return ResponseEntity.ok(orderConverter.toAdminResponse(order));
+    }
+
+    @Operation(summary = "Aceita um pedido do app (Central de Pedidos, ECM-F012)",
+            description = "Fachada do aceite no caixa (POST /pdv/app-orders/{id}/aceitar): o pedido passa a ser "
+                    + "atendido pelo caixa aberto do operador — sessionId omitido usa o dele — e só esse caixa o "
+                    + "liquida. Não muda o status (continua AGUARDANDO_PAGAMENTO até o pagamento); muda "
+                    + "fulfillmentStatus para ACEITO. Na ENTREGA, deliveryFee é obrigatória (zero vale).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Aceito", content = @Content(schema = @Schema(implementation = OrderAdminResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "ORDER_NOT_MARKETPLACE, ou INVALID_DELIVERY (taxa ausente na entrega, presente na retirada)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "SESSION_NOT_OWNED — o caixa informado é de outro operador", content = @Content),
+            @ApiResponse(responseCode = "404", description = "ORDER_NOT_FOUND, PEDIDO_APP_NOT_FOUND, ou NO_OPEN_SESSION sem sessionId e sem caixa aberto", content = @Content),
+            @ApiResponse(responseCode = "409", description = "ORDER_ALREADY_ACCEPTED, ORDER_NOT_PENDING_ACCEPT, ou CASH_REGISTER_SESSION_CLOSED", content = @Content)
+    })
+    @PostMapping("/{id}/accept")
+    @PreAuthorize("hasAnyAuthority('ONLINE_ORDER_MANAGE','PDV_SALE_MANAGE')")
+    public ResponseEntity<OrderAdminResponseDTO> acceptOrder(@PathVariable("id") Long orderId,
+            @Valid @RequestBody(required = false) OrderAcceptRequest request, Authentication authentication) {
+        OrderAcceptRequest body = request == null ? new OrderAcceptRequest() : request;
+        PedidoAppUseCase.PedidoApp aceito = pedidoAppUseCase.aceitarPedido(orderId, body.getSessionId(),
+                body.getDeliveryFee(), authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.ORDER_STATUS_CHANGED, authentication.getName(),
+                Map.of("orderId", orderId,
+                        "action", "ACCEPTED",
+                        "sessionId", aceito.atendimento().sessionId())));
+        return ResponseEntity.ok(toAdminResponse(aceito));
+    }
+
+    @Operation(summary = "Recusa um pedido do app com motivo padronizado (Central de Pedidos, ECM-F012)",
+            description = "Fachada da recusa no caixa (POST /pdv/app-orders/{id}/recusar): cancela o pedido e "
+                    + "devolve a reserva de estoque. O cliente recebe o motivo — o rótulo do reasonCode mais a "
+                    + "note — no cancelReason. Vale enquanto o pedido não foi pago, inclusive depois de aceito.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Recusado", content = @Content(schema = @Schema(implementation = OrderAdminResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "ORDER_NOT_MARKETPLACE, ou INVALID_REJECTION (OUTRO sem note)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "SESSION_NOT_OWNED — já aceito no caixa de outro operador", content = @Content),
+            @ApiResponse(responseCode = "404", description = "ORDER_NOT_FOUND ou PEDIDO_APP_NOT_FOUND", content = @Content),
+            @ApiResponse(responseCode = "409", description = "ORDER_NOT_PENDING_ACCEPT, ou CASH_REGISTER_SESSION_CLOSED (o caixa que aceitou fechou: assuma antes)", content = @Content)
+    })
+    @PostMapping("/{id}/reject")
+    @PreAuthorize("hasAnyAuthority('ONLINE_ORDER_MANAGE','PDV_SALE_MANAGE')")
+    public ResponseEntity<OrderAdminResponseDTO> rejectOrder(@PathVariable("id") Long orderId,
+            @Valid @RequestBody OrderRejectRequest request, Authentication authentication) {
+        PedidoAppUseCase.PedidoApp recusado = pedidoAppUseCase.recusarPedido(orderId, request.getReasonCode(),
+                request.getNote(), authentication.getName());
+        // Mesmo evento de PedidoAppController.recusar: é ele que manda o e-mail ao cliente.
+        Map<String, Object> details = new HashMap<>();
+        details.put("orderId", orderId);
+        details.put("origin", "PEDIDO_APP_RECUSADO");
+        details.put("reason", recusado.atendimento().motivo());
+        details.put("reasonCode", request.getReasonCode().name());
+        publisher.publishEvent(AuditEvent.of(EventType.ORDER_CANCELLED, authentication.getName(), details));
+        return ResponseEntity.ok(toAdminResponse(recusado));
+    }
+
+    private OrderAdminResponseDTO toAdminResponse(PedidoAppUseCase.PedidoApp pedido) {
+        OrderAdminResponseDTO dto = orderConverter.toAdminResponse(pedido.order());
+        enrichCustomerNames(List.of(dto));
+        OrderDTOConverter.applyAtendimento(dto, pedido.atendimento());
+        return dto;
     }
 
     @Operation(summary = "Cancela um pedido ANTES de pagamento confirmado e libera a reserva de estoque",

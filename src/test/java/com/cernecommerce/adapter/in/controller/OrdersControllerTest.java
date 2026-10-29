@@ -60,8 +60,13 @@ public class OrdersControllerTest {
 
     private com.cernecommerce.core.ports.in.ReceivableUseCase receivableUseCase;
 
+    private com.cernecommerce.core.ports.in.PedidoAppUseCase pedidoAppUseCase;
+
+    // ECM-F012 — com as permissões amplas: sem elas, /orders restringe aos canais da Central.
     private static final UsernamePasswordAuthenticationToken AUTH =
-            new UsernamePasswordAuthenticationToken("admin", null, List.of());
+            new UsernamePasswordAuthenticationToken("admin", null, List.of(
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority("ORDER_READ"),
+                    new org.springframework.security.core.authority.SimpleGrantedAuthority("ORDER_FULFILL")));
 
     @BeforeEach
     void setup() {
@@ -73,9 +78,10 @@ public class OrdersControllerTest {
         publisher = mock(ApplicationEventPublisher.class);
         receivableUseCase = mock(com.cernecommerce.core.ports.in.ReceivableUseCase.class);
         when(receivableUseCase.findByOrderId(any())).thenReturn(java.util.Optional.empty());
+        pedidoAppUseCase = mock(com.cernecommerce.core.ports.in.PedidoAppUseCase.class);
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new OrdersController(orderUseCase, orderReportUseCase, crmUseCase, pdvUseCase, orderConverter,
-                        publisher, receivableUseCase))
+                        publisher, receivableUseCase, pedidoAppUseCase))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

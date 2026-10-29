@@ -23,6 +23,9 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /** Só o status gravado, sem montar o pedido — quem decora o save compara o antes e o depois (ECM-F012). */
+    Optional<OrderStatus> findStatusById(Long id);
+
     /** PDV-C060 — os pedidos dos ids, com itens, em lotes. Id sem pedido fica de fora; sem ordem garantida. */
     java.util.List<Order> findAllByIds(java.util.Collection<Long> ids);
 
