@@ -10,6 +10,10 @@ import com.cernecommerce.core.ports.out.user.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 /**
  * Aviso em tempo real para quem opera o PDV: notificação gravada mais o empurrão por SSE, para todo
  * usuário com a permissão dada. Nasceu no autoatendimento do Salão e passou a servir também o pedido
@@ -36,11 +40,13 @@ public class AvisoOperadores implements AvisoOperadoresUseCase {
     }
 
     @Override
-    public void avisar(String chave, String permissao, NotificationType tipo, String titulo, String corpo,
+    public void avisar(String chave, List<String> permissoes, NotificationType tipo, String titulo, String corpo,
             String destino) {
         afterCommit.accumulate(chave, titulo, avisos -> {
             try {
-                for (String username : userRepository.findUsernamesByPermission(permissao)) {
+                Set<String> destinatarios = new LinkedHashSet<>();
+                permissoes.forEach(p -> destinatarios.addAll(userRepository.findUsernamesByPermission(p)));
+                for (String username : destinatarios) {
                     Notification salva = notificationUseCase.notify(username, tipo, titulo, corpo, destino);
                     ssePort.send(username, salva);
                 }

@@ -24,6 +24,8 @@ public enum NotificationType {
     CHAMADO_MESA,
     /** Pedido novo ou cancelado pelo app do cliente (ECM-F010) — para quem tem PDV_SALE_MANAGE. */
     PEDIDO_APP,
+    /** Etapa do próprio pedido do app, para o cliente que o fez (ECM-F013): aceite, pagamento, saída… */
+    PEDIDO_CLIENTE,
     /** Alertas técnicos (bug report, falha de integração, erro 500, segurança) — para a ROLE_DEV. */
     DEV
 }

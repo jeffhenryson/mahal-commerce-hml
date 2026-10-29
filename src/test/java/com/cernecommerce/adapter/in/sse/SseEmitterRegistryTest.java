@@ -26,23 +26,37 @@ class SseEmitterRegistryTest {
 
     @Test
     void register_aceita_multiplos_emitters_por_usuario_ate_o_limite() {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 10; i++) {
             registry.register("alice", new SseEmitter(1000L));
         }
 
-        assertThat(registry.activeConnections("alice")).isEqualTo(5);
+        assertThat(registry.activeConnections("alice")).isEqualTo(10);
+    }
+
+    @Test
+    void limiteAtingido_so_com_o_limite_cheio() {
+        assertThat(registry.limiteAtingido("alice")).isFalse();
+        for (int i = 0; i < 9; i++) {
+            registry.register("alice", new SseEmitter(1000L));
+        }
+        assertThat(registry.limiteAtingido("alice")).isFalse();
+
+        registry.register("alice", new SseEmitter(1000L));
+
+        assertThat(registry.limiteAtingido("alice")).isTrue();
+        assertThat(registry.limiteAtingido("bob")).isFalse();
     }
 
     @Test
     void register_recusa_conexao_alem_do_limite() {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 10; i++) {
             registry.register("alice", new SseEmitter(1000L));
         }
 
         SseEmitter extra = new SseEmitter(1000L);
         registry.register("alice", extra);
 
-        assertThat(registry.activeConnections("alice")).isEqualTo(5);
+        assertThat(registry.activeConnections("alice")).isEqualTo(10);
     }
 
     @Test

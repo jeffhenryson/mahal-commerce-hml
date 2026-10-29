@@ -7,10 +7,18 @@ import com.cernecommerce.core.domain.model.notification.Notification;
 import com.cernecommerce.core.ports.in.NotificationUseCase;
 import com.cernecommerce.core.ports.out.sse.SseTicketPort;
 import com.cernecommerce.adapter.in.sse.SseEmitterRegistry;
+import com.cernecommerce.infra.handler.ApiError;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import org.slf4j.MDC;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -18,6 +26,8 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
@@ -32,6 +42,15 @@ public class NotificationController {
      * resposta do POST e a abertura do EventSource, que é uma ida e volta na mesma página.
      */
     static final long TICKET_TTL_SECONDS = 30;
+
+    /** Quanto o front espera para tentar de novo quando o usuário está no limite de streams. */
+    static final long SSE_RETRY_AFTER_SECONDS = 30;
+
+    // Mapper próprio pelo mesmo motivo do RestAuthenticationEntryPoint: a resposta de erro do stream
+    // é escrita à mão, fora da negociação de conteúdo (o endpoint só produz text/event-stream).
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private final NotificationUseCase useCase;
     private final SseEmitterRegistry sseRegistry;
@@ -110,9 +129,24 @@ public class NotificationController {
             description = "Aceita `Authorization: Bearer` **ou** `?ticket=` emitido por "
                     + "`POST /notifications/stream-ticket` — o bilhete é o caminho do navegador, "
                     + "cujo `EventSource` não envia headers (PLAT-C051). O bilhete é consumido na "
-                    + "abertura: cada reconexão precisa de um novo.")
+                    + "abertura: cada reconexão precisa de um novo.\n\n"
+                    + "Com o usuário já no limite de streams abertos (`notification.sse.max-connections-per-user`, "
+                    + "padrão 10), responde **429** `SSE_CONNECTION_LIMIT` com `Retry-After`: espere e reconecte, "
+                    + "a sessão continua válida.")
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(Authentication auth) {
+    public SseEmitter stream(Authentication auth, HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        if (sseRegistry.limiteAtingido(auth.getName())) {
+            ApiError error = ApiError.of("Limite de conexões em tempo real atingido — feche outras abas ou aguarde",
+                    "SSE_CONNECTION_LIMIT", request.getRequestURI(), MDC.get("traceId"));
+            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            response.setHeader("Retry-After", String.valueOf(SSE_RETRY_AFTER_SECONDS));
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+            MAPPER.writeValue(response.getWriter(), error);
+            // Nulo: o Spring dá a requisição por respondida e não abre o stream.
+            return null;
+        }
         SseEmitter emitter = new SseEmitter(Duration.ofMinutes(30).toMillis());
         sseRegistry.register(auth.getName(), emitter);
         return emitter;

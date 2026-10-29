@@ -15,6 +15,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -23,8 +25,9 @@ public class SseEmitterRegistry implements NotificationSsePort {
 
     private static final Logger log = LoggerFactory.getLogger(SseEmitterRegistry.class);
 
-    @Value("${notification.sse.max-connections-per-user:5}")
-    private int maxConnectionsPerUser = 5;
+    // Era 5: um gerente com o admin em algumas abas e no celular já passava do limite (ECM-F012).
+    @Value("${notification.sse.max-connections-per-user:10}")
+    private int maxConnectionsPerUser = 10;
 
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
     private final Counter notificationsSentCounter;
@@ -39,6 +42,17 @@ public class SseEmitterRegistry implements NotificationSsePort {
         this.connectionRefusedCounter = registry.counter("sse.connections.refused.total");
     }
 
+    /**
+     * O usuário já está no limite? O controller pergunta antes de abrir o stream, para recusar com
+     * 429 ainda na requisição original. Recusar depois, pelo emitter, vira um re-dispatch assíncrono
+     * sem autenticação, que a segurança responde com 401, e o front lê 401 como sessão expirada.
+     */
+    public boolean limiteAtingido(String username) {
+        List<SseEmitter> list = emitters.get(username);
+        return list != null && list.size() >= maxConnectionsPerUser;
+    }
+
+    /** Rede de segurança da corrida entre {@link #limiteAtingido} e o registro. */
     public void register(String username, SseEmitter emitter) {
         CopyOnWriteArrayList<SseEmitter> list = emitters.computeIfAbsent(username, k -> new CopyOnWriteArrayList<>());
         if (list.size() >= maxConnectionsPerUser) {
@@ -69,6 +83,27 @@ public class SseEmitterRegistry implements NotificationSsePort {
             }
         }
         dead.forEach(e -> remove(username, e));
+    }
+
+    @Override
+    public void sendEvent(String username, String eventName, Map<String, Object> payload) {
+        List<SseEmitter> userEmitters = emitters.get(username);
+        if (userEmitters == null || userEmitters.isEmpty()) return;
+
+        List<SseEmitter> dead = new ArrayList<>();
+        for (SseEmitter emitter : userEmitters) {
+            try {
+                emitter.send(SseEmitter.event().name(eventName).data(payload));
+            } catch (IOException ex) {
+                dead.add(emitter);
+            }
+        }
+        dead.forEach(e -> remove(username, e));
+    }
+
+    @Override
+    public Set<String> connectedUsernames() {
+        return Set.copyOf(emitters.keySet());
     }
 
     public void remove(String username, SseEmitter emitter) {
