@@ -61,7 +61,9 @@ import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableExceptio
 import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
+import com.cernecommerce.core.domain.exception.estoque.ProductArchivedException;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
+import com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
 import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateSkuException;
@@ -104,6 +106,7 @@ import com.cernecommerce.core.domain.exception.estoque.LotExpiryDateMismatchExce
 import com.cernecommerce.core.domain.exception.estoque.MissingLotInfoException;
 import com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.ProductVariantNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.SkuArchivedException;
 import com.cernecommerce.core.domain.exception.estoque.ReservedStockException;
 import com.cernecommerce.core.domain.exception.estoque.SameSkuConversionException;
 import com.cernecommerce.core.domain.exception.estoque.StockCountAlreadyOpenException;
@@ -429,6 +432,26 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleProductHasStockHistory(ProductHasStockHistoryException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "PRODUCT_HAS_STOCK_HISTORY", req);
+    }
+
+    /**
+     * EST-F054 — exclusão lógica. {@code PRODUCT_IS_DRAFT} manda o rascunho para o DELETE;
+     * {@code PRODUCT_ARCHIVED} recusa venda/entrada/kit de produto excluído; {@code SKU_ARCHIVED}
+     * recusa reaproveitar o SKU dele. A mensagem é o que o front mostra no snackbar.
+     */
+    @ExceptionHandler(ProductIsDraftException.class)
+    public ResponseEntity<ApiError> handleProductIsDraft(ProductIsDraftException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PRODUCT_IS_DRAFT", req);
+    }
+
+    @ExceptionHandler(ProductArchivedException.class)
+    public ResponseEntity<ApiError> handleProductArchived(ProductArchivedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PRODUCT_ARCHIVED", req);
+    }
+
+    @ExceptionHandler(SkuArchivedException.class)
+    public ResponseEntity<ApiError> handleSkuArchived(SkuArchivedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SKU_ARCHIVED", req);
     }
 
     /**

@@ -177,7 +177,10 @@ public class EstoqueController {
                     + "catálogo inteiro paginado, como antes. `search` casa por trecho em nome "
                     + "OU SKU, sem diferenciar maiúsculas. `category` e `brand` são igualdade "
                     + "exata (também sem diferenciar maiúsculas). A ordenação sempre desempata "
-                    + "por id, para a paginação ser estável.")
+                    + "por id, para a paginação ser estável.\n\n"
+                    + "**Arquivados (EST-F054) ficam fora por padrão**, inclusive na busca do PDV. "
+                    + "`archived=true` devolve **só** os arquivados (filtro Excluídos), com os "
+                    + "mesmos filtros e paginação.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "400", description = "Parâmetro fora da faixa ou valor de enum inválido", content = @Content),
@@ -196,10 +199,11 @@ public class EstoqueController {
             @RequestParam(required = false) Boolean kitComponentEligible,
             @RequestParam(required = false) ProductStatus status,
             @RequestParam(required = false) Boolean sessionProduct,
+            @RequestParam(required = false) Boolean archived,
             @RequestParam(defaultValue = "ID") ProductSortField sort,
             @RequestParam(defaultValue = "ASC") SortDirection direction) {
         ProductFilter filter = new ProductFilter(search, category, brand, active, type, kitComponentEligible, status,
-                sessionProduct);
+                sessionProduct, archived);
         PageResult<Product> result = estoqueUseCase.listProducts(page, size, filter, sort, direction);
         PageResult<ProductResponseDTO> response = new PageResult<>(
                 result.content().stream().map(converter::toResponse).toList(),
@@ -219,7 +223,7 @@ public class EstoqueController {
                     + "senão o `costPrice` da variação, o do produto pai da variação, o do produto; "
                     + "saldo sem custo conhecido contribui **zero**.\n\n"
                     + "Produto em `RASCUNHO` fica **fora**: não é mercadoria da loja, é cadastro em "
-                    + "construção. Produto e depósito **inativos ficam dentro** — desativar tira de "
+                    + "construção. `ARQUIVADO` (EST-F054) também fica fora, inclusive dos alertas. Produto e depósito **inativos ficam dentro** — desativar tira de "
                     + "circulação, não da prateleira, e o total precisa bater com a contagem "
                     + "física.\n\n**`alertasCriticos`/`alertasAtencao`** contam pontos de "
                     + "reposição cadastrados, tratando SKU **sem linha de saldo como quantidade "
@@ -251,7 +255,8 @@ public class EstoqueController {
 
     @Operation(summary = "Resolve um produto pelo código de barras",
             description = "Aceita o código de barras do produto pai ou o de qualquer variação — "
-                    + "nos dois casos devolve o produto pai. Caminho de leitura do scanner do PDV.")
+                    + "nos dois casos devolve o produto pai. Caminho de leitura do scanner do PDV. "
+                    + "Produto arquivado (EST-F054) responde 404.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "404", description = "Código de barras não encontrado", content = @Content),
@@ -708,8 +713,8 @@ public class EstoqueController {
                     + "`PATCH .../active` com `active:false` **não** libera a vaga — `status` e "
                     + "`active` são eixos independentes. Cinco rascunhos abandonados desligavam o "
                     + "recurso para todo o tenant.\n\n"
-                    + "Produto publicado responde **409** e continua saindo de circulação por "
-                    + "`PATCH .../active`: apagar do catálogo deixaria órfão o histórico que "
+                    + "Produto publicado responde **409** e é excluído por "
+                    + "`POST .../archive` (EST-F054): apagar do catálogo deixaria órfão o histórico que "
                     + "referencia o SKU como texto livre, sem FK. Pelo mesmo motivo, rascunho com "
                     + "saldo ou movimentação gravados — no SKU pai ou em qualquer variação — "
                     + "também é recusado.")
@@ -729,6 +734,51 @@ public class EstoqueController {
         estoqueUseCase.deleteProduct(sku);
         publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_DELETED,
                 authentication.getName(), Map.of("sku", sku, "name", name)));
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Exclui (arquiva) um produto publicado (EST-F054)",
+            description = "Exclusão **lógica**: `status` vira `ARQUIVADO`, junto com a grade de "
+                    + "variações. O produto some da listagem, da busca, do leitor de código de "
+                    + "barras, da vitrine, dos kits e da reposição; vendas, movimentações, compras "
+                    + "e relatórios seguem como sempre, e `GET /products/{sku}` continua "
+                    + "respondendo. `active` e saldo não mudam — produto com saldo pode ser "
+                    + "arquivado. Kit que usa o produto como componente fica indisponível.\n\n"
+                    + "Depois de arquivado, venda nova e entrada de mercadoria respondem `409 "
+                    + "PRODUCT_ARCHIVED`; o SKU e o código de barras ficam reservados (`409 "
+                    + "SKU_ARCHIVED` ao recriar). Rascunho não se arquiva: `409 PRODUCT_IS_DRAFT`, "
+                    + "o caminho dele é o `DELETE`. Idempotente.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Arquivado (ou já estava)"),
+            @ApiResponse(responseCode = "404", description = "SKU pai não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Produto é rascunho (`PRODUCT_IS_DRAFT`)", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/products/{sku}/archive")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<Void> archiveProduct(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku, Authentication authentication) {
+        Product archived = estoqueUseCase.archiveProduct(sku, authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_ARCHIVED,
+                authentication.getName(), Map.of("sku", sku, "name", archived.name())));
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Restaura um produto arquivado (EST-F054)",
+            description = "Volta o `status` para `ATIVO`, com o mesmo saldo, e o produto reaparece "
+                    + "em todos os lugares. Idempotente — produto não arquivado não muda.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Restaurado (ou não estava arquivado)"),
+            @ApiResponse(responseCode = "404", description = "SKU pai não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/products/{sku}/restore")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<Void> restoreProduct(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku, Authentication authentication) {
+        Product restored = estoqueUseCase.restoreProduct(sku);
+        publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_RESTORED,
+                authentication.getName(), Map.of("sku", sku, "name", restored.name())));
         return ResponseEntity.noContent().build();
     }
 
@@ -987,6 +1037,12 @@ public class EstoqueController {
     @PreAuthorize("hasAuthority('ESTOQUE_STOCK_MANAGE')")
     public ResponseEntity<StockBalanceResponseDTO> registerMovement(@Valid @RequestBody StockMovementRequest request,
             Authentication authentication) {
+        // EST-F054 — entrada manual de produto excluído é recusada; saída e ajuste manuais passam,
+        // para dar baixa no que sobrou na prateleira. Estorno e transferência, que também são
+        // ENTRADA, não vêm por este endpoint.
+        if (movementConverter.toType(request.getType()) == MovementType.ENTRADA) {
+            estoqueUseCase.requireNotArchived(request.getSku());
+        }
         // Só usa a sobrecarga com lote/custo quando o request de fato traz algum desses campos —
         // mantém o caminho simples (a maioria dos SKUs) idêntico ao de antes do EST-F008/EST-F007.
         StockBalance updated = request.getLotCode() == null && request.getExpiryDate() == null
