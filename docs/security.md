@@ -135,6 +135,21 @@ Permissões criadas em `V45__estoque_product_permissions.sql` (`ESTOQUE_PRODUCT_
 | `RECEIVABLE_MANAGE` | Renegociar, cancelar marcado e definir limite de crédito | ADMIN |
 | `RECEIVABLE_PAYMENT_REVERSE` | Estornar o lote de quitação de marcado lançado por engano (V173) | ADMIN, DEV |
 
+### Permissões — Central de Pedidos (V176, ECM-F012)
+
+| Permissão | Libera | Perfis |
+|---|---|---|
+| `ONLINE_ORDER_READ` | `GET /orders` e `GET /orders/{id}` só nos canais `MARKETPLACE`/`MESA` (o controller confere o canal quando falta `ORDER_READ`), `GET /pdv/app-orders*`, `GET /salao/mesas`, `GET /salao/ocupacoes`, `GET /pdv/solicitacoes-sessao`, `GET /pdv/chamados-mesa`, os eventos SSE da Central de Pedidos (`ORDER_*`, `SOLICITACAO_*`, `CHAMADO_*`), `GET /central-pedidos/config` e `/indicators` | ADMIN, DEV, ATENDENTE |
+| `ONLINE_ORDER_MANAGE` | `POST /orders/{id}/accept\|reject`, `POST /orders/{id}/status` e `PATCH /orders/{id}/delivery` só em pedido `MARKETPLACE`, `POST /pdv/app-orders/{id}/*`, recusar solicitação do QR e atender chamado | ADMIN, DEV, ATENDENTE |
+| `ONLINE_CONFIG_MANAGE` | `PUT /central-pedidos/config` (ECM-F013) e `PATCH /estoque/products/visibility` (este também com `ESTOQUE_PRODUCT_MANAGE`). `GET /central-pedidos/config` aceita esta ou `ONLINE_ORDER_READ` | ADMIN, DEV (V177) |
+
+Aceitar solicitação do QR continua só com `PDV_COMANDA_MANAGE`, porque abre comanda.
+
+Sessão da mesa (PDV-F057 a F060), sem permissão nova — as alçadas são conferidas no controller sobre o corpo:
+`carvaoCortesia: true` (lançar, repetir, `PUT …/sessoes/{itemId}`) exige `PDV_COMANDA_COURTESY`;
+`POST …/sessoes/{itemId}/pagar-no-final` exige `PDV_SESSION_PAY_LATER`; desconto em
+`POST /pdv/comandas/{id}/compra-na-loja` exige `PDV_SALE_DISCOUNT`, como no caixa.
+
 Não existe perfil "gerente" no banco; a alçada maior fica com `ROLE_ADMIN`. O histórico e os
 indicadores de mesas (PDV-F029) não criaram permissão: aceitam `PDV_READ` **ou** `ORDER_READ`.
 
@@ -198,9 +213,9 @@ O endpoint `GET /notifications/stream` mantém conexões HTTP de longa duração
 
 | Property | Padrão |
 |----------|--------|
-| `notification.sse.max-connections-per-user` | 5 |
+| `notification.sse.max-connections-per-user` | 10 |
 
-Conexões além do limite são recusadas com erro imediato pelo `SseEmitterRegistry.register()`. O log registra `sse.connection_limit_exceeded` com o username e o limite configurado.
+Conexões além do limite são recusadas pelo `NotificationController.stream()` **antes** de abrir o stream, com **429** `SSE_CONNECTION_LIMIT` e `Retry-After: 30` (ECM-F013). O limite era 5 e a recusa saía pelo `SseEmitterRegistry.register()` com `completeWithError`: o erro virava um re-dispatch assíncrono sem autenticação (os filtros JWT e de bilhete são `OncePerRequestFilter` e o contexto é stateless), e a requisição terminava em **401** no `RestAuthenticationEntryPoint` — o front lia como sessão expirada, renovava o token e, na terceira vez, desistia do tempo real. O `register()` mantém a recusa só como rede de segurança da corrida entre a checagem e o registro. O log registra `sse.connection_limit_exceeded` com o username e o limite configurado.
 
 Além disso, `GET /notifications/stream` está coberto pelo `LoginRateLimitingFilter` — limita a cadência de abertura de novas conexões por IP. O controle de conexões ativas simultâneas (cap por usuário) é feito pelo `SseEmitterRegistry` de forma complementar.
 
@@ -406,6 +421,8 @@ Todos os eventos publicados via `ApplicationEventPublisher` e persistidos pelo `
 | Marcados (CRM-F010) | `RECEIVABLE_CREATED` (venda ou fechamento de mesa com linha `MARCADO`), `RECEIVABLE_PAID` (lote, abatimentos, troco e saldo restante), `RECEIVABLE_DUE_DATE_CHANGED`, `RECEIVABLE_CANCELLED`, `CUSTOMER_CREDIT_LIMIT_CHANGED` (antes/depois e se é individual), `RECEIVABLE_PAYMENT_REVERSED` (V173: `batchId`, cliente, sessão, `sessionOpenAtReversal`, marcados revertidos com status depois, valores por método, saldo depois e motivo) |
 
 `COMANDA_CANCELLED` passou a levar o `reason` opcional do cancelamento (PDV-F029).
+Sessão da mesa: `COMANDA_SESSION_EDITED` (PDV-F058, `antes`/`depois`) e `COMANDA_SESSION_PAY_LATER`
+(PDV-F059, `convertido: true`); `COMANDA_SESSION_ADDED` passou a levar `carvaoCortesia` (PDV-F057).
 
 > **`AuditEvent.of` usa `Map.copyOf`**: valor nulo no payload derruba a requisição com 500. Quem monta
 > payload com campo opcional remove os nulos antes (ver `OnAccountGuard`, `PdvComandaController.auditPayload`

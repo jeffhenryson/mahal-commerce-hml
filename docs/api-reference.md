@@ -93,6 +93,18 @@ Todos os erros retornam `ApiError`:
 | `PEDIDO_APP_TRANSICAO_INVALIDA` | 409 | Etapa do pedido do app fora de ordem (ex.: liquidar antes do aceite, aceitar duas vezes) |
 | `PEDIDO_APP_OUTRO_CAIXA` | 409 | O pedido do app está com outro caixa aberto |
 | `PEDIDO_APP_NAO_PAGO` | 409 | Entrega do app marcada como saída antes da liquidação |
+| `ORDER_NOT_MARKETPLACE` | 400 | Aceite/recusa pela Central de Pedidos em pedido que não é do app (ECM-F012) |
+| `ORDER_NOT_PENDING_ACCEPT` | 409 | Pedido do app já saiu da fase de aceite: liquidado, ou atendimento recusado/cancelado/expirado/concluído |
+| `ORDER_ALREADY_ACCEPTED` | 409 | Pedido do app já aceito por um caixa |
+| `INVALID_REJECTION` | 400 | Recusa com `OUTRO` sem `note`, ou `note` acima de 200 caracteres |
+| `INVALID_CENTRAL_CONFIG` | 400 | Configuração da Central de Pedidos com regra violada; a mensagem lista todos os problemas (ECM-F013) |
+| `LOJA_FECHADA` | 409 | Checkout do app com o app pausado ou fora do horário da Central de Pedidos (ECM-F013) |
+| `MODALIDADE_INDISPONIVEL` | 409 | Checkout com entrega ou retirada desligada na Central de Pedidos (ECM-F013) |
+| `PEDIDO_MINIMO` | 409 | Entrega abaixo do pedido mínimo da Central de Pedidos (ECM-F013) |
+| `FORA_DA_AREA` | 409 | Entrega num bairro fora da lista de bairros atendidos (ECM-F013) |
+| `QR_PAUSADO` | 409 | Nova solicitação pelo QR da mesa com o QR pausado na Central de Pedidos (ECM-F013) |
+| `INVALID_TRACKING_URL` | 400 | Link da viagem que não é http(s) ou passa de 500 caracteres (ECM-F013) |
+| `SSE_CONNECTION_LIMIT` | 429 | `GET /notifications/stream` com o usuário já no limite de streams abertos; vem com `Retry-After` (ECM-F013) |
 | `INTERNAL_ERROR` | 500 | Erro interno inesperado |
 
 ---
@@ -2476,6 +2488,29 @@ Cada pedido do app traz `atendimento` (sem `sessionId`/`atendidoPor`): `status`,
 `prontoEm`, `saiuEm`, `concluidoEm`, `encerradoEm`. `totalPayable` já inclui a taxa depois do aceite.
 O pagamento confirmado aparece como `status: "CONCLUIDO"` do pedido.
 
+ECM-F013: `atendimento.mensagem` é o texto da etapa (o mesmo do e-mail e da notificação), e
+`atendimento.pixChave` traz a chave Pix da loja **só** na entrega aceita que ainda falta pagar. O link
+da corrida vem em `delivery.trackingUrl` depois da saída. Cada etapa também vira notificação
+`PEDIDO_CLIENTE` para a conta do cliente (`GET /notifications`, e pelo `GET /notifications/stream` se
+o app estiver aberto), com `targetUrl` `/pedidos/{id}`: aceite, separado, saiu, entregue, recusa,
+cancelamento/expiração e "pagamento confirmado" na liquidação.
+
+### GET /shop/store-status — **Público** (ECM-F013)
+
+O que o app consulta antes do checkout, da configuração da Central de Pedidos:
+
+```json
+{ "aberto": true, "appRecebendo": true, "entregaHabilitada": true, "retiradaHabilitada": true,
+  "tempoPreparoMin": 20, "tempoEntregaMin": 40, "pedidoMinimo": 30.00, "taxaFixa": 8.00,
+  "bairros": [ { "nome": "Centro", "taxa": 5.00 } ] }
+```
+
+`aberto` = app recebendo **e** dentro do horário. O checkout recusa com `409 LOJA_FECHADA`,
+`MODALIDADE_INDISPONIVEL`, `PEDIDO_MINIMO` (só entrega, contra o `netAmount`) ou `FORA_DA_AREA`
+(com bairros listados, o `district` do endereço tem de estar entre eles, sem diferença de acento ou
+caixa). A taxa definitiva continua sendo a que a loja informa no aceite. O catálogo público
+(`/shop/catalog`) passou a esconder produto com `visibleInMarketplace = false`.
+
 Etapas do atendimento:
 
 ```
@@ -2531,9 +2566,16 @@ pagamento. O cliente recebe e-mail com o motivo. Pedido já aceito exige ser o d
 
 ### POST /pdv/app-orders/{orderId}/pronto · /saiu · /entregue — Permissão: PDV_SALE_MANAGE
 
-Sem corpo. `pronto`: retirada separada (dono do caixa). `saiu`: entrega **já liquidada** (`409
-PEDIDO_APP_NAO_PAGO` antes disso; dono do caixa). `entregue`: fecha a entrega — não exige caixa
-aberto (o motoboy pode voltar depois do fechamento). Cada etapa vira e-mail ao cliente.
+`pronto` (sem corpo, dono do caixa): retirada separada; ou, desde o ECM-F013, entrega **já liquidada**
+separada esperando o entregador (`409 PEDIDO_APP_NAO_PAGO` antes do pagamento). `saiu` (dono do caixa):
+entrega **já liquidada**, a partir de `ACEITO` ou `PRONTO` (`409 PEDIDO_APP_NAO_PAGO` antes disso). Corpo
+opcional `{ "linkViagem": "https://…" }` (até 500, só http/https, senão `400 INVALID_TRACKING_URL`):
+gravado em `delivery.trackingUrl` e mandado ao cliente. `entregue`: fecha a entrega — não exige caixa
+aberto (o motoboy pode voltar depois do fechamento). Cada etapa vira e-mail e notificação ao cliente.
+
+ECM-F013: o `atendimento` da fila traz `mensagem` (o texto que o cliente recebeu na etapa, útil para a
+mensagem pronta do WhatsApp) e, na entrega `PENDENTE`, `taxaSugerida` (a taxa do bairro na Central de
+Pedidos, ou a fixa) para pré-preencher o aceite.
 
 O pagamento é a liquidação de sempre: `POST /pdv/sessions/{id}/orders/{orderId}/settle` com o valor
 exato de `totalPayable`.
@@ -2672,6 +2714,35 @@ encerrar, e corrige pelo histórico); responder de novo sobrescreve. Com `orderI
 venda à mesa (`comanda_compra_loja`, várias por mesa; repetir não duplica) e a resposta vale "comprou";
 a venda aparece em `comprasLoja` no QR. `204`; `400` sem `boughtInStore` nem `orderId`;
 `404 COMANDA_NOT_FOUND` / `ORDER_NOT_FOUND`. Evento `COMANDA_STORE_PURCHASE_RECORDED` (com `orderId`).
+
+### POST /pdv/comandas/{id}/compra-na-loja — Permissão: PDV_COMANDA_MANAGE
+
+PDV-F060 — a compra na loja de quem tem sessão **paga no final** em aberto entra na conta da mesa em vez
+de ser cobrada no caixa. Corpo: os itens do `SaleRequest` do caixa.
+
+```json
+{ "customerId": 5,
+  "items": [ { "sku": "AGUA-500", "quantity": 2 },
+             { "sku": "ISQ-01", "quantity": 1, "note": "azul", "discountAmount": 1.5 } ] }
+```
+
+Cada item vira uma linha `NORMAL` com `compraNaLoja: true`, preço resolvido pelo servidor e o
+`discountAmount` na linha (`storeDiscountAmount`), com as regras e o teto do caixa; desconto acima de zero
+exige `PDV_SALE_DISCOUNT`. Baixa o estoque na hora (unidade inteira, depósito da comanda) e marca a mesa
+como "comprou na loja" (PDV-F036). `customerId` é aceito, mas a mesa mantém o cliente dela. Não entra no
+caixa até ser cobrada: no `POST …/close` parcial com `itemIds` = sessão + roshs + estas linhas, ou no
+fechamento total. **As linhas `compraNaLoja` nunca entram na base da taxa de serviço.** `DELETE
+…/items/{itemId}` devolve o estoque. **201** com o `ComandaResponseDTO`. Evento
+`COMANDA_STORE_PURCHASE_RECORDED` com `{comandaId, boughtInStore: true, naContaDaMesa: true, skus}`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem itens / desconto maior que o item | 400 | validação / `ITEM_DISCOUNT_EXCEEDS_GROSS` |
+| Desconto sem `PDV_SALE_DISCOUNT` | 403 | — |
+| Comanda ou produto inexistente | 404 | `COMANDA_NOT_FOUND` / produto |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| Mesa sem sessão paga no final em aberto | 409 | `NO_PAY_LATER_SESSION` |
+| Desconto acima do teto | 409 | `DISCOUNT_LIMIT_EXCEEDED` |
 
 ### GET /pdv/comandas — Permissão: PDV_READ
 
@@ -2882,6 +2953,56 @@ Depois de desfazer, o `POST …/duplo` volta a funcionar. **200** com o `Comanda
 | 2º rosh fora de `NA_FILA` (preparando, entregue ou recolhido) | 409 | `ROSH_ALREADY_STARTED` |
 | 2º rosh cobrado (não cortesia) ou já fechado num pedido | 409 | `ROSH_ALREADY_CHARGED` |
 
+### PUT /pdv/comandas/{id}/sessoes/{itemId} — Permissão: PDV_COMANDA_MANAGE
+
+PDV-F058 — edita a sessão enquanto ela não foi entregue (`AGUARDANDO_PAGAMENTO`, `NA_FILA`, `PREPARANDO`).
+O corpo é a configuração **completa** (é PUT), no formato do lançamento sem `modo`, `duplo` e `pagarNoFinal`:
+
+```json
+{ "tierId": 1, "essencia": "Zomo Blueberry", "essenciaSku": "ZOMO-BLUE", "essenciaSku2": null,
+  "proporcao": "MEIO_A_MEIO", "vasoGrande": false, "carvao": "JUMBO", "carvaoCortesia": false,
+  "adicionalIds": [7] }
+```
+
+O subtotal é recalculado com as regras do lançamento (faixa da ficha, a maior na mescla, vaso, adicionais,
+jumbo com ou sem cortesia). Sabor do catálogo trocado devolve o uso da lata antiga e consome o novo
+(`SALAO_SEM_ESTOQUE` como no lançamento); o mesmo SKU não mexe no estoque. Vaso trocado libera um e aloca o
+outro. O 2º rosh ligado e o `pagarNoFinal` não mudam. **200** com o `ComandaResponseDTO`. Evento
+`COMANDA_SESSION_EDITED` com `{comandaId, itemId, antes, depois}` (faixa, sabores, vaso, carvão, cortesia,
+adicionais, subtotal).
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem `essencia` e sem `essenciaSku` / sem faixa / mescla com o mesmo sabor | 400 | `SESSION_ESSENCE_REQUIRED` / `SESSION_TIER_REQUIRED` / `SAME_FLAVOR_MIX` |
+| `carvaoCortesia: true` sem `PDV_COMANDA_COURTESY` | 403 | `COURTESY_NOT_ALLOWED` |
+| Comanda, faixa ou adicional inexistente | 404 | `COMANDA_NOT_FOUND` / `SESSION_TIER_NOT_FOUND` / `SESSION_ADDON_NOT_FOUND` |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| `{itemId}` não é `SESSAO` desta comanda, ou está desistida | 409 | `NOT_A_SESSION_LINE` |
+| Sessão `ENTREGUE` ou `RECOLHIDO` | 409 | `SESSION_NOT_EDITABLE` |
+| Sessão já paga e o subtotal recalculado é outro | 409 | `SESSION_PAID_PRICE_CHANGE` |
+| Sem utensílio livre para o vaso novo / sem lata do sabor novo | 409 | `SESSION_ASSET_UNAVAILABLE` / `SALAO_SEM_ESTOQUE` |
+
+### POST /pdv/comandas/{id}/sessoes/{itemId}/pagar-no-final — Permissão: PDV_COMANDA_MANAGE + PDV_SESSION_PAY_LATER
+
+PDV-F059 — **sem corpo.** A sessão `AGUARDANDO_PAGAMENTO` ainda sem pedido passa a pagar no final, com o
+mesmo efeito de lançá-la com `pagarNoFinal: true`: grava a marca, vai a `PREPARANDO` com o tempo contando, e
+o 2º rosh ligado herda a marca. Recolher continua exigindo pagamento (`SESSION_NOT_PAID_FOR_COLLECT`).
+**200** com o `ComandaResponseDTO`. Evento `COMANDA_SESSION_PAY_LATER` com `{comandaId, itemId, convertido: true}`.
+
+| Erro | HTTP | Código |
+|---|---|---|
+| Sem `PDV_SESSION_PAY_LATER` | 403 | `SESSION_PAY_LATER_NOT_ALLOWED` |
+| Comanda inexistente | 404 | `COMANDA_NOT_FOUND` |
+| Comanda fechada/cancelada | 409 | `COMANDA_NOT_OPEN` |
+| `{itemId}` não é `SESSAO` desta comanda | 409 | `NOT_A_SESSION_LINE` |
+| Sessão fora de `AGUARDANDO_PAGAMENTO` ou já num pedido | 409 | `SESSION_NOT_AWAITING_PAYMENT` |
+
+> **Jumbo de cortesia (PDV-F057).** `POST …/sessoes`, `POST …/repetir` e o `PUT` acima aceitam
+> `carvaoCortesia` (boolean). Com `carvao = JUMBO`, o acréscimo do jumbo não entra no subtotal; com `CUBO`
+> ou sem carvão é ignorado e gravado `false`. `true` exige `PDV_COMANDA_COURTESY` (403
+> `COURTESY_NOT_ALLOWED`). No repetir, sem o campo o jumbo vai cobrado, mesmo com a origem de cortesia.
+> `ComandaItemResponseDTO.carvaoCortesia` volta em toda linha `SESSAO`.
+
 > **Duplo pago no final cobra no 2º rosh (PDV-C046), em `PATCH …/sessoes/{itemId}/status`.** Recolher
 > a sessão `pagarNoFinal` ainda a cobrar continua `409 SESSION_NOT_PAID_FOR_COLLECT` (PDV-F040), **exceto**
 > quando ela tem um `ROSH_EXTRA` ligado ainda no salão (na fila, sabor pendente incluído; o recolhido e o
@@ -2901,15 +3022,21 @@ de propósito — `PDV_READ` é a permissão mais distribuída daquele módulo.
 Três permissões, porque as consequências são diferentes: ler é inócuo, avançar estágio é expedição, e
 cancelar **devolve mercadoria ao estoque**.
 
-### GET /orders — Permissão: ORDER_READ
+### GET /orders — Permissão: ORDER_READ ou ONLINE_ORDER_READ
 
 Filtros, todos opcionais: `channel` (`BALCAO`/`MARKETPLACE`), `status`, `customerId`, `from`, `to`
 (ISO-8601, sobre a data de criação), `page`, `size`. Ordenado do mais recente para o mais antigo.
 
+ECM-F012: com só `ONLINE_ORDER_READ` (Central de Pedidos), `channel` é obrigatório e só vale
+`MARKETPLACE` ou `MESA`; sem ele, ou com `BALCAO`, `403`. Em `GET /orders/{id}` vale o mesmo para o
+canal do pedido. Pedido `MARKETPLACE` traz `fulfillmentStatus` (a etapa do atendimento: é ela que
+posiciona o pedido na Central, porque o `status` só diz se foi pago), `acceptedAt`, `acceptedBy`,
+`rejectedAt` e `rejectionReasonCode`.
+
 Cada linha traz `operatorName` (PED-F003): o usuário que operava o caixa do pedido (`null` sem
 caixa, como pedido do app ainda não pago). Também vem em `GET /orders/{id}`.
 
-### GET /orders/{id} — Permissão: ORDER_READ
+### GET /orders/{id} — Permissão: ORDER_READ ou ONLINE_ORDER_READ
 
 > PED-F004 — cada item traz `refundedQuantity` (unidades já estornadas; o próximo estorno aceita até
 > `quantity − refundedQuantity`). Nas listagens o campo vem nulo.
@@ -2931,7 +3058,44 @@ CRM-F010: `paymentStatus` (`PAGO`, `PENDENTE` = marcado sem quitação, `PARCIAL
 vêm do marcado do pedido, se houver. Nas listagens `paymentStatus` fica nulo. Em `payments`, as
 linhas `CORRECTED` (PDV-F030) aparecem como lastro, fora de qualquer total.
 
-### POST /orders/{id}/status — Permissão: ORDER_FULFILL
+### POST /orders/{id}/accept — Permissão: ONLINE_ORDER_MANAGE ou PDV_SALE_MANAGE
+
+ECM-F012 — fachada de `POST /pdv/app-orders/{id}/aceitar` para a Central de Pedidos. Corpo opcional:
+
+```json
+{ "sessionId": 42, "deliveryFee": 8.00 }
+// 200 → OrderAdminResponseDTO com fulfillmentStatus = ACEITO, acceptedAt, acceptedBy
+```
+
+- `sessionId` omitido: o caixa aberto de quem aceita (`404 NO_OPEN_SESSION` se não houver). Quem
+  aceita passa a atender o pedido, e só esse caixa o liquida.
+- `deliveryFee`: obrigatória na ENTREGA (zero vale), proibida na RETIRADA (`400 INVALID_DELIVERY`).
+- **Não muda o `status`**: em modo BALCAO o pedido fica `AGUARDANDO_PAGAMENTO` até a liquidação.
+- `400 ORDER_NOT_MARKETPLACE`; `404 PEDIDO_APP_NOT_FOUND` (pedido do fluxo do gateway);
+  `409 ORDER_ALREADY_ACCEPTED`; `409 ORDER_NOT_PENDING_ACCEPT`.
+
+### POST /orders/{id}/reject — Permissão: ONLINE_ORDER_MANAGE ou PDV_SALE_MANAGE
+
+ECM-F012 — fachada de `POST /pdv/app-orders/{id}/recusar`, com motivo padronizado:
+
+```json
+{ "reasonCode": "SEM_ESTOQUE", "note": "acabou a menta" }
+// reasonCode: SEM_ESTOQUE | FORA_DO_HORARIO | FORA_DA_AREA | LOJA_SOBRECARREGADA | OUTRO
+// 200 → OrderAdminResponseDTO com status CANCELADO, fulfillmentStatus RECUSADO, rejectedAt, rejectionReasonCode
+```
+
+Cancela o pedido e devolve a reserva, como a recusa do caixa. O motivo que o cliente lê (e-mail e
+`cancelReason`, com o prefixo `Recusado pela loja: `) é o rótulo do código mais a `note` — em `OUTRO`,
+só a `note`, que então é obrigatória (`400 INVALID_REJECTION`). Vale também para pedido já aceito
+(exige ser o dono do caixa que aceitou), até o pagamento. Mesmos `400`/`404`/`409` do accept, menos o
+`ORDER_ALREADY_ACCEPTED`.
+
+### POST /orders/{id}/status — Permissão: ORDER_FULFILL ou ONLINE_ORDER_MANAGE
+
+ECM-F012: com só `ONLINE_ORDER_MANAGE`, apenas pedido `MARKETPLACE` (`403` no resto). O mesmo vale
+para `PATCH /orders/{id}/delivery`. Pedido do app em modo BALCAO não anda por esta rota (ele vai de
+`AGUARDANDO_PAGAMENTO` direto a `CONCLUIDO` na liquidação); a etapa dele anda por
+`/pdv/app-orders/{id}/pronto|saiu|entregue`.
 
 ```json
 { "status": "SEPARADO" }
@@ -3099,6 +3263,72 @@ PED-F006 — troca unidades de um item do pedido por outro produto, no mesmo ped
 | `sku` fora do pedido, `quantity` acima do que resta, linha que não é de catálogo, `newSku` vendido por sessão | 422 | `EXCHANGE_ITEM_INVALID` |
 
 ---
+
+## Central de Pedidos (ECM-F013) — `/central-pedidos`
+
+### GET /central-pedidos/config — Permissão: ONLINE_ORDER_READ ou ONLINE_CONFIG_MANAGE
+### PUT /central-pedidos/config — Permissão: ONLINE_CONFIG_MANAGE
+
+O `PUT` substitui tudo e devolve o que gravou; o `GET` sempre responde `200` (o padrão abaixo enquanto a
+loja nunca salvou). Valores em reais com 2 casas; horas em `HH:MM`.
+
+```json
+{
+  "appRecebendo": true, "qrRecebendo": true,
+  "horarios": [ { "diaSemana": 5, "abre": "18:00", "fecha": "02:00" } ],
+  "aceiteAutomatico": false, "tempoPreparoMin": 20, "tempoEntregaMin": 40, "expiracaoSolicitacaoMin": 30,
+  "entrega": { "habilitada": true, "taxaFixa": 8.00, "pedidoMinimo": 30.00, "raioKm": null,
+               "bairros": [ { "nome": "Centro", "taxa": 5.00 } ] },
+  "retiradaHabilitada": true, "pixChave": "pix@mahal.com.br"
+}
+```
+
+| Campo | Efeito |
+|---|---|
+| `appRecebendo`, `horarios` | Checkout do app: `409 LOJA_FECHADA` fora disso. `horarios` vazio = sempre aberto; ISO 1=seg..7=dom; `fecha` antes de `abre` vira a noite; um por dia |
+| `entrega`, `retiradaHabilitada` | Checkout: `MODALIDADE_INDISPONIVEL`, `PEDIDO_MINIMO`, `FORA_DA_AREA`. `bairros[].taxa` sobrescreve `taxaFixa` na `taxaSugerida` do aceite |
+| `qrRecebendo` | Nova solicitação pelo QR: `409 QR_PAUSADO` |
+| `expiracaoSolicitacaoMin` | Validade da solicitação do QR (mínimo 5) |
+| `pixChave` | Até 120. Vai no aviso de aceite da entrega e no `atendimento.pixChave` do app |
+| `tempoPreparoMin`, `tempoEntregaMin` | Só estimativa, exposta em `GET /shop/store-status` |
+| `aceiteAutomatico`, `entrega.raioKm` | **Só gravados** por ora |
+
+Regra violada: `400 INVALID_CENTRAL_CONFIG` com todos os problemas na mensagem (horário inválido ou com
+abertura igual ao fechamento, dia repetido, tempos ≤ 0, expiração < 5, valores negativos, raio ≤ 0,
+bairro sem nome ou repetido, app recebendo com entrega e retirada desligadas, chave Pix > 120).
+Guardado como JSON em `system_config` (`central-pedidos.config`).
+
+### GET /central-pedidos/indicators?date=AAAA-MM-DD — Permissão: ONLINE_ORDER_READ
+
+Dia local da loja (America/Sao_Paulo); sem `date`, hoje.
+
+```json
+{
+  "porCanal": [ { "channel": "MARKETPLACE", "pedidos": 4, "receitaLiquida": 300.00, "ticketMedio": 75.00 },
+                { "channel": "MESA", "pedidos": 0, "receitaLiquida": 0.00, "ticketMedio": 0.00 } ],
+  "pendentesAgora": { "pedidosApp": 3, "solicitacoes": 1, "chamados": 2 },
+  "recusas": { "pedidosApp": [ { "reasonCode": "OUTRO", "total": 2 } ],
+               "solicitacoes": [ { "motivo": "Essência acabou", "total": 1 } ] },
+  "cancelamentos": [ { "channel": "MARKETPLACE", "total": 1, "valor": 89.90 } ],
+  "taxaRecusa": { "MARKETPLACE": 0.3750, "MESA": 0.0000 }
+}
+```
+
+- `porCanal`: sempre os dois canais, nesta ordem; receita pela regra do `totalRevenueNet` de
+  `/orders/summary` (status pagos, sem `CANCELADO`/`REEMBOLSADO`, pelo nascimento do pedido).
+- `pendentesAgora`: atendimentos `PENDENTE`, solicitações pendentes ainda válidas, chamados abertos ainda válidos.
+- `recusas`: pela data da recusa. Recusa de pedido do app sem código (anterior à V176) conta como `OUTRO`;
+  `solicitacoes[].motivo` pode vir nulo.
+- `cancelamentos`: só canais com cancelamento no dia.
+- `taxaRecusa`: recusados ÷ recebidos no dia, fração com 4 casas. Recusa de pedido da véspera pode levar a mais de 1.
+
+### PATCH /estoque/products/visibility — Permissão: ONLINE_CONFIG_MANAGE ou ESTOQUE_PRODUCT_MANAGE
+
+```json
+{ "skus": ["ESS-001", "CARV-002"], "visibleInMarketplace": false }
+```
+
+`204`. Até 500 SKUs. SKU inexistente: `404 PRODUCT_NOT_FOUND` e nenhum muda.
 
 ## CRM — `/crm`
 
@@ -4042,6 +4272,7 @@ Abre uma conexão SSE (Server-Sent Events) para receber notificações em tempo 
 | Nome do evento SSE | `notification` |
 | Autenticação | `Authorization: Bearer` **ou** `?ticket=` de `POST /notifications/stream-ticket` |
 | Rate limit | bucket `notifications-stream`, **por usuário** (30/min) — antes era por IP, e num salão atrás de um NAT um cliente em laço de reconexão consumia o balde de todos |
+| Limite de streams | 10 abertos por usuário (`notification.sse.max-connections-per-user`). Acima disso, **429** `SSE_CONNECTION_LIMIT` com `Retry-After: 30` — não é sessão expirada: espere e reconecte (ECM-F013; antes saía 401) |
 
 ```
 GET /notifications/stream?ticket=kK3v9c1Zx0aQ8m2s7Lb4eR6tY5uI1oP3aS0dF7gH9jK
@@ -4056,6 +4287,29 @@ nenhuma no contexto.
 event: notification
 data: {"id":42,"type":"PASSWORD_CHANGED","title":"Senha alterada","body":"...","read":false,"readAt":null,"createdAt":"2026-06-09T03:04:00Z"}
 ```
+
+**ECM-F012/F013 — eventos da Central de Pedidos.** No mesmo stream, para quem tem `ONLINE_ORDER_READ`,
+sai depois do commit um evento efêmero (nada é gravado) com o mínimo para a Central de Pedidos decidir se
+relê. **O nome do evento SSE é o próprio tipo** (`event: ORDER_CREATED`), e o JSON repete o tipo em
+`type`. `event: notification` continua reservado às notificações. Balcão não gera evento.
+
+| `type` | Campos |
+|---|---|
+| `ORDER_CREATED` | `orderId`, `channel` (`MARKETPLACE`/`MESA`), `orderNumber` (nulo no pedido do app até a liquidação), `createdAt` |
+| `ORDER_STATUS_CHANGED` | `orderId`, `channel`, `from`, `to` |
+| `ORDER_FULFILLMENT_CHANGED` | `orderId`, `channel` (sempre `MARKETPLACE`), `from`, `to` — etapa do atendimento do pedido do app (aceite, pronto, saiu, entregue, recusa, expiração) |
+| `SOLICITACAO_CREATED` | `solicitacaoId`, `mesa` |
+| `SOLICITACAO_UPDATED` | `solicitacaoId`, `status` (`ACEITA`/`RECUSADA`) |
+| `CHAMADO_CREATED` | `chamadoId`, `mesa`, `tipo` |
+| `CHAMADO_UPDATED` | `chamadoId`, `status` |
+
+```
+event: ORDER_STATUS_CHANGED
+data: {"type":"ORDER_STATUS_CHANGED","orderId":7,"channel":"MARKETPLACE","from":"AGUARDANDO_PAGAMENTO","to":"CONCLUIDO"}
+```
+
+A expiração de solicitação e de chamado do QR (30 min) é calculada na leitura, não gravada, e por isso
+não gera evento. Como as notificações, o stream só alcança quem está conectado na mesma instância.
 
 ---
 
