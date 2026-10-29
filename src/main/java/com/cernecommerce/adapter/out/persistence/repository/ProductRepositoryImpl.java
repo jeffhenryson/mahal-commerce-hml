@@ -25,6 +25,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -216,7 +217,7 @@ public class ProductRepositoryImpl implements ProductRepository {
     @Override
     @Transactional(readOnly = true)
     public long countProducts() {
-        return productJpaRepository.count();
+        return productJpaRepository.countPublished();
     }
 
     @Override
@@ -308,7 +309,8 @@ public class ProductRepositoryImpl implements ProductRepository {
         Page<Long> idPage = productJpaRepository.findFilteredIds(
                 likePattern(filter.search()), filter.category(), filter.brand(), filter.active(),
                 filter.type() == null ? null : filter.type().name(), filter.kitComponentEligible(),
-                filter.status() == null ? null : filter.status().name(), filter.sessionProduct(), pageable);
+                filter.status() == null ? null : filter.status().name(), filter.sessionProduct(),
+                Boolean.TRUE.equals(filter.archived()), pageable);
         return toPageResult(idPage, page, size);
     }
 
@@ -316,6 +318,24 @@ public class ProductRepositoryImpl implements ProductRepository {
     @Transactional(readOnly = true)
     public long countByStatus(ProductStatus status) {
         return productJpaRepository.countByStatus(status.name());
+    }
+
+    @Override
+    @Transactional
+    public void archive(String sku, Instant archivedAt, String archivedBy) {
+        productJpaRepository.archive(sku, archivedAt, archivedBy);
+    }
+
+    @Override
+    @Transactional
+    public void restore(String sku) {
+        productJpaRepository.restore(sku);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isArchived(String sku) {
+        return productJpaRepository.isSkuArchived(sku);
     }
 
     @Override

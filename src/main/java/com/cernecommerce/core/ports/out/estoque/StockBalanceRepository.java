@@ -15,7 +15,7 @@ public interface StockBalanceRepository {
 
     Optional<StockBalance> findBySkuAndWarehouseId(String sku, Long warehouseId);
 
-    /** Saldo paginado de todos os produtos de um depósito, ordenado por SKU. */
+    /** Saldo paginado dos produtos de um depósito, ordenado por SKU — sem os arquivados (EST-F054). */
     PageResult<StockBalance> findByWarehouseId(Long warehouseId, int page, int size);
 
     /** PDV-C058 — dos {@code skus}, os com saldo livre (físico menos reserva) no depósito. */

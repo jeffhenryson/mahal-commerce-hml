@@ -59,6 +59,24 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             + "AND (p.sku = :sku OR (v.sku = :sku AND v.active = TRUE))")
     boolean isSkuActive(String sku);
 
+    // EST-F054: o arquivamento mora no pai — SKU de variação herda o status dele.
+    @Query("SELECT CASE WHEN COUNT(p) > 0 THEN TRUE ELSE FALSE END FROM ProductEntity p "
+            + "LEFT JOIN p.variants v WHERE p.status = 'ARQUIVADO' AND (p.sku = :sku OR v.sku = :sku)")
+    boolean isSkuArchived(String sku);
+
+    // EST-F054: SQL nativo porque archived_at/archived_by são somente leitura no mapeamento
+    // (ver ProductEntity). Variações não têm status — seguem o pai.
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE product SET status = 'ARQUIVADO', archived_at = :archivedAt, archived_by = :archivedBy "
+            + "WHERE sku = :sku", nativeQuery = true)
+    int archive(@Param("sku") String sku, @Param("archivedAt") java.time.Instant archivedAt,
+            @Param("archivedBy") String archivedBy);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE product SET status = 'ATIVO', archived_at = NULL, archived_by = NULL "
+            + "WHERE sku = :sku", nativeQuery = true)
+    int restore(@Param("sku") String sku);
+
     /**
      * Listagem filtrada do catálogo pelo idioma {@code :param IS NULL OR ...} — uma Specification
      * daria o mesmo para quatro critérios fixos, com muito mais cerimônia. Só vale para filtros de
@@ -99,6 +117,11 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
      * vem depois, por {@code findAllByIdsWithVariants} — {@code LIMIT}/{@code OFFSET} junto de
      * {@code JOIN FETCH} de coleção é o bug clássico de paginação com JPA. Substituiu o antigo
      * {@code findAllIds}, que era este mesmo com todos os filtros nulos.</p>
+     *
+     * <p><b>EST-F054:</b> {@code :archived} nunca é nulo (o adapter resolve nulo para falso) — com
+     * {@code false} o arquivado fica fora, com {@code true} só ele volta. Primitivo de propósito:
+     * pelo mesmo motivo do {@code CAST} acima, um {@code :archived IS NULL} sem tipo é bind
+     * frágil.</p>
      */
     @Query("""
             SELECT p.id FROM ProductEntity p
@@ -114,6 +137,8 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
               AND (:kitComponentEligible IS NULL OR p.kitComponentEligible = :kitComponentEligible)
               AND (:status   IS NULL OR p.status = :status)
               AND (:sessionProduct IS NULL OR p.sessionProduct = :sessionProduct)
+              AND ((:archived = TRUE AND p.status = 'ARQUIVADO')
+                   OR (:archived = FALSE AND p.status <> 'ARQUIVADO'))
             """)
     Page<Long> findFilteredIds(@Param("search") String search,
             @Param("category") String category,
@@ -123,6 +148,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             @Param("kitComponentEligible") Boolean kitComponentEligible,
             @Param("status") String status,
             @Param("sessionProduct") Boolean sessionProduct,
+            @Param("archived") boolean archived,
             Pageable pageable);
 
     /** EST-F023 — conta rascunhos para aplicar o teto de 5 no servidor. */
@@ -181,7 +207,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
      */
     @Query("SELECT p.id FROM ProductEntity p "
             + "LEFT JOIN ProductCategoryEntity c ON c.id = p.categoryId "
-            + "WHERE p.active = TRUE "
+            + "WHERE p.active = TRUE AND p.status = 'ATIVO' "
             + "AND (p.salePrice IS NOT NULL OR (p.costPrice IS NOT NULL AND p.markupPercent IS NOT NULL)) "
             + "AND (:onSale IS NULL OR p.onSale = :onSale) "
             + "AND (:visible IS NULL OR p.visibleInMarketplace = :visible) "
@@ -211,14 +237,18 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
     List<ProductEntity> findAllByIdsWithVariants(List<Long> ids);
 
     // EST-F022 — GET /estoque/summary. COUNT(v) e não v.id: variantes sem atributos ainda contam.
-    @Query("SELECT COUNT(v) FROM ProductVariantEntity v")
+    // EST-F054: só produto publicado conta — rascunho e arquivado não são mercadoria da loja.
+    @Query("SELECT COUNT(v) FROM ProductVariantEntity v WHERE v.product.status = 'ATIVO'")
     long countVariants();
+
+    @Query("SELECT COUNT(p) FROM ProductEntity p WHERE p.status = 'ATIVO'")
+    long countPublished();
 
     // Categoria com mais produtos vinculados, para o KPI de resumo. Só considera categoryId
     // preenchido — produto sem vínculo não participa da contagem por categoria nenhuma.
     // Pageable.ofSize(1) traz só a linha vencedora, sem precisar de um LIMIT nativo.
     @Query("SELECT c.name, COUNT(p) FROM ProductEntity p JOIN ProductCategoryEntity c ON c.id = p.categoryId "
-            + "WHERE p.categoryId IS NOT NULL GROUP BY c.name ORDER BY COUNT(p) DESC, c.name ASC")
+            + "WHERE p.categoryId IS NOT NULL AND p.status = 'ATIVO' GROUP BY c.name ORDER BY COUNT(p) DESC, c.name ASC")
     List<Object[]> findCategoryWithMostProductsRaw(Pageable pageable);
 
     // Propaga o rename da categoria para a coluna denormalizada. @Modifying com

@@ -33,7 +33,7 @@ public class ReorderPointRepositoryImpl implements ReorderPointRepository {
     @Transactional(readOnly = true)
     public PageResult<ReorderPoint> findByWarehouseId(Long warehouseId, int page, int size) {
         Page<ReorderPointEntity> result = reorderPointJpaRepository
-                .findByWarehouseIdOrderBySkuAsc(warehouseId, PageRequest.of(page, size));
+                .findPublishedByWarehouseId(warehouseId, PageRequest.of(page, size));
         return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
                 page, size, result.getTotalElements(), result.getTotalPages());
     }

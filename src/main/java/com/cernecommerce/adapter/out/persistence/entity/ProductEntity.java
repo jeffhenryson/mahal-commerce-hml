@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -190,4 +191,13 @@ public class ProductEntity {
     // "unit". DEFAULT 'ATIVO' na migration cobre o backfill do catálogo existente.
     @Column(nullable = false, length = 20)
     private String status;
+
+    // EST-F054 — auditoria do arquivamento. Somente leitura no mapeamento: save() monta a entidade
+    // do zero a partir do domínio, que não carrega estes campos, e apagaria os dois a cada edição.
+    // Quem escreve é ProductRepositoryImpl.archive/restore, por SQL nativo.
+    @Column(name = "archived_at", insertable = false, updatable = false)
+    private Instant archivedAt;
+
+    @Column(name = "archived_by", length = 100, insertable = false, updatable = false)
+    private String archivedBy;
 }

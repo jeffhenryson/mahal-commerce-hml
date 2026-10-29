@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -13,7 +14,24 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
 
     Optional<ReorderPointEntity> findBySkuAndWarehouseId(String sku, Long warehouseId);
 
-    Page<ReorderPointEntity> findByWarehouseIdOrderBySkuAsc(Long warehouseId, Pageable pageable);
+    // EST-F054 — só ponto de produto publicado: rascunho e arquivado não são reposição. Mesma regra
+    // de countAlertsRaw, para a tela de Alertas e o resumo continuarem batendo (EST-C019).
+    @Query(value = """
+            SELECT rp FROM ReorderPointEntity rp
+            WHERE rp.warehouseId = :warehouseId
+              AND NOT EXISTS (SELECT 1 FROM ProductEntity p WHERE p.sku = rp.sku AND p.status <> 'ATIVO')
+              AND NOT EXISTS (SELECT 1 FROM ProductVariantEntity v
+                              WHERE v.sku = rp.sku AND v.product.status <> 'ATIVO')
+            ORDER BY rp.sku ASC
+            """,
+            countQuery = """
+            SELECT COUNT(rp) FROM ReorderPointEntity rp
+            WHERE rp.warehouseId = :warehouseId
+              AND NOT EXISTS (SELECT 1 FROM ProductEntity p WHERE p.sku = rp.sku AND p.status <> 'ATIVO')
+              AND NOT EXISTS (SELECT 1 FROM ProductVariantEntity v
+                              WHERE v.sku = rp.sku AND v.product.status <> 'ATIVO')
+            """)
+    Page<ReorderPointEntity> findPublishedByWarehouseId(@Param("warehouseId") Long warehouseId, Pageable pageable);
 
     void deleteBySkuAndWarehouseId(String sku, Long warehouseId);
 
@@ -33,6 +51,8 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
     // EST-F053 — produto base com variações (e sem parentSellable) fica fora: não vende nem recebe
     // entrada, então o saldo dele é sempre zero e o alerta seria sempre um falso "Crítico".
     //
+    // EST-F054 — produto rascunho ou arquivado também fica fora (ver findPublishedByWarehouseId).
+    //
     // O 0.5 literal duplica ReorderPoint.CRITICAL_THRESHOLD_FACTOR de propósito — JPQL não lê
     // constante de domínio. Mudar o fator lá exige mudar aqui; o teste de EST-C019 cobre os dois.
     @Query("""
@@ -46,6 +66,9 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
             WHERE NOT EXISTS (
               SELECT 1 FROM ProductVariantEntity v
               WHERE v.product.sku = rp.sku AND v.product.parentSellable = false)
+              AND NOT EXISTS (SELECT 1 FROM ProductEntity p WHERE p.sku = rp.sku AND p.status <> 'ATIVO')
+              AND NOT EXISTS (SELECT 1 FROM ProductVariantEntity v2
+                              WHERE v2.sku = rp.sku AND v2.product.status <> 'ATIVO')
             """)
     List<Object[]> countAlertsRaw();
 }

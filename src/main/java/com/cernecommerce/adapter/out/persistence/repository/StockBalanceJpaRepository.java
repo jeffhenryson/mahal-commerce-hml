@@ -16,7 +16,25 @@ public interface StockBalanceJpaRepository extends JpaRepository<StockBalanceEnt
 
     Optional<StockBalanceEntity> findBySkuAndWarehouseId(String sku, Long warehouseId);
 
-    Page<StockBalanceEntity> findByWarehouseIdOrderBySkuAsc(Long warehouseId, Pageable pageable);
+    // EST-F054 — saldo de produto arquivado sai da listagem do depósito: o produto foi excluído
+    // e não deve reaparecer por aqui. O arquivamento mora no pai, então o SKU de variação é
+    // resolvido até ele. Saldo órfão (sem produto) continua aparecendo, como antes.
+    @Query(value = """
+            SELECT sb FROM StockBalanceEntity sb
+            WHERE sb.warehouseId = :warehouseId
+              AND NOT EXISTS (SELECT 1 FROM ProductEntity p WHERE p.sku = sb.sku AND p.status = 'ARQUIVADO')
+              AND NOT EXISTS (SELECT 1 FROM ProductVariantEntity v
+                              WHERE v.sku = sb.sku AND v.product.status = 'ARQUIVADO')
+            ORDER BY sb.sku ASC
+            """,
+            countQuery = """
+            SELECT COUNT(sb) FROM StockBalanceEntity sb
+            WHERE sb.warehouseId = :warehouseId
+              AND NOT EXISTS (SELECT 1 FROM ProductEntity p WHERE p.sku = sb.sku AND p.status = 'ARQUIVADO')
+              AND NOT EXISTS (SELECT 1 FROM ProductVariantEntity v
+                              WHERE v.sku = sb.sku AND v.product.status = 'ARQUIVADO')
+            """)
+    Page<StockBalanceEntity> findListableByWarehouseId(@Param("warehouseId") Long warehouseId, Pageable pageable);
 
     /** PDV-C058 — dos SKUs pedidos, os com saldo livre (físico menos reserva) no depósito. */
     @Query("SELECT b.sku FROM StockBalanceEntity b WHERE b.warehouseId = :warehouseId AND b.sku IN :skus "
@@ -47,6 +65,8 @@ public interface StockBalanceJpaRepository extends JpaRepository<StockBalanceEnt
     //   • RASCUNHO fica FORA. Produto que ainda não foi publicado não é mercadoria da loja — o
     //     saldo dele é de um cadastro em construção, e somá-lo infla o valor do estoque com o que
     //     o operador ainda está digitando.
+    //   • ARQUIVADO (EST-F054) fica FORA também: o produto foi excluído pelo dono. Por isso o
+    //     filtro é "= 'ATIVO'", que cobre os dois.
     //   • Produto INATIVO fica DENTRO. Desativar tira de circulação, não da prateleira: a caixa
     //     continua lá, custou dinheiro e aparece no balanço. Excluí-la faria o total divergir da
     //     contagem física, que é o número com que ele precisa bater.
@@ -61,8 +81,8 @@ public interface StockBalanceJpaRepository extends JpaRepository<StockBalanceEnt
             LEFT JOIN ProductVariantEntity v ON v.sku = sb.sku
             LEFT JOIN v.product vp
             LEFT JOIN ProductEntity p ON p.sku = sb.sku
-            WHERE (vp IS NULL OR vp.status <> 'RASCUNHO')
-              AND (p  IS NULL OR p.status  <> 'RASCUNHO')
+            WHERE (vp IS NULL OR vp.status = 'ATIVO')
+              AND (p  IS NULL OR p.status  = 'ATIVO')
             """)
     BigDecimal sumInventoryValueAtCost();
 }

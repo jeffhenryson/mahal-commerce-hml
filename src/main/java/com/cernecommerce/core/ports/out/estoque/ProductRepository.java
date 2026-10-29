@@ -10,6 +10,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductSortField;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -134,7 +135,10 @@ public interface ProductRepository {
 
     Product save(Product product);
 
-    /** Quantidade de SKUs pai no catálogo, ativos ou não — ver {@link EstoqueSummary#totalProdutos}. */
+    /**
+     * Quantidade de SKUs pai publicados ({@code status = ATIVO}), ativos ou não — rascunho e
+     * arquivado ficam fora (EST-F054). Ver {@link EstoqueSummary#totalProdutos}.
+     */
     long countProducts();
 
     /** Quantidade de variações (SKU filho) em todo o catálogo — ver {@link EstoqueSummary#totalVariantes}. */
@@ -207,6 +211,21 @@ public interface ProductRepository {
      * o teto de 5 rascunhos no servidor antes de gravar.
      */
     long countByStatus(ProductStatus status);
+
+    /**
+     * Arquiva o produto pai (EST-F054): {@code status = ARQUIVADO} mais quando e por quem. As
+     * variações seguem o pai — não têm status próprio. Não toca em {@code active} nem no saldo.
+     */
+    void archive(String sku, Instant archivedAt, String archivedBy);
+
+    /** Desfaz {@link #archive}: volta para {@code ATIVO} e limpa {@code archived_at/by}. */
+    void restore(String sku);
+
+    /**
+     * Indica se o SKU — do produto pai ou de uma variação — pertence a um produto arquivado
+     * (EST-F054). Falso para SKU inexistente.
+     */
+    boolean isArchived(String sku);
 
     /**
      * Apaga de fato o produto e a grade dele (EST-F026). Só é chamado para rascunho sem histórico

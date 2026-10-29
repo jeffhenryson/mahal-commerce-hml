@@ -35,7 +35,7 @@ public class StockBalanceRepositoryImpl implements StockBalanceRepository {
     @Transactional(readOnly = true)
     public PageResult<StockBalance> findByWarehouseId(Long warehouseId, int page, int size) {
         Page<StockBalanceEntity> result = stockBalanceJpaRepository
-                .findByWarehouseIdOrderBySkuAsc(warehouseId, PageRequest.of(page, size));
+                .findListableByWarehouseId(warehouseId, PageRequest.of(page, size));
         return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
                 page, size, result.getTotalElements(), result.getTotalPages());
     }
