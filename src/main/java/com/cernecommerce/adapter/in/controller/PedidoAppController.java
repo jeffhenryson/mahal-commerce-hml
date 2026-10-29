@@ -4,6 +4,7 @@ import com.cernecommerce.adapter.in.converter.PedidoAppDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.PedidoAppAceiteRequest;
 import com.cernecommerce.adapter.in.dtos.request.PedidoAppAssumirRequest;
 import com.cernecommerce.adapter.in.dtos.request.PedidoAppRecusaRequest;
+import com.cernecommerce.adapter.in.dtos.request.PedidoAppSaiuRequest;
 import com.cernecommerce.adapter.in.dtos.response.PedidoAppResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
@@ -66,7 +67,7 @@ public class PedidoAppController {
             description = "Sem status: PENDENTE, ACEITO, PRONTO e SAIU_PARA_ENTREGA — tudo que ainda pede ação. "
                     + "sessionId restringe aos aceitos por aquele caixa.")
     @GetMapping("/app-orders")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PageResult<PedidoAppResponseDTO>> listar(
             @RequestParam(required = false) Set<AtendimentoStatus> status,
             @RequestParam(required = false) Long sessionId,
@@ -78,7 +79,7 @@ public class PedidoAppController {
     @Operation(summary = "Pedidos do app que este caixa atende",
             description = "O \"aparece no caixa aberto\": os aceitos ou assumidos por esta sessão, ainda em andamento.")
     @GetMapping("/sessions/{id}/app-orders")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PageResult<PedidoAppResponseDTO>> listarDoCaixa(@PathVariable("id") Long sessionId,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
@@ -91,7 +92,7 @@ public class PedidoAppController {
             @ApiResponse(responseCode = "404", description = "Não é pedido do app", content = @Content)
     })
     @GetMapping("/app-orders/{orderId}")
-    @PreAuthorize("hasAuthority('PDV_READ')")
+    @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PedidoAppResponseDTO> buscar(@PathVariable Long orderId) {
         return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.buscar(orderId)));
     }
@@ -106,7 +107,7 @@ public class PedidoAppController {
             @ApiResponse(responseCode = "409", description = "Caixa fechado, ou pedido que não está PENDENTE", content = @Content)
     })
     @PostMapping("/app-orders/{orderId}/aceitar")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<PedidoAppResponseDTO> aceitar(@PathVariable Long orderId,
             @Valid @RequestBody PedidoAppAceiteRequest request, Authentication authentication) {
         return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.aceitar(orderId, request.getSessionId(),
@@ -116,7 +117,7 @@ public class PedidoAppController {
     @Operation(summary = "Assume no próprio caixa um pedido aceito por outro",
             description = "Só quando o caixa que aceitou já fechou, ou é do mesmo operador.")
     @PostMapping("/app-orders/{orderId}/assumir")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<PedidoAppResponseDTO> assumir(@PathVariable Long orderId,
             @Valid @RequestBody PedidoAppAssumirRequest request, Authentication authentication) {
         return ResponseEntity.ok(converter.toResponse(
@@ -126,7 +127,7 @@ public class PedidoAppController {
     @Operation(summary = "Recusa o pedido: cancela e devolve o estoque reservado",
             description = "Vale até o pagamento. O motivo vai ao cliente.")
     @PostMapping("/app-orders/{orderId}/recusar")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<PedidoAppResponseDTO> recusar(@PathVariable Long orderId,
             @Valid @RequestBody PedidoAppRecusaRequest request, Authentication authentication) {
         PedidoAppUseCase.PedidoApp recusado = pedidoAppUseCase.recusar(orderId, request.getMotivo(),
@@ -139,24 +140,31 @@ public class PedidoAppController {
         return ResponseEntity.ok(converter.toResponse(recusado));
     }
 
-    @Operation(summary = "Retirada separada, esperando o cliente")
+    @Operation(summary = "Pedido separado",
+            description = "Retirada: esperando o cliente no balcão. Entrega (ECM-F013): já paga, esperando o "
+                    + "entregador — antes do pagamento, 409 PEDIDO_APP_NAO_PAGO.")
     @PostMapping("/app-orders/{orderId}/pronto")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<PedidoAppResponseDTO> pronto(@PathVariable Long orderId, Authentication authentication) {
         return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.pronto(orderId, authentication.getName())));
     }
 
-    @Operation(summary = "Entrega paga saiu da loja", description = "Exige o pedido já liquidado no caixa (Pix conferido).")
+    @Operation(summary = "Entrega paga saiu da loja",
+            description = "Exige o pedido já liquidado no caixa (Pix conferido). Sai de ACEITO ou de PRONTO. "
+                    + "Corpo opcional com linkViagem (ECM-F013): gravado em delivery.trackingUrl e mandado ao "
+                    + "cliente; fora de http(s) ou acima de 500 caracteres, 400 INVALID_TRACKING_URL.")
     @PostMapping("/app-orders/{orderId}/saiu")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
-    public ResponseEntity<PedidoAppResponseDTO> saiu(@PathVariable Long orderId, Authentication authentication) {
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
+    public ResponseEntity<PedidoAppResponseDTO> saiu(@PathVariable Long orderId,
+            @Valid @RequestBody(required = false) PedidoAppSaiuRequest body, Authentication authentication) {
+        String link = body == null ? null : body.getLinkViagem();
         return ResponseEntity.ok(converter.toResponse(
-                pedidoAppUseCase.saiuParaEntrega(orderId, authentication.getName())));
+                pedidoAppUseCase.saiuParaEntrega(orderId, link, authentication.getName())));
     }
 
     @Operation(summary = "Entrega concluída")
     @PostMapping("/app-orders/{orderId}/entregue")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE','ONLINE_ORDER_MANAGE')")
     public ResponseEntity<PedidoAppResponseDTO> entregue(@PathVariable Long orderId, Authentication authentication) {
         return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.entregue(orderId, authentication.getName())));
     }

@@ -26,6 +26,10 @@ public class AtendimentoResponseDTO {
     @Schema(description = "Motivo da recusa, do cancelamento ou da expiração.")
     private String motivo;
 
+    @Schema(description = "ECM-F012 — código da recusa pela loja (SEM_ESTOQUE, FORA_DO_HORARIO, FORA_DA_AREA, "
+            + "LOJA_SOBRECARREGADA, OUTRO). Nulo fora da recusa e nas recusas anteriores.")
+    private String motivoCodigo;
+
     @Schema(description = "Caixa que atende o pedido. Só no PDV.")
     private Long sessionId;
 
@@ -38,4 +42,14 @@ public class AtendimentoResponseDTO {
     private Instant saiuEm;
     private Instant concluidoEm;
     private Instant encerradoEm;
+
+    @Schema(description = "ECM-F013 — o texto da etapa que o cliente lê (o mesmo do e-mail e da notificação).")
+    private String mensagem;
+
+    @Schema(description = "ECM-F013 — taxa sugerida pela Central de Pedidos (bairro ou fixa), para pré-preencher "
+            + "o aceite. Só na entrega PENDENTE e só no PDV.")
+    private java.math.BigDecimal taxaSugerida;
+
+    @Schema(description = "ECM-F013 — chave Pix da loja. Só no app, na entrega aceita que ainda falta pagar.")
+    private String pixChave;
 }

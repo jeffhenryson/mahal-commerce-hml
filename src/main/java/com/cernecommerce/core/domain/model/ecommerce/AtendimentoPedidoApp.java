@@ -22,6 +22,7 @@ import java.util.Set;
  * Se o caixa que aceitou fecha antes, outro operador assume ({@link #assumido}).</p>
  *
  * @param prazo até quando o pedido segura o estoque sem pagamento; passado ele, o varredor cancela.
+ * @param motivoCodigo código da recusa pela loja (ECM-F012); nulo fora da recusa e nas recusas antigas.
  */
 public record AtendimentoPedidoApp(
         Long orderId,
@@ -33,6 +34,7 @@ public record AtendimentoPedidoApp(
         Long sessionId,
         String atendidoPor,
         String motivo,
+        MotivoRecusa motivoCodigo,
         Instant criadoEm,
         Instant aceitoEm,
         Instant prontoEm,
@@ -62,7 +64,7 @@ public record AtendimentoPedidoApp(
     public static AtendimentoPedidoApp novo(Long orderId, DeliveryType tipo, PreferenciaPagamento preferencia,
             String observacao, Instant prazo, Instant agora) {
         return new AtendimentoPedidoApp(orderId, AtendimentoStatus.PENDENTE, tipo, preferencia, observacao, prazo,
-                null, null, null, agora, null, null, null, null, null);
+                null, null, null, null, agora, null, null, null, null, null);
     }
 
     public boolean isEntrega() {
@@ -82,7 +84,8 @@ public record AtendimentoPedidoApp(
     public AtendimentoPedidoApp aceito(Long caixa, String operador, Instant agora) {
         exigir(status == AtendimentoStatus.PENDENTE, AtendimentoStatus.ACEITO);
         return new AtendimentoPedidoApp(orderId, AtendimentoStatus.ACEITO, tipo, preferenciaPagamento, observacao,
-                prazo, caixa, operador, motivo, criadoEm, agora, prontoEm, saiuEm, concluidoEm, encerradoEm);
+                prazo, caixa, operador, motivo, motivoCodigo, criadoEm, agora, prontoEm, saiuEm, concluidoEm,
+                encerradoEm);
     }
 
     /** Outro caixa passa a responder pelo pedido — o que aceitou fechou, ou trocou de turno. */
@@ -92,11 +95,14 @@ public record AtendimentoPedidoApp(
                     "só pedido aceito ou pronto pode ser assumido por outro caixa (atual: " + status + ")");
         }
         return new AtendimentoPedidoApp(orderId, status, tipo, preferenciaPagamento, observacao, prazo, caixa,
-                operador, motivo, criadoEm, aceitoEm, prontoEm, saiuEm, concluidoEm, encerradoEm);
+                operador, motivo, motivoCodigo, criadoEm, aceitoEm, prontoEm, saiuEm, concluidoEm, encerradoEm);
     }
 
+    /**
+     * Separado. Na retirada, esperando o cliente no balcão; na entrega (ECM-F013), esperando o
+     * entregador — e aí só depois de pago, regra que o serviço confere, porque o pagamento é do pedido.
+     */
     public AtendimentoPedidoApp pronto(Instant agora) {
-        exigirRetirada(AtendimentoStatus.PRONTO);
         exigir(status == AtendimentoStatus.ACEITO, AtendimentoStatus.PRONTO);
         return com(AtendimentoStatus.PRONTO, motivo, agora, saiuEm, concluidoEm, encerradoEm);
     }
@@ -112,7 +118,9 @@ public record AtendimentoPedidoApp(
         if (!isEntrega()) {
             throw new AtendimentoTransicaoInvalidaException(orderId, "pedido de retirada não sai para entrega");
         }
-        exigir(status == AtendimentoStatus.ACEITO, AtendimentoStatus.SAIU_PARA_ENTREGA);
+        // Direto do aceite, ou depois de separado (ECM-F013).
+        exigir(status == AtendimentoStatus.ACEITO || status == AtendimentoStatus.PRONTO,
+                AtendimentoStatus.SAIU_PARA_ENTREGA);
         return com(AtendimentoStatus.SAIU_PARA_ENTREGA, motivo, prontoEm, agora, concluidoEm, encerradoEm);
     }
 
@@ -122,8 +130,14 @@ public record AtendimentoPedidoApp(
     }
 
     public AtendimentoPedidoApp recusado(String porque, Instant agora) {
+        return recusado(porque, null, agora);
+    }
+
+    /** Recusa com o código padronizado da Central de Pedidos (ECM-F012). */
+    public AtendimentoPedidoApp recusado(String porque, MotivoRecusa codigo, Instant agora) {
         exigir(emAndamento(), AtendimentoStatus.RECUSADO);
-        return com(AtendimentoStatus.RECUSADO, porque, prontoEm, saiuEm, concluidoEm, agora);
+        return new AtendimentoPedidoApp(orderId, AtendimentoStatus.RECUSADO, tipo, preferenciaPagamento, observacao,
+                prazo, sessionId, atendidoPor, porque, codigo, criadoEm, aceitoEm, prontoEm, saiuEm, concluidoEm, agora);
     }
 
     public AtendimentoPedidoApp cancelado(String porque, Instant agora) {
@@ -140,7 +154,8 @@ public record AtendimentoPedidoApp(
     private AtendimentoPedidoApp com(AtendimentoStatus novo, String novoMotivo, Instant novoPronto, Instant novoSaiu,
             Instant novoConcluido, Instant novoEncerrado) {
         return new AtendimentoPedidoApp(orderId, novo, tipo, preferenciaPagamento, observacao, prazo, sessionId,
-                atendidoPor, novoMotivo, criadoEm, aceitoEm, novoPronto, novoSaiu, novoConcluido, novoEncerrado);
+                atendidoPor, novoMotivo, motivoCodigo, criadoEm, aceitoEm, novoPronto, novoSaiu, novoConcluido,
+                novoEncerrado);
     }
 
     private void exigir(boolean permitido, AtendimentoStatus destino) {

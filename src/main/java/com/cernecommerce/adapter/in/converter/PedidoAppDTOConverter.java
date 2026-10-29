@@ -5,27 +5,40 @@ import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PedidoAppResponseDTO;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus;
+import com.cernecommerce.core.domain.model.ecommerce.MensagemCliente;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 import com.cernecommerce.core.ports.in.PedidoAppUseCase.PedidoApp;
 
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /** Pedido do app na fila do PDV e no app do cliente (ECM-F010). */
 public class PedidoAppDTOConverter {
 
     private final OrderDTOConverter orderConverter;
+    /** ECM-F013 — chave Pix da loja, mostrada ao cliente na entrega aceita e ainda não paga. */
+    private final Supplier<String> pixChave;
 
     public PedidoAppDTOConverter(OrderDTOConverter orderConverter) {
+        this(orderConverter, () -> null);
+    }
+
+    public PedidoAppDTOConverter(OrderDTOConverter orderConverter, Supplier<String> pixChave) {
         this.orderConverter = orderConverter;
+        this.pixChave = pixChave;
     }
 
     public PedidoAppResponseDTO toResponse(PedidoApp pedidoApp) {
         PedidoAppResponseDTO dto = new PedidoAppResponseDTO();
         OrderResponseDTO pedido = orderConverter.toResponse(pedidoApp.order());
         pedido.setAtendimento(toAtendimento(pedidoApp.atendimento(), true));
+        pedido.getAtendimento().setTaxaSugerida(pedidoApp.taxaSugerida());
+        pedido.getAtendimento().setMensagem(pedidoApp.mensagemCliente());
         dto.setPedido(pedido);
         dto.setAtendimento(pedido.getAtendimento());
         if (pedidoApp.cliente() != null) {
@@ -45,13 +58,27 @@ public class PedidoAppDTOConverter {
     /** O pedido como o cliente o vê no app: com a etapa, sem o caixa nem o operador. */
     public OrderResponseDTO toShopResponse(Order order, AtendimentoPedidoApp atendimento) {
         OrderResponseDTO dto = orderConverter.toResponse(order);
-        dto.setAtendimento(toAtendimento(atendimento, false));
+        dto.setAtendimento(paraCliente(order, atendimento));
         return dto;
     }
 
     public OrderResponseDTO toShopCheckoutResponse(Order order, String checkoutUrl, AtendimentoPedidoApp atendimento) {
         OrderResponseDTO dto = orderConverter.toCheckoutResponse(order, checkoutUrl);
-        dto.setAtendimento(toAtendimento(atendimento, false));
+        dto.setAtendimento(paraCliente(order, atendimento));
+        return dto;
+    }
+
+    /** ECM-F013 — com o texto da etapa e, na entrega aceita que falta pagar, a chave Pix. */
+    private AtendimentoResponseDTO paraCliente(Order order, AtendimentoPedidoApp atendimento) {
+        AtendimentoResponseDTO dto = toAtendimento(atendimento, false);
+        if (dto == null) {
+            return null;
+        }
+        boolean cobrando = atendimento.isEntrega() && atendimento.status() == AtendimentoStatus.ACEITO
+                && order.status() != OrderStatus.CONCLUIDO;
+        String chave = cobrando ? pixChave.get() : null;
+        dto.setPixChave(chave);
+        dto.setMensagem(MensagemCliente.para(atendimento, order, chave));
         return dto;
     }
 
@@ -74,6 +101,7 @@ public class PedidoAppDTOConverter {
         dto.setObservacao(a.observacao());
         dto.setPrazo(a.prazo());
         dto.setMotivo(a.motivo());
+        dto.setMotivoCodigo(a.motivoCodigo() == null ? null : a.motivoCodigo().name());
         if (interno) {
             dto.setSessionId(a.sessionId());
             dto.setAtendidoPor(a.atendidoPor());

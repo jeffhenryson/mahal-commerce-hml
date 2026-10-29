@@ -51,15 +51,29 @@ class AtendimentoPedidoAppTest {
     }
 
     @Test
-    void entrega_saiDepoisDoAceiteENaoPassaPorPronto() {
+    void entrega_saiDepoisDoAceiteSemPassarPorPronto() {
         AtendimentoPedidoApp aceito = entrega().aceito(5L, "caixa1", AGORA);
 
-        assertThatThrownBy(() -> aceito.pronto(AGORA)).isInstanceOf(AtendimentoTransicaoInvalidaException.class);
         assertThatThrownBy(() -> aceito.retirado(AGORA)).isInstanceOf(AtendimentoTransicaoInvalidaException.class);
 
         AtendimentoPedidoApp entregue = aceito.saiuParaEntrega(AGORA).entregue(AGORA.plusSeconds(1800));
         assertThat(entregue.status()).isEqualTo(AtendimentoStatus.ENTREGUE);
         assertThat(entregue.saiuEm()).isEqualTo(AGORA);
+    }
+
+    @Test
+    void entrega_separadaEsperaOEntregadorESaiDePronto() {
+        AtendimentoPedidoApp pronto = entrega().aceito(5L, "caixa1", AGORA).pronto(AGORA.plusSeconds(60));
+
+        assertThat(pronto.status()).isEqualTo(AtendimentoStatus.PRONTO);
+        assertThat(pronto.prontoEm()).isEqualTo(AGORA.plusSeconds(60));
+        // Entrega separada já foi paga: não volta a ser liquidável nem é retirada no balcão.
+        assertThat(pronto.liquidavel()).isFalse();
+        assertThatThrownBy(() -> pronto.retirado(AGORA)).isInstanceOf(AtendimentoTransicaoInvalidaException.class);
+
+        AtendimentoPedidoApp saiu = pronto.saiuParaEntrega(AGORA.plusSeconds(600));
+        assertThat(saiu.status()).isEqualTo(AtendimentoStatus.SAIU_PARA_ENTREGA);
+        assertThat(saiu.prontoEm()).isEqualTo(AGORA.plusSeconds(60));
     }
 
     @Test
@@ -98,5 +112,20 @@ class AtendimentoPedidoAppTest {
         assertThat(assumido.atendidoPor()).isEqualTo("caixa2");
         assertThatThrownBy(() -> retirada().assumido(6L, "caixa2"))
                 .isInstanceOf(AtendimentoTransicaoInvalidaException.class);
+    }
+
+    /** ECM-F012 — a recusa da Central guarda o código; a antiga e o resto das etapas não inventam um. */
+    @Test
+    void recusado_comCodigoGuardaOCodigoEAsEtapasSeguintesNaoOPerdem() {
+        AtendimentoPedidoApp recusado = retirada().aceito(5L, "caixa1", AGORA)
+                .recusado("Sem estoque", MotivoRecusa.SEM_ESTOQUE, AGORA);
+
+        assertThat(recusado.status()).isEqualTo(AtendimentoStatus.RECUSADO);
+        assertThat(recusado.motivoCodigo()).isEqualTo(MotivoRecusa.SEM_ESTOQUE);
+        assertThat(recusado.motivo()).isEqualTo("Sem estoque");
+        assertThat(recusado.encerradoEm()).isEqualTo(AGORA);
+        assertThat(recusado.aceitoEm()).isEqualTo(AGORA);
+        assertThat(retirada().recusado("acabou", AGORA).motivoCodigo()).isNull();
+        assertThat(retirada().aceito(5L, "caixa1", AGORA).pronto(AGORA).motivoCodigo()).isNull();
     }
 }

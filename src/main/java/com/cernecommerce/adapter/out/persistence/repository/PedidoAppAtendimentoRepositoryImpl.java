@@ -4,6 +4,7 @@ import com.cernecommerce.adapter.out.persistence.entity.PedidoAppAtendimentoEnti
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus;
+import com.cernecommerce.core.domain.model.ecommerce.MotivoRecusa;
 import com.cernecommerce.core.domain.model.ecommerce.PreferenciaPagamento;
 import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
@@ -40,6 +41,7 @@ public class PedidoAppAtendimentoRepositoryImpl implements AtendimentoPedidoAppR
         e.setSessionId(a.sessionId());
         e.setAtendidoPor(a.atendidoPor());
         e.setMotivo(truncate(a.motivo()));
+        e.setMotivoCodigo(a.motivoCodigo() == null ? null : a.motivoCodigo().name());
         e.setCriadoEm(a.criadoEm());
         e.setAceitoEm(a.aceitoEm());
         e.setProntoEm(a.prontoEm());
@@ -91,7 +93,8 @@ public class PedidoAppAtendimentoRepositoryImpl implements AtendimentoPedidoAppR
     private static AtendimentoPedidoApp toDomain(PedidoAppAtendimentoEntity e) {
         return new AtendimentoPedidoApp(e.getOrderId(), AtendimentoStatus.valueOf(e.getStatus()),
                 DeliveryType.valueOf(e.getTipo()), PreferenciaPagamento.valueOf(e.getPreferenciaPagamento()),
-                e.getObservacao(), e.getPrazo(), e.getSessionId(), e.getAtendidoPor(), e.getMotivo(), e.getCriadoEm(),
+                e.getObservacao(), e.getPrazo(), e.getSessionId(), e.getAtendidoPor(), e.getMotivo(),
+                e.getMotivoCodigo() == null ? null : MotivoRecusa.valueOf(e.getMotivoCodigo()), e.getCriadoEm(),
                 e.getAceitoEm(), e.getProntoEm(), e.getSaiuEm(), e.getConcluidoEm(), e.getEncerradoEm());
     }
 

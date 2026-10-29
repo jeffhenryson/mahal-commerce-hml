@@ -44,6 +44,10 @@ public class PedidoAppAtendimentoEntity {
     @Column(length = 500)
     private String motivo;
 
+    /** Código da recusa pela loja (ECM-F012, V176). */
+    @Column(name = "motivo_codigo", length = 30)
+    private String motivoCodigo;
+
     @Column(name = "criado_em", nullable = false)
     private Instant criadoEm;
 
