@@ -330,10 +330,33 @@ public class ProductRepositoryImpl implements ProductRepository {
     @Transactional(readOnly = true)
     public PageResult<Product> findAllActiveAndPriced(int page, int size, Boolean onSale, Long categoryId,
             String search) {
+        return findActivePriced(page, size, onSale, categoryId, search, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<Product> findMarketplaceCatalog(int page, int size, Boolean onSale, Long categoryId,
+            String search) {
+        return findActivePriced(page, size, onSale, categoryId, search, Boolean.TRUE);
+    }
+
+    private PageResult<Product> findActivePriced(int page, int size, Boolean onSale, Long categoryId, String search,
+            Boolean visibleInMarketplace) {
         String normalized = search == null || search.isBlank() ? null : search.trim().toLowerCase();
         Page<Long> idPage = productJpaRepository.findActivePricedIds(
-                PageRequest.of(page, size), onSale, categoryId, likePattern(normalized));
+                PageRequest.of(page, size), onSale, categoryId, likePattern(normalized), visibleInMarketplace);
         return toPageResult(idPage, page, size);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<String> findExistingSkus(java.util.Collection<String> skus) {
+        return productJpaRepository.findExistingSkus(skus);
+    }
+
+    @Override
+    public int updateVisibleInMarketplace(java.util.Collection<String> skus, boolean visible) {
+        return productJpaRepository.updateVisibleInMarketplace(skus, visible);
     }
 
     /**

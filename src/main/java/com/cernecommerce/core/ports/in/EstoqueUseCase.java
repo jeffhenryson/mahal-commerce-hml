@@ -307,6 +307,20 @@ public interface EstoqueUseCase {
     PageResult<Product> listActivePricedProducts(int page, int size, Boolean onSale, Long categoryId, String search);
 
     /**
+     * ECM-F013 — a vitrine do app: {@link #listActivePricedProducts} só com {@code visibleInMarketplace}.
+     * O kit montável continua no outro, porque filtra o canal produto a produto.
+     */
+    PageResult<Product> listMarketplaceCatalog(int page, int size, Boolean onSale, Long categoryId, String search);
+
+    /**
+     * ECM-F013 — liga ou desliga produtos no app em lote, pela Central de Pedidos.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException se algum SKU não
+     *         existe; nesse caso nenhum muda
+     */
+    void setMarketplaceVisibility(List<String> skus, boolean visible);
+
+    /**
      * Alteração parcial de produto (EST-F018): {@code name} e/ou {@code category} nulos são
      * mantidos como estão. Não altera {@code sku} — a troca tem operação própria,
      * {@link #changeSku(String, String)} (EST-F030) — nem as variações. Lança

@@ -184,6 +184,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             + "WHERE p.active = TRUE "
             + "AND (p.salePrice IS NOT NULL OR (p.costPrice IS NOT NULL AND p.markupPercent IS NOT NULL)) "
             + "AND (:onSale IS NULL OR p.onSale = :onSale) "
+            + "AND (:visible IS NULL OR p.visibleInMarketplace = :visible) "
             + "AND (:categoryId IS NULL OR p.categoryId = :categoryId) "
             + "AND (:search IS NULL "
             + "     OR unaccent(LOWER(p.name))     LIKE unaccent(CAST(:search AS String)) "
@@ -192,7 +193,18 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             + "     OR unaccent(LOWER(p.brand))    LIKE unaccent(CAST(:search AS String))) "
             + "ORDER BY COALESCE(c.featured, FALSE) DESC, COALESCE(c.displayOrder, 2147483647) ASC, p.id ASC")
     Page<Long> findActivePricedIds(Pageable pageable, @Param("onSale") Boolean onSale,
-            @Param("categoryId") Long categoryId, @Param("search") String search);
+            @Param("categoryId") Long categoryId, @Param("search") String search,
+            @Param("visible") Boolean visibleInMarketplace);
+
+    /** ECM-F013 — quais destes SKUs existem, para recusar o lote inteiro se faltar algum. */
+    @Query("SELECT p.sku FROM ProductEntity p WHERE p.sku IN :skus")
+    List<String> findExistingSkus(@Param("skus") java.util.Collection<String> skus);
+
+    /** ECM-F013 — liga ou desliga o produto no app em lote (Central de Pedidos). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ProductEntity p SET p.visibleInMarketplace = :visible WHERE p.sku IN :skus")
+    int updateVisibleInMarketplace(@Param("skus") java.util.Collection<String> skus,
+            @Param("visible") boolean visible);
 
     @Query("SELECT DISTINCT p FROM ProductEntity p LEFT JOIN FETCH p.variants v "
             + "WHERE p.id IN :ids ORDER BY p.id")

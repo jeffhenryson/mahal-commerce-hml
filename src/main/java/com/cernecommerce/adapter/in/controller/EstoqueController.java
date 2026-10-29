@@ -22,6 +22,7 @@ import com.cernecommerce.adapter.in.dtos.request.LotTrackedRequest;
 import com.cernecommerce.adapter.in.dtos.request.InitialStockRequest;
 import com.cernecommerce.adapter.in.dtos.request.KitRecipeRequest;
 import com.cernecommerce.adapter.in.dtos.request.ProductPatchRequest;
+import com.cernecommerce.adapter.in.dtos.request.ProductVisibilityRequest;
 import com.cernecommerce.adapter.in.dtos.request.ProductRequest;
 import com.cernecommerce.adapter.in.dtos.request.ProductVariantPatchRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReorderPointRequest;
@@ -561,6 +562,18 @@ public class EstoqueController {
                 authentication.getName(), Map.of("sku", created.sku())));
         return ResponseEntity.created(URI.create("/estoque/products/" + created.sku()))
                 .body(converter.toResponse(created));
+    }
+
+    @Operation(summary = "Liga ou desliga produtos no app em lote",
+            description = "ECM-F013 — usado pela Central de Pedidos. SKU inexistente: 404 e nenhum produto muda.")
+    @PatchMapping("/products/visibility")
+    @PreAuthorize("hasAnyAuthority('ONLINE_CONFIG_MANAGE','ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<Void> updateMarketplaceVisibility(@Valid @RequestBody ProductVisibilityRequest request,
+            Authentication authentication) {
+        estoqueUseCase.setMarketplaceVisibility(request.getSkus(), request.getVisibleInMarketplace());
+        publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_UPDATED, authentication.getName(),
+                Map.of("skus", request.getSkus(), "visibleInMarketplace", request.getVisibleInMarketplace())));
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Altera parcialmente um produto (nome, categoria e/ou precificação)",

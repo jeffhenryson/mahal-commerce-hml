@@ -395,6 +395,27 @@ public class EstoqueService implements EstoqueUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public PageResult<Product> listMarketplaceCatalog(int page, int size, Boolean onSale, Long categoryId,
+            String search) {
+        return productRepository.findMarketplaceCatalog(page, size, onSale, categoryId, search);
+    }
+
+    @Override
+    @Transactional
+    public void setMarketplaceVisibility(List<String> skus, boolean visible) {
+        Set<String> pedidos = new LinkedHashSet<>(skus);
+        if (pedidos.isEmpty()) {
+            return;
+        }
+        Set<String> existentes = new java.util.HashSet<>(productRepository.findExistingSkus(pedidos));
+        pedidos.stream().filter(sku -> !existentes.contains(sku)).findFirst().ifPresent(sku -> {
+            throw new ProductNotFoundException(sku);
+        });
+        productRepository.updateVisibleInMarketplace(pedidos, visible);
+    }
+
+    @Override
     @Transactional
     public Product updateProduct(String sku, String name, String category, Pricing pricing, String brand,
             String imageUrl, Boolean onSale, Boolean superPromo, String description, String videoUrl,

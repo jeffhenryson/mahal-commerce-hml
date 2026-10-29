@@ -66,6 +66,15 @@ public interface ProductRepository {
      */
     PageResult<Product> findAllActiveAndPriced(int page, int size, Boolean onSale, Long categoryId, String search);
 
+    /** ECM-F013 — {@link #findAllActiveAndPriced}, só com o que está visível no app. */
+    PageResult<Product> findMarketplaceCatalog(int page, int size, Boolean onSale, Long categoryId, String search);
+
+    /** ECM-F013 — os SKUs da lista que existem. */
+    List<String> findExistingSkus(java.util.Collection<String> skus);
+
+    /** ECM-F013 — liga ou desliga no app em lote; devolve quantos produtos mudaram. */
+    int updateVisibleInMarketplace(java.util.Collection<String> skus, boolean visible);
+
     Optional<Product> findBySku(String sku);
 
     /**
