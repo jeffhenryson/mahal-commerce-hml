@@ -14,6 +14,7 @@ import com.cernecommerce.adapter.in.converter.GoodsReceiptDTOConverter;
 import com.cernecommerce.adapter.in.converter.NfeImportDTOConverter;
 import com.cernecommerce.adapter.in.converter.PermissionDTOConverter;
 import com.cernecommerce.adapter.in.converter.KitBuilderDTOConverter;
+import com.cernecommerce.adapter.in.converter.QuantityPromotionDTOConverter;
 import com.cernecommerce.adapter.in.converter.ShopCartDTOConverter;
 import com.cernecommerce.adapter.in.converter.ShopCatalogDTOConverter;
 import com.cernecommerce.adapter.in.converter.StageTransitionDTOConverter;
@@ -181,5 +182,10 @@ class ConverterBeanConfig {
     @Bean
     KitBuilderDTOConverter kitBuilderDTOConverter() {
         return new KitBuilderDTOConverter();
+    }
+
+    @Bean
+    QuantityPromotionDTOConverter quantityPromotionDTOConverter() {
+        return new QuantityPromotionDTOConverter();
     }
 }

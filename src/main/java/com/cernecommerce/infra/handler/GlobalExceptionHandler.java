@@ -86,6 +86,14 @@ import com.cernecommerce.core.domain.exception.estoque.KitCostNotEditableExcepti
 import com.cernecommerce.core.domain.exception.estoque.KitDirectAdjustmentException;
 import com.cernecommerce.core.domain.exception.estoque.KitTemplateNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateKitTemplateNameException;
+import com.cernecommerce.core.domain.exception.estoque.DuplicatePromotionNameException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPromotionPeriodException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPromotionPriceException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidPromotionQuantityException;
+import com.cernecommerce.core.domain.exception.estoque.PromotionChangedException;
+import com.cernecommerce.core.domain.exception.estoque.PromotionSkuInactiveException;
+import com.cernecommerce.core.domain.exception.estoque.PromotionSkuNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.QuantityPromotionNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidKitSelectionException;
 import com.cernecommerce.core.domain.exception.pdv.CashWithdrawalExceedsDrawerException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaTransferNotAllowedException;
@@ -352,6 +360,59 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleKitTemplateNotFound(
             KitTemplateNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "KIT_TEMPLATE_NOT_FOUND", req);
+    }
+
+    // ─── Promoção por quantidade ("leve 4 por R$ 10") ───────────────────────────────────────
+
+    @ExceptionHandler(QuantityPromotionNotFoundException.class)
+    public ResponseEntity<ApiError> handleQuantityPromotionNotFound(QuantityPromotionNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "PROMOTION_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(DuplicatePromotionNameException.class)
+    public ResponseEntity<ApiError> handleDuplicatePromotionName(DuplicatePromotionNameException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "DUPLICATE_PROMOTION_NAME", req);
+    }
+
+    @ExceptionHandler(InvalidPromotionQuantityException.class)
+    public ResponseEntity<ApiError> handleInvalidPromotionQuantity(InvalidPromotionQuantityException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PROMOTION_INVALID_QUANTITY", req);
+    }
+
+    @ExceptionHandler(InvalidPromotionPriceException.class)
+    public ResponseEntity<ApiError> handleInvalidPromotionPrice(InvalidPromotionPriceException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PROMOTION_INVALID_PRICE", req);
+    }
+
+    @ExceptionHandler(InvalidPromotionPeriodException.class)
+    public ResponseEntity<ApiError> handleInvalidPromotionPeriod(InvalidPromotionPeriodException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PROMOTION_INVALID_PERIOD", req);
+    }
+
+    @ExceptionHandler(PromotionSkuNotFoundException.class)
+    public ResponseEntity<ApiError> handlePromotionSkuNotFound(PromotionSkuNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "PROMOTION_SKU_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(PromotionSkuInactiveException.class)
+    public ResponseEntity<ApiError> handlePromotionSkuInactive(PromotionSkuInactiveException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PROMOTION_SKU_INACTIVE", req);
+    }
+
+    /** 409 com o desconto atual no corpo: a tela recarrega as regras e mostra o novo total. */
+    @ExceptionHandler(PromotionChangedException.class)
+    public ResponseEntity<PromotionChangedError> handlePromotionChanged(PromotionChangedException ex,
+            HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new PromotionChangedError(ex.getMessage(),
+                "PROMOTION_CHANGED", Instant.now(), req.getRequestURI(), MDC.get("traceId"),
+                ex.getCurrentPromotionDiscount()));
     }
 
     @ExceptionHandler(DuplicateKitTemplateNameException.class)

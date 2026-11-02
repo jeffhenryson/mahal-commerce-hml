@@ -1,5 +1,9 @@
 package com.cernecommerce.infra.config;
 
+import com.cernecommerce.core.ports.in.QuantityPromotionUseCase;
+import com.cernecommerce.core.ports.out.estoque.QuantityPromotionRepository;
+import com.cernecommerce.core.ports.out.pedido.PromotionStatsQuery;
+import com.cernecommerce.core.service.QuantityPromotionService;
 import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
 import com.cernecommerce.core.ports.out.pedido.OrderItemExchangeRepository;
 import com.cernecommerce.core.service.CashSessionActivityService;
@@ -345,11 +349,15 @@ class CoreBeanConfig {
             // ECM-F010 — a liquidação do pedido do app exige o aceite no caixa.
             AtendimentoPedidoAppRepository atendimentoPedidoAppRepository,
             // ECM-F013 — "pagamento confirmado" ao cliente do app na liquidação.
-            AvisoClientePedidoAppUseCase avisoClientePedidoApp) {
-        return new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
+            AvisoClientePedidoAppUseCase avisoClientePedidoApp,
+            // Promoção por quantidade ("leve 4 por R$ 10"), calculada na venda.
+            QuantityPromotionUseCase quantityPromotionUseCase) {
+        PdvService service = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
                 maxDiscountPercent, Clock.systemUTC(), receivableUseCase, offlineSaleRejectionRepository,
                 atendimentoPedidoAppRepository, avisoClientePedidoApp);
+        service.setQuantityPromotions(quantityPromotionUseCase);
+        return service;
     }
 
     /** ECM-F013 — avisa o cliente do app de cada etapa do pedido: e-mail e notificação no app. */
@@ -478,11 +486,15 @@ class CoreBeanConfig {
             @Value("${pdv.mesa.catalog-items-enabled:false}") boolean catalogItemsEnabled,
             // PDV-F049 — essência só em texto na sessão. Ligada durante o rollout do catálogo do
             // Salão; desligar exige o SKU do sabor em toda sessão nova.
-            @Value("${pdv.sessao.essencia-livre-permitida:true}") boolean freeTextEssenceAllowed) {
-        return new ComandaService(comandaRepository, estoqueUseCase, orderRepository,
+            @Value("${pdv.sessao.essencia-livre-permitida:true}") boolean freeTextEssenceAllowed,
+            // Promoção por quantidade ("leve 4 por R$ 10"), recalculada a cada item da mesa.
+            QuantityPromotionUseCase quantityPromotionUseCase) {
+        ComandaService service = new ComandaService(comandaRepository, estoqueUseCase, orderRepository,
                 orderPaymentRepository, cashbackUseCase, pdvService, notificationUseCase,
                 userRepository, serviceFeePercent, kitBuilderUseCase, sessionMenuService, legacySessionEnabled,
                 catalogItemsEnabled, freeTextEssenceAllowed);
+        service.setQuantityPromotions(quantityPromotionUseCase);
+        return service;
     }
 
     /** Autoatendimento do Salão: QR por mesa, destaques do dia, mesa ocupada e a fila de solicitações do PDV. */
@@ -586,6 +598,14 @@ class CoreBeanConfig {
         return new KitBuilderService(kitTemplateRepository, categoryRepository, estoqueUseCase);
     }
 
+    /** Promoção por quantidade ("leve 4 por R$ 10"): cadastro e o cálculo único dos três canais. */
+    @Bean
+    QuantityPromotionUseCase quantityPromotionUseCase(QuantityPromotionRepository quantityPromotionRepository,
+            EstoqueUseCase estoqueUseCase, PromotionStatsQuery promotionStatsQuery) {
+        return new QuantityPromotionService(quantityPromotionRepository, estoqueUseCase, promotionStatsQuery,
+                Clock.systemUTC());
+    }
+
     @Bean
     ShopUseCase shopUseCase(CrmUseCase crmUseCase, UserUseCase userUseCase, EstoqueUseCase estoqueUseCase,
             CartRepository cartRepository, OrderRepository orderRepository, OrderUseCase orderUseCase,
@@ -593,11 +613,14 @@ class CoreBeanConfig {
             OrderPaymentRepository orderPaymentRepository, EmailPort emailPort,
             KitBuilderUseCase kitBuilderUseCase, AfterCommitExecutor afterCommitExecutor,
             AtendimentoPedidoAppRepository atendimentoPedidoAppRepository, SystemConfigPort systemConfigPort,
-            AvisoOperadoresUseCase avisoOperadores, CentralPedidosConfigRepository centralPedidosConfigRepository) {
-        return new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository, orderRepository,
+            AvisoOperadoresUseCase avisoOperadores, CentralPedidosConfigRepository centralPedidosConfigRepository,
+            QuantityPromotionUseCase quantityPromotionUseCase) {
+        ShopService service = new ShopService(crmUseCase, userUseCase, estoqueUseCase, cartRepository, orderRepository,
                 orderUseCase, cashbackUseCase, paymentGatewayPort, orderPaymentRepository, emailPort,
                 kitBuilderUseCase, afterCommitExecutor, atendimentoPedidoAppRepository, systemConfigPort,
                 avisoOperadores, centralPedidosConfigRepository, Clock.systemUTC());
+        service.setQuantityPromotions(quantityPromotionUseCase);
+        return service;
     }
 
     @Bean
