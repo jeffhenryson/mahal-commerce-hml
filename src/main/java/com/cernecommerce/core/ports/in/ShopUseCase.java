@@ -1,5 +1,6 @@
 package com.cernecommerce.core.ports.in;
 
+import com.cernecommerce.core.domain.model.estoque.QuantityPromotion;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.domain.model.crm.Customer;
@@ -36,7 +37,18 @@ public interface ShopUseCase {
      * (ECM-F003), não aqui.
      */
     record CatalogItem(String sku, String name, String category, BigDecimal price, boolean available,
-            String imageUrl, boolean onSale, BigDecimal originalPrice, boolean superPromo) {
+            String imageUrl, boolean onSale, BigDecimal originalPrice, boolean superPromo,
+            List<QuantityPromotion> quantityPromotions) {
+
+        /** {@code quantityPromotions}: regras "leve N por R$ X" vigentes no marketplace (selo da vitrine). */
+        public CatalogItem {
+            quantityPromotions = quantityPromotions == null ? List.of() : List.copyOf(quantityPromotions);
+        }
+
+        public CatalogItem(String sku, String name, String category, BigDecimal price, boolean available,
+                String imageUrl, boolean onSale, BigDecimal originalPrice, boolean superPromo) {
+            this(sku, name, category, price, available, imageUrl, onSale, originalPrice, superPromo, List.of());
+        }
     }
 
     /** Variação de um item do catálogo, com disponibilidade própria — o preço é herdado do pai. */
@@ -51,7 +63,19 @@ public interface ShopUseCase {
     /** Detalhe público de um item do catálogo (ECM-F002), com a grade de variações ativas. */
     record CatalogItemDetail(String sku, String name, String category, BigDecimal price, boolean available,
             List<CatalogVariant> variants, String imageUrl, boolean onSale, BigDecimal originalPrice,
-            boolean superPromo, String description, String videoUrl, List<String> images) {
+            boolean superPromo, String description, String videoUrl, List<String> images,
+            List<QuantityPromotion> quantityPromotions) {
+
+        public CatalogItemDetail {
+            quantityPromotions = quantityPromotions == null ? List.of() : List.copyOf(quantityPromotions);
+        }
+
+        public CatalogItemDetail(String sku, String name, String category, BigDecimal price, boolean available,
+                List<CatalogVariant> variants, String imageUrl, boolean onSale, BigDecimal originalPrice,
+                boolean superPromo, String description, String videoUrl, List<String> images) {
+            this(sku, name, category, price, available, variants, imageUrl, onSale, originalPrice, superPromo,
+                    description, videoUrl, images, List.of());
+        }
     }
 
     /**
@@ -111,7 +135,27 @@ public interface ShopUseCase {
      * despreço um produto depois de precificado), mas o contrato não assume isso para sempre.
      */
     record CartItemView(String sku, BigDecimal quantity, BigDecimal unitPrice, BigDecimal subtotal,
-            boolean available, String kitBundleId, Long kitTemplateId, Long kitStepId, BigDecimal discountAmount) {
+            boolean available, String kitBundleId, Long kitTemplateId, Long kitStepId, BigDecimal discountAmount,
+            Long promotionId, String promotionName, BigDecimal promotionDiscountAmount) {
+
+        /**
+         * {@code discountAmount} é o desconto do kit montável. {@code promotionDiscountAmount}, o da
+         * promoção por quantidade, calculado no servidor e separado para a tela mostrar "Promoções".
+         */
+        public CartItemView {
+            promotionDiscountAmount = promotionDiscountAmount == null ? BigDecimal.ZERO : promotionDiscountAmount;
+        }
+
+        public CartItemView(String sku, BigDecimal quantity, BigDecimal unitPrice, BigDecimal subtotal,
+                boolean available, String kitBundleId, Long kitTemplateId, Long kitStepId, BigDecimal discountAmount) {
+            this(sku, quantity, unitPrice, subtotal, available, kitBundleId, kitTemplateId, kitStepId, discountAmount,
+                    null, null, BigDecimal.ZERO);
+        }
+
+        public CartItemView withPromotion(Long id, String name, BigDecimal amount) {
+            return new CartItemView(sku, quantity, unitPrice, subtotal, available, kitBundleId, kitTemplateId,
+                    kitStepId, discountAmount, id, name, amount);
+        }
 
         /** Linha avulsa, sem desconto de kit. */
         public CartItemView(String sku, BigDecimal quantity, BigDecimal unitPrice, BigDecimal subtotal,
@@ -125,7 +169,17 @@ public interface ShopUseCase {
      * soma dos subtotais menos {@code discountTotal}, que é o desconto dos kits montáveis
      * (ECM-F008). Sem kit, {@code discountTotal} é zero e {@code total} é o que sempre foi.
      */
-    record CartView(List<CartItemView> items, BigDecimal total, Instant updatedAt, BigDecimal discountTotal) {
+    record CartView(List<CartItemView> items, BigDecimal total, Instant updatedAt, BigDecimal discountTotal,
+            BigDecimal promotionDiscountTotal) {
+
+        /** {@code total} sai líquido do kit e da promoção por quantidade. */
+        public CartView {
+            promotionDiscountTotal = promotionDiscountTotal == null ? BigDecimal.ZERO : promotionDiscountTotal;
+        }
+
+        public CartView(List<CartItemView> items, BigDecimal total, Instant updatedAt, BigDecimal discountTotal) {
+            this(items, total, updatedAt, discountTotal, BigDecimal.ZERO);
+        }
 
         public CartView(List<CartItemView> items, BigDecimal total, Instant updatedAt) {
             this(items, total, updatedAt, BigDecimal.ZERO);
@@ -192,7 +246,12 @@ public interface ShopUseCase {
      * ECM-F009 — o que o cliente escolhe no checkout. {@code delivery} nula é retirada; na entrega
      * a taxa vem zerada (o caixa define no aceite) e a preferência tem de ser Pix.
      */
-    record CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao) {
+    record CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao,
+            BigDecimal expectedPromotionDiscount) {
+
+        public CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao) {
+            this(delivery, preferenciaPagamento, observacao, null);
+        }
 
         /** O checkout sem corpo, como o front antigo chama: retirada, pagando no balcão. */
         public static CheckoutCommand retirada() {

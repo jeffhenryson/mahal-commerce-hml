@@ -19,4 +19,11 @@ public class MarginReportResponseDTO {
     private BigDecimal totalMargin;
     private BigDecimal marginPercent;
     private List<MarginByProductResponseDTO> topProductsByMargin;
+
+    @Schema(description = "Desconto de promoção por quantidade (\"leve 4 por R$ 10\") no período — a linha \"Promoções\"")
+    private BigDecimal promotionDiscountTotal;
+
+    @Schema(description = "Demais descontos do período: kit montável e desconto manual (no balcão o kit chega "
+            + "somado ao desconto da linha, por isso os dois vêm juntos)")
+    private BigDecimal otherDiscountTotal;
 }

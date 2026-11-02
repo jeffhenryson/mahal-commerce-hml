@@ -75,7 +75,8 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
 
         return new OrderSummary(totalOrders, totals.getTotalRevenueNet(), totals.getTotalRevenueGross(),
                 averageTicket, revenueByChannel, ordersByStatus, cancelledOrRefundedRate,
-                dailyRevenue, topProducts);
+                dailyRevenue, topProducts,
+                orderItemJpaRepository.sumPromotionDiscount(channelName, statusName, customerId, from, to));
     }
 
     @Override
@@ -117,6 +118,7 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
                 .toList();
 
         return new MarginSummary(totals.getItemsConsidered(), totals.getRevenue(), totals.getCost(),
-                totals.getMargin(), marginPercent, topProductsByMargin);
+                totals.getMargin(), marginPercent, topProductsByMargin, totals.getPromotionDiscount(),
+                totals.getDiscount().subtract(totals.getPromotionDiscount()));
     }
 }

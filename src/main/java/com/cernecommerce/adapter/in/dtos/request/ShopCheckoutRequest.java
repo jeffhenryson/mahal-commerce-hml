@@ -32,4 +32,10 @@ public class ShopCheckoutRequest {
     @Size(max = 500)
     @Schema(description = "Observação do cliente para a loja.", example = "Interfone 12, deixar na portaria")
     private String notes;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0")
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Desconto de promoção por quantidade que o carrinho "
+            + "mostrou (promotionDiscountTotal). Divergiu do recalculado: 409 PROMOTION_CHANGED com "
+            + "currentPromotionDiscount. Ausente: vale o calculado, sem conferência.")
+    private java.math.BigDecimal expectedPromotionDiscount;
 }

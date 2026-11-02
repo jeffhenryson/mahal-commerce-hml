@@ -18,7 +18,25 @@ public record MarginSummary(
         BigDecimal totalCost,
         BigDecimal totalMargin,
         BigDecimal marginPercent,
-        List<MarginByProduct> topProductsByMargin) {
+        List<MarginByProduct> topProductsByMargin,
+        BigDecimal promotionDiscountTotal,
+        BigDecimal otherDiscountTotal) {
+
+    /**
+     * Descontos do período separados por origem: {@code promotionDiscountTotal} é a promoção por
+     * quantidade (regra da loja), e {@code otherDiscountTotal} junta kit montável e desconto manual.
+     * No balcão o kit chega somado ao desconto da linha, por isso os dois não se separam.
+     */
+    public MarginSummary {
+        promotionDiscountTotal = promotionDiscountTotal == null ? BigDecimal.ZERO : promotionDiscountTotal;
+        otherDiscountTotal = otherDiscountTotal == null ? BigDecimal.ZERO : otherDiscountTotal;
+    }
+
+    public MarginSummary(long itemsConsidered, BigDecimal totalRevenueNet, BigDecimal totalCost,
+            BigDecimal totalMargin, BigDecimal marginPercent, List<MarginByProduct> topProductsByMargin) {
+        this(itemsConsidered, totalRevenueNet, totalCost, totalMargin, marginPercent, topProductsByMargin,
+                BigDecimal.ZERO, BigDecimal.ZERO);
+    }
 
     /**
      * {@code productName} cai para o próprio {@code sku} quando o produto foi renomeado ou

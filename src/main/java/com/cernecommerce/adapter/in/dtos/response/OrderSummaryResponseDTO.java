@@ -30,4 +30,7 @@ public class OrderSummaryResponseDTO {
     private BigDecimal cancelledOrRefundedRate;
     private List<DailyRevenueResponseDTO> dailyRevenue;
     private List<TopProductResponseDTO> topProducts;
+
+    @Schema(description = "Desconto de promoção por quantidade (\"leve 4 por R$ 10\") no período.")
+    private java.math.BigDecimal promotionDiscountTotal;
 }

@@ -48,7 +48,10 @@ public record OrderItem(
         boolean courtesy,
         String notes,
         BigDecimal surchargeAmount,
-        String charcoal) {
+        String charcoal,
+        Long promotionId,
+        String promotionName,
+        BigDecimal promotionDiscountAmount) {
 
     public OrderItem {
         if (sku == null || sku.isBlank()) {
@@ -81,6 +84,19 @@ public record OrderItem(
         // Negativo seria um desconto entrando sem passar por discountAmount nem pelo teto.
         if (surchargeAmount != null && surchargeAmount.signum() < 0) {
             throw new IllegalArgumentException("surchargeAmount não pode ser negativo");
+        }
+        // Promoção por quantidade: é PARTE de discountAmount (que continua sendo o total da linha),
+        // separada só para o relatório distinguir regra da loja de desconto manual/kit.
+        promotionDiscountAmount = promotionDiscountAmount == null ? BigDecimal.ZERO : promotionDiscountAmount;
+        if (promotionDiscountAmount.signum() < 0) {
+            throw new IllegalArgumentException("promotionDiscountAmount não pode ser negativo");
+        }
+        if (promotionDiscountAmount.compareTo(discountAmount) > 0) {
+            throw new IllegalArgumentException("promotionDiscountAmount não pode ser maior que discountAmount");
+        }
+        if (promotionDiscountAmount.signum() == 0) {
+            promotionId = null;
+            promotionName = null;
         }
     }
 
@@ -128,7 +144,7 @@ public record OrderItem(
             }
         }
         return new OrderItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
-                discountAmount, null, productName, ConsumptionMode.NORMAL, false, null, null, null);
+                discountAmount, null, productName, ConsumptionMode.NORMAL, false, null, null, null, null, null, null);
     }
 
     /**
@@ -185,13 +201,36 @@ public record OrderItem(
             BigDecimal costPrice, BigDecimal discountAmount, BigDecimal cashbackPercent, String productName,
             ConsumptionMode mode, boolean courtesy, String notes, BigDecimal surchargeAmount, String charcoal) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal);
+                mode, courtesy, notes, surchargeAmount, charcoal, null, null, null);
+    }
+
+    /** Reconstitui um item com o detalhamento da promoção por quantidade (zero/nulos sem promoção). */
+    public static OrderItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, BigDecimal discountAmount, BigDecimal cashbackPercent, String productName,
+            ConsumptionMode mode, boolean courtesy, String notes, BigDecimal surchargeAmount, String charcoal,
+            Long promotionId, String promotionName, BigDecimal promotionDiscountAmount) {
+        return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
+    }
+
+    /**
+     * Aplica o desconto de promoção por quantidade calculado pelo servidor: <b>soma</b> ao
+     * {@code discountAmount} da linha e guarda o detalhamento. Desconto zero devolve a própria linha.
+     */
+    public OrderItem withPromotion(Long newPromotionId, String newPromotionName, BigDecimal amount) {
+        if (amount == null || amount.signum() == 0) {
+            return this;
+        }
+        BigDecimal promo = Money.of(amount);
+        return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount.add(promo), cashbackPercent,
+                productName, mode, courtesy, notes, surchargeAmount, charcoal, newPromotionId, newPromotionName,
+                promotionDiscountAmount.add(promo));
     }
 
     /** Carimba a taxa de cashback vigente. Cópia — o item permanece imutável. */
     public OrderItem withCashbackPercent(BigDecimal newCashbackPercent) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, newCashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal);
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
     }
 
     /**
@@ -201,13 +240,13 @@ public record OrderItem(
     public OrderItem withNotes(String newNotes) {
         String trimmed = newNotes == null || newNotes.isBlank() ? null : newNotes.trim();
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
-                mode, courtesy, trimmed, surchargeAmount, charcoal);
+                mode, courtesy, trimmed, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
     }
 
     /** Concede desconto neste item. Cópia — o item permanece imutável. */
     public OrderItem withDiscount(BigDecimal newDiscountAmount) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, newDiscountAmount, cashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal);
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
     }
 
     /**

@@ -48,7 +48,8 @@ public class OrderDTOConverter {
      */
     public List<SaleItemCommand> toCommands(List<SaleItemRequest> requests) {
         return requests.stream()
-                .map(r -> new SaleItemCommand(r.getSku(), r.getQuantity(), r.getDiscountAmount(), r.getNote()))
+                .map(r -> new SaleItemCommand(r.getSku(), r.getQuantity(), r.getDiscountAmount(), r.getNote(),
+                        r.getKitQuantity(), r.getPromotionDiscountAmount()))
                 .toList();
     }
 
@@ -225,6 +226,9 @@ public class OrderDTOConverter {
         dto.setQuantity(item.quantity());
         dto.setUnitPrice(item.unitPrice());
         dto.setDiscountAmount(item.discountAmount());
+        dto.setPromotionId(item.promotionId());
+        dto.setPromotionName(item.promotionName());
+        dto.setPromotionDiscountAmount(item.promotionDiscountAmount());
         dto.setNetAmount(item.netAmount());
         dto.setSurchargeAmount(item.surchargeAmount());
         dto.setCashbackAmount(item.cashbackAmount());
@@ -301,6 +305,9 @@ public class OrderDTOConverter {
         dto.setQuantity(item.quantity());
         dto.setUnitPrice(item.unitPrice());
         dto.setDiscountAmount(item.discountAmount());
+        dto.setPromotionId(item.promotionId());
+        dto.setPromotionName(item.promotionName());
+        dto.setPromotionDiscountAmount(item.promotionDiscountAmount());
         dto.setGrossAmount(item.grossAmount());
         dto.setNetAmount(item.netAmount());
         dto.setCostPrice(item.costPrice());
@@ -340,6 +347,9 @@ public class OrderDTOConverter {
         dto.setQuantity(item.quantity());
         dto.setUnitPrice(item.unitPrice());
         dto.setDiscountAmount(item.discountAmount());
+        dto.setPromotionId(item.promotionId());
+        dto.setPromotionName(item.promotionName());
+        dto.setPromotionDiscountAmount(item.promotionDiscountAmount());
         dto.setGrossAmount(item.grossAmount());
         dto.setNetAmount(item.netAmount());
         dto.setCashbackPercent(item.cashbackPercent());
@@ -421,6 +431,7 @@ public class OrderDTOConverter {
         dto.setCancelledOrRefundedRate(summary.cancelledOrRefundedRate());
         dto.setDailyRevenue(summary.dailyRevenue().stream().map(this::toResponse).toList());
         dto.setTopProducts(summary.topProducts().stream().map(this::toResponse).toList());
+        dto.setPromotionDiscountTotal(summary.promotionDiscountTotal());
         return dto;
     }
 
@@ -457,6 +468,8 @@ public class OrderDTOConverter {
         dto.setTotalMargin(summary.totalMargin());
         dto.setMarginPercent(summary.marginPercent());
         dto.setTopProductsByMargin(summary.topProductsByMargin().stream().map(this::toResponse).toList());
+        dto.setPromotionDiscountTotal(summary.promotionDiscountTotal());
+        dto.setOtherDiscountTotal(summary.otherDiscountTotal());
         return dto;
     }
 

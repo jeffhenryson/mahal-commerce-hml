@@ -69,4 +69,13 @@ public class OrderItemAdminResponseDTO {
     @Schema(description = "PED-F004 — unidades já estornadas desta linha. Só no GET /orders/{id} e na resposta do "
             + "estorno; nulo nas listagens. O próximo estorno aceita até quantity − refundedQuantity.")
     private BigDecimal refundedQuantity;
+
+    @Schema(description = "Regra de promoção por quantidade aplicada na linha (a de maior desconto). Nulo sem promoção.")
+    private Long promotionId;
+
+    @Schema(description = "Nome da regra como estava na venda.")
+    private String promotionName;
+
+    @Schema(description = "Parte de discountAmount que veio de promoção por quantidade.")
+    private java.math.BigDecimal promotionDiscountAmount;
 }

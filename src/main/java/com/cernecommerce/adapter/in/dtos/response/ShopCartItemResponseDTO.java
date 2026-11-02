@@ -16,4 +16,12 @@ public class ShopCartItemResponseDTO {
     private Long kitTemplateId;
     private Long kitStepId;
     private BigDecimal discountAmount;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Promoção por quantidade aplicada na linha. Nulo sem promoção.")
+    private Long promotionId;
+
+    private String promotionName;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Desconto de promoção por quantidade na linha (zero sem promoção).")
+    private java.math.BigDecimal promotionDiscountAmount;
 }

@@ -22,6 +22,7 @@ public class ShopCatalogDTOConverter {
         dto.setOnSale(item.onSale());
         dto.setOriginalPrice(item.originalPrice());
         dto.setSuperPromo(item.superPromo());
+        dto.setQuantityPromotions(badges(item.quantityPromotions()));
         return dto;
     }
 
@@ -37,6 +38,7 @@ public class ShopCatalogDTOConverter {
         dto.setOnSale(detail.onSale());
         dto.setOriginalPrice(detail.originalPrice());
         dto.setSuperPromo(detail.superPromo());
+        dto.setQuantityPromotions(badges(detail.quantityPromotions()));
         dto.setDescription(detail.description());
         dto.setVideoUrl(detail.videoUrl());
         dto.setImages(detail.images());
@@ -57,5 +59,13 @@ public class ShopCatalogDTOConverter {
         dto.setType(attribute.type());
         dto.setValue(attribute.value());
         return dto;
+    }
+
+    private static java.util.List<com.cernecommerce.adapter.in.dtos.response.QuantityPromotionBadgeDTO> badges(
+            java.util.List<com.cernecommerce.core.domain.model.estoque.QuantityPromotion> promotions) {
+        return promotions.stream()
+                .map(p -> new com.cernecommerce.adapter.in.dtos.response.QuantityPromotionBadgeDTO(p.id(),
+                        p.quantity(), p.bundlePrice(), p.label()))
+                .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
     }
 }

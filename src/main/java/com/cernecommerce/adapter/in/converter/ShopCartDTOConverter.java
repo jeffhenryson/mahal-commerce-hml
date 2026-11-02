@@ -12,6 +12,7 @@ public class ShopCartDTOConverter {
         dto.setItems(cart.items().stream().map(this::toResponse).toList());
         dto.setTotal(cart.total());
         dto.setDiscountTotal(cart.discountTotal());
+        dto.setPromotionDiscountTotal(cart.promotionDiscountTotal());
         dto.setUpdatedAt(cart.updatedAt());
         return dto;
     }
@@ -27,6 +28,9 @@ public class ShopCartDTOConverter {
         dto.setKitTemplateId(item.kitTemplateId());
         dto.setKitStepId(item.kitStepId());
         dto.setDiscountAmount(item.discountAmount());
+        dto.setPromotionId(item.promotionId());
+        dto.setPromotionName(item.promotionName());
+        dto.setPromotionDiscountAmount(item.promotionDiscountAmount());
         return dto;
     }
 }

@@ -25,7 +25,21 @@ public record OrderSummary(
         Map<OrderStatus, Long> ordersByStatus,
         BigDecimal cancelledOrRefundedRate,
         List<DailyRevenue> dailyRevenue,
-        List<TopProduct> topProducts) {
+        List<TopProduct> topProducts,
+        BigDecimal promotionDiscountTotal) {
+
+    /** {@code promotionDiscountTotal}: desconto de promoção por quantidade do período ("Promoções"). */
+    public OrderSummary {
+        promotionDiscountTotal = promotionDiscountTotal == null ? BigDecimal.ZERO : promotionDiscountTotal;
+    }
+
+    public OrderSummary(long totalOrders, BigDecimal totalRevenueNet, BigDecimal totalRevenueGross,
+            BigDecimal averageTicket, Map<SalesChannel, BigDecimal> revenueByChannel,
+            Map<OrderStatus, Long> ordersByStatus, BigDecimal cancelledOrRefundedRate,
+            List<DailyRevenue> dailyRevenue, List<TopProduct> topProducts) {
+        this(totalOrders, totalRevenueNet, totalRevenueGross, averageTicket, revenueByChannel, ordersByStatus,
+                cancelledOrRefundedRate, dailyRevenue, topProducts, BigDecimal.ZERO);
+    }
 
     public record DailyRevenue(LocalDate date, BigDecimal revenue, long orderCount) {}
 

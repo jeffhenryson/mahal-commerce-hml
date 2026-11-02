@@ -1,5 +1,12 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.estoque.PromotionChangedException;
+import com.cernecommerce.core.domain.model.Money;
+import com.cernecommerce.core.domain.model.estoque.PromotionChannel;
+import com.cernecommerce.core.domain.model.estoque.QuantityPromotion;
+import com.cernecommerce.core.domain.model.estoque.QuantityPromotionEngine;
+import com.cernecommerce.core.domain.model.pedido.DiscountProration;
+import com.cernecommerce.core.ports.in.QuantityPromotionUseCase;
 import com.cernecommerce.core.domain.exception.crm.DuplicateCustomerEmailException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartEmptyException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartItemNotFoundException;
@@ -115,6 +122,8 @@ public class ShopService implements ShopUseCase {
     /** ECM-F013 — se o app está recebendo, horários, entrega e retirada, da Central de Pedidos. */
     private final CentralPedidosConfigRepository centralConfig;
     private final Clock clock;
+    /** Promoção por quantidade ("leve 4 por R$ 10"), canal MARKETPLACE. Nulo nos testes antigos. */
+    private QuantityPromotionUseCase quantityPromotions;
 
     public ShopService(CrmUseCase crmUseCase, UserUseCase userUseCase, EstoqueUseCase estoqueUseCase,
             CartRepository cartRepository, OrderRepository orderRepository, OrderUseCase orderUseCase,
@@ -165,8 +174,9 @@ public class ShopService implements ShopUseCase {
         Warehouse warehouse = estoqueUseCase.getDefaultWarehouse();
         PageResult<Product> products = estoqueUseCase.listMarketplaceCatalog(page, size, onSale, categoryId,
                 search);
+        Map<String, List<QuantityPromotion>> promos = marketplacePromotionsBySku();
         return new PageResult<>(
-                products.content().stream().map(p -> toCatalogItem(p, warehouse.code())).toList(),
+                products.content().stream().map(p -> toCatalogItem(p, warehouse.code(), promos)).toList(),
                 products.page(), products.size(), products.totalElements(), products.totalPages());
     }
 
@@ -197,13 +207,41 @@ public class ShopService implements ShopUseCase {
         return new CatalogItemDetail(product.sku(), product.name(), product.category(),
                 product.pricing().effectivePrice(), isAvailable(product.sku(), warehouse.code()), variants,
                 product.imageUrl(), product.onSale(), product.pricing().originalPrice(), product.superPromo(),
-                product.description(), product.videoUrl(), product.images());
+                product.description(), product.videoUrl(), product.images(),
+                promotionsFor(product, marketplacePromotionsBySku()));
     }
 
-    private CatalogItem toCatalogItem(Product product, String warehouseCode) {
+    private CatalogItem toCatalogItem(Product product, String warehouseCode,
+            Map<String, List<QuantityPromotion>> promos) {
         return new CatalogItem(product.sku(), product.name(), product.category(),
                 product.pricing().effectivePrice(), isAvailable(product.sku(), warehouseCode),
-                product.imageUrl(), product.onSale(), product.pricing().originalPrice(), product.superPromo());
+                product.imageUrl(), product.onSale(), product.pricing().originalPrice(), product.superPromo(),
+                promotionsFor(product, promos));
+    }
+
+    /** SKU → regras vigentes agora no marketplace que o incluem. Carregado uma vez por página. */
+    private Map<String, List<QuantityPromotion>> marketplacePromotionsBySku() {
+        if (quantityPromotions == null) {
+            return Map.of();
+        }
+        Map<String, List<QuantityPromotion>> bySku = new HashMap<>();
+        for (QuantityPromotion p : quantityPromotions.listVigentes(PromotionChannel.MARKETPLACE, clock.instant())) {
+            for (String sku : p.skus()) {
+                bySku.computeIfAbsent(sku, k -> new ArrayList<>()).add(p);
+            }
+        }
+        return bySku;
+    }
+
+    /** Selo da vitrine: regras que incluem o produto ou qualquer variação dele, sem repetir, por id. */
+    private static List<QuantityPromotion> promotionsFor(Product product, Map<String, List<QuantityPromotion>> promos) {
+        if (promos.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, QuantityPromotion> found = new java.util.TreeMap<>();
+        promos.getOrDefault(product.sku(), List.of()).forEach(p -> found.put(p.id(), p));
+        product.variants().forEach(v -> promos.getOrDefault(v.sku(), List.of()).forEach(p -> found.put(p.id(), p)));
+        return List.copyOf(found.values());
     }
 
     private boolean isAvailable(String sku, String warehouseCode) {
@@ -339,6 +377,11 @@ public class ShopService implements ShopUseCase {
             }
             orderItems.add(item);
         }
+
+        // Promoção por quantidade recalculada aqui (canal MARKETPLACE), como o kit. Com
+        // expectedPromotionDiscount, divergência é 409 PROMOTION_CHANGED. Sem ele (vitrine que ainda não
+        // manda o campo) vale o calculado: o carrinho já é calculado no servidor e o cliente viu esse valor.
+        orderItems = applyCheckoutPromotions(cart, orderItems, escolha.expectedPromotionDiscount());
 
         Order order = Order.openMarketplace(customerId, warehouse.code(), orderItems, delivery);
         if (delivery != null && delivery.isEntrega()
@@ -545,13 +588,20 @@ public class ShopService implements ShopUseCase {
         List<CartItemView> items = cart.items().stream()
                 .map(item -> toCartItemView(item, warehouseCode, kitLines))
                 .toList();
+        // Promoção por quantidade (canal MARKETPLACE) sobre as unidades fora de kit.
+        QuantityPromotionEngine.Result promo = marketplacePromotions(items);
+        items = withPromotions(items, promo);
         BigDecimal gross = items.stream()
                 .map(CartItemView::subtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal discountTotal = items.stream()
                 .map(CartItemView::discountAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new CartView(items, gross.subtract(discountTotal), cart.updatedAt(), discountTotal);
+        BigDecimal promotionTotal = items.stream()
+                .map(CartItemView::promotionDiscountAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new CartView(items, gross.subtract(discountTotal).subtract(promotionTotal), cart.updatedAt(),
+                discountTotal, promotionTotal);
     }
 
     private CartItemView toCartItemView(CartItem cartItem, String warehouseCode,
@@ -566,6 +616,79 @@ public class ShopService implements ShopUseCase {
         BigDecimal discount = lines == null ? BigDecimal.ZERO : lines.next().discountAmount();
         return new CartItemView(cartItem.sku(), cartItem.quantity(), unitPrice, subtotal, available && lines != null,
                 cartItem.kitBundleId(), cartItem.kitTemplateId(), cartItem.kitStepId(), discount);
+    }
+
+    private List<OrderItem> applyCheckoutPromotions(Cart cart, List<OrderItem> orderItems, BigDecimal expected) {
+        List<CartItemView> views = new ArrayList<>(orderItems.size());
+        for (int i = 0; i < orderItems.size(); i++) {
+            OrderItem o = orderItems.get(i);
+            CartItem c = cart.items().get(i);
+            views.add(new CartItemView(o.sku(), o.quantity(), o.unitPrice(), o.grossAmount(), true, c.kitBundleId(),
+                    c.kitTemplateId(), c.kitStepId(), o.discountAmount()));
+        }
+        QuantityPromotionEngine.Result promo = marketplacePromotions(views);
+        if (expected != null && Money.of(expected).compareTo(promo.total()) != 0) {
+            throw new PromotionChangedException(Money.of(expected), promo.total());
+        }
+        List<CartItemView> promoted = withPromotions(views, promo);
+        List<OrderItem> out = new ArrayList<>(orderItems.size());
+        for (int i = 0; i < orderItems.size(); i++) {
+            CartItemView v = promoted.get(i);
+            out.add(orderItems.get(i).withPromotion(v.promotionId(), v.promotionName(), v.promotionDiscountAmount()));
+        }
+        return out;
+    }
+
+    /** Ligado pelo {@code CoreBeanConfig}. Nulo nos testes antigos: a loja não aplica promoção. */
+    public void setQuantityPromotions(QuantityPromotionUseCase quantityPromotions) {
+        this.quantityPromotions = quantityPromotions;
+    }
+
+    /** Promoção por quantidade das linhas do carrinho; unidades em kit montável não contam. */
+    private QuantityPromotionEngine.Result marketplacePromotions(List<CartItemView> items) {
+        if (quantityPromotions == null || items.isEmpty()) {
+            return QuantityPromotionEngine.Result.EMPTY;
+        }
+        Map<String, Integer> unitsInKit = new HashMap<>();
+        List<QuantityPromotionEngine.CartLine> lines = new ArrayList<>();
+        for (CartItemView i : items) {
+            if (i.unitPrice() == null) {
+                continue;
+            }
+            lines.add(new QuantityPromotionEngine.CartLine(i.sku(), i.quantity(), i.unitPrice()));
+            if (i.kitBundleId() != null) {
+                unitsInKit.merge(i.sku(), i.quantity().intValue(), Integer::sum);
+            }
+        }
+        return quantityPromotions.calculate(PromotionChannel.MARKETPLACE, clock.instant(), lines, unitsInKit);
+    }
+
+    /** Reparte o desconto de cada SKU entre as linhas avulsas (fora de kit) daquele SKU. */
+    private static List<CartItemView> withPromotions(List<CartItemView> items, QuantityPromotionEngine.Result promo) {
+        if (promo.isEmpty()) {
+            return items;
+        }
+        List<CartItemView> out = new ArrayList<>(items);
+        promo.bySku().forEach((sku, p) -> {
+            List<Integer> idx = new ArrayList<>();
+            List<BigDecimal> room = new ArrayList<>();
+            for (int i = 0; i < out.size(); i++) {
+                CartItemView v = out.get(i);
+                if (v.sku().equals(sku) && v.kitBundleId() == null && v.subtotal() != null) {
+                    idx.add(i);
+                    room.add(v.subtotal());
+                }
+            }
+            BigDecimal amount = p.discount().min(room.stream().reduce(BigDecimal.ZERO, BigDecimal::add));
+            if (idx.isEmpty() || amount.signum() <= 0) {
+                return;
+            }
+            List<BigDecimal> parts = DiscountProration.distribute(room, amount);
+            for (int k = 0; k < idx.size(); k++) {
+                out.set(idx.get(k), out.get(idx.get(k)).withPromotion(p.promotionId(), p.promotionName(), parts.get(k)));
+            }
+        });
+        return out;
     }
 
     /** Mesma validação que {@link OrderItem#fromCatalog} faria no checkout — só descarta o resultado. */

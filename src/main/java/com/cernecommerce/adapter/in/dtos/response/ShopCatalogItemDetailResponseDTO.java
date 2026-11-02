@@ -34,4 +34,8 @@ public class ShopCatalogItemDetailResponseDTO {
 
     /** Galeria de até 5 imagens ordenadas. Nunca nula; lista vazia se não cadastrada. */
     private List<String> images;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Promoções por quantidade vigentes no marketplace que "
+            + "incluem o produto (ou uma variação): selo \"4 por R$ 10\" da vitrine. Vazio sem promoção.")
+    private java.util.List<QuantityPromotionBadgeDTO> quantityPromotions = new java.util.ArrayList<>();
 }

@@ -12,6 +12,21 @@ import java.util.List;
 
 public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, Long> {
 
+    /** Desconto de promoção por quantidade do período, mesmo filtro de {@link #findTopProducts}. */
+    @Query("""
+            SELECT COALESCE(SUM(oi.promotionDiscountAmount), 0)
+            FROM OrderItemEntity oi
+            JOIN oi.order o
+            WHERE (:channel    IS NULL OR o.channel    = :channel)
+              AND (:status     IS NULL OR o.status     = :status)
+              AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND o.createdAt >= :from
+              AND o.createdAt <= :to
+              AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
+            """)
+    BigDecimal sumPromotionDiscount(@Param("channel") String channel, @Param("status") String status,
+            @Param("customerId") Long customerId, @Param("from") Instant from, @Param("to") Instant to);
+
     /**
      * Top N produtos por receita no período (GET /orders/summary). {@code LEFT JOIN} por
      * <b>valor</b> contra {@code product.sku} — não há FK entre {@code order_item} e
@@ -85,7 +100,9 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             SELECT COUNT(oi) AS itemsConsidered,
                    COALESCE(SUM(oi.quantity * oi.unitPrice - oi.discountAmount), 0) AS revenue,
                    COALESCE(SUM(oi.quantity * oi.costPrice), 0) AS cost,
-                   COALESCE(SUM(oi.quantity * oi.unitPrice - oi.discountAmount - oi.quantity * oi.costPrice), 0) AS margin
+                   COALESCE(SUM(oi.quantity * oi.unitPrice - oi.discountAmount - oi.quantity * oi.costPrice), 0) AS margin,
+                   COALESCE(SUM(oi.discountAmount), 0) AS discount,
+                   COALESCE(SUM(oi.promotionDiscountAmount), 0) AS promotionDiscount
             FROM OrderItemEntity oi
             JOIN oi.order o
             WHERE (:channel       IS NULL OR o.channel       = :channel)
@@ -127,6 +144,32 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
         BigDecimal getRevenue();
         BigDecimal getCost();
         BigDecimal getMargin();
+        BigDecimal getDiscount();
+        BigDecimal getPromotionDiscount();
+    }
+
+    /**
+     * Números de uma promoção por quantidade no período ({@code GET /estoque/promotions/quantity/{id}/stats}).
+     * Mesmo filtro de pedido pago da margem.
+     */
+    @Query("""
+            SELECT COUNT(DISTINCT o.id) AS vendas,
+                   COALESCE(SUM(oi.quantity), 0) AS unidades,
+                   COALESCE(SUM(oi.promotionDiscountAmount), 0) AS descontoTotal
+            FROM OrderItemEntity oi
+            JOIN oi.order o
+            WHERE oi.promotionId = :promotionId
+              AND o.createdAt >= :from
+              AND o.createdAt <= :to
+              AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
+            """)
+    PromotionStatsProjection findPromotionStats(@Param("promotionId") Long promotionId,
+            @Param("from") Instant from, @Param("to") Instant to);
+
+    interface PromotionStatsProjection {
+        long getVendas();
+        BigDecimal getUnidades();
+        BigDecimal getDescontoTotal();
     }
 
     interface TopProductByMarginProjection {

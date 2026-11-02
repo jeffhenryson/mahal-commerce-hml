@@ -161,7 +161,8 @@ public class ShopAccountController {
             entrega.setMethod(request.getMethod());
             delivery = orderConverter.toDelivery(entrega);
         }
-        return new ShopUseCase.CheckoutCommand(delivery, request.getPaymentPreference(), request.getNotes());
+        return new ShopUseCase.CheckoutCommand(delivery, request.getPaymentPreference(), request.getNotes(),
+                request.getExpectedPromotionDiscount());
     }
 
     @Operation(summary = "Pedidos do cliente autenticado, de qualquer canal, do mais recente para o mais antigo")

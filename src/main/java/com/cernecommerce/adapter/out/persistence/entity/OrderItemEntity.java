@@ -75,4 +75,14 @@ public class OrderItemEntity {
     // PDV-F024 — carvão da sessão (CUBO/JUMBO), só registro. Nulo fora de sessão do cardápio.
     @Column(length = 10)
     private String charcoal;
+
+    // Promoção por quantidade: detalhamento de discount_amount. promotion_id sem FK (a regra pode ser excluída).
+    @Column(name = "promotion_id")
+    private Long promotionId;
+
+    @Column(name = "promotion_name", length = 150)
+    private String promotionName;
+
+    @Column(name = "promotion_discount_amount", nullable = false, precision = 14, scale = 2)
+    private BigDecimal promotionDiscountAmount = BigDecimal.ZERO;
 }

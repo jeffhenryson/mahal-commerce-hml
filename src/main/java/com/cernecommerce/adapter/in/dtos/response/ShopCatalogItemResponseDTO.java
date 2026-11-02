@@ -27,4 +27,8 @@ public class ShopCatalogItemResponseDTO {
 
     /** Selo de destaque distinto de {@code onSale}. */
     private boolean superPromo;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Promoções por quantidade vigentes no marketplace que "
+            + "incluem o produto (ou uma variação): selo \"4 por R$ 10\" da vitrine. Vazio sem promoção.")
+    private java.util.List<QuantityPromotionBadgeDTO> quantityPromotions = new java.util.ArrayList<>();
 }

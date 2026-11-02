@@ -104,6 +104,9 @@ public class OrderRepositoryImpl implements OrderRepository {
         itemEntity.setCourtesy(item.courtesy());
         itemEntity.setNotes(item.notes());
         itemEntity.setCharcoal(item.charcoal());
+        itemEntity.setPromotionId(item.promotionId());
+        itemEntity.setPromotionName(item.promotionName());
+        itemEntity.setPromotionDiscountAmount(item.promotionDiscountAmount());
         itemEntity.setSurchargeAmount(item.surchargeAmount());
         return itemEntity;
     }
@@ -325,6 +328,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         return OrderItem.of(e.getId(), e.getSku(), e.getQuantity(), e.getUnitPrice(), e.getCostPrice(),
                 e.getDiscountAmount(), e.getCashbackPercent(), e.getProductName(),
                 e.getMode() == null ? ConsumptionMode.NORMAL : ConsumptionMode.valueOf(e.getMode()),
-                e.isCourtesy(), e.getNotes(), e.getSurchargeAmount(), e.getCharcoal());
+                e.isCourtesy(), e.getNotes(), e.getSurchargeAmount(), e.getCharcoal(),
+                e.getPromotionId(), e.getPromotionName(), e.getPromotionDiscountAmount());
     }
 }

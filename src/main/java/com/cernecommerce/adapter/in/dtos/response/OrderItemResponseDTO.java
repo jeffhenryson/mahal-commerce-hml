@@ -45,4 +45,13 @@ public class OrderItemResponseDTO {
 
     @Schema(description = "PDV-F022 — observação da linha, quando houver.", example = "Sem gelo")
     private String note;
+
+    @Schema(description = "Regra de promoção por quantidade aplicada na linha (a de maior desconto). Nulo sem promoção.")
+    private Long promotionId;
+
+    @Schema(description = "Nome da regra como estava na venda.")
+    private String promotionName;
+
+    @Schema(description = "Parte de discountAmount que veio de promoção por quantidade.")
+    private java.math.BigDecimal promotionDiscountAmount;
 }
