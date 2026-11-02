@@ -56,4 +56,23 @@ public class CustomerEntity {
     /** CRM-F012 — opcional; base da automação de aniversário. */
     @Column(name = "data_nascimento")
     private LocalDate dataNascimento;
+
+    /** V183 — cidade, opcional. */
+    @Column(length = 100)
+    private String cidade;
+
+    /** V183 — foto do cliente (URL). */
+    @Column(name = "avatar_url", length = 500)
+    private String avatarUrl;
+
+    /** V183 — segmento materializado (Novo, Recorrente, VIP, Em Risco, Inativo). */
+    @Column(nullable = false, length = 20)
+    private String segmento = "Novo";
+
+    /** V183 — true: escolhido pelo operador, o job não recalcula. */
+    @Column(name = "segmento_manual", nullable = false)
+    private boolean segmentoManual;
+
+    @Column(name = "segmento_calculado_em")
+    private java.time.Instant segmentoCalculadoEm;
 }

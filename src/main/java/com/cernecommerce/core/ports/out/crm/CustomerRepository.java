@@ -42,6 +42,12 @@ public interface CustomerRepository {
     /** Lista clientes paginados, filtrando por nome ou contato quando {@code search} não for nulo/vazio. */
     PageResult<Customer> findAll(String search, int page, int size);
 
+    /** Pendência 7 — filtros repetíveis e ordem; {@code totalElements} já filtrado. */
+    PageResult<Customer> findAll(com.cernecommerce.core.domain.model.crm.CustomerFilter filter, int page, int size);
+
+    /** Mesmo filtro e mesma ordem de {@link #findAll(com.cernecommerce.core.domain.model.crm.CustomerFilter, int, int)}, sem paginar. */
+    List<Customer> findAllForExport(com.cernecommerce.core.domain.model.crm.CustomerFilter filter);
+
     /** Total de clientes cadastrados. */
     long countAll();
 

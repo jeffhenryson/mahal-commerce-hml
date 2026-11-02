@@ -31,8 +31,17 @@ public record Customer(
     String origem,
     Instant cadastradoEm,
     CustomerStage estagio,
-    LocalDate dataNascimento
+    LocalDate dataNascimento,
+    String cidade,
+    String avatarUrl,
+    String segmento,
+    boolean segmentoManual
 ) {
+
+    /** V183 — segmentos válidos. Texto livre para o front (badge), conjunto fechado aqui. */
+    public static final java.util.Set<String> SEGMENTOS = java.util.Set.of("Novo", "Recorrente", "VIP", "Em Risco",
+            "Inativo");
+    public static final String SEGMENTO_INICIAL = "Novo";
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
@@ -53,6 +62,16 @@ public record Customer(
         if (estagio == null) {
             throw new IllegalArgumentException("estagio é obrigatório");
         }
+        segmento = segmento == null ? SEGMENTO_INICIAL : segmento;
+        if (!SEGMENTOS.contains(segmento)) {
+            throw new IllegalArgumentException("segmento inválido: " + segmento);
+        }
+    }
+
+    /** Forma anterior a V183 (sem cidade, avatar nem segmento). */
+    public Customer(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento) {
+        this(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, null, null, null, false);
     }
 
     /** Cliente sem data de nascimento — a forma anterior a CRM-F012. */
@@ -85,17 +104,49 @@ public record Customer(
     public Customer withProfile(String novoNome, String novoContato, String novoEmail, String novoCpf,
             String novaOrigem) {
         return new Customer(id, novoNome, novoContato, novoEmail, novoCpf, novaOrigem, cadastradoEm, estagio,
-                dataNascimento);
+                dataNascimento, cidade, avatarUrl, segmento, segmentoManual);
     }
 
     /** Retorna uma cópia com a data de nascimento trocada (CRM-F012). */
     public Customer withDataNascimento(LocalDate novaDataNascimento) {
-        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, novaDataNascimento);
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, novaDataNascimento,
+                cidade, avatarUrl, segmento, segmentoManual);
     }
 
     /** Retorna uma cópia deste cliente com o estágio atualizado. */
     public Customer withEstagio(CustomerStage novoEstagio) {
-        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, novoEstagio, dataNascimento);
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, novoEstagio, dataNascimento,
+                cidade, avatarUrl, segmento, segmentoManual);
+    }
+
+    /** V183 — cidade e foto. Vazio vira nulo. */
+    public Customer withCidadeEAvatar(String novaCidade, String novoAvatarUrl) {
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento,
+                blankToNull(novaCidade), blankToNull(novoAvatarUrl), segmento, segmentoManual);
+    }
+
+    /**
+     * V183 — segmento escolhido pelo operador (congela o valor: o job não recalcula). Nulo devolve o
+     * cliente ao cálculo automático, mantendo o último valor até o próximo recálculo.
+     */
+    public Customer withSegmentoManual(String novoSegmento) {
+        return novoSegmento == null
+                ? new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
+                        avatarUrl, segmento, false)
+                : new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
+                        avatarUrl, novoSegmento, true);
+    }
+
+    /** Reconstitui com todos os campos (V183). */
+    public static Customer of(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento, String cidade, String avatarUrl,
+            String segmento, boolean segmentoManual) {
+        return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
+                avatarUrl, segmento, segmentoManual);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /**

@@ -1,5 +1,7 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.domain.model.crm.CustomerSummary;
+import com.cernecommerce.core.domain.model.crm.CustomerFilter;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -116,7 +118,8 @@ public class CrmControllerTest {
 
     @Test
     void create_returns_201() throws Exception {
-        when(crmUseCase.createCustomer("Maria Silva", "11999998888", "maria@example.com", null, null, null))
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", "maria@example.com", null, null, null,
+                new CrmUseCase.CustomerExtras(null, null)))
                 .thenReturn(customer(1L, "maria@example.com"));
 
         mockMvc.perform(post("/crm/customers")
@@ -126,9 +129,10 @@ public class CrmControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.email").value("maria@example.com"))
-                .andExpect(jsonPath("$.ltv").value(0))
-                .andExpect(jsonPath("$.cashback").value(0))
-                .andExpect(jsonPath("$.segmento").value("NOVO"))
+                // Resposta de escrita: sem números de outros domínios (nulo, nunca um zero falso).
+                .andExpect(jsonPath("$.ltv").doesNotExist())
+                .andExpect(jsonPath("$.cashback").doesNotExist())
+                .andExpect(jsonPath("$.segmento").value("Novo"))
                 .andExpect(jsonPath("$.tags").isEmpty());
     }
 
@@ -152,7 +156,7 @@ public class CrmControllerTest {
 
     @Test
     void create_duplicate_returns_409_withMatchedByAndCustomerId() throws Exception {
-        when(crmUseCase.createCustomer(any(), any(), eq("maria@example.com"), any(), any(), any()))
+        when(crmUseCase.createCustomer(any(), any(), eq("maria@example.com"), any(), any(), any(), any()))
                 .thenThrow(new CustomerAlreadyExistsException(
                         Set.of(CustomerMatchField.PHONE, CustomerMatchField.EMAIL), 7L));
 
@@ -170,7 +174,7 @@ public class CrmControllerTest {
     @Test
     void create_customerLeveWithOnlyContato_returns_201() throws Exception {
         // CRM-C005: sem email nem cpf, só nome + contato — "cliente leve".
-        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, null))
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, null, new CrmUseCase.CustomerExtras(null, null)))
                 .thenReturn(Customer.of(1L, "Maria Silva", "11999998888", null, null, null, Instant.now(),
                         CustomerStage.NOVO_LEAD));
 
@@ -187,7 +191,7 @@ public class CrmControllerTest {
     @Test
     void create_comDataNascimento_repassaEDevolve() throws Exception {
         LocalDate nascimento = LocalDate.of(1990, 5, 17);
-        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, nascimento))
+        when(crmUseCase.createCustomer("Maria Silva", "11999998888", null, null, null, nascimento, new CrmUseCase.CustomerExtras(null, null)))
                 .thenReturn(Customer.of(1L, "Maria Silva", "11999998888", null, null, null, Instant.now(),
                         CustomerStage.NOVO_LEAD, nascimento));
 
@@ -201,7 +205,7 @@ public class CrmControllerTest {
 
     @Test
     void create_menorDeIdade_returns_400_CUSTOMER_UNDERAGE() throws Exception {
-        when(crmUseCase.createCustomer(any(), any(), any(), any(), any(), any()))
+        when(crmUseCase.createCustomer(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new CustomerUnderageException(16));
 
         mockMvc.perform(post("/crm/customers")
@@ -281,18 +285,25 @@ public class CrmControllerTest {
 
     @Test
     void get_returns_200() throws Exception {
-        when(crmUseCase.findCustomerById(1L)).thenReturn(customer(1L, "maria@example.com"));
-        when(cashbackUseCase.getCustomerBalance(1L))
-                .thenReturn(new CashbackBalance(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(crmUseCase.getCustomerSummary(1L)).thenReturn(summary(customer(1L, "maria@example.com"), List.of()));
 
         mockMvc.perform(get("/crm/customers/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(1));
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.ltv").value(250.0))
+                .andExpect(jsonPath("$.pedidosCount").value(2))
+                .andExpect(jsonPath("$.ticketMedio").value(125.0))
+                .andExpect(jsonPath("$.cashback").value(12.5));
+    }
+
+    private static CustomerSummary summary(Customer c, List<String> tags) {
+        return new CustomerSummary(c, tags, new BigDecimal("250.00"), 2, new BigDecimal("125.00"),
+                Instant.parse("2026-10-30T12:00:00Z"), new BigDecimal("12.50"));
     }
 
     @Test
     void get_notFound_returns_404() throws Exception {
-        when(crmUseCase.findCustomerById(99L)).thenThrow(new CustomerNotFoundException(99L));
+        when(crmUseCase.getCustomerSummary(99L)).thenThrow(new CustomerNotFoundException(99L));
 
         mockMvc.perform(get("/crm/customers/99"))
                 .andExpect(status().isNotFound())
@@ -301,21 +312,25 @@ public class CrmControllerTest {
 
     @Test
     void list_returns_200_with_customers() throws Exception {
-        when(crmUseCase.listCustomers(null, 0, 20))
-                .thenReturn(new PageResult<>(List.of(customer(1L, "maria@example.com")), 0, 20, 1L, 1));
+        when(crmUseCase.listCustomerSummaries(any(CustomerFilter.class), eq(0), eq(20)))
+                .thenReturn(new PageResult<>(List.of(summary(customer(1L, "maria@example.com"), List.of("VIP"))),
+                        0, 20, 1L, 1));
 
         mockMvc.perform(get("/crm/customers"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.content[0].email").value("maria@example.com"))
-                .andExpect(jsonPath("$.content[0].segmento").value("NOVO"))
+                .andExpect(jsonPath("$.content[0].segmento").value("Novo"))
+                .andExpect(jsonPath("$.content[0].ltv").value(250.0))
+                .andExpect(jsonPath("$.content[0].tags[0]").value("VIP"))
                 .andExpect(jsonPath("$.totalElements").value(1));
     }
 
     @Test
     void list_withSearch_passesSearchThrough() throws Exception {
-        when(crmUseCase.listCustomers("maria", 0, 20))
-                .thenReturn(new PageResult<>(List.of(customer(1L, "maria@example.com")), 0, 20, 1L, 1));
+        when(crmUseCase.listCustomerSummaries(argThat(f -> "maria".equals(f.search())), eq(0), eq(20)))
+                .thenReturn(new PageResult<>(List.of(summary(customer(1L, "maria@example.com"), List.of())),
+                        0, 20, 1L, 1));
 
         mockMvc.perform(get("/crm/customers").param("search", "maria"))
                 .andExpect(status().isOk())
@@ -324,13 +339,55 @@ public class CrmControllerTest {
 
     @Test
     void list_capsPageSizeAt100() throws Exception {
-        when(crmUseCase.listCustomers(null, 0, 100))
+        when(crmUseCase.listCustomerSummaries(any(CustomerFilter.class), eq(0), eq(100)))
                 .thenReturn(new PageResult<>(List.of(), 0, 100, 0L, 0));
 
         mockMvc.perform(get("/crm/customers").param("size", "500"))
                 .andExpect(status().isOk());
 
-        verify(crmUseCase).listCustomers(null, 0, 100);
+        verify(crmUseCase).listCustomerSummaries(any(CustomerFilter.class), eq(0), eq(100));
+    }
+
+    /** Pendência 7 — filtros repetíveis e ordem chegam ao use case. */
+    @Test
+    void list_filtrosEOrdem_chegamAoUseCase() throws Exception {
+        when(crmUseCase.listCustomerSummaries(any(CustomerFilter.class), eq(0), eq(20)))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        mockMvc.perform(get("/crm/customers")
+                        .param("estagio", "NOVO_LEAD").param("estagio", "QUALIFICADO")
+                        .param("segmento", "VIP").param("origem", "Instagram")
+                        .param("tagId", "3").param("sort", "nome").param("direction", "ASC"))
+                .andExpect(status().isOk());
+
+        verify(crmUseCase).listCustomerSummaries(argThat(f ->
+                f.estagios().equals(List.of(CustomerStage.NOVO_LEAD, CustomerStage.QUALIFICADO))
+                        && f.segmentos().equals(List.of("VIP")) && f.origens().equals(List.of("Instagram"))
+                        && f.tagIds().equals(List.of(3L)) && f.sort().equals("nome") && f.ascending()),
+                eq(0), eq(20));
+    }
+
+    @Test
+    void list_sortInvalido_returns_400() throws Exception {
+        mockMvc.perform(get("/crm/customers").param("sort", "cpf"))
+                .andExpect(status().isBadRequest());
+
+        verify(crmUseCase, never()).listCustomerSummaries(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void setSegmento_returns_200() throws Exception {
+        Customer vip = customer(1L, "maria@example.com").withSegmentoManual("VIP");
+        when(crmUseCase.setSegmento(1L, "VIP")).thenReturn(vip);
+        when(crmUseCase.getCustomerSummary(1L)).thenReturn(summary(vip, List.of()));
+
+        mockMvc.perform(patch("/crm/customers/1/segmento")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"segmento\":\"VIP\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.segmento").value("VIP"))
+                .andExpect(jsonPath("$.segmentoManual").value(true));
     }
 
     @Test
@@ -370,16 +427,65 @@ public class CrmControllerTest {
 
     @Test
     void listNotes_returns_200() throws Exception {
-        when(crmUseCase.listNotes(1L)).thenReturn(List.of(note(10L, 1L)));
+        when(crmUseCase.listNotes(1L, 0, 20)).thenReturn(new PageResult<>(List.of(note(10L, 1L).withAnexos(List.of(
+                new com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment(3L, 10L, "rg.pdf", "application/pdf",
+                        1024, "abc.pdf", Instant.now())))), 0, 20, 1L, 1));
 
         mockMvc.perform(get("/crm/customers/1/notes"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(10));
+                .andExpect(jsonPath("$.content[0].id").value(10))
+                .andExpect(jsonPath("$.content[0].anexos[0].nomeArquivo").value("rg.pdf"))
+                .andExpect(jsonPath("$.content[0].anexos[0].url").value("/crm/customers/1/notes/10/anexos/3"))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void addNoteWithAttachments_multipart_returns_201() throws Exception {
+        when(crmUseCase.addNote(eq(1L), eq("admin"), eq("Documento do cliente"), argThat(files -> files.size() == 1
+                && files.get(0).nomeArquivo().equals("rg.pdf") && files.get(0).bytes().length == 3)))
+                .thenReturn(note(10L, 1L));
+
+        mockMvc.perform(multipart("/crm/customers/1/notes")
+                        .file(new org.springframework.mock.web.MockMultipartFile("anexos", "rg.pdf", "application/pdf",
+                                new byte[]{1, 2, 3}))
+                        .file(new org.springframework.mock.web.MockMultipartFile("texto", "", "text/plain",
+                                "Documento do cliente".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                        .principal(AUTH))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void addNoteWithAttachments_anexoRecusado_returns_400() throws Exception {
+        when(crmUseCase.addNote(eq(1L), any(), any(), any())).thenThrow(
+                new com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException("Tipo de arquivo não aceito: .exe"));
+
+        mockMvc.perform(multipart("/crm/customers/1/notes")
+                        .file(new org.springframework.mock.web.MockMultipartFile("anexos", "x.exe", "application/octet-stream",
+                                new byte[]{1}))
+                        .file(new org.springframework.mock.web.MockMultipartFile("texto", "", "text/plain",
+                                "x".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                        .principal(AUTH))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_NOTE_ATTACHMENT"));
+    }
+
+    @Test
+    void downloadNoteAttachment_servesFileWithServerContentType() throws Exception {
+        var anexo = new com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment(3L, 10L, "rg.pdf",
+                "application/pdf", 3, "abc.pdf", Instant.now());
+        when(crmUseCase.loadNoteAttachment(1L, 10L, 3L)).thenReturn(new CrmUseCase.NoteAttachmentContent(anexo,
+                new java.io.ByteArrayInputStream(new byte[]{1, 2, 3})));
+
+        mockMvc.perform(get("/crm/customers/1/notes/10/anexos/3"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/pdf"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.startsWith("inline")));
     }
 
     @Test
     void listNotes_customerNotFound_returns_404() throws Exception {
-        when(crmUseCase.listNotes(99L)).thenThrow(new CustomerNotFoundException(99L));
+        when(crmUseCase.listNotes(99L, 0, 20)).thenThrow(new CustomerNotFoundException(99L));
 
         mockMvc.perform(get("/crm/customers/99/notes"))
                 .andExpect(status().isNotFound())
@@ -407,13 +513,47 @@ public class CrmControllerTest {
     @Test
     void listCashback_delegatesToCashbackUseCaseAndReturns200() throws Exception {
         when(crmUseCase.findCustomerById(1L)).thenReturn(customer(1L, "maria@example.com"));
-        when(cashbackUseCase.listCustomerEntries(1L, 0, 100))
-                .thenReturn(new PageResult<>(List.of(), 0, 100, 0, 0));
+        when(cashbackUseCase.listCustomerEntries(1L, 1, 10))
+                .thenReturn(new PageResult<>(List.of(), 1, 10, 0, 0));
 
-        mockMvc.perform(get("/crm/customers/1/cashback"))
+        mockMvc.perform(get("/crm/customers/1/cashback").param("page", "1").param("size", "10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$").isEmpty());
+                .andExpect(jsonPath("$.content").isArray())
+                .andExpect(jsonPath("$.page").value(1));
+    }
+
+    @Test
+    void revokeCashback_returns_200_withReversal() throws Exception {
+        var earned = com.cernecommerce.core.domain.model.cashback.CashbackEntry.of(5L, 1L, 77L, null,
+                com.cernecommerce.core.domain.model.cashback.CashbackEntryType.EARNED, new BigDecimal("8.00"),
+                Instant.now(), null, null, Instant.now());
+        when(cashbackUseCase.revokeEntry(1L, 5L)).thenReturn(
+                com.cernecommerce.core.domain.model.cashback.CashbackEntry.reversed(earned, Instant.now()));
+
+        mockMvc.perform(post("/crm/customers/1/cashback/5/revoke").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("REVERSED"))
+                .andExpect(jsonPath("$.reversesEntryId").value(5));
+    }
+
+    @Test
+    void revokeCashback_naoRevogavel_returns_409() throws Exception {
+        when(cashbackUseCase.revokeEntry(1L, 5L)).thenThrow(
+                new com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException(5L, "já foi anulado"));
+
+        mockMvc.perform(post("/crm/customers/1/cashback/5/revoke").principal(AUTH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CASHBACK_ENTRY_NOT_REVOCABLE"));
+    }
+
+    @Test
+    void unlockEarlyRedeem_returnsBalance() throws Exception {
+        when(cashbackUseCase.releasePending(1L)).thenReturn(
+                new CashbackBalance(new BigDecimal("20.00"), BigDecimal.ZERO, BigDecimal.ZERO));
+
+        mockMvc.perform(post("/crm/customers/1/cashback/unlock-early-redeem").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(20.0));
     }
 
     @Test
@@ -519,10 +659,8 @@ public class CrmControllerTest {
 
     @Test
     void get_returns_tags_from_use_case() throws Exception {
-        when(crmUseCase.findCustomerById(1L)).thenReturn(customer(1L, "maria@example.com"));
-        when(crmUseCase.listCustomerTags(1L)).thenReturn(List.of(Tag.of(1L, "VIP")));
-        when(cashbackUseCase.getCustomerBalance(1L))
-                .thenReturn(new CashbackBalance(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(crmUseCase.getCustomerSummary(1L)).thenReturn(summary(customer(1L, "maria@example.com"),
+                List.of("VIP")));
 
         mockMvc.perform(get("/crm/customers/1"))
                 .andExpect(status().isOk())
@@ -705,7 +843,8 @@ public class CrmControllerTest {
 
     @Test
     void exportCustomersCsv_returns_200_withCsvContentAndHeaders() throws Exception {
-        when(crmUseCase.listCustomersForExport(null)).thenReturn(List.of(customer(1L, "maria@example.com")));
+        when(crmUseCase.listCustomersForExport(any(CustomerFilter.class)))
+                .thenReturn(List.of(customer(1L, "maria@example.com")));
 
         byte[] body = mockMvc.perform(get("/crm/customers/export").principal(AUTH))
                 .andExpect(status().isOk())
@@ -720,12 +859,15 @@ public class CrmControllerTest {
 
     @Test
     void exportCustomersCsv_passesSearchThrough() throws Exception {
-        when(crmUseCase.listCustomersForExport("maria")).thenReturn(List.of(customer(1L, "maria@example.com")));
+        when(crmUseCase.listCustomersForExport(any(CustomerFilter.class)))
+                .thenReturn(List.of(customer(1L, "maria@example.com")));
 
-        mockMvc.perform(get("/crm/customers/export").param("search", "maria").principal(AUTH))
+        mockMvc.perform(get("/crm/customers/export").param("search", "maria").param("segmento", "VIP")
+                        .principal(AUTH))
                 .andExpect(status().isOk());
 
-        verify(crmUseCase).listCustomersForExport("maria");
+        verify(crmUseCase).listCustomersForExport(argThat((CustomerFilter f) -> "maria".equals(f.search())
+                && f.segmentos().equals(List.of("VIP"))));
     }
 
     private void assertThatCsvHasUtf8Bom(byte[] body) {

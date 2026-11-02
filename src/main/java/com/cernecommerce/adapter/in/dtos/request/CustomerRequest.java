@@ -46,4 +46,13 @@ public class CustomerRequest {
             + "400 CUSTOMER_UNDERAGE. No PUT, omitida mantém a gravada. No lead, só completa um cliente que "
             + "ainda não tem data — nunca sobrescreve.", example = "1990-05-17")
     private LocalDate dataNascimento;
+
+    @Size(max = 100)
+    @Schema(description = "V183 — cidade. No PUT, ausente mantém a gravada e \"\" apaga.", example = "Fortaleza")
+    private String cidade;
+
+    @Size(max = 500)
+    @jakarta.validation.constraints.Pattern(regexp = "^$|^https?://.+", message = "avatarUrl deve ser uma URL http(s)")
+    @Schema(description = "V183 — URL da foto. No PUT, ausente mantém a gravada e \"\" apaga.")
+    private String avatarUrl;
 }

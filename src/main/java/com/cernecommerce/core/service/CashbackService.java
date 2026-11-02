@@ -301,6 +301,33 @@ public class CashbackService implements CashbackUseCase {
     }
 
     @Override
+    @Transactional
+    public CashbackEntry revokeEntry(Long customerId, Long entryId) {
+        customerRepository.findById(customerId).orElseThrow(() -> new CustomerNotFoundException(customerId));
+        CashbackEntry entry = cashbackEntryRepository.findById(entryId)
+                .filter(e -> customerId.equals(e.customerId()))
+                .orElseThrow(() -> new com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotFoundException(
+                        entryId));
+        if (entry.type() != com.cernecommerce.core.domain.model.cashback.CashbackEntryType.EARNED) {
+            throw new com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException(entryId,
+                    "só um ganho (EARNED) pode ser revogado");
+        }
+        if (cashbackEntryRepository.isReversed(entryId)) {
+            throw new com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException(entryId,
+                    "já foi revertido ou expirado");
+        }
+        return cashbackEntryRepository.save(CashbackEntry.reversed(entry, Instant.now()));
+    }
+
+    @Override
+    @Transactional
+    public CashbackBalance releasePending(Long customerId) {
+        customerRepository.findById(customerId).orElseThrow(() -> new CustomerNotFoundException(customerId));
+        cashbackEntryRepository.releasePendingEarned(customerId, Instant.now());
+        return getCustomerBalance(customerId);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public CashbackBalance getCustomerBalance(Long customerId) {
         customerRepository.findById(customerId)

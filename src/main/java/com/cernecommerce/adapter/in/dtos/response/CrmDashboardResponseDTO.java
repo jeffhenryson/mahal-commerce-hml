@@ -20,4 +20,8 @@ public class CrmDashboardResponseDTO {
 
     // Dado real, calculado sobre o campo estagio do Kanban.
     private Map<CustomerStage, Long> porEstagio;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Pendência 8 — saldo de cashback disponível da base "
+            + "inteira: o que a loja deve aos clientes.")
+    private BigDecimal cashbackEmAberto;
 }

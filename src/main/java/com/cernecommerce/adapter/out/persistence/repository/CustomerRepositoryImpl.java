@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
+import com.cernecommerce.core.domain.model.crm.CustomerFilter;
 import com.cernecommerce.adapter.out.persistence.entity.CustomerEntity;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.crm.Customer;
@@ -81,7 +82,9 @@ public class CustomerRepositoryImpl implements CustomerRepository {
 
     @Override
     public Customer save(Customer customer) {
-        CustomerEntity entity = new CustomerEntity();
+        // Relido quando já existe: preserva o que não é do domínio (segmento_calculado_em, V183).
+        CustomerEntity entity = customer.id() == null ? new CustomerEntity()
+                : customerJpaRepository.findById(customer.id()).orElseGet(CustomerEntity::new);
         entity.setId(customer.id());
         entity.setNome(customer.nome());
         entity.setContato(customer.contato());
@@ -92,6 +95,10 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         entity.setCadastradoEm(customer.cadastradoEm());
         entity.setEstagio(customer.estagio());
         entity.setDataNascimento(customer.dataNascimento());
+        entity.setCidade(customer.cidade());
+        entity.setAvatarUrl(customer.avatarUrl());
+        entity.setSegmento(customer.segmento());
+        entity.setSegmentoManual(customer.segmentoManual());
         CustomerEntity saved = customerJpaRepository.save(entity);
         return toDomain(saved);
     }
@@ -108,6 +115,22 @@ public class CustomerRepositoryImpl implements CustomerRepository {
                 : searchPage(search.trim(), cpfSearchDigits(search), pageRequest);
         List<Customer> content = result.getContent().stream().map(this::toDomain).toList();
         return new PageResult<>(content, page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<Customer> findAll(CustomerFilter filter, int page, int size) {
+        Page<CustomerEntity> result = customerJpaRepository.findAll(CustomerSpecifications.of(filter),
+                PageRequest.of(page, size, CustomerSpecifications.sort(filter)));
+        List<Customer> content = result.getContent().stream().map(this::toDomain).toList();
+        return new PageResult<>(content, page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Customer> findAllForExport(CustomerFilter filter) {
+        return customerJpaRepository.findAll(CustomerSpecifications.of(filter), CustomerSpecifications.sort(filter))
+                .stream().map(this::toDomain).toList();
     }
 
     @Override
@@ -171,6 +194,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
 
     private Customer toDomain(CustomerEntity e) {
         return Customer.of(e.getId(), e.getNome(), e.getContato(), e.getEmail(), e.getCpf(), e.getOrigem(),
-                e.getCadastradoEm(), e.getEstagio(), e.getDataNascimento());
+                e.getCadastradoEm(), e.getEstagio(), e.getDataNascimento(), e.getCidade(), e.getAvatarUrl(),
+                e.getSegmento(), e.isSegmentoManual());
     }
 }

@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
  */
 public class CustomerCsvConverter {
 
-    private static final String HEADER = "id,nome,contato,email,cpf,origem,cadastradoEm,estagio";
+    private static final String HEADER = "id,nome,contato,email,cpf,origem,cadastradoEm,estagio,cidade,segmento";
     private static final String LINE_BREAK = "\r\n";
 
     public String toCsv(List<Customer> customers) {
@@ -33,7 +33,9 @@ public class CustomerCsvConverter {
                 field(c.cpf()),
                 field(c.origem()),
                 field(c.cadastradoEm()),
-                field(c.estagio()));
+                field(c.estagio()),
+                field(c.cidade()),
+                field(c.segmento()));
     }
 
     private String field(Object value) {

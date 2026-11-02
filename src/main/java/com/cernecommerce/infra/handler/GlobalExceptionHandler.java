@@ -1542,6 +1542,40 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "COMANDA_NOT_OPEN", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotFoundException.class)
+    public ResponseEntity<ApiError> handleCashbackEntryNotFound(
+            com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CASHBACK_ENTRY_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException.class)
+    public ResponseEntity<ApiError> handleCashbackEntryNotRevocable(
+            com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CASHBACK_ENTRY_NOT_REVOCABLE", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException.class)
+    public ResponseEntity<ApiError> handleInvalidNoteAttachment(
+            com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_NOTE_ATTACHMENT", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.crm.CustomerNoteAttachmentNotFoundException.class)
+    public ResponseEntity<ApiError> handleNoteAttachmentNotFound(
+            com.cernecommerce.core.domain.exception.crm.CustomerNoteAttachmentNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "NOTE_ATTACHMENT_NOT_FOUND", req);
+    }
+
+    /** Upload acima de spring.servlet.multipart.max-request-size (6 MB): 413 legível, e não 500. */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleMaxUploadSize(org.springframework.web.multipart.MaxUploadSizeExceededException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.PAYLOAD_TOO_LARGE, "Arquivo(s) acima do limite de 6 MB por envio", "PAYLOAD_TOO_LARGE",
+                req);
+    }
+
     @ExceptionHandler(SaleEmptyException.class)
     public ResponseEntity<ApiError> handleSaleEmpty(SaleEmptyException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SALE_EMPTY", req);

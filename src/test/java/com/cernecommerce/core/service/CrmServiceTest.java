@@ -495,7 +495,7 @@ class CrmServiceTest {
     @Test
     void listCustomers_allowsNullSearch() {
         PageResult<Customer> page = new PageResult<>(List.of(), 0, 20, 0L, 0);
-        when(customerRepository.findAll(null, 0, 20)).thenReturn(page);
+        when(customerRepository.findAll((String) null, 0, 20)).thenReturn(page);
 
         PageResult<Customer> result = crmService.listCustomers(null, 0, 20);
 
@@ -606,7 +606,50 @@ class CrmServiceTest {
     }
 
     @Test
-    void getDashboardOverview_aggregatesRealCountsWithPlaceholders() {
+    void addNote_comAnexos_gravaNoStorageComTipoDoServidor() {
+        com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort storage =
+                mock(com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort.class);
+        crmService.setNoteAttachmentStorage(storage);
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(ana));
+        when(customerNoteRepository.save(any())).thenAnswer(inv -> {
+            CustomerNote n = inv.getArgument(0);
+            return CustomerNote.of(10L, n.customerId(), n.autor(), n.texto(), n.criadoEm());
+        });
+        when(storage.save(any(), eq("pdf"))).thenReturn("uuid.pdf");
+        when(customerNoteRepository.saveAttachment(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        CustomerNote nota = crmService.addNote(1L, "gerente", "RG do cliente", List.of(
+                new com.cernecommerce.core.ports.in.CrmUseCase.NewNoteAttachment("C:\\fakepath\\RG.PDF",
+                        new byte[]{1, 2, 3})));
+
+        assertThat(nota.anexos()).hasSize(1);
+        var anexo = nota.anexos().get(0);
+        assertThat(anexo.nomeArquivo()).isEqualTo("RG.PDF");
+        assertThat(anexo.contentType()).isEqualTo("application/pdf");
+        assertThat(anexo.tamanho()).isEqualTo(3);
+        assertThat(anexo.storageKey()).isEqualTo("uuid.pdf");
+        assertThat(anexo.noteId()).isEqualTo(10L);
+    }
+
+    @Test
+    void addNote_anexoRecusado_naoGravaNada() {
+        com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort storage =
+                mock(com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort.class);
+        crmService.setNoteAttachmentStorage(storage);
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(ana));
+
+        assertThatThrownBy(() -> crmService.addNote(1L, "gerente", "x", List.of(
+                new com.cernecommerce.core.ports.in.CrmUseCase.NewNoteAttachment("ok.png", new byte[]{1}),
+                new com.cernecommerce.core.ports.in.CrmUseCase.NewNoteAttachment("virus.exe", new byte[]{1}))))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException.class);
+        verify(customerNoteRepository, never()).save(any());
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void getDashboardOverview_semInsights_naoInventaNumeros() {
         when(customerRepository.countAll()).thenReturn(10L);
         when(customerRepository.countActive()).thenReturn(7L);
         when(customerRepository.countByStage()).thenReturn(Map.of(
@@ -619,9 +662,113 @@ class CrmServiceTest {
         assertThat(result.totalClientes()).isEqualTo(10L);
         assertThat(result.clientesAtivos()).isEqualTo(7L);
         assertThat(result.porEstagio()).containsEntry(CustomerStage.NOVO_LEAD, 5L);
-        assertThat(result.ltvMedio()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(result.disparosWhatsappMes()).isZero();
-        assertThat(result.porSegmento()).containsEntry("NOVO", 10L);
+        assertThat(result.porSegmento()).isEmpty();
+    }
+
+    // ── Pendência 8: números reais ──────────────────────────────────────────────────────────
+
+    @Test
+    void getDashboardOverview_comInsights_usaNumerosReais() {
+        com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository insights =
+                mock(com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository.class);
+        crmService.setInsights(insights);
+        when(customerRepository.countAll()).thenReturn(10L);
+        when(customerRepository.countActive()).thenReturn(7L);
+        when(customerRepository.countByStage()).thenReturn(Map.of());
+        when(insights.averageLtv()).thenReturn(new BigDecimal("180.00"));
+        when(insights.whatsappDispatchesBetween(any(), any())).thenReturn(42L);
+        when(insights.countBySegmento()).thenReturn(Map.of("VIP", 2L, "Novo", 8L));
+        when(insights.cashbackAvailableTotal(any())).thenReturn(new BigDecimal("315.40"));
+
+        CrmDashboardOverview result = crmService.getDashboardOverview();
+
+        assertThat(result.ltvMedio()).isEqualByComparingTo("180.00");
+        assertThat(result.disparosWhatsappMes()).isEqualTo(42L);
+        assertThat(result.porSegmento()).containsEntry("VIP", 2L).containsEntry("Novo", 8L);
+        assertThat(result.cashbackEmAberto()).isEqualByComparingTo("315.40");
+    }
+
+    @Test
+    void listCustomerSummaries_montaNumerosEmLotePorPagina() {
+        com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository insights =
+                mock(com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository.class);
+        crmService.setInsights(insights);
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        Customer bia = Customer.of(2L, "Bia", "11999990001", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        com.cernecommerce.core.domain.model.crm.CustomerFilter filter =
+                com.cernecommerce.core.domain.model.crm.CustomerFilter.searchOnly(null);
+        when(customerRepository.findAll(filter, 0, 20)).thenReturn(new PageResult<>(List.of(ana, bia), 0, 20, 2L, 1));
+        Instant ultima = Instant.parse("2026-10-30T12:00:00Z");
+        when(insights.statsFor(List.of(1L, 2L))).thenReturn(Map.of(1L,
+                new com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository.CustomerStats(1L,
+                        new BigDecimal("300.00"), 3, ultima)));
+        when(insights.cashbackAvailableFor(eq(List.of(1L, 2L)), any())).thenReturn(Map.of(1L, new BigDecimal("9.90")));
+        when(insights.tagNamesFor(List.of(1L, 2L))).thenReturn(Map.of(2L, List.of("VIP")));
+
+        PageResult<com.cernecommerce.core.domain.model.crm.CustomerSummary> page =
+                crmService.listCustomerSummaries(filter, 0, 20);
+
+        var first = page.content().get(0);
+        assertThat(first.ltv()).isEqualByComparingTo("300.00");
+        assertThat(first.pedidosCount()).isEqualTo(3);
+        assertThat(first.ticketMedio()).isEqualByComparingTo("100.00");
+        assertThat(first.ultimaCompraEm()).isEqualTo(ultima);
+        assertThat(first.cashback()).isEqualByComparingTo("9.90");
+        var second = page.content().get(1);
+        assertThat(second.ltv()).isEqualByComparingTo("0");
+        assertThat(second.pedidosCount()).isZero();
+        assertThat(second.ultimaCompraEm()).isNull();
+        assertThat(second.tags()).containsExactly("VIP");
+        // Uma consulta de cada por página, não uma por linha.
+        verify(insights).statsFor(List.of(1L, 2L));
+        verify(insights).tagNamesFor(List.of(1L, 2L));
+    }
+
+    @Test
+    void setSegmento_congelaManualENuloVoltaAoAutomatico() {
+        com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository insights =
+                mock(com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository.class);
+        crmService.setInsights(insights);
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(ana));
+        when(customerRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Customer vip = crmService.setSegmento(1L, "VIP");
+
+        assertThat(vip.segmento()).isEqualTo("VIP");
+        assertThat(vip.segmentoManual()).isTrue();
+        verify(insights, never()).recalculateSegments(any(), any());
+
+        crmService.setSegmento(1L, null);
+
+        verify(customerRepository).save(argThat(c -> !c.segmentoManual()));
+        verify(insights).recalculateSegments(eq(1L), any());
+    }
+
+    @Test
+    void setSegmento_invalido_lanca400() {
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(ana));
+
+        assertThatThrownBy(() -> crmService.setSegmento(1L, "Ouro"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateCustomer_cidadeNulaMantemEVazioApaga() {
+        Customer ana = Customer.of(1L, "Ana", "11999990000", null, null, null, Instant.now(), CustomerStage.NOVO_LEAD,
+                null, "Fortaleza", "https://img/ana.png", "Novo", false);
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(ana));
+        when(customerRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Customer mantida = crmService.updateCustomer(1L, "Ana", "11999990000", null, null, null, null,
+                com.cernecommerce.core.ports.in.CrmUseCase.CustomerExtras.NONE);
+        Customer apagada = crmService.updateCustomer(1L, "Ana", "11999990000", null, null, null, null,
+                new com.cernecommerce.core.ports.in.CrmUseCase.CustomerExtras("", null));
+
+        assertThat(mantida.cidade()).isEqualTo("Fortaleza");
+        assertThat(apagada.cidade()).isNull();
+        assertThat(apagada.avatarUrl()).isEqualTo("https://img/ana.png");
     }
 
     @Test

@@ -1,5 +1,8 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.domain.model.crm.CustomerStage;
+import com.cernecommerce.core.domain.model.crm.CustomerSummary;
+import com.cernecommerce.core.domain.model.crm.CustomerFilter;
 import com.cernecommerce.adapter.in.converter.CampaignDTOConverter;
 import com.cernecommerce.adapter.in.converter.CashbackDTOConverter;
 import com.cernecommerce.adapter.in.converter.ChannelStatusDTOConverter;
@@ -121,7 +124,7 @@ public class CrmController {
     public ResponseEntity<CustomerResponseDTO> createCustomer(@Valid @RequestBody CustomerRequest request,
             Authentication authentication) {
         Customer created = crmUseCase.createCustomer(request.getNome(), request.getContato(), request.getEmail(),
-                request.getCpf(), request.getOrigem(), request.getDataNascimento());
+                request.getCpf(), request.getOrigem(), request.getDataNascimento(), extras(request));
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_CREATED,
                 authentication.getName(), Map.of("customerId", String.valueOf(created.id()))));
         return ResponseEntity.created(URI.create("/crm/customers/" + created.id()))
@@ -143,7 +146,8 @@ public class CrmController {
     public ResponseEntity<CustomerResponseDTO> updateCustomer(@PathVariable Long id,
             @Valid @RequestBody CustomerRequest request, Authentication authentication) {
         Customer updated = crmUseCase.updateCustomer(id, request.getNome(), request.getContato(),
-                request.getEmail(), request.getCpf(), request.getOrigem(), request.getDataNascimento());
+                request.getEmail(), request.getCpf(), request.getOrigem(), request.getDataNascimento(),
+                extras(request));
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED,
                 authentication.getName(), Map.of("customerId", String.valueOf(id))));
         return ResponseEntity.ok(converter.toResponse(updated));
@@ -229,13 +233,8 @@ public class CrmController {
     @GetMapping("/customers/{id}")
     @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
     public ResponseEntity<CustomerResponseDTO> getCustomer(@PathVariable Long id) {
-        Customer customer = crmUseCase.findCustomerById(id);
-        List<String> tagNomes = crmUseCase.listCustomerTags(id).stream()
-                .map(com.cernecommerce.core.domain.model.crm.Tag::nome).toList();
-        CustomerResponseDTO dto = converter.toResponse(customer, tagNomes);
-        // CRM-F003: só a busca por id paga a consulta de saldo — a listagem paginada mantém o
-        // placeholder de propósito, para não virar um N+1 de saldo por linha da página.
-        dto.setCashback(cashbackUseCase.getCustomerBalance(id).available());
+        // Pendência 8 — LTV, pedidos, ticket médio, última compra, cashback e tags reais.
+        CustomerResponseDTO dto = converter.toResponse(crmUseCase.getCustomerSummary(id));
         // CRM-F010 — saldo do "Marcar" na ficha.
         ReceivableUseCase.CustomerBalance balance = receivableUseCase.balance(id);
         dto.setCreditLimit(balance.creditLimit());
@@ -244,25 +243,88 @@ public class CrmController {
         return ResponseEntity.ok(dto);
     }
 
-    @Operation(summary = "Lista clientes paginados, com filtro opcional por nome ou contato")
+    @Operation(summary = "Lista clientes paginados, com filtros e ordem",
+            description = "Pendência 7/8. `search` livre (nome/email sem acento, telefone, CPF). Filtros repetíveis "
+                    + "(`?estagio=NOVO_LEAD&estagio=QUALIFICADO`): OU dentro do mesmo campo, E entre campos. "
+                    + "`origem` compara sem caixa. `sort` = nome|email|cadastradoEm|estagio, `direction` = ASC|DESC "
+                    + "(padrão cadastradoEm DESC); o id desempata. `totalElements` já filtrado. Cada linha traz ltv, "
+                    + "pedidosCount, ticketMedio, ultimaCompraEm, cashback e tags reais, montados em lote.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "400", description = "sort, direction, estagio ou segmento inválidos",
+                    content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @GetMapping("/customers")
     @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
     public ResponseEntity<PageResult<CustomerResponseDTO>> listCustomers(
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<CustomerStage> estagio,
+            @RequestParam(required = false) List<String> segmento,
+            @RequestParam(required = false) List<String> origem,
+            @RequestParam(required = false) List<Long> tagId,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String direction,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        PageResult<Customer> result = crmUseCase.listCustomers(search, page, Math.min(size, 100));
+        CustomerFilter filter = filter(search, estagio, segmento, origem, tagId, sort, direction);
+        PageResult<CustomerSummary> result = crmUseCase.listCustomerSummaries(filter, Math.max(page, 0),
+                Math.min(Math.max(size, 1), 100));
         PageResult<CustomerResponseDTO> response = new PageResult<>(
                 result.content().stream().map(converter::toResponse).toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
     }
 
-    @Operation(summary = "Exporta a listagem de clientes em CSV — não paginado, mesmo filtro de listCustomers")
+    @Operation(summary = "Define o segmento do cliente à mão (V183)",
+            description = "Congela o segmento (Novo, Recorrente, VIP, Em Risco, Inativo): o recálculo diário não "
+                    + "sobrescreve. `segmento` nulo devolve ao cálculo automático e recalcula na hora. A tag VIP "
+                    + "continua dando VIP automaticamente.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = CustomerResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Segmento inválido", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PatchMapping("/customers/{id}/segmento")
+    @PreAuthorize("hasAnyAuthority('CRM_CUSTOMER_MANAGE', 'CRM_CUSTOMER_VIP_MANAGE')")
+    public ResponseEntity<CustomerResponseDTO> setSegmento(@PathVariable Long id,
+            @RequestBody com.cernecommerce.adapter.in.dtos.request.CustomerSegmentoRequest request,
+            Authentication authentication) {
+        Customer updated = crmUseCase.setSegmento(id, request.getSegmento());
+        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED, authentication.getName(),
+                Map.of("customerId", String.valueOf(id), "segmento",
+                        request.getSegmento() == null ? "AUTOMATICO" : request.getSegmento())));
+        return ResponseEntity.ok(converter.toResponse(crmUseCase.getCustomerSummary(updated.id())));
+    }
+
+    @Operation(summary = "Recalcula o segmento de toda a base agora (V183)",
+            description = "O job roda todo dia às 03:30; isto é para não esperar. Clientes com segmento manual ficam "
+                    + "de fora. Devolve quantos foram regravados.")
+    @PostMapping("/segmentos/recalcular")
+    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    public ResponseEntity<Map<String, Integer>> recalculateSegments(Authentication authentication) {
+        int updated = crmUseCase.recalculateSegments();
+        return ResponseEntity.ok(Map.of("updated", updated));
+    }
+
+    private static CustomerFilter filter(String search, List<CustomerStage> estagio, List<String> segmento,
+            List<String> origem, List<Long> tagId, String sort, String direction) {
+        Boolean ascending = null;
+        if (direction != null && !direction.isBlank()) {
+            if (!direction.equalsIgnoreCase("ASC") && !direction.equalsIgnoreCase("DESC")) {
+                throw new IllegalArgumentException("direction deve ser ASC ou DESC");
+            }
+            ascending = direction.equalsIgnoreCase("ASC");
+        }
+        return new CustomerFilter(search, estagio, segmento, origem, tagId, sort, ascending);
+    }
+
+    private static CrmUseCase.CustomerExtras extras(CustomerRequest request) {
+        return new CrmUseCase.CustomerExtras(request.getCidade(), request.getAvatarUrl());
+    }
+
+    @Operation(summary = "Exporta a listagem de clientes em CSV — não paginado, mesmos filtros e ordem de listCustomers")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(mediaType = "text/csv")),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
@@ -270,8 +332,15 @@ public class CrmController {
     @GetMapping("/customers/export")
     @PreAuthorize("hasAuthority('CRM_CUSTOMER_EXPORT')")
     public ResponseEntity<byte[]> exportCustomersCsv(@RequestParam(required = false) String search,
+            @RequestParam(required = false) List<CustomerStage> estagio,
+            @RequestParam(required = false) List<String> segmento,
+            @RequestParam(required = false) List<String> origem,
+            @RequestParam(required = false) List<Long> tagId,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String direction,
             Authentication authentication) {
-        List<Customer> customers = crmUseCase.listCustomersForExport(search);
+        List<Customer> customers = crmUseCase.listCustomersForExport(
+                filter(search, estagio, segmento, origem, tagId, sort, direction));
         String csv = csvConverter.toCsv(customers);
         byte[] body = withUtf8Bom(csv);
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_LIST_EXPORTED,
@@ -313,7 +382,43 @@ public class CrmController {
                 .body(noteConverter.toResponse(created));
     }
 
-    @Operation(summary = "Lista as notas de um cliente, mais recentes primeiro")
+    @Operation(summary = "Cria uma nota com anexos (multipart, V183)",
+            description = "Partes: `texto` (obrigatório) e `anexos` (0 a 5 arquivos, até 5 MB cada; PDF, PNG, JPG, "
+                    + "WEBP, GIF, TXT, CSV, DOC/DOCX, XLS/XLSX). Arquivo recusado: 400 INVALID_NOTE_ATTACHMENT e "
+                    + "nada é gravado. O corpo inteiro da requisição tem teto de 6 MB.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Criada", content = @Content(schema = @Schema(implementation = CustomerNoteResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Texto vazio ou anexo recusado", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
+            @ApiResponse(responseCode = "413", description = "Requisição acima de 6 MB", content = @Content)
+    })
+    @PostMapping(value = "/customers/{id}/notes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAuthority('CRM_CUSTOMER_MANAGE')")
+    public ResponseEntity<CustomerNoteResponseDTO> addNoteWithAttachments(@PathVariable Long id,
+            @RequestPart("texto") String texto,
+            @RequestPart(value = "anexos", required = false) List<org.springframework.web.multipart.MultipartFile> anexos,
+            Authentication authentication) {
+        if (texto == null || texto.isBlank()) {
+            throw new IllegalArgumentException("texto é obrigatório");
+        }
+        List<CrmUseCase.NewNoteAttachment> files = new java.util.ArrayList<>();
+        for (org.springframework.web.multipart.MultipartFile file : anexos == null ? List.<org.springframework.web.multipart.MultipartFile>of() : anexos) {
+            try {
+                files.add(new CrmUseCase.NewNoteAttachment(file.getOriginalFilename(), file.getBytes()));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        CustomerNote created = crmUseCase.addNote(id, authentication.getName(), texto.trim(), files);
+        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_NOTE_ADDED,
+                authentication.getName(), Map.of("customerId", String.valueOf(id),
+                        "anexos", String.valueOf(files.size()))));
+        return ResponseEntity.created(URI.create("/crm/customers/" + id + "/notes/" + created.id()))
+                .body(noteConverter.toResponse(created));
+    }
+
+    @Operation(summary = "Lista as notas de um cliente, paginadas, mais recentes primeiro",
+            description = "V183 — devolve página (antes era a lista inteira). Cada nota traz seus anexos.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
@@ -321,13 +426,44 @@ public class CrmController {
     })
     @GetMapping("/customers/{id}/notes")
     @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
-    public ResponseEntity<List<CustomerNoteResponseDTO>> listNotes(@PathVariable Long id) {
-        List<CustomerNoteResponseDTO> response = crmUseCase.listNotes(id).stream()
-                .map(noteConverter::toResponse).toList();
-        return ResponseEntity.ok(response);
+    public ResponseEntity<PageResult<CustomerNoteResponseDTO>> listNotes(@PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
+        PageResult<CustomerNote> result = crmUseCase.listNotes(id, Math.max(page, 0), Math.min(Math.max(size, 1), 100));
+        return ResponseEntity.ok(new PageResult<>(result.content().stream().map(noteConverter::toResponse).toList(),
+                result.page(), result.size(), result.totalElements(), result.totalPages()));
     }
 
-    @Operation(summary = "Histórico de pedidos do cliente — placeholder até o domínio de pedidos existir")
+    @Operation(summary = "Baixa um anexo de nota (V183)")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "O arquivo"),
+            @ApiResponse(responseCode = "404", description = "Cliente, nota ou anexo não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/customers/{id}/notes/{noteId}/anexos/{anexoId}")
+    @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
+    public ResponseEntity<org.springframework.core.io.Resource> downloadNoteAttachment(@PathVariable Long id,
+            @PathVariable Long noteId, @PathVariable Long anexoId) {
+        CrmUseCase.NoteAttachmentContent content = crmUseCase.loadNoteAttachment(id, noteId, anexoId);
+        // Imagem e PDF abrem no navegador; o resto baixa. nosniff: o tipo é o que o servidor decidiu.
+        boolean inline = content.attachment().contentType().startsWith("image/")
+                || content.attachment().contentType().equals("application/pdf");
+        ContentDisposition disposition = (inline ? ContentDisposition.inline() : ContentDisposition.attachment())
+                .filename(content.attachment().nomeArquivo(), StandardCharsets.UTF_8).build();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(content.attachment().contentType()))
+                .contentLength(content.attachment().tamanho())
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(new org.springframework.core.io.InputStreamResource(content.stream()));
+    }
+
+    /**
+     * @deprecated Sempre vazio. O histórico de pedidos do cliente é {@code GET /orders?customerId=}, que é
+     * paginado e tipado; o admin já usa aquele. Mantido só para não quebrar o client gerado.
+     */
+    @Deprecated(since = "2026-11")
+    @Operation(summary = "DEPRECADO — histórico de pedidos do cliente (sempre vazio)", deprecated = true,
+            description = "Use GET /orders?customerId={id}&page=&size=.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK — sempre lista vazia por enquanto"),
             @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
@@ -340,9 +476,9 @@ public class CrmController {
         return ResponseEntity.ok(List.of());
     }
 
-    @Operation(summary = "Extrato de cashback do cliente",
-            description = "As 100 entradas mais recentes do ledger — EARNED, REDEEMED, REVERSED e "
-                    + "EXPIRED. Para extrato paginado completo, use GET /cashback/customers/{id}/entries.")
+    @Operation(summary = "Extrato de cashback do cliente, paginado",
+            description = "V183 — devolve página (antes eram as 100 mais recentes): EARNED, REDEEMED, REVERSED e "
+                    + "EXPIRED, mais recentes primeiro.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
@@ -350,11 +486,51 @@ public class CrmController {
     })
     @GetMapping("/customers/{id}/cashback")
     @PreAuthorize("hasAuthority('CRM_CUSTOMER_READ')")
-    public ResponseEntity<List<CashbackEntryResponseDTO>> listCashback(@PathVariable Long id) {
+    public ResponseEntity<PageResult<CashbackEntryResponseDTO>> listCashback(@PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         crmUseCase.findCustomerById(id);
-        List<CashbackEntryResponseDTO> response = cashbackUseCase.listCustomerEntries(id, 0, 100)
-                .content().stream().map(cashbackConverter::toResponse).toList();
-        return ResponseEntity.ok(response);
+        PageResult<com.cernecommerce.core.domain.model.cashback.CashbackEntry> result =
+                cashbackUseCase.listCustomerEntries(id, Math.max(page, 0), Math.min(Math.max(size, 1), 100));
+        return ResponseEntity.ok(new PageResult<>(result.content().stream().map(cashbackConverter::toResponse).toList(),
+                result.page(), result.size(), result.totalElements(), result.totalPages()));
+    }
+
+    @Operation(summary = "Revoga um ganho de cashback do cliente",
+            description = "Grava um REVERSED apontando para o ganho (`reversesEntryId`), como no reembolso; nada é "
+                    + "apagado. Só um EARNED ainda não revertido/expirado. Auditado.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "O lançamento de estorno criado"),
+            @ApiResponse(responseCode = "404", description = "Cliente ou lançamento não encontrado (CASHBACK_ENTRY_NOT_FOUND)", content = @Content),
+            @ApiResponse(responseCode = "409", description = "CASHBACK_ENTRY_NOT_REVOCABLE: não é um ganho ou já foi anulado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/customers/{id}/cashback/{entryId}/revoke")
+    @PreAuthorize("hasAuthority('CASHBACK_ADJUST')")
+    public ResponseEntity<CashbackEntryResponseDTO> revokeCashback(@PathVariable Long id, @PathVariable Long entryId,
+            Authentication authentication) {
+        var reversal = cashbackUseCase.revokeEntry(id, entryId);
+        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED, authentication.getName(),
+                Map.of("customerId", String.valueOf(id), "action", "CASHBACK_REVOKED",
+                        "entryId", String.valueOf(entryId), "amount", reversal.amount().negate().toPlainString())));
+        return ResponseEntity.ok(cashbackConverter.toResponse(reversal));
+    }
+
+    @Operation(summary = "Desbloqueia o resgate antecipado do cashback do cliente",
+            description = "Tudo o que está em carência passa a disponível agora (o vencimento não muda). Devolve o "
+                    + "saldo depois da liberação. Auditado.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Saldo depois da liberação"),
+            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PostMapping("/customers/{id}/cashback/unlock-early-redeem")
+    @PreAuthorize("hasAuthority('CASHBACK_ADJUST')")
+    public ResponseEntity<com.cernecommerce.core.domain.model.cashback.CashbackBalance> unlockEarlyRedeem(
+            @PathVariable Long id, Authentication authentication) {
+        var balance = cashbackUseCase.releasePending(id);
+        publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED, authentication.getName(),
+                Map.of("customerId", String.valueOf(id), "action", "CASHBACK_EARLY_REDEEM_UNLOCKED")));
+        return ResponseEntity.ok(balance);
     }
 
     @Operation(summary = "Move o cliente para um novo estágio no Kanban de atendimento")
@@ -407,6 +583,7 @@ public class CrmController {
         response.setDisparosWhatsappMes(overview.disparosWhatsappMes());
         response.setPorSegmento(overview.porSegmento());
         response.setPorEstagio(overview.porEstagio());
+        response.setCashbackEmAberto(overview.cashbackEmAberto());
         return ResponseEntity.ok(response);
     }
 

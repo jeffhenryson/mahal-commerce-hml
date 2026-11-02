@@ -1,5 +1,8 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository;
+import com.cernecommerce.core.domain.model.crm.CustomerSummary;
+import com.cernecommerce.core.domain.model.crm.CustomerFilter;
 import com.cernecommerce.core.domain.exception.crm.CampaignAutomationNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.crm.CustomerAlreadyExistsException;
@@ -66,11 +69,41 @@ public class CrmService implements CrmUseCase {
     private static final int IDADE_MINIMA = 18;
     private static final int IDADE_MAXIMA = 120;
 
-    // Placeholder até os domínios de pedidos/cashback e de campanhas existirem —
-    // ver crm/listagem-clientes-rfm e crm/automacoes-campanhas.
-    private static final BigDecimal LTV_MEDIO_PLACEHOLDER = BigDecimal.ZERO;
-    private static final long DISPAROS_WHATSAPP_PLACEHOLDER = 0L;
-    private static final String SEGMENTO_PLACEHOLDER = "NOVO";
+    /**
+     * Pendência 8 — LTV, cashback, tags e métricas vindos de pedidos, cashback e campanhas. Nulo nos
+     * testes antigos: a lista sai sem esses números (nulos, nunca zero fingindo ser dado real).
+     */
+    private com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository insights;
+
+    /** V183 — storage privado dos anexos de nota. Nulo nos testes antigos: nota com anexo é recusada. */
+    private com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort noteAttachmentStorage;
+
+    public void setNoteAttachmentStorage(
+            com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort noteAttachmentStorage) {
+        this.noteAttachmentStorage = noteAttachmentStorage;
+    }
+
+    static final int MAX_ANEXOS = 5;
+    static final long MAX_ANEXO_BYTES = 5L * 1024 * 1024;
+    /** Extensão → content type servido. O tipo que o navegador declarou não é confiável e é ignorado. */
+    static final Map<String, String> ANEXO_TIPOS = Map.ofEntries(
+            Map.entry("pdf", "application/pdf"),
+            Map.entry("png", "image/png"),
+            Map.entry("jpg", "image/jpeg"),
+            Map.entry("jpeg", "image/jpeg"),
+            Map.entry("webp", "image/webp"),
+            Map.entry("gif", "image/gif"),
+            Map.entry("txt", "text/plain"),
+            Map.entry("csv", "text/csv"),
+            Map.entry("doc", "application/msword"),
+            Map.entry("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            Map.entry("xls", "application/vnd.ms-excel"),
+            Map.entry("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+    /** Ligado pelo {@code CoreBeanConfig}. Setter para não multiplicar construtores. */
+    public void setInsights(com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository insights) {
+        this.insights = insights;
+    }
 
     // Provedor exibido no badge de canais quando o WhatsApp está conectado.
     private static final String WHATSAPP_PROVIDER = "META_CLOUD_API";
@@ -106,7 +139,7 @@ public class CrmService implements CrmUseCase {
     @Override
     @Transactional
     public Customer createCustomer(String nome, String contato, String email, String cpf, String origem,
-            LocalDate dataNascimento) {
+            LocalDate dataNascimento, CustomerExtras extras) {
         validateDataNascimento(dataNascimento);
         // CRM-C005: email e cpf são opcionais agora — só checa duplicidade do que veio preenchido.
         // CRM-C006: normaliza antes (CPF só dígitos, "" vira null) — sem isso "" passava e o 2º
@@ -117,13 +150,16 @@ public class CrmService implements CrmUseCase {
         ensureIdentifiersFree(null, normalizedContato, normalizedEmail, normalizedCpf);
         Customer customer = Customer.create(nome.trim(), normalizedContato, normalizedEmail, normalizedCpf,
                 CustomerIdentifiers.normalizeContato(origem)).withDataNascimento(dataNascimento);
+        if (extras != null) {
+            customer = customer.withCidadeEAvatar(extras.cidade(), extras.avatarUrl());
+        }
         return customerRepository.save(customer);
     }
 
     @Override
     @Transactional
     public Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem,
-            LocalDate dataNascimento) {
+            LocalDate dataNascimento, CustomerExtras extras) {
         validateDataNascimento(dataNascimento);
         Customer current = requireCustomer(id);
         String normalizedContato = CustomerIdentifiers.normalizeContato(contato);
@@ -134,6 +170,11 @@ public class CrmService implements CrmUseCase {
                 normalizedEmail, normalizedCpf, CustomerIdentifiers.normalizeContato(origem));
         if (dataNascimento != null) {
             updated = updated.withDataNascimento(dataNascimento);
+        }
+        // V183 — nulo mantém o gravado, vazio apaga (withCidadeEAvatar transforma vazio em nulo).
+        if (extras != null && (extras.cidade() != null || extras.avatarUrl() != null)) {
+            updated = updated.withCidadeEAvatar(extras.cidade() != null ? extras.cidade() : updated.cidade(),
+                    extras.avatarUrl() != null ? extras.avatarUrl() : updated.avatarUrl());
         }
         return customerRepository.save(updated);
     }
@@ -156,7 +197,8 @@ public class CrmService implements CrmUseCase {
             existing = customerRepository.findByEmail(normalizedEmail);
         }
         if (existing.isEmpty()) {
-            return new LeadResolution(createCustomer(nome, contato, email, cpf, origem, dataNascimento), true);
+            return new LeadResolution(createCustomer(nome, contato, email, cpf, origem, dataNascimento,
+                    CustomerExtras.NONE), true);
         }
         Customer completed = completeMissingIdentifiers(existing.get(), contato, normalizedEmail, normalizedCpf);
         // CRM-F012 — mesma regra dos identificadores: completa o que faltava, nunca sobrescreve.
@@ -324,10 +366,167 @@ public class CrmService implements CrmUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public PageResult<CustomerSummary> listCustomerSummaries(CustomerFilter filter, int page, int size) {
+        PageResult<Customer> result = customerRepository.findAll(filter, page, size);
+        return new PageResult<>(summarize(result.content()), result.page(), result.size(), result.totalElements(),
+                result.totalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Customer> listCustomersForExport(CustomerFilter filter) {
+        return customerRepository.findAllForExport(filter);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CustomerSummary getCustomerSummary(Long id) {
+        return summarize(List.of(requireCustomer(id))).get(0);
+    }
+
+    @Override
+    @Transactional
+    public Customer setSegmento(Long id, String segmento) {
+        Customer customer = requireCustomer(id);
+        String normalized = segmento == null || segmento.isBlank() ? null : segmento.trim();
+        if (normalized != null && !Customer.SEGMENTOS.contains(normalized)) {
+            throw new IllegalArgumentException("segmento inválido: " + normalized);
+        }
+        Customer saved = customerRepository.save(customer.withSegmentoManual(normalized));
+        if (normalized == null && insights != null) {
+            insights.recalculateSegments(id, Instant.now());
+            return requireCustomer(id);
+        }
+        return saved;
+    }
+
+    @Override
+    @Transactional
+    public int recalculateSegments() {
+        return insights == null ? 0 : insights.recalculateSegments(null, Instant.now());
+    }
+
+    /**
+     * Pendência 8 — os números da página em lote: uma consulta para pedidos, uma para cashback e uma
+     * para tags, qualquer que seja o tamanho da página. Sem o repositório (testes antigos), os números
+     * ficam nulos e as tags vazias.
+     */
+    private List<CustomerSummary> summarize(List<Customer> customers) {
+        if (customers.isEmpty()) {
+            return List.of();
+        }
+        if (insights == null) {
+            return customers.stream()
+                    .map(c -> new CustomerSummary(c, List.of(), null, 0, null, null, null))
+                    .toList();
+        }
+        List<Long> ids = customers.stream().map(Customer::id).toList();
+        Map<Long, CustomerInsightsRepository.CustomerStats> stats = insights.statsFor(ids);
+        Map<Long, BigDecimal> cashback = insights.cashbackAvailableFor(ids, Instant.now());
+        Map<Long, List<String>> tags = insights.tagNamesFor(ids);
+        return customers.stream().map(c -> {
+            CustomerInsightsRepository.CustomerStats s = stats.get(c.id());
+            return new CustomerSummary(c, tags.getOrDefault(c.id(), List.of()),
+                    s == null ? BigDecimal.ZERO.setScale(2) : s.ltv(),
+                    s == null ? 0 : s.pedidos(),
+                    s == null ? BigDecimal.ZERO.setScale(2) : s.ticketMedio(),
+                    s == null ? null : s.ultimaCompraEm(),
+                    cashback.getOrDefault(c.id(), BigDecimal.ZERO.setScale(2)));
+        }).toList();
+    }
+
+    @Override
     @Transactional
     public CustomerNote addNote(Long customerId, String autor, String texto) {
         requireCustomer(customerId);
         return customerNoteRepository.save(CustomerNote.create(customerId, autor, texto));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<CustomerNote> listNotes(Long customerId, int page, int size) {
+        requireCustomer(customerId);
+        return customerNoteRepository.findByCustomerId(customerId, page, size);
+    }
+
+    @Override
+    @Transactional
+    public CustomerNote addNote(Long customerId, String autor, String texto, List<NewNoteAttachment> anexos) {
+        requireCustomer(customerId);
+        List<NewNoteAttachment> files = anexos == null ? List.of() : anexos;
+        // Tudo validado antes de gravar qualquer coisa: um arquivo recusado não deixa nota pela metade.
+        if (files.size() > MAX_ANEXOS) {
+            throw new com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException(
+                    "No máximo " + MAX_ANEXOS + " anexos por nota");
+        }
+        List<String> extensions = new java.util.ArrayList<>();
+        for (NewNoteAttachment file : files) {
+            extensions.add(validateAttachment(file));
+        }
+        if (!files.isEmpty() && noteAttachmentStorage == null) {
+            throw new IllegalStateException("Storage de anexos de nota não configurado");
+        }
+        CustomerNote note = customerNoteRepository.save(CustomerNote.create(customerId, autor, texto));
+        List<com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment> saved = new java.util.ArrayList<>();
+        for (int i = 0; i < files.size(); i++) {
+            NewNoteAttachment file = files.get(i);
+            String ext = extensions.get(i);
+            String key = noteAttachmentStorage.save(file.bytes(), ext);
+            saved.add(customerNoteRepository.saveAttachment(new com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment(
+                    null, note.id(), safeName(file.nomeArquivo()), ANEXO_TIPOS.get(ext), file.bytes().length, key,
+                    Instant.now())));
+        }
+        return note.withAnexos(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public NoteAttachmentContent loadNoteAttachment(Long customerId, Long noteId, Long attachmentId) {
+        requireCustomer(customerId);
+        boolean noteOfCustomer = customerNoteRepository.findById(noteId)
+                .filter(n -> customerId.equals(n.customerId())).isPresent();
+        var attachment = customerNoteRepository.findAttachment(attachmentId)
+                .filter(a -> noteOfCustomer && noteId.equals(a.noteId()))
+                .orElseThrow(() -> new com.cernecommerce.core.domain.exception.crm.CustomerNoteAttachmentNotFoundException(
+                        attachmentId));
+        java.io.InputStream stream = noteAttachmentStorage == null ? null
+                : noteAttachmentStorage.load(attachment.storageKey()).orElse(null);
+        if (stream == null) {
+            throw new com.cernecommerce.core.domain.exception.crm.CustomerNoteAttachmentNotFoundException(attachmentId);
+        }
+        return new NoteAttachmentContent(attachment, stream);
+    }
+
+    /** Devolve a extensão aceita, ou recusa o arquivo. */
+    private static String validateAttachment(NewNoteAttachment file) {
+        String name = file.nomeArquivo() == null ? "" : file.nomeArquivo();
+        int dot = name.lastIndexOf('.');
+        String ext = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
+        if (!ANEXO_TIPOS.containsKey(ext)) {
+            throw new com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException(
+                    "Tipo de arquivo não aceito: " + (ext.isEmpty() ? "sem extensão" : "." + ext)
+                            + ". Use PDF, imagem, TXT, CSV, DOC/DOCX ou XLS/XLSX.");
+        }
+        if (file.bytes() == null || file.bytes().length == 0) {
+            throw new com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException(
+                    "Arquivo vazio: " + name);
+        }
+        if (file.bytes().length > MAX_ANEXO_BYTES) {
+            throw new com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException(
+                    "Arquivo acima de 5 MB: " + name);
+        }
+        return ext;
+    }
+
+    /** Só o nome, sem caminho (navegador antigo manda "C:\\fakepath\\x.pdf"), até 255 caracteres. */
+    private static String safeName(String raw) {
+        String name = raw == null ? "anexo" : raw.replace('\\', '/');
+        name = name.substring(name.lastIndexOf('/') + 1).trim();
+        if (name.isEmpty()) {
+            name = "anexo";
+        }
+        return name.length() > 255 ? name.substring(name.length() - 255) : name;
     }
 
     @Override
@@ -356,13 +555,21 @@ public class CrmService implements CrmUseCase {
     @Transactional(readOnly = true)
     public CrmDashboardOverview getDashboardOverview() {
         long total = customerRepository.countAll();
+        if (insights == null) {
+            return new CrmDashboardOverview(total, customerRepository.countActive(), BigDecimal.ZERO, 0L, Map.of(),
+                    customerRepository.countByStage());
+        }
+        // Mês corrente no fuso da loja: "disparos do mês" é o mês que o dono vê no calendário.
+        Instant now = Instant.now();
+        java.time.ZonedDateTime inicioMes = LocalDate.now(ZONA_LOJA).withDayOfMonth(1).atStartOfDay(ZONA_LOJA);
         return new CrmDashboardOverview(
                 total,
                 customerRepository.countActive(),
-                LTV_MEDIO_PLACEHOLDER,
-                DISPAROS_WHATSAPP_PLACEHOLDER,
-                Map.of(SEGMENTO_PLACEHOLDER, total),
-                customerRepository.countByStage());
+                insights.averageLtv(),
+                insights.whatsappDispatchesBetween(inicioMes.toInstant(), inicioMes.plusMonths(1).toInstant()),
+                insights.countBySegmento(),
+                customerRepository.countByStage(),
+                insights.cashbackAvailableTotal(now));
     }
 
     @Override
@@ -396,6 +603,10 @@ public class CrmService implements CrmUseCase {
         requireCustomer(customerId);
         requireAllowedTag(tagId, onlyVip);
         customerTagRepository.associate(customerId, tagId);
+        // A tag VIP define o segmento VIP: recalcula este cliente agora, sem esperar o job.
+        if (insights != null) {
+            insights.recalculateSegments(customerId, Instant.now());
+        }
     }
 
     @Override
@@ -404,6 +615,9 @@ public class CrmService implements CrmUseCase {
         requireCustomer(customerId);
         requireAllowedTag(tagId, onlyVip);
         customerTagRepository.disassociate(customerId, tagId);
+        if (insights != null) {
+            insights.recalculateSegments(customerId, Instant.now());
+        }
     }
 
     @Override

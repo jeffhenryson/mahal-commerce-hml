@@ -22,7 +22,7 @@ class CustomerCsvConverterTest {
     void toCsv_includesHeaderRow() {
         String csv = converter.toCsv(List.of());
 
-        assertThat(csv).startsWith("id,nome,contato,email,cpf,origem,cadastradoEm,estagio\r\n");
+        assertThat(csv).startsWith("id,nome,contato,email,cpf,origem,cadastradoEm,estagio,cidade,segmento\r\n");
     }
 
     @Test
@@ -68,6 +68,6 @@ class CustomerCsvConverterTest {
         String csv = converter.toCsv(List.of(c));
 
         String dataLine = csv.split("\r\n")[1];
-        assertThat(dataLine).isEqualTo("1,Maria Silva,11999998888,maria@example.com,,,2026-07-21T12:00:00Z,NOVO_LEAD");
+        assertThat(dataLine).isEqualTo("1,Maria Silva,11999998888,maria@example.com,,,2026-07-21T12:00:00Z,NOVO_LEAD,,Novo");
     }
 }

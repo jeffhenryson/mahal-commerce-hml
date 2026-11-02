@@ -5,19 +5,13 @@ import com.cernecommerce.adapter.in.dtos.response.CustomerResponseDTO;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerMatch;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 public class CustomerDTOConverter {
 
-    // Placeholder até os domínios de pedidos e cashback existirem — ver crm/listagem-clientes-rfm.
-    private static final BigDecimal LTV_PLACEHOLDER = BigDecimal.ZERO;
-    private static final BigDecimal CASHBACK_PLACEHOLDER = BigDecimal.ZERO;
-    private static final String SEGMENTO_PLACEHOLDER = "NOVO";
-
     /**
-     * Converte sem buscar as tags reais — usado para clientes recém-criados (sem tags ainda)
-     * e para a listagem paginada (evita N+1: buscar tags por cliente a cada linha da página).
+     * Converte sem tags nem números de outros domínios — usado nas respostas de escrita (criar,
+     * atualizar), em que ltv/cashback saem nulos em vez de um zero que fingiria ser dado real.
      */
     public CustomerResponseDTO toResponse(Customer customer) {
         return toResponse(customer, List.of());
@@ -45,10 +39,22 @@ public class CustomerDTOConverter {
         dto.setCadastradoEm(customer.cadastradoEm());
         dto.setEstagio(customer.estagio());
         dto.setDataNascimento(customer.dataNascimento());
-        dto.setLtv(LTV_PLACEHOLDER);
-        dto.setCashback(CASHBACK_PLACEHOLDER);
-        dto.setSegmento(SEGMENTO_PLACEHOLDER);
+        dto.setSegmento(customer.segmento());
+        dto.setSegmentoManual(customer.segmentoManual());
+        dto.setCidade(customer.cidade());
+        dto.setAvatarUrl(customer.avatarUrl());
         dto.setTags(tagNomes);
+        return dto;
+    }
+
+    /** Pendência 8 — o cliente com LTV, pedidos, cashback e tags reais. */
+    public CustomerResponseDTO toResponse(com.cernecommerce.core.domain.model.crm.CustomerSummary summary) {
+        CustomerResponseDTO dto = fill(new CustomerResponseDTO(), summary.customer(), summary.tags());
+        dto.setLtv(summary.ltv());
+        dto.setCashback(summary.cashback());
+        dto.setPedidosCount(summary.ltv() == null ? null : summary.pedidosCount());
+        dto.setTicketMedio(summary.ticketMedio());
+        dto.setUltimaCompraEm(summary.ultimaCompraEm());
         return dto;
     }
 }

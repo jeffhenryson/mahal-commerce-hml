@@ -11,7 +11,8 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 
-public interface CustomerJpaRepository extends JpaRepository<CustomerEntity, Long> {
+public interface CustomerJpaRepository extends JpaRepository<CustomerEntity, Long>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<CustomerEntity> {
 
     Optional<CustomerEntity> findByEmail(String email);
 

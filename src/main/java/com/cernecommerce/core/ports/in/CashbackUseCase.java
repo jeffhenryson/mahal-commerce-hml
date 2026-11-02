@@ -24,6 +24,23 @@ import java.util.List;
 public interface CashbackUseCase {
 
     /**
+     * Pendência 8 — revoga um ganho ({@code EARNED}) do cliente: grava um {@code REVERSED} apontando
+     * para ele, como no reembolso. Nada é apagado.
+     *
+     * @throws com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotFoundException se o
+     *         lançamento não existir ou for de outro cliente
+     * @throws com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException se
+     *         não for um ganho ou já tiver sido revertido/expirado
+     */
+    com.cernecommerce.core.domain.model.cashback.CashbackEntry revokeEntry(Long customerId, Long entryId);
+
+    /**
+     * Pendência 8 — "desbloquear resgate antecipado": tudo o que está em carência passa a disponível
+     * agora. Devolve o saldo depois da liberação.
+     */
+    com.cernecommerce.core.domain.model.cashback.CashbackBalance releasePending(Long customerId);
+
+    /**
      * Cria uma nova taxa de cashback.
      *
      * @throws com.cernecommerce.core.domain.exception.cashback.CashbackRateAlreadyExistsException

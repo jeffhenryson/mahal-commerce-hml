@@ -72,4 +72,19 @@ public interface CashbackEntryJpaRepository extends JpaRepository<CashbackEntryE
     List<CashbackEntryEntity> findEarnedByOrderId(@Param("orderId") Long orderId);
 
     boolean existsByOrderIdAndType(Long orderId, String type);
+
+    /** Já existe um lançamento anulando este (estorno ou expiração)? */
+    boolean existsByReversesEntryId(Long reversesEntryId);
+
+    /**
+     * Pendência 8 — libera agora os ganhos ainda em carência do cliente (resgate antecipado). Só o
+     * {@code availableAt} muda; o vencimento continua o original.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("""
+            UPDATE CashbackEntryEntity e SET e.availableAt = :now
+            WHERE e.customerId = :customerId AND e.type = 'EARNED' AND e.availableAt > :now
+              AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id)
+            """)
+    int releasePendingEarned(@Param("customerId") Long customerId, @Param("now") Instant now);
 }

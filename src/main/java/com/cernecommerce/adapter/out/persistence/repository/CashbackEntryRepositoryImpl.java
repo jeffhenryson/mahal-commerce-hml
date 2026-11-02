@@ -86,6 +86,23 @@ public class CashbackEntryRepositoryImpl implements CashbackEntryRepository {
         return jpaRepository.existsByOrderIdAndType(orderId, CashbackEntryType.EARNED.name());
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.Optional<CashbackEntry> findById(Long id) {
+        return jpaRepository.findById(id).map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isReversed(Long entryId) {
+        return jpaRepository.existsByReversesEntryId(entryId);
+    }
+
+    @Override
+    public int releasePendingEarned(Long customerId, Instant now) {
+        return jpaRepository.releasePendingEarned(customerId, now);
+    }
+
     private CashbackEntry toDomain(CashbackEntryEntity e) {
         return CashbackEntry.of(e.getId(), e.getCustomerId(), e.getOrderId(), e.getOrderItemId(),
                 CashbackEntryType.valueOf(e.getType()), e.getAmount(), e.getAvailableAt(),

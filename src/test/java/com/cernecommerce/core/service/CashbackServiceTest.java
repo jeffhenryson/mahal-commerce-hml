@@ -455,4 +455,70 @@ class CashbackServiceTest {
                 "LOJA-01", List.of(item), new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.ZERO,
                 new BigDecimal("100.00"), null, null, paidAt, paidAt, paidAt, null, null, 0L);
     }
+
+    // ── Pendência 8: revogar e liberar ──────────────────────────────────────────────────────
+
+    private static com.cernecommerce.core.domain.model.cashback.CashbackEntry ganho(Long id, Long customerId) {
+        return com.cernecommerce.core.domain.model.cashback.CashbackEntry.of(id, customerId, 77L, null,
+                com.cernecommerce.core.domain.model.cashback.CashbackEntryType.EARNED, new java.math.BigDecimal("8.00"),
+                java.time.Instant.now(), null, null, java.time.Instant.now());
+    }
+
+    @Test
+    void revokeEntry_gravaEstornoApontandoParaOGanho() {
+        org.mockito.Mockito.when(customerRepository.findById(1L)).thenReturn(java.util.Optional.of(
+                com.cernecommerce.core.domain.model.crm.Customer.create("Ana", "11999990000", null, null, null)));
+        org.mockito.Mockito.when(cashbackEntryRepository.findById(5L)).thenReturn(java.util.Optional.of(ganho(5L, 1L)));
+        org.mockito.Mockito.when(cashbackEntryRepository.isReversed(5L)).thenReturn(false);
+        org.mockito.Mockito.when(cashbackEntryRepository.save(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        var estorno = cashbackService.revokeEntry(1L, 5L);
+
+        org.assertj.core.api.Assertions.assertThat(estorno.type())
+                .isEqualTo(com.cernecommerce.core.domain.model.cashback.CashbackEntryType.REVERSED);
+        org.assertj.core.api.Assertions.assertThat(estorno.reversesEntryId()).isEqualTo(5L);
+        org.assertj.core.api.Assertions.assertThat(estorno.amount()).isEqualByComparingTo("-8.00");
+    }
+
+    @Test
+    void revokeEntry_deOutroCliente_e404() {
+        org.mockito.Mockito.when(customerRepository.findById(1L)).thenReturn(java.util.Optional.of(
+                com.cernecommerce.core.domain.model.crm.Customer.create("Ana", "11999990000", null, null, null)));
+        org.mockito.Mockito.when(cashbackEntryRepository.findById(5L)).thenReturn(java.util.Optional.of(ganho(5L, 2L)));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> cashbackService.revokeEntry(1L, 5L))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotFoundException.class);
+    }
+
+    @Test
+    void revokeEntry_jaAnulado_e409() {
+        org.mockito.Mockito.when(customerRepository.findById(1L)).thenReturn(java.util.Optional.of(
+                com.cernecommerce.core.domain.model.crm.Customer.create("Ana", "11999990000", null, null, null)));
+        org.mockito.Mockito.when(cashbackEntryRepository.findById(5L)).thenReturn(java.util.Optional.of(ganho(5L, 1L)));
+        org.mockito.Mockito.when(cashbackEntryRepository.isReversed(5L)).thenReturn(true);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> cashbackService.revokeEntry(1L, 5L))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.cashback.CashbackEntryNotRevocableException.class);
+        org.mockito.Mockito.verify(cashbackEntryRepository, org.mockito.Mockito.never())
+                .save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void releasePending_liberaEDevolveSaldoNovo() {
+        org.mockito.Mockito.when(customerRepository.findById(1L)).thenReturn(java.util.Optional.of(
+                com.cernecommerce.core.domain.model.crm.Customer.create("Ana", "11999990000", null, null, null)));
+        org.mockito.Mockito.when(cashbackEntryRepository.sumAvailableByCustomerId(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new java.math.BigDecimal("20.00"));
+        org.mockito.Mockito.when(cashbackEntryRepository.sumPendingByCustomerId(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any())).thenReturn(java.math.BigDecimal.ZERO);
+        org.mockito.Mockito.when(cashbackEntryRepository.sumExpiringSoonByCustomerId(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(java.math.BigDecimal.ZERO);
+
+        var saldo = cashbackService.releasePending(1L);
+
+        org.mockito.Mockito.verify(cashbackEntryRepository).releasePendingEarned(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any());
+        org.assertj.core.api.Assertions.assertThat(saldo.available()).isEqualByComparingTo("20.00");
+    }
 }

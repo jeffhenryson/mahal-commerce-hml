@@ -15,6 +15,14 @@ public interface CashbackEntryRepository {
 
     CashbackEntry save(CashbackEntry entry);
 
+    java.util.Optional<CashbackEntry> findById(Long id);
+
+    /** Já existe estorno ou expiração apontando para este lançamento? */
+    boolean isReversed(Long entryId);
+
+    /** Libera agora os ganhos em carência do cliente. Devolve quantos lançamentos mudaram. */
+    int releasePendingEarned(Long customerId, Instant now);
+
     PageResult<CashbackEntry> findByCustomerId(Long customerId, int page, int size);
 
     /** {@code SUM(amount)} das entradas do cliente já liberadas em {@code now} — o saldo disponível. */

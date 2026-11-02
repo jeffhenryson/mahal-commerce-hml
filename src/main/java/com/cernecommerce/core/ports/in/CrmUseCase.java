@@ -49,8 +49,22 @@ public interface CrmUseCase {
      *
      * @throws com.cernecommerce.core.domain.exception.crm.CustomerUnderageException se tiver menos de 18 anos
      */
+    default Customer createCustomer(String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento) {
+        return createCustomer(nome, contato, email, cpf, origem, dataNascimento, CustomerExtras.NONE);
+    }
+
+    /** Como a anterior, com cidade e foto (V183). */
     Customer createCustomer(String nome, String contato, String email, String cpf, String origem,
-            LocalDate dataNascimento);
+            LocalDate dataNascimento, CustomerExtras extras);
+
+    /**
+     * V183 — cidade e foto do cliente. Na atualização, campo nulo mantém o gravado e vazio apaga: um
+     * client antigo, que não conhece os campos, não apaga nada ao salvar.
+     */
+    record CustomerExtras(String cidade, String avatarUrl) {
+        public static final CustomerExtras NONE = new CustomerExtras(null, null);
+    }
 
     /**
      * Atualiza os dados cadastrais de um cliente (CRM-C006) — é por aqui que um cliente cadastrado
@@ -72,8 +86,14 @@ public interface CrmUseCase {
      *
      * @throws com.cernecommerce.core.domain.exception.crm.CustomerUnderageException se tiver menos de 18 anos
      */
+    default Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem,
+            LocalDate dataNascimento) {
+        return updateCustomer(id, nome, contato, email, cpf, origem, dataNascimento, CustomerExtras.NONE);
+    }
+
+    /** Como a anterior, com cidade e foto (V183): nulo mantém, vazio apaga. */
     Customer updateCustomer(Long id, String nome, String contato, String email, String cpf, String origem,
-            LocalDate dataNascimento);
+            LocalDate dataNascimento, CustomerExtras extras);
 
     /**
      * Find-or-create do lead do balcão e da mesa (PDV-F020): procura por CPF e depois por
@@ -153,6 +173,28 @@ public interface CrmUseCase {
     List<Customer> listCustomersForExport(String search);
 
     /**
+     * Pendência 7/8 — lista com filtros repetíveis e ordem, já com LTV, pedidos, cashback e tags
+     * reais (montados em lote: algumas consultas por página, nenhuma por linha).
+     */
+    PageResult<com.cernecommerce.core.domain.model.crm.CustomerSummary> listCustomerSummaries(
+            com.cernecommerce.core.domain.model.crm.CustomerFilter filter, int page, int size);
+
+    /** Exportação com o mesmo filtro e a mesma ordem da lista. */
+    List<Customer> listCustomersForExport(com.cernecommerce.core.domain.model.crm.CustomerFilter filter);
+
+    /** O cliente com LTV, pedidos, ticket médio, última compra, cashback e tags. */
+    com.cernecommerce.core.domain.model.crm.CustomerSummary getCustomerSummary(Long id);
+
+    /**
+     * V183 — segmento escolhido pelo operador (Novo, Recorrente, VIP, Em Risco, Inativo), que o
+     * recálculo não sobrescreve. Nulo devolve o cliente ao cálculo automático e recalcula na hora.
+     */
+    Customer setSegmento(Long id, String segmento);
+
+    /** Recalcula o segmento da base inteira (o job diário chama isto). Devolve quantos foram regravados. */
+    int recalculateSegments();
+
+    /**
      * Adiciona uma nota a um cliente. Lança
      * {@link com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException}
      * se o cliente não existir.
@@ -165,6 +207,28 @@ public interface CrmUseCase {
      * se o cliente não existir.
      */
     List<CustomerNote> listNotes(Long customerId);
+
+    /** V183 — página de notas, mais recentes primeiro, com os anexos. */
+    PageResult<CustomerNote> listNotes(Long customerId, int page, int size);
+
+    /**
+     * V183 — nota com anexos (documento ou imagem). Até {@code 5} arquivos de até 5 MB cada; tipos
+     * aceitos: PDF, imagens (PNG, JPG, WEBP, GIF), TXT, CSV, DOC/DOCX e XLS/XLSX.
+     *
+     * @throws com.cernecommerce.core.domain.exception.crm.InvalidNoteAttachmentException se algum
+     *         arquivo for recusado — nada é gravado
+     */
+    CustomerNote addNote(Long customerId, String autor, String texto, List<NewNoteAttachment> anexos);
+
+    /** O arquivo de um anexo, conferindo que pertence à nota e ao cliente. */
+    NoteAttachmentContent loadNoteAttachment(Long customerId, Long noteId, Long attachmentId);
+
+    record NewNoteAttachment(String nomeArquivo, byte[] bytes) {
+    }
+
+    record NoteAttachmentContent(com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment attachment,
+            java.io.InputStream stream) {
+    }
 
     /**
      * Move um cliente para um novo estágio no Kanban de atendimento, registrando a transição.

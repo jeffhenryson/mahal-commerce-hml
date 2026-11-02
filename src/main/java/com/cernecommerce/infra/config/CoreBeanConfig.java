@@ -654,10 +654,23 @@ class CoreBeanConfig {
             StageTransitionRepository stageTransitionRepository, TagRepository tagRepository,
             CustomerTagRepository customerTagRepository, CampaignAutomationRepository campaignAutomationRepository,
             CampaignLogRepository campaignLogRepository, EmailPort emailPort,
-            AutomationDispatchUseCase automationDispatchUseCase, WhatsappIntegrationUseCase whatsappIntegrationUseCase) {
-        return new CrmService(customerRepository, customerNoteRepository, stageTransitionRepository, tagRepository,
-                customerTagRepository, campaignAutomationRepository, campaignLogRepository, emailPort,
+            AutomationDispatchUseCase automationDispatchUseCase, WhatsappIntegrationUseCase whatsappIntegrationUseCase,
+            // Pendência 8 — LTV, cashback, tags e métricas reais na lista e no dashboard.
+            com.cernecommerce.core.ports.out.crm.CustomerInsightsRepository customerInsightsRepository,
+            com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort customerNoteAttachmentStoragePort) {
+        CrmService service = new CrmService(customerRepository, customerNoteRepository, stageTransitionRepository,
+                tagRepository, customerTagRepository, campaignAutomationRepository, campaignLogRepository, emailPort,
                 automationDispatchUseCase, whatsappIntegrationUseCase);
+        service.setInsights(customerInsightsRepository);
+        service.setNoteAttachmentStorage(customerNoteAttachmentStoragePort);
+        return service;
+    }
+
+    /** V183 — anexos de nota do CRM: disco local privado, servidos só pela API (podem ser documentos do cliente). */
+    @Bean
+    com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort customerNoteAttachmentStoragePort(
+            @Value("${crm.note-attachments.storage.dir:./data/crm-note-attachments}") String storageDir) {
+        return new com.cernecommerce.adapter.out.storage.LocalCustomerNoteAttachmentStorageAdapter(Path.of(storageDir));
     }
 
     @Bean
