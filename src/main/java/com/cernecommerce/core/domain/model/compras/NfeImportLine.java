@@ -36,7 +36,11 @@ public record NfeImportLine(
         String lotCode,
         LocalDate expiryDate,
         MatchStatus matchStatus,
-        String matchedSku) {
+        String matchedSku,
+        String unit,
+        String taxUnit,
+        BigDecimal taxQuantity,
+        Integer unitsPerPackage) {
 
     public enum MatchStatus { MATCHED, UNMATCHED }
 
@@ -53,6 +57,9 @@ public record NfeImportLine(
         if (matchStatus == null) {
             throw new IllegalArgumentException("matchStatus é obrigatório");
         }
+        if (unitsPerPackage != null && unitsPerPackage < 1) {
+            throw new IllegalArgumentException("unitsPerPackage deve ser pelo menos 1");
+        }
         if ((matchStatus == MatchStatus.MATCHED) != (matchedSku != null)) {
             throw new IllegalArgumentException(
                     "matchStatus e matchedSku têm que coexistir: matchStatus=" + matchStatus
@@ -68,9 +75,17 @@ public record NfeImportLine(
     public static NfeImportLine fromXml(int itemNumber, String supplierProductCode, String ean,
             String description, BigDecimal quantity, BigDecimal unitPrice, String lotCode,
             LocalDate expiryDate, String matchedSku) {
+        return fromXml(itemNumber, supplierProductCode, ean, description, quantity, unitPrice, lotCode, expiryDate,
+                matchedSku, null, null, null);
+    }
+
+    /** Com a unidade comercial ({@code uCom}) e a tributável ({@code uTrib}/{@code qTrib}) da nota. */
+    public static NfeImportLine fromXml(int itemNumber, String supplierProductCode, String ean,
+            String description, BigDecimal quantity, BigDecimal unitPrice, String lotCode,
+            LocalDate expiryDate, String matchedSku, String unit, String taxUnit, BigDecimal taxQuantity) {
         return new NfeImportLine(null, itemNumber, supplierProductCode, ean, description, quantity,
                 unitPrice, lotCode, expiryDate, matchedSku != null ? MatchStatus.MATCHED : MatchStatus.UNMATCHED,
-                matchedSku);
+                matchedSku, unit, taxUnit, taxQuantity, null);
     }
 
     /** Reconstitui uma linha a partir de persistência. */
@@ -78,7 +93,42 @@ public record NfeImportLine(
             String description, BigDecimal quantity, BigDecimal unitPrice, String lotCode,
             LocalDate expiryDate, MatchStatus matchStatus, String matchedSku) {
         return new NfeImportLine(id, itemNumber, supplierProductCode, ean, description, quantity, unitPrice,
-                lotCode, expiryDate, matchStatus, matchedSku);
+                lotCode, expiryDate, matchStatus, matchedSku, null, null, null, null);
+    }
+
+    /** Reconstitui com unidade e fator (V182). */
+    public static NfeImportLine of(Long id, int itemNumber, String supplierProductCode, String ean,
+            String description, BigDecimal quantity, BigDecimal unitPrice, String lotCode,
+            LocalDate expiryDate, MatchStatus matchStatus, String matchedSku, String unit, String taxUnit,
+            BigDecimal taxQuantity, Integer unitsPerPackage) {
+        return new NfeImportLine(id, itemNumber, supplierProductCode, ean, description, quantity, unitPrice,
+                lotCode, expiryDate, matchStatus, matchedSku, unit, taxUnit, taxQuantity, unitsPerPackage);
+    }
+
+    /** Fator de embalagem: unidades de estoque por unidade comercial da nota. Nulo (não informado) vale 1. */
+    public NfeImportLine withUnitsPerPackage(Integer factor) {
+        return new NfeImportLine(id, itemNumber, supplierProductCode, ean, description, quantity, unitPrice,
+                lotCode, expiryDate, matchStatus, matchedSku, unit, taxUnit, taxQuantity, factor);
+    }
+
+    /** Fator efetivo da linha. */
+    public int effectiveUnitsPerPackage() {
+        return unitsPerPackage == null ? 1 : unitsPerPackage;
+    }
+
+    /** Quantidade que entra no estoque: a da nota vezes o fator. */
+    public BigDecimal stockQuantity() {
+        return quantity.multiply(BigDecimal.valueOf(effectiveUnitsPerPackage()));
+    }
+
+    /**
+     * Custo por unidade de estoque: {@code vUnCom} dividido pelo fator, a 2 casas (a mesma escala de
+     * {@code stock_movement.unit_cost}).
+     */
+    public BigDecimal stockUnitCost() {
+        int factor = effectiveUnitsPerPackage();
+        return factor == 1 ? unitPrice
+                : unitPrice.divide(BigDecimal.valueOf(factor), 2, java.math.RoundingMode.HALF_UP);
     }
 
     /** Aplica um override manual do operador — a linha passa a {@code MATCHED}. */
@@ -87,6 +137,6 @@ public record NfeImportLine(
             throw new IllegalArgumentException("sku do override não pode ser vazio");
         }
         return new NfeImportLine(id, itemNumber, supplierProductCode, ean, description, quantity, unitPrice,
-                lotCode, expiryDate, MatchStatus.MATCHED, sku);
+                lotCode, expiryDate, MatchStatus.MATCHED, sku, unit, taxUnit, taxQuantity, unitsPerPackage);
     }
 }

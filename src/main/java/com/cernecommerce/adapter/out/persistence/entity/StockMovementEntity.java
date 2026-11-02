@@ -55,4 +55,18 @@ public class StockMovementEntity {
     /** EST-F039 — depósito do outro lado de uma transferência. NULL em qualquer outro movimento. */
     @Column(name = "counterpart_warehouse_id")
     private Long counterpartWarehouseId;
+
+    /** V181 — {@code StockMovementOriginType}. NULL no histórico sem origem conhecida. */
+    @Column(name = "origin_type", length = 20)
+    private String originType;
+
+    /** V181 — id do documento de origem (pedido, comanda, recebimento, reserva). Sem FK. */
+    @Column(name = "origin_id")
+    private Long originId;
+
+    @Column(name = "balance_before", precision = 14, scale = 3)
+    private BigDecimal balanceBefore;
+
+    @Column(name = "balance_after", precision = 14, scale = 3)
+    private BigDecimal balanceAfter;
 }

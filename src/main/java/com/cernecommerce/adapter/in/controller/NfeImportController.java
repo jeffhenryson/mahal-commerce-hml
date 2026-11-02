@@ -96,7 +96,9 @@ public class NfeImportController {
             @ApiResponse(responseCode = "201", description = "Confirmado", content = @Content(schema = @Schema(implementation = GoodsReceiptResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Linha sem SKU resolvido, faltando override", content = @Content),
             @ApiResponse(responseCode = "404", description = "Import ou depósito não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Import já confirmado ou rejeitado", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Import já confirmado ou rejeitado (NFE_IMPORT_ALREADY_PROCESSED), "
+                    + "ou outra importação com a mesma chave de acesso já recebida (NFE_ALREADY_RECEIVED, com "
+                    + "goodsReceiptId e receivedAt)", content = @Content(schema = @Schema(implementation = com.cernecommerce.infra.handler.NfeAlreadyReceivedError.class)))
     })
     @PostMapping("/nfe-confirm")
     @PreAuthorize("hasAuthority('COMPRAS_RECEIPT_MANAGE')")

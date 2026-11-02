@@ -63,7 +63,7 @@ public class JdkDomNfeXmlImportAdapter implements NfeXmlImportPort {
             for (int i = 0; i < detNodes.getLength(); i++) {
                 lines.add(parseLine((Element) detNodes.item(i)));
             }
-            return new NfeImportPreview(emitterCnpj, lines);
+            return new NfeImportPreview(emitterCnpj, lines, accessKey(document));
         } catch (MalformedNfeXmlException e) {
             throw e;
         } catch (Exception e) {
@@ -104,8 +104,43 @@ public class JdkDomNfeXmlImportAdapter implements NfeXmlImportPort {
 
         String matchedSku = matchByEan(ean);
 
+        // V182 — unidade comercial (a da quantidade qCom) e tributável. Informativas: o fator que leva
+        // "CX" a "UN" vem do operador (ou do que ele já ensinou para este fornecedor + cProd).
+        String unit = blankToNull(optionalText(prod, "uCom"));
+        String taxUnit = blankToNull(optionalText(prod, "uTrib"));
+        String rawTaxQuantity = blankToNull(optionalText(prod, "qTrib"));
+        BigDecimal taxQuantity = rawTaxQuantity == null ? null : new BigDecimal(rawTaxQuantity);
+
         return NfeImportLine.fromXml(itemNumber, supplierProductCode, ean, description, quantity, unitPrice,
-                lotCode, expiryDate, matchedSku);
+                lotCode, expiryDate, matchedSku, unit, taxUnit, taxQuantity);
+    }
+
+    /**
+     * V182 — chave de acesso, 44 dígitos. Vem do protocolo de autorização ({@code protNFe/infProt/chNFe})
+     * quando o XML é o "procNFe" autorizado, e senão do atributo {@code Id="NFe…"} de {@code infNFe}.
+     * Nula quando nenhum dos dois tem 44 dígitos: a nota ainda é importável, só sem a trava de repetida.
+     */
+    static String accessKey(Document document) {
+        Element infProt = firstElement(document.getElementsByTagName("infProt"));
+        String fromProtocol = infProt == null ? null : digitsOnly(optionalText(infProt, "chNFe"));
+        if (fromProtocol != null && fromProtocol.length() == 44) {
+            return fromProtocol;
+        }
+        Element infNFe = firstElement(document.getElementsByTagName("infNFe"));
+        String fromId = infNFe == null ? null : digitsOnly(infNFe.getAttribute("Id"));
+        return fromId != null && fromId.length() == 44 ? fromId : null;
+    }
+
+    private static String digitsOnly(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String digits = raw.replaceAll("\\D", "");
+        return digits.isEmpty() ? null : digits;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     /** {@code null} quando não há EAN, ou quando nenhum produto do catálogo tem esse código de barras. */

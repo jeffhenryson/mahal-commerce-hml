@@ -242,7 +242,25 @@ public interface PdvUseCase {
      * divergência é {@code 409 PROMOTION_CHANGED}. Com verdadeiro (venda offline, já cobrada), vale o
      * valor do cliente e fica um aviso no log.
      */
+    default SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
+        return registerSaleIdempotent(sessionId, customerId, items, List.of(), payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck);
+    }
+
+    /**
+     * Venda de balcão com kits montáveis (PDV-F019 no balcão). Cada {@link KitSelection} é cotado pelo
+     * servidor no canal PDV, exatamente como {@code ComandaService.addKit}: o preço e o desconto de
+     * cada linha vêm da cotação, nunca do cliente. O desconto do kit é preço configurado pelo admin,
+     * não abatimento concedido — fica fora de {@code PDV_SALE_DISCOUNT} e do teto de desconto. As
+     * unidades do kit não entram na promoção por quantidade. Kit que não fecha mais (passo removido,
+     * item indisponível) é {@code 422 KIT_*} ({@code InvalidKitSelectionException}).
+     *
+     * @param kits pode ser vazio; nulo vale vazio. {@code items} pode ser vazio quando há kit.
+     */
     SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
             String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck);
 

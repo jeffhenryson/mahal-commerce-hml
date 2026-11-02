@@ -187,4 +187,61 @@ class JdkDomNfeXmlImportAdapterTest {
         assertThatThrownBy(() -> adapter.parse(bytes(xxeParam)))
                 .isInstanceOf(MalformedNfeXmlException.class);
     }
+
+    // ── V182: chave de acesso e unidades ────────────────────────────────────────────────────
+
+    private static final String KEY = "35261112345678000199550010000012341000012345";
+
+    private static String nfe(String infNFeId, String protocol) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <nfeProc>
+                  <NFe>
+                    <infNFe %s>
+                      <emit><CNPJ>12345678000199</CNPJ></emit>
+                      <det nItem="1">
+                        <prod>
+                          <cProd>FORN-SEDA</cProd>
+                          <cEAN>SEM GTIN</cEAN>
+                          <xProd>Seda caixa 12</xProd>
+                          <qCom>2.0000</qCom>
+                          <uCom>CX</uCom>
+                          <vUnCom>36.00</vUnCom>
+                          <uTrib>UN</uTrib>
+                          <qTrib>24.0000</qTrib>
+                        </prod>
+                      </det>
+                    </infNFe>
+                  </NFe>
+                  %s
+                </nfeProc>
+                """.formatted(infNFeId, protocol);
+    }
+
+    @Test
+    void parse_leChaveDoProtocoloEUnidades() {
+        NfeImportPreview preview = adapter.parse(bytes(nfe("Id=\"NFe" + "0".repeat(44) + "\"",
+                "<protNFe><infProt><chNFe>" + KEY + "</chNFe></infProt></protNFe>")));
+
+        assertThat(preview.accessKey()).isEqualTo(KEY);
+        NfeImportLine line = preview.lines().get(0);
+        assertThat(line.unit()).isEqualTo("CX");
+        assertThat(line.taxUnit()).isEqualTo("UN");
+        assertThat(line.taxQuantity()).isEqualByComparingTo("24");
+        assertThat(line.unitsPerPackage()).isNull();
+    }
+
+    @Test
+    void parse_semProtocolo_usaIdDoInfNFe() {
+        NfeImportPreview preview = adapter.parse(bytes(nfe("Id=\"NFe" + KEY + "\"", "")));
+
+        assertThat(preview.accessKey()).isEqualTo(KEY);
+    }
+
+    @Test
+    void parse_semChaveValida_devolveNula() {
+        NfeImportPreview preview = adapter.parse(bytes(nfe("", "")));
+
+        assertThat(preview.accessKey()).isNull();
+    }
 }

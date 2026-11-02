@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/ecommerce")
-@Tag(name = "E-commerce", description = "Carrinho, cupons e promoções — esqueleto, implementação pendente")
+@Tag(name = "E-commerce", description = "Carrinhos do marketplace (leitura administrativa)")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 public class EcommerceController {
@@ -36,7 +36,8 @@ public class EcommerceController {
         this.ecommerceUseCase = ecommerceUseCase;
     }
 
-    @Operation(summary = "Lista carrinhos (stub — retorna página vazia)")
+    @Operation(summary = "Lista carrinhos com itens do marketplace, mais recente primeiro",
+            description = "Somente leitura. Carrinho vazio não aparece. Sem preço: o preço é resolvido no checkout.")
     @GetMapping("/carts")
     @PreAuthorize("hasAuthority('ECOMMERCE_READ')")
     public ResponseEntity<PageResult<Cart>> listCarts(

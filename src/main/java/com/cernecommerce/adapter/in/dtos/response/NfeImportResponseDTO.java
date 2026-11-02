@@ -22,4 +22,9 @@ public class NfeImportResponseDTO {
     private String uploadedBy;
     private Instant uploadedAt;
     private Instant confirmedAt;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "V182 — chave de acesso da NF-e (44 dígitos), lida "
+            + "de protNFe/infProt/chNFe ou de infNFe@Id. Nula se a nota não trouxer uma chave válida (aí não há "
+            + "trava de nota repetida).", nullable = true)
+    private String accessKey;
 }

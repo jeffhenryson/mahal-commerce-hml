@@ -31,6 +31,8 @@ import com.cernecommerce.core.domain.exception.pedido.RefundQuantityExceededExce
 import com.cernecommerce.core.domain.exception.pedido.RefundNotOwnSessionException;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext;
 import com.cernecommerce.core.domain.model.pagamento.CashSessionAdjustment;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.OrderPaymentCorrection;
@@ -189,7 +191,9 @@ public class OrderService implements OrderUseCase {
         // Pré-pagamento nunca teve baixa real de estoque — só reserva (ou nem isso, no balcão, que
         // nunca reserva). Devolver com adjustStock(ENTRADA) aqui inflaria o físico com mercadoria
         // que nunca saiu; releaseReservationsByOwner já é idempotente/zero-safe por design.
-        estoqueUseCase.releaseReservationsByOwner(Order.reservationOwnerReference(orderId), username);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(orderId))) {
+            estoqueUseCase.releaseReservationsByOwner(Order.reservationOwnerReference(orderId), username);
+        }
         return orderRepository.save(cancelled);
     }
 
@@ -357,14 +361,16 @@ public class OrderService implements OrderUseCase {
 
         // Estoque: a devolvida volta (RESTOCK) ou é perda sem mexer no saldo (DISCARD); a nova sai.
         String movementReason = "Troca no pedido " + order.orderNumber();
-        for (RefundPlanLine line : lines) {
-            if (line.destination().returnsToStock()) {
-                estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
-                        line.quantity(), movementReason, username, null, null);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(order.id()))) {
+            for (RefundPlanLine line : lines) {
+                if (line.destination().returnsToStock()) {
+                    estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
+                            line.quantity(), movementReason, username, null, null);
+                }
             }
+            estoqueUseCase.adjustStock(command.newSku(), order.warehouseCode(), MovementType.SAIDA,
+                    command.newQuantity(), movementReason, username);
         }
-        estoqueUseCase.adjustStock(command.newSku(), order.warehouseCode(), MovementType.SAIDA,
-                command.newQuantity(), movementReason, username);
 
         Order saved = orderRepository.save(order.withAddedItem(newItem));
         Set<Long> originalIds = order.items().stream().map(OrderItem::id).collect(Collectors.toSet());
@@ -543,9 +549,11 @@ public class OrderService implements OrderUseCase {
             RefundItemLot lot = lotBySku.get(line.item().sku());
             // Sempre a sobrecarga de 8 argumentos (EST-F008): sem lote, lotCode/expiryDate chegam nulos,
             // o que só vale se o SKU não for lote-rastreado (senão MissingLotInfoException).
-            estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
-                    line.quantity(), movementReason, username,
-                    lot == null ? null : lot.lotCode(), lot == null ? null : lot.expiryDate());
+            try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(order.id()))) {
+                estoqueUseCase.adjustStock(line.item().sku(), order.warehouseCode(), MovementType.ENTRADA,
+                        line.quantity(), movementReason, username,
+                        lot == null ? null : lot.lotCode(), lot == null ? null : lot.expiryDate());
+            }
         }
     }
 

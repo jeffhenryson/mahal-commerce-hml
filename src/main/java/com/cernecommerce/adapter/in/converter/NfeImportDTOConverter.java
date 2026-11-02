@@ -12,7 +12,9 @@ import java.util.List;
 public class NfeImportDTOConverter {
 
     public List<LineOverride> toOverrides(List<NfeLineOverrideRequest> requests) {
-        return requests.stream().map(r -> new LineOverride(r.getItemNumber(), r.getSku())).toList();
+        return requests.stream()
+                .map(r -> new LineOverride(r.getItemNumber(), r.getSku(), r.getUnitsPerPackage()))
+                .toList();
     }
 
     public NfeImportResponseDTO toResponse(NfeImport nfeImport) {
@@ -27,6 +29,7 @@ public class NfeImportDTOConverter {
         dto.setUploadedBy(nfeImport.uploadedBy());
         dto.setUploadedAt(nfeImport.uploadedAt());
         dto.setConfirmedAt(nfeImport.confirmedAt());
+        dto.setAccessKey(nfeImport.accessKey());
         return dto;
     }
 
@@ -43,6 +46,10 @@ public class NfeImportDTOConverter {
         dto.setExpiryDate(line.expiryDate());
         dto.setMatchStatus(line.matchStatus().name());
         dto.setMatchedSku(line.matchedSku());
+        dto.setUnit(line.unit());
+        dto.setTaxUnit(line.taxUnit());
+        dto.setTaxQuantity(line.taxQuantity());
+        dto.setUnitsPerPackage(line.unitsPerPackage());
         return dto;
     }
 }

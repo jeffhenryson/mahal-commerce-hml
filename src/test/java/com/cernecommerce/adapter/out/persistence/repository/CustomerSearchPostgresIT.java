@@ -81,6 +81,17 @@ class CustomerSearchPostgresIT {
         assertThat(all).extracting(Customer::id).contains(bia.id());
     }
 
+    /** Busca sem acento acha nome acentuado e vice-versa (unaccent nos dois lados). */
+    @Test
+    void searchByName_ignoresAccents() {
+        Customer joao = novo("João Acentuação Teste", null);
+
+        assertThat(customerRepository.findAll("joao acentuacao", 0, 20).content())
+                .extracting(Customer::id).contains(joao.id());
+        assertThat(customerRepository.findAll("JOÃO ACENTUAÇÃO", 0, 20).content())
+                .extracting(Customer::id).contains(joao.id());
+    }
+
     /** CRM-F012 — V153: a coluna data_nascimento grava e volta pelo mapeamento. */
     @Test
     void dataNascimento_gravaELe() {

@@ -42,6 +42,7 @@ public class NfeImportRepositoryImpl implements NfeImportRepository {
         entity.setUploadedBy(nfeImport.uploadedBy());
         entity.setUploadedAt(nfeImport.uploadedAt());
         entity.setConfirmedAt(nfeImport.confirmedAt());
+        entity.setAccessKey(nfeImport.accessKey());
 
         // Linhas reescritas por inteiro — mesmo padrão de OrderRepositoryImpl/ComandaRepositoryImpl.
         entity.getLines().clear();
@@ -58,6 +59,10 @@ public class NfeImportRepositoryImpl implements NfeImportRepository {
             lineEntity.setExpiryDate(line.expiryDate());
             lineEntity.setMatchStatus(line.matchStatus().name());
             lineEntity.setMatchedSku(line.matchedSku());
+            lineEntity.setUnit(line.unit());
+            lineEntity.setTaxUnit(line.taxUnit());
+            lineEntity.setTaxQuantity(line.taxQuantity());
+            lineEntity.setUnitsPerPackage(line.unitsPerPackage());
             entity.getLines().add(lineEntity);
         }
         return toDomain(nfeImportJpaRepository.save(entity));
@@ -67,12 +72,23 @@ public class NfeImportRepositoryImpl implements NfeImportRepository {
         return NfeImport.of(e.getId(), e.getSupplierId(), e.getEmitterCnpj(), e.getWarehouseCode(),
                 e.getFileReference(), NfeImportStatus.valueOf(e.getStatus()), e.getGoodsReceiptId(),
                 e.getLines().stream().map(this::toDomain).toList(), e.getUploadedBy(), e.getUploadedAt(),
-                e.getConfirmedAt());
+                e.getConfirmedAt(), e.getAccessKey());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<NfeImport> findConfirmedByAccessKey(String accessKey) {
+        if (accessKey == null) {
+            return Optional.empty();
+        }
+        return nfeImportJpaRepository.findFirstByAccessKeyAndStatus(accessKey, NfeImportStatus.CONFIRMED.name())
+                .map(this::toDomain);
     }
 
     private NfeImportLine toDomain(NfeImportLineEntity e) {
         return NfeImportLine.of(e.getId(), e.getItemNumber(), e.getSupplierProductCode(), e.getEan(),
                 e.getDescription(), e.getQuantity(), e.getUnitPrice(), e.getLotCode(), e.getExpiryDate(),
-                NfeImportLine.MatchStatus.valueOf(e.getMatchStatus()), e.getMatchedSku());
+                NfeImportLine.MatchStatus.valueOf(e.getMatchStatus()), e.getMatchedSku(), e.getUnit(),
+                e.getTaxUnit(), e.getTaxQuantity(), e.getUnitsPerPackage());
     }
 }

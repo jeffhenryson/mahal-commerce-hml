@@ -22,9 +22,26 @@ public class SaleRequest {
             + "incentivo que faz o operador perguntar \"CPF na nota?\".", example = "42")
     private Long customerId;
 
-    @NotEmpty
     @Valid
+    @Schema(description = "Itens avulsos. Pode ser vazio quando a venda tem `kits`; sem itens e sem kits, "
+            + "400 SALE_EMPTY.")
     private List<SaleItemRequest> items;
+
+    @Valid
+    @jakarta.validation.constraints.Size(max = 20)
+    @Schema(description = "Kits montáveis vendidos no balcão (mesmo corpo de POST /pdv/kits/quote). O servidor "
+            + "cota cada kit no canal PDV e grava uma linha por escolha, com o desconto do kit já rateado. "
+            + "Esse desconto NÃO exige PDV_SALE_DISCOUNT e não conta para o teto de desconto (como na "
+            + "comanda), e as unidades do kit ficam fora da promoção por quantidade. Kit que não fecha "
+            + "mais: 422 com code KIT_* (KIT_NOT_AVAILABLE, KIT_ITEM_NOT_SELLABLE, KIT_REQUIRED_STEP_MISSING…). "
+            + "Não mande as linhas do kit também em `items`.")
+    private List<KitSelectionRequest> kits;
+
+    /** Venda vazia: nem item avulso nem kit. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isEmptySale() {
+        return (items == null || items.isEmpty()) && (kits == null || kits.isEmpty());
+    }
 
     @NotEmpty
     @Valid

@@ -6,7 +6,11 @@ import java.util.List;
  * Resultado puro do parsing de um XML de NF-e (EST-F005) — antes de qualquer persistência ou
  * resolução de fornecedor. Produzido por {@code NfeXmlImportPort.parse}.
  */
-public record NfeImportPreview(String emitterCnpj, List<NfeImportLine> lines) {
+public record NfeImportPreview(String emitterCnpj, List<NfeImportLine> lines, String accessKey) {
+
+    public NfeImportPreview(String emitterCnpj, List<NfeImportLine> lines) {
+        this(emitterCnpj, lines, null);
+    }
 
     public NfeImportPreview {
         if (emitterCnpj == null || emitterCnpj.isBlank()) {

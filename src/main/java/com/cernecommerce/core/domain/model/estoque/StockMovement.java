@@ -23,10 +23,16 @@ import java.time.Instant;
  *        precisa saber de qual fornecedor veio a entrada.
  * @param counterpartWarehouseId EST-F039 — depósito do outro lado de uma transferência, nas duas
  *        pontas. {@code null} em qualquer outro movimento.
+ * @param origin de onde veio a movimentação (V181). Nulo no histórico anterior, quando não deu para
+ *        deduzir pelo backfill.
+ * @param balanceBefore saldo físico do SKU no depósito antes desta movimentação (V181). Nulo no
+ *        histórico anterior.
+ * @param balanceAfter saldo físico depois dela. Em {@code AJUSTE} é a quantidade contada.
  */
 public record StockMovement(Long id, String sku, Long warehouseId, MovementType type, BigDecimal quantity,
         String reason, String username, Instant createdAt, String lotCode, BigDecimal unitCost,
-        Long goodsReceiptId, Long counterpartWarehouseId) {
+        Long goodsReceiptId, Long counterpartWarehouseId, StockMovementOrigin origin, BigDecimal balanceBefore,
+        BigDecimal balanceAfter) {
 
     public StockMovement {
         if (sku == null || sku.isBlank()) {
@@ -87,7 +93,13 @@ public record StockMovement(Long id, String sku, Long warehouseId, MovementType 
             String reason, String username, String lotCode, BigDecimal unitCost, Long goodsReceiptId,
             Long counterpartWarehouseId) {
         return new StockMovement(null, sku, warehouseId, type, quantity, reason, username, Instant.now(), lotCode,
-                unitCost, goodsReceiptId, counterpartWarehouseId);
+                unitCost, goodsReceiptId, counterpartWarehouseId, null, null, null);
+    }
+
+    /** Cópia com a origem e o saldo antes/depois, carimbados por {@code EstoqueService} ao gravar. */
+    public StockMovement withTrace(StockMovementOrigin origin, BigDecimal balanceBefore, BigDecimal balanceAfter) {
+        return new StockMovement(id, sku, warehouseId, type, quantity, reason, username, createdAt, lotCode, unitCost,
+                goodsReceiptId, counterpartWarehouseId, origin, balanceBefore, balanceAfter);
     }
 
     /** Reconstitui uma movimentação sem lote nem custo a partir de persistência. */
@@ -117,7 +129,7 @@ public record StockMovement(Long id, String sku, Long warehouseId, MovementType 
             String reason, String username, Instant createdAt, String lotCode, BigDecimal unitCost,
             Long goodsReceiptId, Long counterpartWarehouseId) {
         return new StockMovement(id, sku, warehouseId, type, quantity, reason, username, createdAt, lotCode,
-                unitCost, goodsReceiptId, counterpartWarehouseId);
+                unitCost, goodsReceiptId, counterpartWarehouseId, null, null, null);
     }
 
     /** Reconstitui sem o vínculo de transferência. */

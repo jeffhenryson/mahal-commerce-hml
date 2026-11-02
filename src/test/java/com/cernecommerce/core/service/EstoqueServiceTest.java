@@ -761,6 +761,58 @@ class EstoqueServiceTest {
         assertThat(result.quantity()).isEqualByComparingTo("7.000");
     }
 
+    /** V181 — a movimentação grava o saldo antes/depois e a origem do escopo aberto por quem chamou. */
+    @Test
+    void adjustStock_gravaSaldoAntesDepoisEOrigemDoEscopo() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        StockBalance existing = StockBalance.of(10L, "NARG-001", 1L, new BigDecimal("10.000"), 2L);
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(stockMovementRepository.save(any())).thenAnswer(inv -> {
+            StockMovement m = inv.getArgument(0);
+            return StockMovement.of(77L, m.sku(), m.warehouseId(), m.type(), m.quantity(), m.reason(), m.username(),
+                    m.createdAt(), m.lotCode(), m.unitCost(), m.goodsReceiptId(), m.counterpartWarehouseId())
+                    .withTrace(m.origin(), m.balanceBefore(), m.balanceAfter());
+        });
+
+        java.util.List<Long> ids;
+        try (var origem = com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext.open(
+                com.cernecommerce.core.domain.model.estoque.StockMovementOrigin.comanda(40L))) {
+            estoqueService.adjustStock("NARG-001", "LOJA-01", MovementType.SAIDA, new BigDecimal("3.000"),
+                    "Comanda #40", "caixa1");
+            ids = origem.movementIds();
+        }
+
+        ArgumentCaptor<StockMovement> captor = ArgumentCaptor.forClass(StockMovement.class);
+        verify(stockMovementRepository).save(captor.capture());
+        StockMovement gravada = captor.getValue();
+        assertThat(gravada.balanceBefore()).isEqualByComparingTo("10.000");
+        assertThat(gravada.balanceAfter()).isEqualByComparingTo("7.000");
+        assertThat(gravada.origin()).isEqualTo(
+                com.cernecommerce.core.domain.model.estoque.StockMovementOrigin.comanda(40L));
+        assertThat(ids).containsExactly(77L);
+        assertThat(com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext.current()).isNull();
+    }
+
+    /** V181 — sem escopo, o vínculo de recebimento vira a origem GOODS_RECEIPT. */
+    @Test
+    void adjustStock_semEscopo_recebimentoViraOrigemGoodsReceipt() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.empty());
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        estoqueService.adjustStock("NARG-001", "LOJA-01", MovementType.ENTRADA, new BigDecimal("5.000"),
+                "Recebimento", "gerente", null, null, null, 9L);
+
+        verify(stockMovementRepository).save(argThat(m -> m.origin() != null
+                && m.origin().type() == com.cernecommerce.core.domain.model.estoque.StockMovementOriginType.GOODS_RECEIPT
+                && m.origin().id().equals(9L)
+                && m.balanceBefore().signum() == 0
+                && m.balanceAfter().compareTo(new BigDecimal("5.000")) == 0));
+    }
+
     @Test
     void adjustStock_saida_insufficientBalance_throwsAndDoesNotPersistAnything() {
         Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);

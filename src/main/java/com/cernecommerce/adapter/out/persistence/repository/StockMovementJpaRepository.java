@@ -96,4 +96,11 @@ public interface StockMovementJpaRepository
             """)
     List<Object[]> transferredInto(@Param("warehouseId") Long warehouseId, @Param("from") Instant from,
             @Param("to") Instant to);
+
+    /** V181 — vincula a origem a movimentações já gravadas (venda de balcão: o pedido nasce depois da baixa). */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE StockMovementEntity m SET m.originType = :type, m.originId = :id WHERE m.id IN :ids")
+    int assignOrigin(@org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids,
+            @org.springframework.data.repository.query.Param("type") String type,
+            @org.springframework.data.repository.query.Param("id") Long id);
 }

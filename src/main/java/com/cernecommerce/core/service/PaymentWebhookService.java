@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
 import com.cernecommerce.core.domain.model.pedido.Order;
@@ -105,7 +107,9 @@ public class PaymentWebhookService implements PaymentWebhookUseCase {
             return WebhookResult.noop();
         }
 
-        estoqueUseCase.consumeReservationsByOwner(Order.reservationOwnerReference(orderId), WEBHOOK_ACTOR);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(orderId))) {
+            estoqueUseCase.consumeReservationsByOwner(Order.reservationOwnerReference(orderId), WEBHOOK_ACTOR);
+        }
         Order paid = orderRepository.save(order.paid(Instant.now()));
         cashbackUseCase.recordEarnedForOrder(paid);
 

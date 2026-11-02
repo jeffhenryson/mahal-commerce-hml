@@ -39,11 +39,28 @@ public interface NfeImportUseCase {
      *         se o import já tiver sido confirmado ou rejeitado
      * @throws com.cernecommerce.core.domain.exception.compras.UnmatchedNfeLineException se
      *         alguma linha continuar sem SKU resolvido depois dos overrides
+     * @throws com.cernecommerce.core.domain.exception.compras.NfeAlreadyReceivedException se outra
+     *         importação com a mesma chave de acesso já foi confirmada (V182)
      */
     GoodsReceipt confirmImport(NfeImportConfirmCommand command, String username);
 
-    /** SKU informado manualmente pelo operador para uma linha que o casamento automático não resolveu. */
-    record LineOverride(int itemNumber, String sku) {
+    /**
+     * Correção do operador para uma linha: o SKU (quando o casamento automático não resolveu) e/ou o
+     * fator de embalagem (V182: quantas unidades de estoque há em uma unidade comercial da nota).
+     * Os dois são lembrados por fornecedor + {@code cProd} para a próxima nota.
+     */
+    record LineOverride(int itemNumber, String sku, Integer unitsPerPackage) {
+
+        public LineOverride {
+            if (unitsPerPackage != null && unitsPerPackage < 1) {
+                throw new IllegalArgumentException("unitsPerPackage deve ser pelo menos 1");
+            }
+            sku = sku == null || sku.isBlank() ? null : sku.trim();
+        }
+
+        public LineOverride(int itemNumber, String sku) {
+            this(itemNumber, sku, null);
+        }
     }
 
     record NfeImportConfirmCommand(Long nfeImportId, String warehouseCode, List<LineOverride> overrides) {

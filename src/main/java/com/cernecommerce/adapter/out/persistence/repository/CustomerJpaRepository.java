@@ -31,11 +31,13 @@ public interface CustomerJpaRepository extends JpaRepository<CustomerEntity, Lon
      * Busca livre por nome, contato, email ou CPF (CRM-C006 incluiu email e CPF). CRM-C008: a variante
      * com CPF só é chamada com cpfDigits preenchido — um parâmetro nulo em ":p IS NOT NULL" chega ao
      * Postgres sem tipo (bytea) e o LIKE quebra com 500. Por isso são duas consultas, não um filtro opcional.
+     * Nome e email passam por unaccent nos dois lados (mesmo critério do catálogo, EST-C020/V122): o
+     * autocomplete do PDV com "joao" precisa achar "João".
      */
     String SEARCH_TEXT = """
-            lower(c.nome) LIKE lower(concat('%', :search, '%'))
+            unaccent(lower(c.nome)) LIKE unaccent(lower(concat('%', :search, '%')))
                OR c.contato LIKE concat('%', :search, '%')
-               OR lower(c.email) LIKE lower(concat('%', :search, '%'))""";
+               OR unaccent(lower(c.email)) LIKE unaccent(lower(concat('%', :search, '%')))""";
 
     @Query("SELECT c FROM CustomerEntity c WHERE " + SEARCH_TEXT)
     Page<CustomerEntity> search(@Param("search") String search, Pageable pageable);

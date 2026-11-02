@@ -2,15 +2,20 @@ package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.CartEntity;
 import com.cernecommerce.adapter.out.persistence.entity.CartItemEntity;
+import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.ecommerce.Cart;
 import com.cernecommerce.core.domain.model.ecommerce.CartItem;
 import com.cernecommerce.core.ports.out.ecommerce.CartRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -81,6 +86,22 @@ public class CartRepositoryImpl implements CartRepository {
             cartJpaRepository.save(cart);
         }
         return removed;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<Cart> findAllNonEmpty(int page, int size) {
+        Page<Long> ids = cartJpaRepository.findNonEmptyIds(PageRequest.of(page, size));
+        Map<Long, CartEntity> byId = new HashMap<>();
+        if (!ids.isEmpty()) {
+            cartJpaRepository.findWithItemsByIdIn(ids.getContent()).forEach(c -> byId.put(c.getId(), c));
+        }
+        List<Cart> content = ids.getContent().stream()
+                .map(byId::get)
+                .filter(java.util.Objects::nonNull)
+                .map(this::toDomain)
+                .toList();
+        return new PageResult<>(content, page, size, ids.getTotalElements(), ids.getTotalPages());
     }
 
     private CartEntity findOrCreate(Long customerId) {

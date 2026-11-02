@@ -188,6 +188,7 @@ import com.cernecommerce.core.domain.exception.compras.NfeImportNotFoundExceptio
 import com.cernecommerce.core.domain.exception.compras.SupplierNotFoundByTaxIdException;
 import com.cernecommerce.core.domain.exception.compras.UnmatchedNfeLineException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaEmptyException;
+import com.cernecommerce.core.domain.exception.pdv.SaleEmptyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException;
@@ -847,6 +848,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NfeImportNotFoundException.class)
     public ResponseEntity<ApiError> handleNfeImportNotFound(NfeImportNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "NFE_IMPORT_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.compras.NfeAlreadyReceivedException.class)
+    public ResponseEntity<NfeAlreadyReceivedError> handleNfeAlreadyReceived(
+            com.cernecommerce.core.domain.exception.compras.NfeAlreadyReceivedException ex, HttpServletRequest req) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new NfeAlreadyReceivedError(ex.getMessage(),
+                "NFE_ALREADY_RECEIVED", Instant.now(), req.getRequestURI(), MDC.get("traceId"), ex.getAccessKey(),
+                ex.getGoodsReceiptId(), ex.getReceivedAt()));
     }
 
     @ExceptionHandler(NfeImportAlreadyProcessedException.class)
@@ -1531,6 +1540,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ComandaNotOpenException.class)
     public ResponseEntity<ApiError> handleComandaNotOpen(ComandaNotOpenException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "COMANDA_NOT_OPEN", req);
+    }
+
+    @ExceptionHandler(SaleEmptyException.class)
+    public ResponseEntity<ApiError> handleSaleEmpty(SaleEmptyException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SALE_EMPTY", req);
     }
 
     @ExceptionHandler(ComandaEmptyException.class)

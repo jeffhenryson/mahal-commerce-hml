@@ -25,6 +25,7 @@ import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSessionFilter;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
+import com.cernecommerce.core.domain.exception.pdv.SaleEmptyException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
@@ -302,14 +303,21 @@ public class PdvController {
     @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
     public ResponseEntity<OrderResponseDTO> registerSale(@PathVariable("id") Long sessionId,
             @Valid @RequestBody SaleRequest request, Authentication authentication) {
+        if (request.isEmptySale()) {
+            throw new SaleEmptyException();
+        }
         List<SaleItemCommand> items = orderConverter.toCommands(request.getItems());
+        // Kit montável: o desconto é da cotação do servidor, não do atendente. Por isso só os itens
+        // avulsos passam por requireDiscountAuthority.
+        List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits =
+                orderConverter.toKitSelections(request.getKits());
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         requireDiscountAuthority(items, authentication);
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
         PdvUseCase.SaleRegistration registration = pdvUseCase.registerSaleIdempotent(sessionId,
-                request.getCustomerId(), items, payments, authentication.getName(),
+                request.getCustomerId(), items, kits, payments, authentication.getName(),
                 Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null,
                 PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()));
         Order order = registration.order();
@@ -327,8 +335,9 @@ public class PdvController {
                         "orderNumber", order.orderNumber(),
                         "warehouseCode", order.warehouseCode(),
                         "type", MovementType.SAIDA.name(),
-                        "skus", items.stream().map(SaleItemCommand::sku).toList(),
-                        "itemCount", items.size())));
+                        "skus", order.items().stream().map(i -> i.sku()).distinct().toList(),
+                        "itemCount", order.items().size(),
+                        "kitCount", kits.size())));
         publishCashbackEarnedIfAny(order, authentication.getName());
         OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         // Venda paga (concluída ou reservada para retirada): dispara as automações de VENDA_PDV_CONCLUIDA.

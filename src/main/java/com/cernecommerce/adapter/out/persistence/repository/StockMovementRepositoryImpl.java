@@ -4,6 +4,8 @@ import com.cernecommerce.adapter.out.persistence.entity.StockMovementEntity;
 import com.cernecommerce.core.domain.model.estoque.AbcAnalysis;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginType;
 import com.cernecommerce.core.domain.model.estoque.StockMovement;
 import com.cernecommerce.core.ports.out.estoque.StockMovementRepository;
 import jakarta.persistence.criteria.Predicate;
@@ -44,7 +46,21 @@ public class StockMovementRepositoryImpl implements StockMovementRepository {
         entity.setUnitCost(movement.unitCost());
         entity.setGoodsReceiptId(movement.goodsReceiptId());
         entity.setCounterpartWarehouseId(movement.counterpartWarehouseId());
+        if (movement.origin() != null) {
+            entity.setOriginType(movement.origin().type().name());
+            entity.setOriginId(movement.origin().id());
+        }
+        entity.setBalanceBefore(movement.balanceBefore());
+        entity.setBalanceAfter(movement.balanceAfter());
         return toDomain(stockMovementJpaRepository.save(entity));
+    }
+
+    @Override
+    public void assignOrigin(java.util.Collection<Long> movementIds, StockMovementOrigin origin) {
+        if (movementIds == null || movementIds.isEmpty() || origin == null) {
+            return;
+        }
+        stockMovementJpaRepository.assignOrigin(movementIds, origin.type().name(), origin.id());
     }
 
     /**
@@ -122,8 +138,11 @@ public class StockMovementRepositoryImpl implements StockMovementRepository {
     }
 
     private StockMovement toDomain(StockMovementEntity e) {
+        StockMovementOrigin origin = e.getOriginType() == null ? null
+                : new StockMovementOrigin(StockMovementOriginType.valueOf(e.getOriginType()), e.getOriginId());
         return StockMovement.of(e.getId(), e.getSku(), e.getWarehouseId(), MovementType.valueOf(e.getType()),
                 e.getQuantity(), e.getReason(), e.getUsername(), e.getCreatedAt(), e.getLotCode(),
-                e.getUnitCost(), e.getGoodsReceiptId(), e.getCounterpartWarehouseId());
+                e.getUnitCost(), e.getGoodsReceiptId(), e.getCounterpartWarehouseId())
+                .withTrace(origin, e.getBalanceBefore(), e.getBalanceAfter());
     }
 }

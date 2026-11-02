@@ -45,6 +45,12 @@ public interface CartRepository {
      */
     boolean removeItem(Long customerId, String sku);
 
+    /**
+     * Listagem administrativa (GET /ecommerce/carts): só carrinhos com ao menos uma linha, do mais
+     * recentemente alterado para o mais antigo.
+     */
+    com.cernecommerce.core.domain.model.PageResult<Cart> findAllNonEmpty(int page, int size);
+
     /** Esvazia o carrinho — o checkout consome as linhas ao virar pedido. Sem efeito se já vazio. */
     void clear(Long customerId);
 }

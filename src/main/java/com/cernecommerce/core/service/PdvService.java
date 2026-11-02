@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
 import com.cernecommerce.core.ports.in.PdvUseCase.PromotionCheck;
 import com.cernecommerce.core.ports.in.QuantityPromotionUseCase;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
@@ -25,7 +27,11 @@ import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
+import com.cernecommerce.core.domain.model.estoque.KitChannel;
+import com.cernecommerce.core.domain.model.estoque.KitQuote;
+import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
+import com.cernecommerce.core.ports.in.KitBuilderUseCase;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
 import com.cernecommerce.core.domain.model.pagamento.PaymentStatus;
@@ -101,6 +107,17 @@ public class PdvService implements PdvUseCase {
      * e confere {@code expectedPromotionDiscount} contra zero.
      */
     private QuantityPromotionUseCase quantityPromotions;
+
+    /**
+     * Cotação do kit montável vendido no balcão. Nulo nos testes antigos: venda com {@code kits}
+     * não vazio falha alto em vez de vender o kit sem desconto.
+     */
+    private KitBuilderUseCase kitBuilder;
+
+    /** Ligado pelo {@code CoreBeanConfig}, pelo mesmo motivo de {@link #setQuantityPromotions}. */
+    public void setKitBuilder(KitBuilderUseCase kitBuilder) {
+        this.kitBuilder = kitBuilder;
+    }
 
     /** Ligado pelo {@code CoreBeanConfig}. Setter para não multiplicar mais um construtor. */
     public void setQuantityPromotions(QuantityPromotionUseCase quantityPromotions) {
@@ -480,11 +497,26 @@ public class PdvService implements PdvUseCase {
                 clientSaleId, clientSoldAt, PromotionCheck.strict(null));
     }
 
+    /** Mesmo motivo da sobrescrita acima: o default da interface perderia o {@code @Transactional}. */
     @Override
     @Transactional
     public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
             String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
+        return registerSaleIdempotent(sessionId, customerId, items, List.of(), payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck);
+    }
+
+    @Override
+    @Transactional
+    public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<KitSelection> kits, List<PaymentCommand> payments, String username, boolean reserveForPickup,
+            OrderDelivery delivery, String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
+        items = items == null ? List.of() : items;
+        kits = kits == null ? List.of() : kits;
+        if (items.isEmpty() && kits.isEmpty()) {
+            throw new IllegalArgumentException("A venda precisa de ao menos um item ou kit");
+        }
         // PDV-F043 — o reenvio da mesma venda devolve o pedido já gravado, ANTES de qualquer checagem
         // de caixa: o timeout pode ter acontecido no último segundo do turno, e o caixa já fechado não
         // pode transformar um reenvio inofensivo em erro. Nada é tocado — estoque, pedido, pagamento.
@@ -517,6 +549,36 @@ public class PdvService implements PdvUseCase {
             orderItems.add(item);
         }
 
+        // Kit montável no balcão: cotado aqui, como em ComandaService.addKit. Cada linha da cotação
+        // vira um item de 1 unidade com o desconto do kit já rateado; a soma desses descontos é preço
+        // de catálogo e sai do teto abaixo. Para a promoção por quantidade, essas unidades são
+        // "presas a kit" (kitQuantity), e o servidor deriva isso sozinho, sem confiar no cliente.
+        BigDecimal kitDiscountTotal = BigDecimal.ZERO;
+        List<SaleItemCommand> promotionCommands = new ArrayList<>(items);
+        if (!kits.isEmpty()) {
+            if (kitBuilder == null) {
+                throw new IllegalStateException("Venda com kit montável sem o montador de kits ligado");
+            }
+            for (KitSelection selection : kits) {
+                KitQuote quote = kitBuilder.quote(selection, KitChannel.PDV);
+                for (KitQuote.Line line : quote.lines()) {
+                    EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(line.sku());
+                    OrderItem item = OrderItem.fromCatalog(line.sku(), BigDecimal.ONE, saleInfo.pricing(),
+                            line.discountAmount(), saleInfo.productName());
+                    CashbackRate resolvedRate = saleInfo.category() != null
+                            ? cashbackUseCase.resolveApplicableRate(line.sku(), saleInfo.category())
+                            : cashbackUseCase.resolveApplicableRate(line.sku());
+                    if (resolvedRate != null) {
+                        item = item.withCashbackPercent(resolvedRate.percent());
+                    }
+                    orderItems.add(item);
+                    kitDiscountTotal = kitDiscountTotal.add(item.discountAmount());
+                    promotionCommands.add(new SaleItemCommand(line.sku(), BigDecimal.ONE, BigDecimal.ZERO, null,
+                            1, null));
+                }
+            }
+        }
+
         // PDV-C004: o depósito vem da SESSÃO, não do request. É o que impede o operador de baixar
         // estoque de um depósito que não é o do caixa dele.
         String warehouseCode = session.warehouseCode();
@@ -526,10 +588,10 @@ public class PdvService implements PdvUseCase {
         QuantityPromotionUseCase.PromotedSale promoted = quantityPromotions == null
                 ? QuantityPromotionUseCase.withoutPromotions(orderItems, check)
                 : quantityPromotions.applyToSale(clientSoldAt == null ? clock.instant() : clientSoldAt, orderItems,
-                        items, check, clientSaleId);
+                        promotionCommands, check, clientSaleId);
         orderItems = promoted.items();
         Order order = Order.openBalcao(sessionId, warehouseCode, customerId, orderItems, delivery);
-        requireDiscountWithinLimit(order, promoted.total());
+        requireDiscountWithinLimit(order, promoted.total().add(kitDiscountTotal));
 
         // PDV-F006: pagamento é validado ANTES de tocar o estoque — um pagamento insuficiente não
         // deveria custar um adjustStock que só vai ser desfeito pelo rollback da transação.
@@ -539,9 +601,16 @@ public class PdvService implements PdvUseCase {
         // CRM-F010 — o marcar é validado junto com o pagamento, antes do estoque.
         validateOnAccount(customerId, OnAccountChannel.BALCAO, payments);
 
-        for (OrderItem item : order.items()) {
-            estoqueUseCase.adjustStock(item.sku(), warehouseCode, MovementType.SAIDA, item.quantity(),
-                    "Venda balcão sessão #" + sessionId, username);
+        // V181 — o pedido ainda não tem id aqui (a baixa vem antes da numeração, para um estoque
+        // insuficiente não queimar número). O escopo junta os ids das movimentações, e elas recebem
+        // a origem ORDER logo depois do save, na mesma transação.
+        List<Long> saleMovementIds;
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(null))) {
+            for (OrderItem item : order.items()) {
+                estoqueUseCase.adjustStock(item.sku(), warehouseCode, MovementType.SAIDA, item.quantity(),
+                        "Venda balcão sessão #" + sessionId, username);
+            }
+            saleMovementIds = List.copyOf(origem.movementIds());
         }
 
         // No balcão a mercadoria sai e o dinheiro entra no mesmo instante: CRIADO → CONCLUIDO (ou,
@@ -554,6 +623,10 @@ public class PdvService implements PdvUseCase {
         Order saved = orderRepository.save(reserve
                 ? order.reserved(orderRepository.nextOrderNumber(), changeAmount, Instant.now())
                 : order.concluded(orderRepository.nextOrderNumber(), changeAmount, Instant.now()));
+
+        if (!saleMovementIds.isEmpty()) {
+            estoqueUseCase.assignMovementOrigin(saleMovementIds, StockMovementOrigin.order(saved.id()));
+        }
 
         for (PaymentCommand payment : payments) {
             orderPaymentRepository.save(toPaymentLine(saved.id(), payment));
@@ -705,7 +778,9 @@ public class PdvService implements PdvUseCase {
 
         // A reserva já segurou a mercadoria desde o checkout: consumi-la converte o reservado em
         // saída real. Chamar adjustStock(SAIDA) aqui debitaria o estoque duas vezes.
-        estoqueUseCase.consumeReservationsByOwner(Order.reservationOwnerReference(orderId), username);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(orderId))) {
+            estoqueUseCase.consumeReservationsByOwner(Order.reservationOwnerReference(orderId), username);
+        }
 
         // O canal continua MARKETPLACE — quem muda é o sessionId, que passa a dizer qual caixa
         // recebeu o dinheiro. concluded() valida a transição e recusa pedido que não está

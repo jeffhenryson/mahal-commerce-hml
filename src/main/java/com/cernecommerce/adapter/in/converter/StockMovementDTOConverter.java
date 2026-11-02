@@ -31,6 +31,11 @@ public class StockMovementDTOConverter {
         dto.setLotCode(movement.lotCode());
         dto.setUnitCost(movement.unitCost());
         dto.setUnit(unit == null ? null : unit.name());
+        dto.setOriginType(movement.origin() == null ? null : movement.origin().type().name());
+        dto.setOriginId(movement.origin() == null ? null : movement.origin().id());
+        dto.setGoodsReceiptId(movement.goodsReceiptId());
+        dto.setBalanceBefore(movement.balanceBefore());
+        dto.setBalanceAfter(movement.balanceAfter());
         return dto;
     }
 

@@ -191,4 +191,84 @@ class NfeImportServiceTest {
         verify(comprasUseCase).receiveGoods(any(), any(), argThat(items ->
                 items.get(0).unitCost().compareTo(new BigDecimal("10.00")) == 0), any());
     }
+
+    // ── V182: nota repetida, fator de embalagem e memória por fornecedor + cProd ─────────────
+
+    private static final String KEY = "35261112345678000199550010000012341000012345";
+
+    private static NfeImport previewed(String accessKey, NfeImportLine... lines) {
+        return NfeImport.of(1L, 7L, "12345678000199", null, "uuid.xml", NfeImportStatus.PREVIEWED, null,
+                List.of(lines), "comprador1", Instant.now(), null, accessKey);
+    }
+
+    @Test
+    void confirmImport_chaveJaRecebida_responde409ComORecebimentoAnterior() {
+        Instant antes = Instant.parse("2026-10-30T15:00:00Z");
+        when(nfeImportRepository.findById(1L)).thenReturn(Optional.of(previewed(KEY, matchedLine(1))));
+        when(nfeImportRepository.findConfirmedByAccessKey(KEY)).thenReturn(Optional.of(NfeImport.of(9L, 7L,
+                "12345678000199", "LOJA-01", "old.xml", NfeImportStatus.CONFIRMED, 55L, List.of(matchedLine(1)),
+                "comprador1", antes, antes, KEY)));
+
+        assertThatThrownBy(() -> service.confirmImport(new NfeImportConfirmCommand(1L, "LOJA-01", List.of()),
+                "comprador1"))
+                .isInstanceOfSatisfying(com.cernecommerce.core.domain.exception.compras.NfeAlreadyReceivedException.class,
+                        e -> {
+                            assertThat(e.getGoodsReceiptId()).isEqualTo(55L);
+                            assertThat(e.getReceivedAt()).isEqualTo(antes);
+                            assertThat(e.getAccessKey()).isEqualTo(KEY);
+                        });
+        verifyNoInteractions(comprasUseCase);
+    }
+
+    @Test
+    void confirmImport_fatorMultiplicaQuantidadeDivideCustoELembra() {
+        com.cernecommerce.core.ports.out.compras.SupplierProductMappingRepository mappings =
+                mock(com.cernecommerce.core.ports.out.compras.SupplierProductMappingRepository.class);
+        service = new NfeImportService(nfeXmlImportPort, supplierRepository, nfeImportStoragePort,
+                nfeImportRepository, comprasUseCase, mappings);
+        // 2 CX a R$ 36,00, sem EAN: o operador diz o SKU e que cada caixa tem 12.
+        NfeImportLine caixa = NfeImportLine.fromXml(1, "FORN-SEDA", null, "Seda caixa 12", new BigDecimal("2"),
+                new BigDecimal("36.00"), null, null, null, "CX", "UN", new BigDecimal("24"));
+        when(nfeImportRepository.findById(1L)).thenReturn(Optional.of(previewed(KEY, caixa)));
+        when(nfeImportRepository.findConfirmedByAccessKey(KEY)).thenReturn(Optional.empty());
+        when(comprasUseCase.receiveGoods(eq(7L), eq("LOJA-01"), any(), eq("comprador1")))
+                .thenReturn(new GoodsReceipt(30L, 7L, "LOJA-01", List.of(new GoodsReceiptItem("SEDA", new BigDecimal("24"),
+                        null, null, new BigDecimal("3.00"))), "comprador1", Instant.now()));
+
+        service.confirmImport(new NfeImportConfirmCommand(1L, "LOJA-01",
+                List.of(new LineOverride(1, "SEDA", 12))), "comprador1");
+
+        verify(comprasUseCase).receiveGoods(eq(7L), eq("LOJA-01"), argThat(items -> items.size() == 1
+                && items.get(0).sku().equals("SEDA")
+                && items.get(0).quantity().compareTo(new BigDecimal("24")) == 0
+                && items.get(0).unitCost().compareTo(new BigDecimal("3.00")) == 0), eq("comprador1"));
+        verify(mappings).upsert(eq(new com.cernecommerce.core.domain.model.compras.SupplierProductMapping(7L,
+                "FORN-SEDA", "SEDA", 12)), eq("comprador1"));
+        verify(nfeImportRepository).save(argThat(n -> n.status() == NfeImportStatus.CONFIRMED
+                && KEY.equals(n.accessKey()) && n.lines().get(0).unitsPerPackage() == 12));
+    }
+
+    @Test
+    void previewImport_aplicaFatorESkuLembradosDoFornecedor() {
+        com.cernecommerce.core.ports.out.compras.SupplierProductMappingRepository mappings =
+                mock(com.cernecommerce.core.ports.out.compras.SupplierProductMappingRepository.class);
+        service = new NfeImportService(nfeXmlImportPort, supplierRepository, nfeImportStoragePort,
+                nfeImportRepository, comprasUseCase, mappings);
+        NfeImportLine semEan = NfeImportLine.fromXml(1, "FORN-SEDA", null, "Seda caixa 12", new BigDecimal("2"),
+                new BigDecimal("36.00"), null, null, null, "CX", null, null);
+        when(nfeXmlImportPort.parse(XML_BYTES)).thenReturn(new NfeImportPreview("12345678000199", List.of(semEan), KEY));
+        when(nfeImportStoragePort.save(any(), any())).thenReturn("uuid.xml");
+        when(supplierRepository.findByTaxId("12345678000199")).thenReturn(Optional.of(supplier()));
+        when(mappings.findBySupplierAndCodes(eq(7L), any())).thenReturn(java.util.Map.of("FORN-SEDA",
+                new com.cernecommerce.core.domain.model.compras.SupplierProductMapping(7L, "FORN-SEDA", "SEDA", 12)));
+        when(nfeImportRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        NfeImport result = service.previewImport(XML_BYTES, "comprador1");
+
+        assertThat(result.accessKey()).isEqualTo(KEY);
+        NfeImportLine line = result.lines().get(0);
+        assertThat(line.unitsPerPackage()).isEqualTo(12);
+        assertThat(line.matchStatus()).isEqualTo(NfeImportLine.MatchStatus.MATCHED);
+        assertThat(line.matchedSku()).isEqualTo("SEDA");
+    }
 }

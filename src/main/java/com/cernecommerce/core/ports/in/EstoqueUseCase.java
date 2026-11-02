@@ -1192,6 +1192,14 @@ public interface EstoqueUseCase {
             String reason, String username);
 
     /**
+     * V181 — carimba a origem em movimentações já gravadas, pelos ids que o
+     * {@link com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext} juntou. Só para quem
+     * baixa antes de o documento de origem existir (venda de balcão).
+     */
+    void assignMovementOrigin(java.util.List<Long> movementIds,
+            com.cernecommerce.core.domain.model.estoque.StockMovementOrigin origin);
+
+    /**
      * Converte saldo de um SKU em saldo de outro <b>numa única transação</b> (EST-F025): uma
      * {@code SAIDA} de {@code fromQuantity} em {@code fromSku} e uma {@code ENTRADA} de
      * {@code toQuantity} em {@code toSku}, no mesmo depósito.

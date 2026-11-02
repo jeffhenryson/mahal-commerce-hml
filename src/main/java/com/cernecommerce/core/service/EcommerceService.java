@@ -3,23 +3,25 @@ package com.cernecommerce.core.service;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.ecommerce.Cart;
 import com.cernecommerce.core.ports.in.EcommerceUseCase;
-
-import java.util.List;
+import com.cernecommerce.core.ports.out.ecommerce.CartRepository;
 
 /**
- * Implementação stub do {@link EcommerceUseCase}.
+ * Leitura administrativa dos carrinhos do marketplace.
  *
- * <p>Classe pura conectada via {@code @Bean} em {@code CoreBeanConfig}. Quando os
- * adapters existirem, injetar {@code CartRepository} e {@code PaymentGatewayPort}
- * pelo construtor (ver {@code core.ports.out.ecommerce}).</p>
+ * <p>O carrinho em si é operado pelo {@code ShopService} ({@code /shop/cart}); aqui só se lista o
+ * que existe, para o admin ver carrinhos em aberto. Classe pura conectada via {@code @Bean} em
+ * {@code CoreBeanConfig}.</p>
  */
 public class EcommerceService implements EcommerceUseCase {
 
-    // TODO: injetar CartRepository / PaymentGatewayPort (core.ports.out.ecommerce).
+    private final CartRepository cartRepository;
+
+    public EcommerceService(CartRepository cartRepository) {
+        this.cartRepository = cartRepository;
+    }
 
     @Override
     public PageResult<Cart> listCarts(int page, int size) {
-        // TODO: delegar ao CartRepository.findAll(page, size).
-        return new PageResult<>(List.of(), page, size, 0, 0);
+        return cartRepository.findAllNonEmpty(page, size);
     }
 }

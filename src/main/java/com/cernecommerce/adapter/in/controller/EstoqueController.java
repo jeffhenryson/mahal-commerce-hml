@@ -1045,15 +1045,20 @@ public class EstoqueController {
         }
         // Só usa a sobrecarga com lote/custo quando o request de fato traz algum desses campos —
         // mantém o caminho simples (a maioria dos SKUs) idêntico ao de antes do EST-F008/EST-F007.
-        StockBalance updated = request.getLotCode() == null && request.getExpiryDate() == null
-                && request.getUnitCost() == null
-                ? estoqueUseCase.adjustStock(request.getSku(), request.getWarehouseCode(),
-                        movementConverter.toType(request.getType()), request.getQuantity(), request.getReason(),
-                        authentication.getName())
-                : estoqueUseCase.adjustStock(request.getSku(), request.getWarehouseCode(),
-                        movementConverter.toType(request.getType()), request.getQuantity(), request.getReason(),
-                        authentication.getName(), request.getLotCode(), request.getExpiryDate(),
-                        request.getUnitCost());
+        StockBalance updated;
+        // V181 — movimentação lançada à mão na tela de estoque: origem MANUAL.
+        try (var origem = com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext.open(
+                com.cernecommerce.core.domain.model.estoque.StockMovementOrigin.manual())) {
+            updated = request.getLotCode() == null && request.getExpiryDate() == null
+                    && request.getUnitCost() == null
+                    ? estoqueUseCase.adjustStock(request.getSku(), request.getWarehouseCode(),
+                            movementConverter.toType(request.getType()), request.getQuantity(), request.getReason(),
+                            authentication.getName())
+                    : estoqueUseCase.adjustStock(request.getSku(), request.getWarehouseCode(),
+                            movementConverter.toType(request.getType()), request.getQuantity(), request.getReason(),
+                            authentication.getName(), request.getLotCode(), request.getExpiryDate(),
+                            request.getUnitCost());
+        }
         publisher.publishEvent(AuditEvent.of(EventType.STOCK_MOVEMENT_REGISTERED, authentication.getName(),
                 Map.of("sku", request.getSku(), "warehouseCode", request.getWarehouseCode(),
                         "type", request.getType(), "quantity", request.getQuantity())));

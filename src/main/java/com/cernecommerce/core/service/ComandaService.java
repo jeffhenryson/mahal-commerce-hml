@@ -89,6 +89,8 @@ import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
 import com.cernecommerce.core.domain.model.estoque.KitChannel;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext;
 import com.cernecommerce.core.domain.model.estoque.KitQuote;
 import com.cernecommerce.core.domain.model.estoque.KitSelection;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
@@ -400,12 +402,14 @@ public class ComandaService implements ComandaUseCase {
         // exatamente o caso medido no QA (50 → 49 numa sessão simples). Produto sem
         // sessionsPerUnit segue baixando unidade, o que torna a adoção uma escolha por item de
         // catálogo em vez de uma virada de chave para a casa inteira.
-        if (saleInfo.consumesOpenPackage()) {
-            OpenPackage lata = estoqueUseCase.consumeSession(sku, comanda.warehouseCode(), quantity, username);
-            item = item.withPackageCounter(lata.uses(), lata.sessionsPerUnit());
-        } else {
-            estoqueUseCase.adjustStock(sku, comanda.warehouseCode(), MovementType.SAIDA, quantity,
-                    "Comanda #" + comandaId, username);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comandaId))) {
+            if (saleInfo.consumesOpenPackage()) {
+                OpenPackage lata = estoqueUseCase.consumeSession(sku, comanda.warehouseCode(), quantity, username);
+                item = item.withPackageCounter(lata.uses(), lata.sessionsPerUnit());
+            } else {
+                estoqueUseCase.adjustStock(sku, comanda.warehouseCode(), MovementType.SAIDA, quantity,
+                        "Comanda #" + comandaId, username);
+            }
         }
 
         return comandaRepository.save(recalculatePromotions(comanda.withAddedItem(item)));
@@ -431,8 +435,10 @@ public class ComandaService implements ComandaUseCase {
             ComandaItem item = ComandaItem.fromCatalog(line.sku(), BigDecimal.ONE, saleInfo.pricing(),
                             saleInfo.productName())
                     .withKit(bundleId, quote.template().id(), line.discountAmount());
-            estoqueUseCase.adjustStock(line.sku(), comanda.warehouseCode(), MovementType.SAIDA, BigDecimal.ONE,
-                    "Comanda #" + comandaId + " (kit " + quote.template().name() + ")", username);
+            try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comandaId))) {
+                estoqueUseCase.adjustStock(line.sku(), comanda.warehouseCode(), MovementType.SAIDA, BigDecimal.ONE,
+                        "Comanda #" + comandaId + " (kit " + quote.template().name() + ")", username);
+            }
             updated = updated.withAddedItem(item);
         }
         return comandaRepository.save(recalculatePromotions(updated));
@@ -454,7 +460,7 @@ public class ComandaService implements ComandaUseCase {
         Comanda semKit = comanda;
         for (ComandaItem linha : linhas) {
             semKit = semKit.withRemovedItem(linha.id());
-            undoStock(linha, comanda.warehouseCode(), "Remoção de kit da comanda #" + comandaId, username);
+            undoStock(comandaId, linha, comanda.warehouseCode(), "Remoção de kit da comanda #" + comandaId, username);
         }
         return comandaRepository.save(recalculatePromotions(semKit));
     }
@@ -818,11 +824,11 @@ public class ComandaService implements ComandaUseCase {
             // guarda (essenceBurned) é a da remoção, não a da troca.
             String motivo = "Troca de sabor da sessão da comanda #" + comandaId;
             if (antes.essenceSku() != null) {
-                undoOne(antes.essenceSku(), antes.consumedPackage(), antes.quantity(), comanda.warehouseCode(),
+                undoOne(comandaId, antes.essenceSku(), antes.consumedPackage(), antes.quantity(), comanda.warehouseCode(),
                         motivo, username);
             }
             if (antes.essenceSku2() != null) {
-                undoOne(antes.essenceSku2(), antes.essence2Package(), antes.quantity(), comanda.warehouseCode(),
+                undoOne(comandaId, antes.essenceSku2(), antes.essence2Package(), antes.quantity(), comanda.warehouseCode(),
                         motivo, username);
             }
             depois = consumeEssence(depois, sabores, comanda, username);
@@ -996,8 +1002,10 @@ public class ComandaService implements ComandaUseCase {
         // de lata aberta do salão. Sem contador na linha, a remoção devolve com ENTRADA.
         Comanda comCompra = comanda;
         for (ComandaItem linha : linhas) {
-            estoqueUseCase.adjustStock(linha.sku(), comanda.warehouseCode(), MovementType.SAIDA, linha.quantity(),
-                    "Compra na loja — comanda #" + comandaId, username);
+            try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comandaId))) {
+                estoqueUseCase.adjustStock(linha.sku(), comanda.warehouseCode(), MovementType.SAIDA, linha.quantity(),
+                        "Compra na loja — comanda #" + comandaId, username);
+            }
             comCompra = comCompra.withAddedItem(linha);
         }
         Comanda saved = comandaRepository.save(comCompra);
@@ -1207,12 +1215,15 @@ public class ComandaService implements ComandaUseCase {
     /** Um sabor: um uso da lata (devolvida) ou, sem lata configurada, 1 unidade como uso da loja (nulo). */
     private OpenPackage consumeOne(Map.Entry<String, EstoqueUseCase.CatalogSaleInfo> sabor, Comanda comanda,
             String username) {
-        if (sabor.getValue().consumesOpenPackage()) {
-            return estoqueUseCase.consumeSession(sabor.getKey(), comanda.warehouseCode(), BigDecimal.ONE, username);
+        try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comanda.id()))) {
+            if (sabor.getValue().consumesOpenPackage()) {
+                return estoqueUseCase.consumeSession(sabor.getKey(), comanda.warehouseCode(), BigDecimal.ONE,
+                        username);
+            }
+            estoqueUseCase.adjustStock(sabor.getKey(), comanda.warehouseCode(), MovementType.SAIDA, BigDecimal.ONE,
+                    "Uso da loja — sessão da comanda #" + comanda.id(), username);
+            return null;
         }
-        estoqueUseCase.adjustStock(sabor.getKey(), comanda.warehouseCode(), MovementType.SAIDA, BigDecimal.ONE,
-                "Uso da loja — sessão da comanda #" + comanda.id(), username);
-        return null;
     }
 
     /** A faixa de uma linha de sessão vem do SKU sintético {@code SESS-{id}}. */
@@ -1314,7 +1325,7 @@ public class ComandaService implements ComandaUseCase {
         // Devolve o que cada linha removida havia debitado — mesma ENTRADA de cancelComanda. A
         // cortesia também volta: ela não foi cobrada, mas a essência tinha saído do estoque.
         for (ComandaItem removida : removidas) {
-            undoStock(removida, comanda.warehouseCode(), motivo, username);
+            undoStock(comanda.id(), removida, comanda.warehouseCode(), motivo, username);
         }
         // PDV-F021 — sessão removida devolve os utensílios à casa.
         releaseSessionAssets(removidas);
@@ -1827,7 +1838,7 @@ public class ComandaService implements ComandaUseCase {
 
         // Devolve cada item já debitado — mesmo padrão de OrderService.refundOrder.
         for (ComandaItem item : comanda.items()) {
-            undoStock(item, comanda.warehouseCode(), "Cancelamento de comanda #" + comandaId, username);
+            undoStock(comandaId, item, comanda.warehouseCode(), "Cancelamento de comanda #" + comandaId, username);
         }
         releaseSessionAssets(comanda.items());
         Comanda cancelled = comandaRepository.save(comanda.cancelled(Instant.now()));
@@ -1849,7 +1860,7 @@ public class ComandaService implements ComandaUseCase {
      * catálogo: o produto pode ter deixado de ser vendido por sessão desde o lançamento, e o
      * desfazimento tem que espelhar o que de fato aconteceu, não o cadastro de hoje.</p>
      */
-    private void undoStock(ComandaItem item, String warehouseCode, String reason, String username) {
+    private void undoStock(Long comandaId, ComandaItem item, String warehouseCode, String reason, String username) {
         // PDV-F021 — sessão do cardápio só em texto nunca baixou estoque; não há o que devolver.
         // PDV-F042 — com essência do catálogo, devolve-se o SABOR (stockSku), não a faixa SESS-{id}.
         if (!item.consumedStock()) {
@@ -1860,19 +1871,22 @@ public class ComandaService implements ComandaUseCase {
         if (item.essenceSku() != null && item.essenceBurned()) {
             return;
         }
-        undoOne(item.stockSku(), item.consumedPackage(), item.quantity(), warehouseCode, reason, username);
+        undoOne(comandaId, item.stockSku(), item.consumedPackage(), item.quantity(), warehouseCode, reason, username);
         // PDV-F051 — o 2º sabor da mescla se desfaz pelo que ele mesmo consumiu (lata ou unidade).
         if (item.essenceSku2() != null) {
-            undoOne(item.essenceSku2(), item.essence2Package(), item.quantity(), warehouseCode, reason, username);
+            undoOne(comandaId, item.essenceSku2(), item.essence2Package(), item.quantity(), warehouseCode, reason,
+                    username);
         }
     }
 
-    private void undoOne(String sku, boolean fromPackage, BigDecimal quantity, String warehouseCode, String reason,
-            String username) {
+    private void undoOne(Long comandaId, String sku, boolean fromPackage, BigDecimal quantity, String warehouseCode,
+            String reason, String username) {
         if (fromPackage) {
             estoqueUseCase.releaseSession(sku, warehouseCode, quantity);
         } else {
-            estoqueUseCase.adjustStock(sku, warehouseCode, MovementType.ENTRADA, quantity, reason, username);
+            try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comandaId))) {
+                estoqueUseCase.adjustStock(sku, warehouseCode, MovementType.ENTRADA, quantity, reason, username);
+            }
         }
     }
 

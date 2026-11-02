@@ -57,4 +57,20 @@ public class NfeImportLineEntity {
 
     @Column(name = "matched_sku", length = 50)
     private String matchedSku;
+
+    /** V182 — uCom. */
+    @Column(length = 10)
+    private String unit;
+
+    /** V182 — uTrib. */
+    @Column(name = "tax_unit", length = 10)
+    private String taxUnit;
+
+    /** V182 — qTrib. */
+    @Column(name = "tax_quantity", precision = 14, scale = 4)
+    private BigDecimal taxQuantity;
+
+    /** V182 — fator de embalagem usado (ou sugerido) para a entrada. */
+    @Column(name = "units_per_package")
+    private Integer unitsPerPackage;
 }

@@ -351,12 +351,15 @@ class CoreBeanConfig {
             // ECM-F013 — "pagamento confirmado" ao cliente do app na liquidação.
             AvisoClientePedidoAppUseCase avisoClientePedidoApp,
             // Promoção por quantidade ("leve 4 por R$ 10"), calculada na venda.
-            QuantityPromotionUseCase quantityPromotionUseCase) {
+            QuantityPromotionUseCase quantityPromotionUseCase,
+            // Kit montável vendido no balcão: o servidor cota o kit, como na comanda.
+            KitBuilderUseCase kitBuilderUseCase) {
         PdvService service = new PdvService(cashRegisterRepository, cashMovementRepository, orderRepository,
                 orderPaymentRepository, estoqueUseCase, cashbackUseCase, comandaRepository,
                 maxDiscountPercent, Clock.systemUTC(), receivableUseCase, offlineSaleRejectionRepository,
                 atendimentoPedidoAppRepository, avisoClientePedidoApp);
         service.setQuantityPromotions(quantityPromotionUseCase);
+        service.setKitBuilder(kitBuilderUseCase);
         return service;
     }
 
@@ -574,9 +577,10 @@ class CoreBeanConfig {
     @Bean
     NfeImportUseCase nfeImportUseCase(NfeXmlImportPort nfeXmlImportPort, SupplierRepository supplierRepository,
             NfeImportStoragePort nfeImportStoragePort, NfeImportRepository nfeImportRepository,
-            ComprasUseCase comprasUseCase) {
+            ComprasUseCase comprasUseCase,
+            com.cernecommerce.core.ports.out.compras.SupplierProductMappingRepository supplierProductMappingRepository) {
         return new NfeImportService(nfeXmlImportPort, supplierRepository, nfeImportStoragePort,
-                nfeImportRepository, comprasUseCase);
+                nfeImportRepository, comprasUseCase, supplierProductMappingRepository);
     }
 
     @Bean
@@ -585,8 +589,8 @@ class CoreBeanConfig {
     }
 
     @Bean
-    EcommerceUseCase ecommerceUseCase() {
-        return new EcommerceService();
+    EcommerceUseCase ecommerceUseCase(CartRepository cartRepository) {
+        return new EcommerceService(cartRepository);
     }
 
     // EST-F031 — kit montável. Bean próprio, e não mais um método em EstoqueService: a regra do

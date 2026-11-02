@@ -47,9 +47,27 @@ public class OrderDTOConverter {
      * request só informa SKU, quantidade e desconto (PDV-F004).
      */
     public List<SaleItemCommand> toCommands(List<SaleItemRequest> requests) {
+        if (requests == null) {
+            return List.of();
+        }
         return requests.stream()
                 .map(r -> new SaleItemCommand(r.getSku(), r.getQuantity(), r.getDiscountAmount(), r.getNote(),
                         r.getKitQuantity(), r.getPromotionDiscountAmount()))
+                .toList();
+    }
+
+    /** Kits montáveis da venda de balcão. Nulo vale lista vazia. */
+    public List<com.cernecommerce.core.domain.model.estoque.KitSelection> toKitSelections(
+            List<com.cernecommerce.adapter.in.dtos.request.KitSelectionRequest> requests) {
+        if (requests == null) {
+            return List.of();
+        }
+        return requests.stream()
+                .map(r -> new com.cernecommerce.core.domain.model.estoque.KitSelection(r.getTemplateId(),
+                        r.getPicks() == null ? List.of() : r.getPicks().stream()
+                                .map(p -> new com.cernecommerce.core.domain.model.estoque.KitSelection.Pick(
+                                        p.getStepId(), p.getSku()))
+                                .toList()))
                 .toList();
     }
 

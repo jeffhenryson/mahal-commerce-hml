@@ -36,7 +36,14 @@ public class LogisticaController {
         this.logisticaUseCase = logisticaUseCase;
     }
 
-    @Operation(summary = "Lista expedições (stub — retorna página vazia)")
+    /**
+     * @deprecated Sem persistência (não há tabela {@code shipment}) e sem consumidor: a entrega do
+     * PDV/marketplace vive em {@code OrderDelivery} e é acompanhada pela Central de Pedidos. Mantido
+     * só para não quebrar o client gerado; será removido junto com {@link LogisticaUseCase}.
+     */
+    @Deprecated(since = "2026-11")
+    @Operation(summary = "Lista expedições (DEPRECADO — sempre página vazia)", deprecated = true,
+            description = "Não implementado e sem plano de implementação. Use a Central de Pedidos (/pdv/app-orders) e a entrega do pedido.")
     @GetMapping("/shipments")
     @PreAuthorize("hasAuthority('LOGISTICA_READ')")
     public ResponseEntity<PageResult<Shipment>> listShipments(

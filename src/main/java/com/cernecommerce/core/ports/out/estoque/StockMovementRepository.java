@@ -17,6 +17,13 @@ public interface StockMovementRepository {
     StockMovement save(StockMovement movement);
 
     /**
+     * V181 — carimba a origem em movimentações já gravadas. Só para quem baixa o estoque antes de o
+     * documento de origem ter id (venda de balcão). Sem efeito com lista vazia.
+     */
+    void assignOrigin(java.util.Collection<Long> movementIds,
+            com.cernecommerce.core.domain.model.estoque.StockMovementOrigin origin);
+
+    /**
      * Consumo agregado por SKU no período (EST-F011), já valorizado pelo custo médio e com o saldo
      * atual — a entrada de {@code AbcAnalysis.classify}. {@code warehouseId} nulo agrega a loja
      * inteira.

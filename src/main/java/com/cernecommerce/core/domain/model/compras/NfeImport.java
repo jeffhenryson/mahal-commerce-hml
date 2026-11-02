@@ -33,7 +33,8 @@ public record NfeImport(
         List<NfeImportLine> lines,
         String uploadedBy,
         Instant uploadedAt,
-        Instant confirmedAt) {
+        Instant confirmedAt,
+        String accessKey) {
 
     public NfeImport {
         if (emitterCnpj == null || emitterCnpj.isBlank()) {
@@ -87,23 +88,43 @@ public record NfeImport(
     /** Preview aceito: fornecedor encontrado, aguardando confirmação do operador. */
     public static NfeImport previewed(Long supplierId, String emitterCnpj, String fileReference,
             List<NfeImportLine> lines, String uploadedBy) {
+        return previewed(supplierId, emitterCnpj, fileReference, lines, uploadedBy, null);
+    }
+
+    /** Com a chave de acesso da nota (V182). */
+    public static NfeImport previewed(Long supplierId, String emitterCnpj, String fileReference,
+            List<NfeImportLine> lines, String uploadedBy, String accessKey) {
         return new NfeImport(null, supplierId, emitterCnpj, null, fileReference, NfeImportStatus.PREVIEWED,
-                null, lines, uploadedBy, Instant.now(), null);
+                null, lines, uploadedBy, Instant.now(), null, accessKey);
     }
 
     /** Preview rejeitado: o CNPJ do emitente não bate com nenhum fornecedor cadastrado. */
     public static NfeImport rejected(String emitterCnpj, String fileReference, List<NfeImportLine> lines,
             String uploadedBy) {
+        return rejected(emitterCnpj, fileReference, lines, uploadedBy, null);
+    }
+
+    /** Com a chave de acesso da nota (V182). */
+    public static NfeImport rejected(String emitterCnpj, String fileReference, List<NfeImportLine> lines,
+            String uploadedBy, String accessKey) {
         return new NfeImport(null, null, emitterCnpj, null, fileReference, NfeImportStatus.REJECTED,
-                null, lines, uploadedBy, Instant.now(), null);
+                null, lines, uploadedBy, Instant.now(), null, accessKey);
     }
 
     /** Reconstitui a partir de persistência. */
     public static NfeImport of(Long id, Long supplierId, String emitterCnpj, String warehouseCode,
             String fileReference, NfeImportStatus status, Long goodsReceiptId, List<NfeImportLine> lines,
             String uploadedBy, Instant uploadedAt, Instant confirmedAt) {
+        return of(id, supplierId, emitterCnpj, warehouseCode, fileReference, status, goodsReceiptId, lines,
+                uploadedBy, uploadedAt, confirmedAt, null);
+    }
+
+    /** Reconstitui com a chave de acesso (V182). */
+    public static NfeImport of(Long id, Long supplierId, String emitterCnpj, String warehouseCode,
+            String fileReference, NfeImportStatus status, Long goodsReceiptId, List<NfeImportLine> lines,
+            String uploadedBy, Instant uploadedAt, Instant confirmedAt, String accessKey) {
         return new NfeImport(id, supplierId, emitterCnpj, warehouseCode, fileReference, status, goodsReceiptId,
-                lines, uploadedBy, uploadedAt, confirmedAt);
+                lines, uploadedBy, uploadedAt, confirmedAt, accessKey);
     }
 
     /**
@@ -112,7 +133,7 @@ public record NfeImport(
      */
     public NfeImport withLines(List<NfeImportLine> newLines) {
         return new NfeImport(id, supplierId, emitterCnpj, warehouseCode, fileReference, status, goodsReceiptId,
-                newLines, uploadedBy, uploadedAt, confirmedAt);
+                newLines, uploadedBy, uploadedAt, confirmedAt, accessKey);
     }
 
     /**
@@ -135,7 +156,7 @@ public record NfeImport(
             throw new IllegalArgumentException("confirmedAt é obrigatório ao confirmar");
         }
         return new NfeImport(id, supplierId, emitterCnpj, warehouseCode, fileReference,
-                NfeImportStatus.CONFIRMED, goodsReceiptId, lines, uploadedBy, uploadedAt, confirmedAt);
+                NfeImportStatus.CONFIRMED, goodsReceiptId, lines, uploadedBy, uploadedAt, confirmedAt, accessKey);
     }
 
     /** Linhas ainda sem SKU resolvido — o que falta para poder confirmar. */

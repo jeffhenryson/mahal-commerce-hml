@@ -80,6 +80,9 @@ import com.cernecommerce.core.domain.model.estoque.KitComponentDetail;
 import com.cernecommerce.core.domain.model.estoque.LotIntegrityMismatch;
 import com.cernecommerce.core.domain.model.estoque.MeasurementUnit;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginContext;
+import com.cernecommerce.core.domain.model.estoque.StockMovementOriginType;
 import com.cernecommerce.core.domain.model.estoque.OrphanSku;
 import com.cernecommerce.core.domain.model.estoque.OpenPackage;
 import com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason;
@@ -1761,8 +1764,15 @@ public class EstoqueService implements EstoqueUseCase {
                 .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
         // EST-F032 — se o filho não cobre a saída, abre embalagens pai até cobrir, e a saída segue
         // sobre o saldo já reposto. Só relê quando houve quebra: o caminho comum não paga nada a mais.
-        if (breakPackaging && type == MovementType.SAIDA
-                && breakPackagingIfShort(sku, warehouse, current, quantity, username)) {
+        boolean brokePackaging;
+        // A abertura automática de embalagem é movimentação própria (PACKAGING), não da venda que a
+        // provocou: escopo de dentro, que também impede a venda de recarimbar essas linhas depois.
+        try (var ignored = StockMovementOriginContext.open(
+                new StockMovementOrigin(StockMovementOriginType.PACKAGING, null))) {
+            brokePackaging = breakPackaging && type == MovementType.SAIDA
+                    && breakPackagingIfShort(sku, warehouse, current, quantity, username);
+        }
+        if (brokePackaging) {
             current = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
                     .orElseGet(() -> StockBalance.zero(sku, warehouse.id()));
         }
@@ -1774,8 +1784,11 @@ public class EstoqueService implements EstoqueUseCase {
             movementLotCode = lotCode;
         }
 
-        stockMovementRepository.save(StockMovement.create(sku, warehouse.id(), type, quantity, reason, username,
-                movementLotCode, unitCost, goodsReceiptId, counterpartWarehouseId));
+        StockMovement movement = stockMovementRepository.save(StockMovement.create(sku, warehouse.id(), type, quantity,
+                        reason, username, movementLotCode, unitCost, goodsReceiptId, counterpartWarehouseId)
+                .withTrace(resolveOrigin(goodsReceiptId, counterpartWarehouseId), current.quantity(),
+                        updated.quantity()));
+        StockMovementOriginContext.recordMovement(movement == null ? null : movement.id());
         StockBalance saved = stockBalanceRepository.save(updated);
 
         if (lotTracked && type == MovementType.SAIDA) {
@@ -1785,6 +1798,30 @@ public class EstoqueService implements EstoqueUseCase {
         notifyIfBelowReorderPoint(saved);
         notifyIfKitsNewlyBlocked(kitBuildableBefore, warehouse.id());
         return saved;
+    }
+
+    @Override
+    @Transactional
+    public void assignMovementOrigin(List<Long> movementIds, StockMovementOrigin origin) {
+        stockMovementRepository.assignOrigin(movementIds, origin);
+    }
+
+    /**
+     * V181 — a origem da movimentação: a do escopo aberto por quem chamou (venda, comanda, pedido,
+     * ajuste manual) e, sem escopo, o que a própria movimentação revela (recebimento, transferência).
+     * O vínculo com o recebimento vence o escopo: é o dado mais específico que existe.
+     */
+    private static StockMovementOrigin resolveOrigin(Long goodsReceiptId, Long counterpartWarehouseId) {
+        if (goodsReceiptId != null) {
+            return new StockMovementOrigin(StockMovementOriginType.GOODS_RECEIPT, goodsReceiptId);
+        }
+        StockMovementOrigin scoped = StockMovementOriginContext.current();
+        if (scoped != null) {
+            return scoped;
+        }
+        return counterpartWarehouseId != null
+                ? new StockMovementOrigin(StockMovementOriginType.TRANSFER, null)
+                : null;
     }
 
     // ── Embalagem (EST-F032) ────────────────────────────────────────────────────────────────
@@ -2483,9 +2520,14 @@ public class EstoqueService implements EstoqueUseCase {
 
         // A mercadoria saiu de verdade: o ledger tem que registrar, com o mesmo formato das outras
         // saídas, senão o histórico do SKU fica com um buraco do tamanho das vendas online.
-        stockMovementRepository.save(StockMovement.create(reservation.sku(), reservation.warehouseId(),
-                MovementType.SAIDA, reservation.quantity(),
-                "Consumo da reserva #" + reservationId + " (" + reservation.ownerReference() + ")", username));
+        StockMovementOrigin scoped = StockMovementOriginContext.current();
+        StockMovement movement = stockMovementRepository.save(StockMovement.create(reservation.sku(),
+                        reservation.warehouseId(), MovementType.SAIDA, reservation.quantity(),
+                        "Consumo da reserva #" + reservationId + " (" + reservation.ownerReference() + ")", username)
+                .withTrace(scoped != null ? scoped
+                                : new StockMovementOrigin(StockMovementOriginType.RESERVATION, reservationId),
+                        current.quantity(), updated.quantity()));
+        StockMovementOriginContext.recordMovement(movement == null ? null : movement.id());
 
         // EST-F008: a mercadoria reservada também sai de um lote de verdade quando o SKU é
         // lote-rastreado — este caminho não passa por adjustStock, então o FEFO precisa ser

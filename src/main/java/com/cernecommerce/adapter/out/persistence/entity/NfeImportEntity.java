@@ -53,6 +53,10 @@ public class NfeImportEntity {
     @Column(name = "confirmed_at")
     private Instant confirmedAt;
 
+    /** V182 — chave de acesso da NF-e (44 dígitos). Nula em imports anteriores. */
+    @Column(name = "access_key", length = 44)
+    private String accessKey;
+
     @OneToMany(mappedBy = "nfeImport", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude
     private List<NfeImportLineEntity> lines = new ArrayList<>();
