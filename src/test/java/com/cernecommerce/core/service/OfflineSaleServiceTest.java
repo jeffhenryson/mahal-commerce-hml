@@ -96,11 +96,11 @@ class OfflineSaleServiceTest {
         givenSaveAssignsId();
         when(rejections.findByClientSaleId(any())).thenReturn(Optional.empty());
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), eq("caixa1"), anyBoolean(), any(),
-                eq("k-nova"), any())).thenReturn(new SaleRegistration(pedido(10L), false));
+                eq("k-nova"), any(), any())).thenReturn(new SaleRegistration(pedido(10L), false));
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), eq("caixa1"), anyBoolean(), any(),
-                eq("k-repetida"), any())).thenReturn(new SaleRegistration(pedido(11L), true));
+                eq("k-repetida"), any(), any())).thenReturn(new SaleRegistration(pedido(11L), true));
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), eq("caixa1"), anyBoolean(), any(),
-                eq("k-sem-estoque"), any()))
+                eq("k-sem-estoque"), any(), any()))
                 .thenThrow(new InsufficientStockException("LM-AZUL-MACO", 1L, BigDecimal.ZERO, BigDecimal.ONE));
         when(pdvUseCase.findOrderIdByClientSaleId("k-sem-estoque")).thenReturn(Optional.empty());
 
@@ -133,7 +133,7 @@ class OfflineSaleServiceTest {
             assertThat(r.rejectionId()).isEqualTo(70L);
         });
         verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyBoolean(), any(),
-                any(), any());
+                any(), any(), any());
     }
 
     /** PIX e marcado não existem sem rede: o lote inteiro é recusado antes de qualquer venda. */
@@ -145,7 +145,7 @@ class OfflineSaleServiceTest {
                 venda("k-2", PaymentMethod.PIX)), "caixa1"))
                 .isInstanceOf(OfflinePaymentNotAllowedException.class);
         verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyBoolean(), any(),
-                any(), any());
+                any(), any(), any());
     }
 
     @Test
@@ -184,7 +184,7 @@ class OfflineSaleServiceTest {
         when(rejections.findById(70L)).thenReturn(Optional.of(pendente));
         givenCaixaAberto();
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), eq("caixa1"), anyBoolean(), any(),
-                eq("k-1"), any())).thenReturn(new SaleRegistration(pedido(12L), false));
+                eq("k-1"), any(), any())).thenReturn(new SaleRegistration(pedido(12L), false));
         when(rejections.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         OfflineSaleRejection resolvida = service.retry(70L, "gerente");
@@ -202,7 +202,7 @@ class OfflineSaleServiceTest {
                 "INSUFFICIENT_STOCK", "sem saldo", "caixa1", ABERTURA).withId(70L);
         when(rejections.findById(70L)).thenReturn(Optional.of(pendente));
         givenCaixaAberto();
-        when(pdvUseCase.registerSaleIdempotent(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any()))
                 .thenThrow(new InsufficientStockException("LM-AZUL-MACO", 1L, BigDecimal.ZERO, BigDecimal.ONE));
         when(pdvUseCase.findOrderIdByClientSaleId("k-1")).thenReturn(Optional.empty());
         when(rejections.save(any())).thenAnswer(inv -> inv.getArgument(0));

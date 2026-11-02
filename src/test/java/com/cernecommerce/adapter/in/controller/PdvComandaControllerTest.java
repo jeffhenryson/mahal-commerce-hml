@@ -979,7 +979,7 @@ class PdvComandaControllerTest {
     void addStorePurchaseToTab_returns_201_withTheStorePurchaseLines() throws Exception {
         Comanda withPurchase = abertaComanda().withAddedItem(ComandaItem.fromCatalog("AGUA-500", new BigDecimal("2"),
                 Pricing.of(new BigDecimal("1.00"), null, new BigDecimal("5.00")), "Água").asStorePurchase(null));
-        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString())).thenReturn(withPurchase);
+        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString(), any())).thenReturn(withPurchase);
 
         mockMvc.perform(post("/pdv/comandas/10/compra-na-loja")
                         .principal(AUTH)
@@ -992,7 +992,7 @@ class PdvComandaControllerTest {
 
     @Test
     void addStorePurchaseToTab_withoutPayLaterSession_returns_409() throws Exception {
-        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString()))
+        when(comandaUseCase.addStorePurchaseToTab(eq(10L), any(), anyString(), any()))
                 .thenThrow(new NoPayLaterSessionException(10L));
 
         mockMvc.perform(post("/pdv/comandas/10/compra-na-loja")
