@@ -339,6 +339,50 @@ class PedidoAppServiceTest {
         assertThat(fila.content().get(0).cliente().contato()).isEqualTo("14999990000");
     }
 
+    // ── Pendência 10 §1 e §3: coluna paginada e clienteVip ──
+
+    @Test
+    void listarColuna_saiJuntaProntoESaiuEMarcaVipEmLote() {
+        when(atendimentos.findByColuna(java.util.EnumSet.of(com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus.PRONTO,
+                        com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus.SAIU_PARA_ENTREGA), null, 0, 5))
+                .thenReturn(new PageResult<>(List.of(pendente(DeliveryType.RETIRADA)), 0, 5, 7L, 2));
+        when(orderRepository.findByIds(List.of(7L))).thenReturn(List.of(pedido(retirada())));
+        when(crmUseCase.findVipCustomerIds(java.util.Set.of(CLIENTE))).thenReturn(java.util.Set.of(CLIENTE));
+
+        PageResult<PedidoAppUseCase.PedidoApp> coluna = service.listarColuna(
+                com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.SAIU, null, 0, 5);
+
+        assertThat(coluna.totalElements()).isEqualTo(7L);
+        assertThat(coluna.content().get(0).clienteVip()).isTrue();
+        verify(crmUseCase).findVipCustomerIds(java.util.Set.of(CLIENTE));
+    }
+
+    @Test
+    void listarColuna_finalizadosExigeFromETamanhoDoSeletor() {
+        assertThatThrownBy(() -> service.listarColuna(
+                        com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.FINALIZADOS, null, 0, 10))
+                .isInstanceOfSatisfying(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException.class,
+                        e -> assertThat(e.code()).isEqualTo("FROM_REQUIRED"));
+        assertThatThrownBy(() -> service.listarColuna(
+                        com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.NOVOS, null, 0, 7))
+                .isInstanceOfSatisfying(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException.class,
+                        e -> assertThat(e.code()).isEqualTo("INVALID_PAGE_SIZE"));
+        verifyNoInteractions(atendimentos);
+    }
+
+    @Test
+    void listarColuna_finalizadosFiltraPeloComecoDoDia() {
+        Instant hoje = Instant.parse("2026-10-23T03:00:00Z");
+        when(atendimentos.findByColuna(any(), eq(hoje), eq(0), eq(10)))
+                .thenReturn(new PageResult<>(List.of(), 0, 10, 0L, 0));
+
+        service.listarColuna(com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.FINALIZADOS, hoje, 0, 10);
+
+        verify(atendimentos).findByColuna(java.util.EnumSet.of(
+                        com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus.RETIRADO,
+                        com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus.ENTREGUE), hoje, 0, 10);
+    }
+
     // ── ECM-F012: aceite e recusa pela Central de Pedidos ──
 
     private static Order outroPedido(SalesChannel canal, OrderStatus status) {

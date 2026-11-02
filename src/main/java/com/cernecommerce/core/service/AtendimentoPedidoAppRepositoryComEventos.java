@@ -60,6 +60,12 @@ public class AtendimentoPedidoAppRepositoryComEventos implements AtendimentoPedi
     }
 
     @Override
+    public PageResult<AtendimentoPedidoApp> findByColuna(Set<AtendimentoStatus> statuses, Instant concluidoDesde,
+            int page, int size) {
+        return delegate.findByColuna(statuses, concluidoDesde, page, size);
+    }
+
+    @Override
     public List<Long> findVencidos(Instant agora, int limite) {
         return delegate.findVencidos(agora, limite);
     }

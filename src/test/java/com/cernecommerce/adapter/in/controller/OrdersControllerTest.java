@@ -424,7 +424,7 @@ public class OrdersControllerTest {
     void getSummary_returns_200_withMappedDto() throws Exception {
         OrderSummary summary = new OrderSummary(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 Map.of(), Map.of(), BigDecimal.ZERO, List.of(), List.of());
-        when(orderReportUseCase.getSummary(any(), any(), any(), any(), any())).thenReturn(summary);
+        when(orderReportUseCase.getSummary(any(), any(), any(), any(), any(), any())).thenReturn(summary);
 
         OrderSummaryResponseDTO dto = new OrderSummaryResponseDTO();
         dto.setTotalOrders(0);
@@ -447,7 +447,7 @@ public class OrdersControllerTest {
 
     @Test
     void getSummary_returns_400_whenPeriodInvalid() throws Exception {
-        when(orderReportUseCase.getSummary(any(), any(), any(), any(), any()))
+        when(orderReportUseCase.getSummary(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new InvalidReportPeriodException("'from' não pode ser depois de 'to'"));
 
         mockMvc.perform(get("/orders/summary")

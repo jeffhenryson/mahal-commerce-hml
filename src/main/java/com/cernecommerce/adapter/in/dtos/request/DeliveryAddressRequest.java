@@ -43,4 +43,17 @@ public class DeliveryAddressRequest {
     @Size(max = 200)
     @Schema(example = "Portão azul, ao lado da padaria")
     private String reference;
+
+    @jakarta.validation.constraints.DecimalMin("-90")
+    @jakarta.validation.constraints.DecimalMax("90")
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Pendência 10 §2 — latitude do endereço (vem junto com "
+            + "longitude, ou nenhuma). O app manda quando usa o autocomplete do Google.", example = "-22.9035",
+            nullable = true)
+    private Double latitude;
+
+    @jakarta.validation.constraints.DecimalMin("-180")
+    @jakarta.validation.constraints.DecimalMax("180")
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Pendência 10 §2 — longitude do endereço.",
+            example = "-43.1092", nullable = true)
+    private Double longitude;
 }

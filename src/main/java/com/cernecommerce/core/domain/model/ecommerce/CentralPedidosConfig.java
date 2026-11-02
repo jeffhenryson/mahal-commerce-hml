@@ -43,7 +43,27 @@ public record CentralPedidosConfig(
         int expiracaoSolicitacaoMin,
         Entrega entrega,
         boolean retiradaHabilitada,
-        String pixChave) {
+        String pixChave,
+        Origem origem) {
+
+    /** Sem a origem da loja (anterior à pendência 10 §2). */
+    public CentralPedidosConfig(boolean appRecebendo, boolean qrRecebendo, List<Horario> horarios,
+            boolean aceiteAutomatico, int tempoPreparoMin, int tempoEntregaMin, int expiracaoSolicitacaoMin,
+            Entrega entrega, boolean retiradaHabilitada, String pixChave) {
+        this(appRecebendo, qrRecebendo, horarios, aceiteAutomatico, tempoPreparoMin, tempoEntregaMin,
+                expiracaoSolicitacaoMin, entrega, retiradaHabilitada, pixChave, null);
+    }
+
+    /**
+     * Pendência 10 §2 — de onde sai a entrega: o mapa da Central traça a rota e a distância a partir daqui.
+     * Nula = mapa só com o cliente.
+     */
+    public record Origem(Double latitude, Double longitude, String endereco) {
+
+        public Origem {
+            endereco = endereco == null || endereco.isBlank() ? null : endereco.strip();
+        }
+    }
 
     public static final int EXPIRACAO_MINIMA_MIN = 5;
     public static final int PIX_CHAVE_MAX = 120;
@@ -82,8 +102,17 @@ public record CentralPedidosConfig(
             entrega = new Entrega(true, BigDecimal.ZERO, BigDecimal.ZERO, null, List.of());
         }
         pixChave = pixChave == null || pixChave.isBlank() ? null : pixChave.strip();
-        List<String> erros = erros(horarios, tempoPreparoMin, tempoEntregaMin, expiracaoSolicitacaoMin, entrega,
-                appRecebendo, retiradaHabilitada, pixChave);
+        List<String> erros = new ArrayList<>(erros(horarios, tempoPreparoMin, tempoEntregaMin,
+                expiracaoSolicitacaoMin, entrega, appRecebendo, retiradaHabilitada, pixChave));
+        if (origem != null) {
+            if (origem.latitude() == null || origem.longitude() == null) {
+                erros.add("A origem da loja precisa de latitude e longitude.");
+            } else if (origem.latitude() < -90 || origem.latitude() > 90) {
+                erros.add("Latitude da origem fora de -90..90.");
+            } else if (origem.longitude() < -180 || origem.longitude() > 180) {
+                erros.add("Longitude da origem fora de -180..180.");
+            }
+        }
         if (!erros.isEmpty()) {
             throw new CentralPedidosConfigInvalidaException(String.join(" ", erros));
         }

@@ -14,7 +14,16 @@ public interface OrderReportRepository {
      * Agrega os pedidos do período em um {@link OrderSummary}. {@code topProductsLimit} é o N do
      * top produtos por receita.
      */
-    OrderSummary summarize(SalesChannel channel, OrderStatus status, Long customerId,
+    default OrderSummary summarize(SalesChannel channel, OrderStatus status, Long customerId,
+            Instant from, Instant to, int topProductsLimit) {
+        return summarize(channel, status, customerId, null, from, to, topProductsLimit);
+    }
+
+    /**
+     * Pendência 9 — com {@code warehouseCode} opcional (o mesmo filtro da margem). A série diária é
+     * agrupada no dia de {@code America/Sao_Paulo}.
+     */
+    OrderSummary summarize(SalesChannel channel, OrderStatus status, Long customerId, String warehouseCode,
             Instant from, Instant to, int topProductsLimit);
 
     /**

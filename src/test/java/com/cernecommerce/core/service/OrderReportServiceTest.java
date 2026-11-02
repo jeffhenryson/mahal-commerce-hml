@@ -66,12 +66,12 @@ class OrderReportServiceTest {
     @Test
     void getSummary_delegatesToRepositoryWithTopProductsLimit() {
         Instant from = NOW.minusSeconds(3600);
-        when(orderReportRepository.summarize(null, null, null, from, NOW, 10)).thenReturn(emptySummary());
+        when(orderReportRepository.summarize(null, null, null, null, from, NOW, 10)).thenReturn(emptySummary());
 
         OrderSummary result = orderReportService.getSummary(null, null, null, from, NOW);
 
         assertThat(result.totalOrders()).isZero();
-        verify(orderReportRepository).summarize(eq(null), eq(null), eq(null), eq(from), eq(NOW), eq(10));
+        verify(orderReportRepository).summarize(eq(null), eq(null), eq(null), eq(null), eq(from), eq(NOW), eq(10));
     }
 
     @Test
@@ -159,5 +159,30 @@ class OrderReportServiceTest {
 
         assertThat(result.itemsConsidered()).isZero();
         verify(orderReportRepository).summarizeMargin(eq(null), eq("LOJA-01"), eq(from), eq(NOW), eq(10));
+    }
+
+    /** Pendência 9 — limit em topProductsByMargin, de 1 a 50. */
+    @Test
+    void getMarginReport_repassaLimitEValidaFaixa() {
+        Instant from = NOW.minusSeconds(3600);
+        MarginSummary summary = new MarginSummary(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, List.of());
+        when(orderReportRepository.summarizeMargin(null, null, from, NOW, 50)).thenReturn(summary);
+
+        orderReportService.getMarginReport(null, null, from, NOW, 50);
+
+        verify(orderReportRepository).summarizeMargin(null, null, from, NOW, 50);
+        assertThatThrownBy(() -> orderReportService.getMarginReport(null, null, from, NOW, 51))
+                .isInstanceOf(InvalidReportPeriodException.class);
+    }
+
+    @Test
+    void getSummary_repassaDeposito() {
+        Instant from = NOW.minusSeconds(3600);
+        when(orderReportRepository.summarize(null, null, null, "LOJA-01", from, NOW, 10)).thenReturn(emptySummary());
+
+        orderReportService.getSummary(null, null, null, "LOJA-01", from, NOW);
+
+        verify(orderReportRepository).summarize(null, null, null, "LOJA-01", from, NOW, 10);
     }
 }

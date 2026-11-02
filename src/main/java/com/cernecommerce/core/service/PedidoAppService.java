@@ -94,19 +94,46 @@ public class PedidoAppService implements PedidoAppUseCase {
     @Transactional(readOnly = true)
     public PageResult<PedidoApp> listar(Set<AtendimentoStatus> statuses, Long sessionId, int page, int size) {
         Set<AtendimentoStatus> filtro = statuses == null || statuses.isEmpty() ? FILA_PADRAO : statuses;
-        PageResult<AtendimentoPedidoApp> pagina = atendimentos.findByStatus(filtro, sessionId, page, size);
+        return montarPagina(atendimentos.findByStatus(filtro, sessionId, page, size));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<PedidoApp> listarColuna(com.cernecommerce.core.domain.model.ecommerce.ColunaCentral coluna,
+            Instant from, int page, int size) {
+        if (!com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.TAMANHOS.contains(size)) {
+            throw new com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException(
+                    "INVALID_PAGE_SIZE", "size deve ser 5, 10, 20, 50 ou 100");
+        }
+        boolean finalizados = coluna == com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.FINALIZADOS;
+        if (finalizados && from == null) {
+            throw new com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException(
+                    "FROM_REQUIRED", "A coluna FINALIZADOS exige from (começo do dia local)");
+        }
+        return montarPagina(atendimentos.findByColuna(coluna.statuses(), finalizados ? from : null, page, size));
+    }
+
+    /**
+     * A página com pedido, cliente e VIP (pendência 10 §3) em lote: uma consulta de pedidos, uma de
+     * clientes e uma de tags por página, nunca por card.
+     */
+    private PageResult<PedidoApp> montarPagina(PageResult<AtendimentoPedidoApp> pagina) {
         List<Long> ids = pagina.content().stream().map(AtendimentoPedidoApp::orderId).toList();
         CentralPedidosConfig config = centralConfig.atual();
         Map<Long, Order> pedidos = orderRepository.findByIds(ids).stream()
                 .collect(Collectors.toMap(Order::id, Function.identity()));
-        Map<Long, Customer> clientes = crmUseCase.findCustomersByIds(pedidos.values().stream()
-                .map(Order::customerId).collect(Collectors.toSet()));
+        Set<Long> clienteIds = pedidos.values().stream().map(Order::customerId)
+                .filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, Customer> clientes = crmUseCase.findCustomersByIds(clienteIds);
+        Set<Long> vips = clienteIds.isEmpty() ? Set.of() : crmUseCase.findVipCustomerIds(clienteIds);
         List<PedidoApp> conteudo = pagina.content().stream()
                 .filter(a -> pedidos.containsKey(a.orderId()))
                 .map(a -> {
                     Order order = pedidos.get(a.orderId());
-                    return new PedidoApp(a, order, clientes.get(order.customerId()), taxaSugerida(a, order, config),
-                            MensagemCliente.para(a, order, config.pixChave()));
+                    Customer cliente = clientes.get(order.customerId());
+                    return new PedidoApp(a, order, cliente, taxaSugerida(a, order, config),
+                            MensagemCliente.para(a, order, config.pixChave()),
+                            cliente == null ? null : vips.contains(cliente.id()));
                 })
                 .toList();
         return new PageResult<>(conteudo, pagina.page(), pagina.size(), pagina.totalElements(), pagina.totalPages());

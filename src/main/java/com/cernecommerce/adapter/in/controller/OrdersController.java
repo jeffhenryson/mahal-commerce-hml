@@ -225,7 +225,8 @@ public class OrdersController {
             description = "from e to são obrigatórios (máx. 366 dias). Totais de receita e produtos "
                     + "mais vendidos só contam pedidos com pagamento confirmado (PAGO em diante, "
                     + "exceto REEMBOLSADO); ordersByStatus mostra a distribuição completa, incluindo "
-                    + "CRIADO/AGUARDANDO_PAGAMENTO/CANCELADO.")
+                    + "CRIADO/AGUARDANDO_PAGAMENTO/CANCELADO. Pendência 9: dailyRevenue agrupado no dia de "
+                    + "America/Sao_Paulo; warehouseCode opcional, como em /financeiro/margem.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = OrderSummaryResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "from/to ausentes, from depois de to, ou intervalo maior que o teto permitido", content = @Content)
@@ -236,10 +237,11 @@ public class OrdersController {
             @RequestParam(required = false) SalesChannel channel,
             @RequestParam(required = false) OrderStatus status,
             @RequestParam(required = false) Long customerId,
+            @RequestParam(required = false) String warehouseCode,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
         return ResponseEntity.ok(orderConverter.toSummaryResponse(
-                orderReportUseCase.getSummary(channel, status, customerId, from, to)));
+                orderReportUseCase.getSummary(channel, status, customerId, warehouseCode, from, to)));
     }
 
     @Operation(summary = "Produtos mais vendidos do período, por receita ou por quantidade",

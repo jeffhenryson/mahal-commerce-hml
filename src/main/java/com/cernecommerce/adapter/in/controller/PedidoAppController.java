@@ -65,15 +65,38 @@ public class PedidoAppController {
 
     @Operation(summary = "Fila de pedidos do app, do mais antigo ao mais novo",
             description = "Sem status: PENDENTE, ACEITO, PRONTO e SAIU_PARA_ENTREGA — tudo que ainda pede ação. "
-                    + "sessionId restringe aos aceitos por aquele caixa.")
+                    + "sessionId restringe aos aceitos por aquele caixa. Pendência 10 §1 — com `coluna` "
+                    + "(NOVOS | PREPARO | SAIU | FINALIZADOS) devolve só aquela coluna do quadro, mais antigo primeiro "
+                    + "(criadoEm, depois o id), com totalElements da coluna; size em 5, 10, 20, 50 ou 100 "
+                    + "(400 INVALID_PAGE_SIZE); FINALIZADOS exige `from` (400 FROM_REQUIRED) e traz os concluídos "
+                    + "desde ele; coluna desconhecida, 400 INVALID_COLUMN. Com `coluna`, status e sessionId são "
+                    + "ignorados. Cada item traz clienteVip.")
     @GetMapping("/app-orders")
     @PreAuthorize("hasAnyAuthority('PDV_READ','ONLINE_ORDER_READ')")
     public ResponseEntity<PageResult<PedidoAppResponseDTO>> listar(
             @RequestParam(required = false) Set<AtendimentoStatus> status,
             @RequestParam(required = false) Long sessionId,
+            @RequestParam(required = false) String coluna,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
+            java.time.Instant from,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        if (coluna != null && !coluna.isBlank()) {
+            return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.listarColuna(coluna(coluna), from, page,
+                    size)));
+        }
         return ResponseEntity.ok(converter.toResponse(pedidoAppUseCase.listar(status, sessionId, page, size)));
+    }
+
+    private static com.cernecommerce.core.domain.model.ecommerce.ColunaCentral coluna(String raw) {
+        try {
+            return com.cernecommerce.core.domain.model.ecommerce.ColunaCentral.valueOf(
+                    raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException("INVALID_COLUMN",
+                    "coluna deve ser NOVOS, PREPARO, SAIU ou FINALIZADOS");
+        }
     }
 
     @Operation(summary = "Pedidos do app que este caixa atende",

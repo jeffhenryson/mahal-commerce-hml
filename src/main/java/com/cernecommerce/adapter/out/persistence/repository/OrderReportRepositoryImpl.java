@@ -22,6 +22,9 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class OrderReportRepositoryImpl implements OrderReportRepository {
 
+    /** Fuso da loja: o "dia" da série é o do calendário de quem vende, não o do banco. */
+    static final java.time.ZoneId STORE_ZONE = java.time.ZoneId.of("America/Sao_Paulo");
+
     private final OrderJpaRepository orderJpaRepository;
     private final OrderItemJpaRepository orderItemJpaRepository;
 
@@ -32,13 +35,13 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
     }
 
     @Override
-    public OrderSummary summarize(SalesChannel channel, OrderStatus status, Long customerId,
+    public OrderSummary summarize(SalesChannel channel, OrderStatus status, Long customerId, String warehouseCode,
             Instant from, Instant to, int topProductsLimit) {
         String channelName = channel == null ? null : channel.name();
         String statusName = status == null ? null : status.name();
 
         List<OrderJpaRepository.StatusCountProjection> statusCounts = orderJpaRepository
-                .countByStatus(channelName, statusName, customerId, from, to);
+                .countByStatus(channelName, statusName, customerId, warehouseCode, from, to);
         Map<OrderStatus, Long> ordersByStatus = statusCounts.stream()
                 .collect(Collectors.toMap(p -> OrderStatus.valueOf(p.getStatus()),
                         OrderJpaRepository.StatusCountProjection::getCount));
@@ -50,23 +53,31 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
                         .divide(BigDecimal.valueOf(totalOrders), 4, RoundingMode.HALF_UP);
 
         OrderJpaRepository.HeaderTotalsProjection totals = orderJpaRepository
-                .findRevenueTotals(channelName, statusName, customerId, from, to);
+                .findRevenueTotals(channelName, statusName, customerId, warehouseCode, from, to);
         BigDecimal averageTicket = totals.getOrderCount() == 0 ? BigDecimal.ZERO
                 : totals.getTotalRevenueNet()
                         .divide(BigDecimal.valueOf(totals.getOrderCount()), Money.MONEY_SCALE, Money.ROUNDING);
 
         Map<SalesChannel, BigDecimal> revenueByChannel = orderJpaRepository
-                .findRevenueByChannel(channelName, statusName, customerId, from, to).stream()
+                .findRevenueByChannel(channelName, statusName, customerId, warehouseCode, from, to).stream()
                 .collect(Collectors.toMap(p -> SalesChannel.valueOf(p.getChannel()),
                         OrderJpaRepository.ChannelRevenueProjection::getRevenue));
 
-        List<OrderSummary.DailyRevenue> dailyRevenue = orderJpaRepository
-                .findDailyRevenue(channelName, statusName, customerId, from, to).stream()
-                .map(p -> new OrderSummary.DailyRevenue(p.getDay(), p.getRevenue(), p.getOrderCount()))
+        // Pendência 9 — dia local da loja, agrupado aqui (ver findPaidInstantsAndAmounts).
+        java.util.TreeMap<java.time.LocalDate, BigDecimal[]> byDay = new java.util.TreeMap<>();
+        for (Object[] row : orderJpaRepository.findPaidInstantsAndAmounts(channelName, statusName, customerId,
+                warehouseCode, from, to)) {
+            java.time.LocalDate day = ((Instant) row[0]).atZone(STORE_ZONE).toLocalDate();
+            BigDecimal[] acc = byDay.computeIfAbsent(day, d -> new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+            acc[0] = acc[0].add((BigDecimal) row[1]);
+            acc[1] = acc[1].add(BigDecimal.ONE);
+        }
+        List<OrderSummary.DailyRevenue> dailyRevenue = byDay.entrySet().stream()
+                .map(e -> new OrderSummary.DailyRevenue(e.getKey(), e.getValue()[0], e.getValue()[1].longValue()))
                 .toList();
 
         List<OrderSummary.TopProduct> topProducts = orderItemJpaRepository
-                .findTopProducts(channelName, statusName, customerId, from, to,
+                .findTopProducts(channelName, statusName, customerId, warehouseCode, from, to,
                         PageRequest.of(0, topProductsLimit))
                 .stream()
                 .map(p -> new OrderSummary.TopProduct(p.getSku(), p.getProductName(), p.getQuantitySold(),
@@ -76,7 +87,7 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
         return new OrderSummary(totalOrders, totals.getTotalRevenueNet(), totals.getTotalRevenueGross(),
                 averageTicket, revenueByChannel, ordersByStatus, cancelledOrRefundedRate,
                 dailyRevenue, topProducts,
-                orderItemJpaRepository.sumPromotionDiscount(channelName, statusName, customerId, from, to));
+                orderItemJpaRepository.sumPromotionDiscount(channelName, statusName, customerId, warehouseCode, from, to));
     }
 
     @Override
@@ -87,9 +98,9 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
         Pageable pageable = PageRequest.of(0, limit);
 
         List<OrderItemJpaRepository.TopProductProjection> projections = byQuantity
-                ? orderItemJpaRepository.findTopProductsByQuantity(channelName, statusName, customerId,
+                ? orderItemJpaRepository.findTopProductsByQuantity(channelName, statusName, customerId, null,
                         from, to, pageable)
-                : orderItemJpaRepository.findTopProducts(channelName, statusName, customerId, from, to,
+                : orderItemJpaRepository.findTopProducts(channelName, statusName, customerId, null, from, to,
                         pageable);
 
         return projections.stream()

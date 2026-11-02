@@ -41,5 +41,9 @@ public class DeliveryResponseDTO {
         private String state;
         private String country;
         private String reference;
+        @Schema(description = "Pendência 10 §2 — nulo quando o endereço não foi geocodificado.", nullable = true)
+        private Double latitude;
+        @Schema(description = "Pendência 10 §2 — nulo quando o endereço não foi geocodificado.", nullable = true)
+        private Double longitude;
     }
 }

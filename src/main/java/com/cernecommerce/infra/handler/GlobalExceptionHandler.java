@@ -1576,6 +1576,24 @@ public class GlobalExceptionHandler {
                 req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pedido.InvalidSalesGoalAmountException.class)
+    public ResponseEntity<ApiError> handleInvalidSalesGoalAmount(
+            com.cernecommerce.core.domain.exception.pedido.InvalidSalesGoalAmountException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "INVALID_AMOUNT", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pedido.SalesGoalNotFoundException.class)
+    public ResponseEntity<ApiError> handleSalesGoalNotFound(
+            com.cernecommerce.core.domain.exception.pedido.SalesGoalNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "SALES_GOAL_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException.class)
+    public ResponseEntity<ApiError> handleCentralPedidosQuery(
+            com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), ex.code(), req);
+    }
+
     @ExceptionHandler(SaleEmptyException.class)
     public ResponseEntity<ApiError> handleSaleEmpty(SaleEmptyException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SALE_EMPTY", req);

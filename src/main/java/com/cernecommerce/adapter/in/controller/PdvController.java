@@ -462,7 +462,12 @@ public class PdvController {
                     + "pelo dinheiro recebido. **PDV-C015: a rota passou a exigir corpo** — o "
                     + "pagamento recebido é registrado como em qualquer outra venda, e a cobrança "
                     + "de gateway aberta no checkout é encerrada. `payments` tem que somar "
-                    + "EXATAMENTE o líquido: pedido de marketplace não tem onde guardar troco.")
+                    + "EXATAMENTE o líquido: pedido de marketplace não tem onde guardar troco. Pendência 10 §4: "
+                    + "aceita MARCADO (com dueDate), também misto, com as regras do balcão (CRM-F010): "
+                    + "PDV_SALE_ON_ACCOUNT (403 ON_ACCOUNT_NOT_ALLOWED), cliente no pedido (400 "
+                    + "CUSTOMER_REQUIRED_FOR_ON_ACCOUNT), VIP (403 CUSTOMER_NOT_ELIGIBLE), sem vencido (409 "
+                    + "CUSTOMER_HAS_OVERDUE) e limite (409 CREDIT_LIMIT_EXCEEDED, contra o limite do BALCÃO). A parte "
+                    + "marcada vira recebível ligado ao pedido e não entra no caixa.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Liquidado", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Pagamento insuficiente, ou acima do líquido (aqui não há troco)", content = @Content),
@@ -475,8 +480,11 @@ public class PdvController {
     public ResponseEntity<OrderResponseDTO> settleOnlineOrder(@PathVariable("id") Long sessionId,
             @PathVariable("orderId") Long orderId,
             @Valid @RequestBody SettleOnlineOrderRequest request, Authentication authentication) {
-        Order order = pdvUseCase.settleOnlineOrder(sessionId, orderId,
-                orderConverter.toPaymentCommands(request.getPayments()), authentication.getName());
+        List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
+        // Pendência 10 §4 — Marcado no pedido do app: a mesma permissão do balcão.
+        OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
+        Order order = pdvUseCase.settleOnlineOrder(sessionId, orderId, payments, authentication.getName());
+        OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         publisher.publishEvent(AuditEvent.of(EventType.STOCK_MOVEMENT_REGISTERED, authentication.getName(),
                 Map.of("origin", "PDV_SETTLE_ONLINE",
                         "sessionId", sessionId,

@@ -27,6 +27,14 @@ public interface PedidoAppAtendimentoJpaRepository extends JpaRepository<PedidoA
     Page<PedidoAppAtendimentoEntity> findByStatusInAndSessionIdOrderByCriadoEmAsc(Collection<String> statuses,
             Long sessionId, Pageable pageable);
 
+    /** Pendência 10 §1 — coluna do quadro, mais antigo primeiro, com o id como desempate. */
+    Page<PedidoAppAtendimentoEntity> findByStatusInOrderByCriadoEmAscOrderIdAsc(Collection<String> statuses,
+            Pageable pageable);
+
+    /** Coluna FINALIZADOS: só os concluídos desde o começo do dia local. */
+    Page<PedidoAppAtendimentoEntity> findByStatusInAndConcluidoEmGreaterThanEqualOrderByCriadoEmAscOrderIdAsc(
+            Collection<String> statuses, Instant concluidoDesde, Pageable pageable);
+
     // Só os ainda não pagos: a entrega liquidada continua ACEITO até sair, e não pode expirar —
     // nem ocupar o lote do varredor para sempre.
     @Query("SELECT a.orderId FROM PedidoAppAtendimentoEntity a WHERE a.status IN ('PENDENTE', 'ACEITO', 'PRONTO') "

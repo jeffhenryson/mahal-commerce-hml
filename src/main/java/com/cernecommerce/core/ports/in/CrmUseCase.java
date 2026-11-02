@@ -191,6 +191,12 @@ public interface CrmUseCase {
      */
     Customer setSegmento(Long id, String segmento);
 
+    /**
+     * Pendência 10 §3 — dos clientes pedidos, os que têm a tag VIP (a mesma regra do "Marcar"), numa
+     * consulta só.
+     */
+    java.util.Set<Long> findVipCustomerIds(Collection<Long> customerIds);
+
     /** Recalcula o segmento da base inteira (o job diário chama isto). Devolve quantos foram regravados. */
     int recalculateSegments();
 

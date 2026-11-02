@@ -32,6 +32,13 @@ public interface AtendimentoPedidoAppRepository {
      */
     PageResult<AtendimentoPedidoApp> findByStatus(Set<AtendimentoStatus> statuses, Long sessionId, int page, int size);
 
+    /**
+     * Pendência 10 §1 — uma coluna do quadro, mais antigo primeiro ({@code criadoEm}, depois o id).
+     * {@code concluidoDesde} não nulo filtra os concluídos a partir dele (coluna FINALIZADOS).
+     */
+    PageResult<AtendimentoPedidoApp> findByColuna(Set<AtendimentoStatus> statuses, Instant concluidoDesde, int page,
+            int size);
+
     /** Ids dos em andamento com prazo vencido — o que o varredor cancela. */
     List<Long> findVencidos(Instant agora, int limite);
 }

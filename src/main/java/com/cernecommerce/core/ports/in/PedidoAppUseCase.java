@@ -28,11 +28,20 @@ public interface PedidoAppUseCase {
      * @param taxaSugerida ECM-F013 — taxa da Central de Pedidos para o bairro (ou a fixa); só na entrega pendente
      * @param mensagemCliente ECM-F013 — o texto da etapa que o cliente lê, igual ao do aviso
      */
+    /**
+     * @param clienteVip pendência 10 §3 — tem a tag VIP do CRM (a mesma regra do "Marcar"). Nulo quando
+     *        não há cliente, ou quando a origem não calculou (consultas pontuais).
+     */
     record PedidoApp(AtendimentoPedidoApp atendimento, Order order, Customer cliente, BigDecimal taxaSugerida,
-            String mensagemCliente) {
+            String mensagemCliente, Boolean clienteVip) {
+
+        public PedidoApp(AtendimentoPedidoApp atendimento, Order order, Customer cliente, BigDecimal taxaSugerida,
+                String mensagemCliente) {
+            this(atendimento, order, cliente, taxaSugerida, mensagemCliente, null);
+        }
 
         public PedidoApp(AtendimentoPedidoApp atendimento, Order order, Customer cliente) {
-            this(atendimento, order, cliente, null, null);
+            this(atendimento, order, cliente, null, null, null);
         }
     }
 
@@ -45,6 +54,17 @@ public interface PedidoAppUseCase {
      * {@code sessionId} restringe aos aceitos por aquele caixa.
      */
     PageResult<PedidoApp> listar(Set<AtendimentoStatus> statuses, Long sessionId, int page, int size);
+
+    /**
+     * Pendência 10 §1 — uma coluna do quadro, paginada, mais antigo primeiro. {@code from} é obrigatório
+     * em FINALIZADOS (começo do dia local que o front calcula) e ignorado nas demais. {@code size} em
+     * 5, 10, 20, 50 ou 100.
+     *
+     * @throws com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosQueryException
+     *         FROM_REQUIRED ou INVALID_PAGE_SIZE
+     */
+    PageResult<PedidoApp> listarColuna(com.cernecommerce.core.domain.model.ecommerce.ColunaCentral coluna,
+            java.time.Instant from, int page, int size);
 
     /**
      * @throws com.cernecommerce.core.domain.exception.ecommerce.AtendimentoNotFoundException se o

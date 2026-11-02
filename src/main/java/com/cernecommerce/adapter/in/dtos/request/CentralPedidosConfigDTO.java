@@ -56,6 +56,28 @@ public class CentralPedidosConfigDTO {
     @Schema(description = "Chave Pix da loja, enviada ao cliente no aceite da entrega.", example = "pix@mahal.com.br")
     private String pixChave;
 
+    @jakarta.validation.Valid
+    @Schema(description = "Pendência 10 §2 — de onde sai a entrega (rota e distância no mapa). Nulo = mapa só com o "
+            + "cliente.", nullable = true)
+    private Origem origem;
+
+    @Data
+    @Schema(name = "CentralPedidosOrigem")
+    public static class Origem {
+        @jakarta.validation.constraints.NotNull
+        @jakarta.validation.constraints.DecimalMin("-90")
+        @jakarta.validation.constraints.DecimalMax("90")
+        private Double latitude;
+
+        @jakarta.validation.constraints.NotNull
+        @jakarta.validation.constraints.DecimalMin("-180")
+        @jakarta.validation.constraints.DecimalMax("180")
+        private Double longitude;
+
+        @Size(max = 200)
+        private String endereco;
+    }
+
     @Data
     @Schema(name = "CentralPedidosHorario")
     public static class Horario {

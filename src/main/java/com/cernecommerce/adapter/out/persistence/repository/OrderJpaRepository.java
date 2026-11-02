@@ -136,12 +136,14 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
             GROUP BY o.status
             """)
     List<StatusCountProjection> countByStatus(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to);
 
     /**
@@ -156,12 +158,14 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
             """)
     HeaderTotalsProjection findRevenueTotals(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to);
 
     @Query("""
@@ -170,6 +174,7 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
@@ -177,23 +182,28 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
             """)
     List<ChannelRevenueProjection> findRevenueByChannel(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to);
 
+    /**
+     * Instante e líquido de cada pedido pago do período, com os filtros do summary. A série diária é
+     * agrupada em Java, no dia de {@code America/Sao_Paulo}: o {@code CAST(createdAt AS date)} que
+     * havia aqui usava o fuso do banco, e a venda das 22h caía no dia seguinte.
+     */
     @Query("""
-            SELECT CAST(o.createdAt AS date) AS day, COALESCE(SUM(o.netAmount), 0) AS revenue,
-                   COUNT(o) AS orderCount
+            SELECT o.createdAt, o.netAmount
             FROM OrderEntity o
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
-            GROUP BY CAST(o.createdAt AS date)
-            ORDER BY CAST(o.createdAt AS date) ASC
             """)
-    List<DailyRevenueProjection> findDailyRevenue(@Param("channel") String channel,
+    List<Object[]> findPaidInstantsAndAmounts(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to);
 
     interface StatusCountProjection {
@@ -212,9 +222,4 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
         BigDecimal getRevenue();
     }
 
-    interface DailyRevenueProjection {
-        java.time.LocalDate getDay();
-        BigDecimal getRevenue();
-        long getOrderCount();
-    }
 }

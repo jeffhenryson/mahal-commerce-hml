@@ -120,9 +120,11 @@ public class FinanceiroController {
             @RequestParam(required = false) SalesChannel channel,
             @RequestParam(required = false) String warehouseCode,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @io.swagger.v3.oas.annotations.Parameter(description = "Pendência 9 — itens em topProductsByMargin (1 a 50).")
+            @RequestParam(defaultValue = "10") int limit) {
         return ResponseEntity.ok(orderConverter.toMarginResponse(
-                orderReportUseCase.getMarginReport(channel, warehouseCode, from, to)));
+                orderReportUseCase.getMarginReport(channel, warehouseCode, from, to, limit)));
     }
 
     @Operation(summary = "Cria um lançamento de fluxo de caixa",

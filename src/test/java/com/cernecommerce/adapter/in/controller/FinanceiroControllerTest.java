@@ -191,7 +191,7 @@ public class FinanceiroControllerTest {
     void getMarginReport_returns_200() throws Exception {
         Instant from = Instant.parse("2026-07-01T00:00:00Z");
         Instant to = Instant.parse("2026-07-31T23:59:59Z");
-        when(orderReportUseCase.getMarginReport(null, null, from, to))
+        when(orderReportUseCase.getMarginReport(null, null, from, to, 10))
                 .thenReturn(new MarginSummary(3, new BigDecimal("100.00"), new BigDecimal("60.00"),
                         new BigDecimal("40.00"), new BigDecimal("40.00"), List.of()));
 
@@ -209,7 +209,7 @@ public class FinanceiroControllerTest {
     void getMarginReport_invalidPeriod_returns_400() throws Exception {
         Instant from = Instant.parse("2026-07-31T00:00:00Z");
         Instant to = Instant.parse("2026-07-01T00:00:00Z");
-        when(orderReportUseCase.getMarginReport(null, null, from, to))
+        when(orderReportUseCase.getMarginReport(null, null, from, to, 10))
                 .thenThrow(new InvalidReportPeriodException("'from' não pode ser depois de 'to'"));
 
         mockMvc.perform(get("/financeiro/margem")

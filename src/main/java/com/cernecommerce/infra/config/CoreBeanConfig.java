@@ -588,6 +588,14 @@ class CoreBeanConfig {
         return new FinanceiroService(ledgerRepository);
     }
 
+    /** Pendência 9 — Análise de Vendas e meta mensal. */
+    @Bean
+    com.cernecommerce.core.ports.in.SalesAnalyticsUseCase salesAnalyticsUseCase(
+            com.cernecommerce.core.ports.out.pedido.SalesAnalyticsRepository salesAnalyticsRepository,
+            CustomerRepository customerRepository) {
+        return new com.cernecommerce.core.service.SalesAnalyticsService(salesAnalyticsRepository, customerRepository);
+    }
+
     @Bean
     EcommerceUseCase ecommerceUseCase(CartRepository cartRepository) {
         return new EcommerceService(cartRepository);

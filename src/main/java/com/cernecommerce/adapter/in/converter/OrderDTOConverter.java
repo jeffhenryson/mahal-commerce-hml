@@ -386,7 +386,7 @@ public class OrderDTOConverter {
         DeliveryAddressRequest a = request.getAddress();
         DeliveryAddress address = a == null ? null : new DeliveryAddress(a.getStreet(), a.getNumber(),
                 a.getComplement(), a.getZipCode(), a.getDistrict(), a.getCity(), a.getState(), a.getCountry(),
-                a.getReference());
+                a.getReference(), a.getLatitude(), a.getLongitude());
         return new OrderDelivery(request.getType(), address, request.getMethod(), request.getCourierName(),
                 request.getCourierPhone(), request.getPickupCode(), request.getDropoffCode(),
                 request.getTrackingCode(), request.getFee(), request.getTrackingUrl());
@@ -397,7 +397,7 @@ public class OrderDTOConverter {
         DeliveryAddressRequest a = request.getAddress();
         DeliveryAddress.Patch address = a == null ? null : new DeliveryAddress.Patch(a.getStreet(), a.getNumber(),
                 a.getComplement(), a.getZipCode(), a.getDistrict(), a.getCity(), a.getState(), a.getCountry(),
-                a.getReference());
+                a.getReference(), a.getLatitude(), a.getLongitude());
         return new OrderDelivery.Patch(request.getType(), address, request.getMethod(), request.getCourierName(),
                 request.getCourierPhone(), request.getPickupCode(), request.getDropoffCode(),
                 request.getTrackingCode(), request.getFee(), request.getTrackingUrl());
@@ -429,6 +429,8 @@ public class OrderDTOConverter {
             address.setState(a.state());
             address.setCountry(a.country());
             address.setReference(a.reference());
+            address.setLatitude(a.latitude());
+            address.setLongitude(a.longitude());
             dto.setAddress(address);
         }
         return dto;

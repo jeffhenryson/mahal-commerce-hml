@@ -24,7 +24,13 @@ public interface OrderReportUseCase {
      * @throws com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException se
      *         {@code from} for depois de {@code to}, ou o intervalo exceder o teto permitido
      */
-    OrderSummary getSummary(SalesChannel channel, OrderStatus status, Long customerId,
+    default OrderSummary getSummary(SalesChannel channel, OrderStatus status, Long customerId,
+            Instant from, Instant to) {
+        return getSummary(channel, status, customerId, null, from, to);
+    }
+
+    /** Pendência 9 — com o filtro opcional de depósito. */
+    OrderSummary getSummary(SalesChannel channel, OrderStatus status, Long customerId, String warehouseCode,
             Instant from, Instant to);
 
     /**
@@ -44,5 +50,10 @@ public interface OrderReportUseCase {
      * @throws com.cernecommerce.core.domain.exception.pedido.InvalidReportPeriodException se
      *         {@code from} for depois de {@code to}, ou o intervalo exceder o teto permitido
      */
-    MarginSummary getMarginReport(SalesChannel channel, String warehouseCode, Instant from, Instant to);
+    default MarginSummary getMarginReport(SalesChannel channel, String warehouseCode, Instant from, Instant to) {
+        return getMarginReport(channel, warehouseCode, from, to, 10);
+    }
+
+    /** Pendência 9 — {@code topProductsByMargin} com até {@code limit} itens (1 a 50). */
+    MarginSummary getMarginReport(SalesChannel channel, String warehouseCode, Instant from, Instant to, int limit);
 }

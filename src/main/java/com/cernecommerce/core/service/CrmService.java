@@ -402,6 +402,25 @@ public class CrmService implements CrmUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public java.util.Set<Long> findVipCustomerIds(Collection<Long> customerIds) {
+        if (customerIds == null || customerIds.isEmpty()) {
+            return java.util.Set.of();
+        }
+        if (insights != null) {
+            return insights.tagNamesFor(customerIds).entrySet().stream()
+                    .filter(e -> e.getValue().stream().anyMatch(Tag::isVipName))
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toSet());
+        }
+        // Sem o repositório em lote (testes antigos): uma consulta por cliente.
+        return customerIds.stream().filter(java.util.Objects::nonNull)
+                .filter(id -> customerTagRepository.findTagsByCustomerId(id).stream()
+                        .anyMatch(t -> Tag.isVipName(t.nome())))
+                .collect(Collectors.toSet());
+    }
+
+    @Override
     @Transactional
     public int recalculateSegments() {
         return insights == null ? 0 : insights.recalculateSegments(null, Instant.now());

@@ -44,6 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -190,5 +192,54 @@ class PdvServicePedidoAppSettleTest {
 
         assertThat(pdvService.settleOnlineOrder(1L, 7L, pix("44.00"), "caixa1").status())
                 .isEqualTo(OrderStatus.CONCLUIDO);
+    }
+
+    // ── Pendência 10 §4: Marcado no pedido do app ──────────────────────────────────────────
+
+    private static List<PaymentCommand> pixEMarcado(String pix, String marcado) {
+        return List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal(pix), null),
+                new PaymentCommand(PaymentMethod.MARCADO, new BigDecimal(marcado), null, null, null,
+                        java.time.LocalDate.of(2026, 11, 30)));
+    }
+
+    @Test
+    void marcadoMisto_validaNoBalcaoGravaLinhaForaDoCaixaECriaRecebivel() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(caixa(1L)));
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(pedidoDoApp(retirada())));
+        when(atendimentos.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pendente(DeliveryType.RETIRADA).aceito(1L, "caixa1", AGORA)));
+        givenPersistence();
+        List<PaymentCommand> pagamentos = pixEMarcado("14.00", "30.00");
+
+        Order pago = pdvService.settleOnlineOrder(1L, 7L, pagamentos, "caixa1");
+
+        verify(receivableUseCase).validateOnAccount(42L,
+                com.cernecommerce.core.domain.model.recebivel.OnAccountChannel.BALCAO, pagamentos);
+        ArgumentCaptor<com.cernecommerce.core.domain.model.pagamento.OrderPayment> linhas =
+                ArgumentCaptor.forClass(com.cernecommerce.core.domain.model.pagamento.OrderPayment.class);
+        verify(orderPaymentRepository, org.mockito.Mockito.atLeast(2)).save(linhas.capture());
+        assertThat(linhas.getAllValues()).extracting(com.cernecommerce.core.domain.model.pagamento.OrderPayment::status)
+                .contains(com.cernecommerce.core.domain.model.pagamento.PaymentStatus.CAPTURED,
+                        com.cernecommerce.core.domain.model.pagamento.PaymentStatus.ON_ACCOUNT);
+        verify(receivableUseCase).createFromOrder(eq(pago), eq(null), argThat(PaymentCommand::isOnAccount),
+                eq("caixa1"));
+    }
+
+    @Test
+    void marcadoDeClienteNaoVip_naoGravaNada() {
+        when(cashRegisterRepository.findById(1L)).thenReturn(Optional.of(caixa(1L)));
+        when(orderRepository.findById(7L)).thenReturn(Optional.of(pedidoDoApp(retirada())));
+        when(atendimentos.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pendente(DeliveryType.RETIRADA).aceito(1L, "caixa1", AGORA)));
+        org.mockito.Mockito.doThrow(new com.cernecommerce.core.domain.exception.recebivel
+                        .CustomerNotEligibleForOnAccountException(42L))
+                .when(receivableUseCase).validateOnAccount(any(), any(), any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        pdvService.settleOnlineOrder(1L, 7L, pixEMarcado("14.00", "30.00"), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.recebivel.CustomerNotEligibleForOnAccountException.class);
+        verify(orderRepository, never()).save(any());
+        verify(estoqueUseCase, never()).consumeReservationsByOwner(any(), any());
+        verify(receivableUseCase, never()).createFromOrder(any(), any(), any(), any());
     }
 }

@@ -30,10 +30,11 @@ public class OrderReportService implements OrderReportUseCase {
 
     @Override
     @Transactional(readOnly = true)
-    public OrderSummary getSummary(SalesChannel channel, OrderStatus status, Long customerId,
+    public OrderSummary getSummary(SalesChannel channel, OrderStatus status, Long customerId, String warehouseCode,
             Instant from, Instant to) {
         validatePeriod(from, to);
-        return orderReportRepository.summarize(channel, status, customerId, from, to, TOP_PRODUCTS_LIMIT);
+        return orderReportRepository.summarize(channel, status, customerId, warehouseCode, from, to,
+                TOP_PRODUCTS_LIMIT);
     }
 
     @Override
@@ -58,17 +59,29 @@ public class OrderReportService implements OrderReportUseCase {
 
     @Override
     @Transactional(readOnly = true)
-    public MarginSummary getMarginReport(SalesChannel channel, String warehouseCode, Instant from, Instant to) {
+    public MarginSummary getMarginReport(SalesChannel channel, String warehouseCode, Instant from, Instant to,
+            int limit) {
         validatePeriod(from, to);
-        return orderReportRepository.summarizeMargin(channel, warehouseCode, from, to, TOP_PRODUCTS_LIMIT);
+        if (limit < 1 || limit > 50) {
+            throw new InvalidReportPeriodException("limit deve estar entre 1 e 50");
+        }
+        return orderReportRepository.summarizeMargin(channel, warehouseCode, from, to, limit);
     }
 
-    private void validatePeriod(Instant from, Instant to) {
+    /** Package-private: as análises de vendas (SalesAnalyticsService) usam o mesmo teto. */
+    static void checkPeriod(Instant from, Instant to) {
+        if (from == null || to == null) {
+            throw new InvalidReportPeriodException("'from' e 'to' são obrigatórios");
+        }
         if (from.isAfter(to)) {
             throw new InvalidReportPeriodException("'from' não pode ser depois de 'to'");
         }
         if (Duration.between(from, to).toDays() > MAX_RANGE_DAYS) {
             throw new InvalidReportPeriodException("Intervalo máximo permitido: " + MAX_RANGE_DAYS + " dias");
         }
+    }
+
+    private void validatePeriod(Instant from, Instant to) {
+        checkPeriod(from, to);
     }
 }

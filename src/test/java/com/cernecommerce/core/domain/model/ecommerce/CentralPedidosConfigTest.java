@@ -101,4 +101,18 @@ class CentralPedidosConfigTest {
         assertThat(c.entrega().taxaFixa()).isEqualTo(new BigDecimal("8.00"));
         assertThat(c.entrega().pedidoMinimo()).isEqualTo(new BigDecimal("30.00"));
     }
+
+    /** Pendência 10 §2 — origem da loja para o mapa. */
+    @Test
+    void origemValidaCoordenadas() {
+        CentralPedidosConfig ok = new CentralPedidosConfig(true, true, List.of(), false, 20, 40, 30, null, true, null,
+                new CentralPedidosConfig.Origem(-22.9068, -43.1729, " Rua da Loja, 100 "));
+        org.assertj.core.api.Assertions.assertThat(ok.origem().endereco()).isEqualTo("Rua da Loja, 100");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new CentralPedidosConfig(true, true, List.of(), false,
+                        20, 40, 30, null, true, null, new CentralPedidosConfig.Origem(-95.0, 0.0, null)))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosConfigInvalidaException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new CentralPedidosConfig(true, true, List.of(), false,
+                        20, 40, 30, null, true, null, new CentralPedidosConfig.Origem(-22.9, null, null)))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.ecommerce.CentralPedidosConfigInvalidaException.class);
+    }
 }

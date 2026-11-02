@@ -46,6 +46,7 @@ public class PedidoAppDTOConverter {
             dto.setClienteNome(pedidoApp.cliente().nome());
             dto.setClienteContato(pedidoApp.cliente().contato());
             dto.setClienteEmail(pedidoApp.cliente().email());
+            dto.setClienteVip(pedidoApp.clienteVip());
         }
         return dto;
     }

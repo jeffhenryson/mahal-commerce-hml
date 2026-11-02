@@ -19,4 +19,8 @@ public class PedidoAppResponseDTO {
     private String clienteContato;
 
     private String clienteEmail;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Pendência 10 §3 — o cliente tem a tag VIP do CRM (a "
+            + "mesma regra do Marcar). Nulo quando o pedido não tem cliente.", nullable = true)
+    private Boolean clienteVip;
 }

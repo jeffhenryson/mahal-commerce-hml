@@ -35,7 +35,9 @@ public final class CentralPedidosDTOConverter {
                 dto.getExpiracaoSolicitacaoMin(),
                 new CentralPedidosConfig.Entrega(e.isHabilitada(), e.getTaxaFixa(), e.getPedidoMinimo(), e.getRaioKm(),
                         bairros),
-                dto.isRetiradaHabilitada(), dto.getPixChave());
+                dto.isRetiradaHabilitada(), dto.getPixChave(),
+                dto.getOrigem() == null ? null : new CentralPedidosConfig.Origem(dto.getOrigem().getLatitude(),
+                        dto.getOrigem().getLongitude(), dto.getOrigem().getEndereco()));
     }
 
     public static CentralPedidosConfigDTO toDto(CentralPedidosConfig config) {
@@ -67,6 +69,13 @@ public final class CentralPedidosDTOConverter {
         dto.setEntrega(entrega);
         dto.setRetiradaHabilitada(config.retiradaHabilitada());
         dto.setPixChave(config.pixChave());
+        if (config.origem() != null) {
+            CentralPedidosConfigDTO.Origem origem = new CentralPedidosConfigDTO.Origem();
+            origem.setLatitude(config.origem().latitude());
+            origem.setLongitude(config.origem().longitude());
+            origem.setEndereco(config.origem().endereco());
+            dto.setOrigem(origem);
+        }
         return dto;
     }
 

@@ -20,12 +20,14 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
             """)
     BigDecimal sumPromotionDiscount(@Param("channel") String channel, @Param("status") String status,
-            @Param("customerId") Long customerId, @Param("from") Instant from, @Param("to") Instant to);
+            @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode, @Param("from") Instant from, @Param("to") Instant to);
 
     /**
      * Top N produtos por receita no período (GET /orders/summary). {@code LEFT JOIN} por
@@ -46,6 +48,7 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
@@ -54,6 +57,7 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             """)
     List<TopProductProjection> findTopProducts(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to, Pageable pageable);
 
     /**
@@ -70,6 +74,7 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
               AND (:customerId IS NULL OR o.customerId = :customerId)
+              AND (:warehouseCode IS NULL OR o.warehouseCode = :warehouseCode)
               AND o.createdAt >= :from
               AND o.createdAt <= :to
               AND o.status IN ('PAGO','SEPARADO','ENVIADO','ENTREGUE','CONCLUIDO','RESERVADO')
@@ -78,6 +83,7 @@ public interface OrderItemJpaRepository extends JpaRepository<OrderItemEntity, L
             """)
     List<TopProductProjection> findTopProductsByQuantity(@Param("channel") String channel,
             @Param("status") String status, @Param("customerId") Long customerId,
+            @Param("warehouseCode") String warehouseCode,
             @Param("from") Instant from, @Param("to") Instant to, Pageable pageable);
 
     interface TopProductProjection {

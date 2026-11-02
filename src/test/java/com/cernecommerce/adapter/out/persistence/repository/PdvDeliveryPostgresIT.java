@@ -133,7 +133,7 @@ class PdvDeliveryPostgresIT {
         String[] ctx = givenOpenSessionWithStock();
         OrderDelivery delivery = new OrderDelivery(DeliveryType.ENTREGA,
                 new DeliveryAddress("Rua A", "10", null, "58000-000", "Centro", "João Pessoa", "PB", "Brasil",
-                        "Portão azul"),
+                        "Portão azul", -7.119495, -34.845011),
                 DeliveryMethod.APP_99, null, null, null, null, null, new BigDecimal("9.90"));
 
         Order sold = pdvUseCase.registerSale(Long.valueOf(ctx[0]), null,
@@ -146,6 +146,9 @@ class PdvDeliveryPostgresIT {
         assertThat(row.get("type")).isEqualTo("ENTREGA");
         assertThat(row.get("method")).isEqualTo("APP_99");
         assertThat((BigDecimal) row.get("fee")).isEqualByComparingTo("9.90");
+        // Pendência 10 §2 (V185) — coordenadas gravadas com 6 casas.
+        assertThat((BigDecimal) row.get("latitude")).isEqualByComparingTo("-7.119495");
+        assertThat((BigDecimal) row.get("longitude")).isEqualByComparingTo("-34.845011");
         assertThat(jdbc.queryForObject("SELECT notes FROM order_item WHERE order_id = ?", String.class, sold.id()))
                 .isEqualTo("Sem gelo");
 
@@ -155,6 +158,7 @@ class PdvDeliveryPostgresIT {
         assertThat(reloaded.delivery().pickupCode()).isEqualTo("COL-1");
         assertThat(reloaded.delivery().dropoffCode()).isEqualTo("ENT-2");
         assertThat(reloaded.delivery().address().reference()).isEqualTo("Portão azul");
+        assertThat(reloaded.delivery().address().latitude()).isEqualTo(-7.119495);
         assertThat(reloaded.totalPayable()).isEqualByComparingTo("31.90");
     }
 

@@ -194,6 +194,13 @@ public class OrderEntity {
     @Column(table = DELIVERY_TABLE, name = "tracking_url", length = 500)
     private String deliveryTrackingUrl;
 
+    /** Pendência 10 §2 — coordenadas do endereço (V185). */
+    @Column(table = DELIVERY_TABLE, name = "latitude", precision = 9, scale = 6)
+    private BigDecimal deliveryLatitude;
+
+    @Column(table = DELIVERY_TABLE, name = "longitude", precision = 9, scale = 6)
+    private BigDecimal deliveryLongitude;
+
     /**
      * Bloqueio otimista. A {@code Sale} anterior não tinha — era irrelevante numa tabela
      * insert-only, e passa a importar quando o pedido ganha transição de estado.

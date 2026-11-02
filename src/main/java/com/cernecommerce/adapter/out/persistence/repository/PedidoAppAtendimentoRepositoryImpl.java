@@ -86,6 +86,20 @@ public class PedidoAppAtendimentoRepositoryImpl implements AtendimentoPedidoAppR
 
     @Override
     @Transactional(readOnly = true)
+    public PageResult<AtendimentoPedidoApp> findByColuna(Set<AtendimentoStatus> statuses, Instant concluidoDesde,
+            int page, int size) {
+        List<String> names = statuses.stream().map(Enum::name).toList();
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<PedidoAppAtendimentoEntity> result = concluidoDesde == null
+                ? jpaRepository.findByStatusInOrderByCriadoEmAscOrderIdAsc(names, pageable)
+                : jpaRepository.findByStatusInAndConcluidoEmGreaterThanEqualOrderByCriadoEmAscOrderIdAsc(names,
+                        concluidoDesde, pageable);
+        return new PageResult<>(result.getContent().stream().map(PedidoAppAtendimentoRepositoryImpl::toDomain).toList(),
+                page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<Long> findVencidos(Instant agora, int limite) {
         return jpaRepository.findVencidos(agora, PageRequest.of(0, limite));
     }

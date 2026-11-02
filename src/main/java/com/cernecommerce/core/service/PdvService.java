@@ -51,7 +51,6 @@ import com.cernecommerce.core.ports.in.CashbackUseCase;
 import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
-import com.cernecommerce.core.domain.exception.recebivel.OnAccountNotSupportedException;
 import com.cernecommerce.core.ports.out.pagamento.OrderPaymentRepository;
 import com.cernecommerce.core.ports.out.pdv.CashMovementRepository;
 import com.cernecommerce.core.ports.out.pdv.CashRegisterRepository;
@@ -765,9 +764,6 @@ public class PdvService implements PdvUseCase {
         // gravá-lo faria a linha de pagamento afirmar que entrou na gaveta mais do que ficou — o
         // mesmo defeito que PDV-C017 acabou de tirar do fechamento, entrando de novo por outra
         // porta. Ver ChangeNotSupportedException.
-        if (payments.stream().anyMatch(PaymentCommand::isOnAccount)) {
-            throw new OnAccountNotSupportedException("liquidação de pedido do app");
-        }
         // ECM-F010 — contra totalPayable(), que inclui a taxa de entrega definida no aceite; sem
         // entrega é o próprio líquido, como antes.
         BigDecimal total = order.totalPayable();
@@ -775,6 +771,10 @@ public class PdvService implements PdvUseCase {
         if (change != null && change.signum() > 0) {
             throw new ChangeNotSupportedException(total.add(change), total);
         }
+        // Pendência 10 §4 — o pedido do app também pode ser recebido como Marcado (CRM-F010), com as
+        // mesmas regras do balcão: cliente VIP, sem vencido, dentro do limite. Conta no limite do BALCÃO,
+        // o caixa que recebe; o recebível não tem canal próprio (o canal sai de comandaId).
+        validateOnAccount(order.customerId(), OnAccountChannel.BALCAO, payments);
 
         // A reserva já segurou a mercadoria desde o checkout: consumi-la converte o reservado em
         // saída real. Chamar adjustStock(SAIDA) aqui debitaria o estoque duas vezes.
@@ -795,9 +795,10 @@ public class PdvService implements PdvUseCase {
         // fechamento acusava SOBRA sem dono; /payment-totals não via o valor; e o comprovante saía
         // com a lista de pagamentos vazia.
         for (PaymentCommand payment : payments) {
-            orderPaymentRepository.save(OrderPayment.captured(saved.id(), payment.method(),
-                    payment.amount(), payment.installments(), payment.channel(), payment.provider()));
+            // MARCADO nasce ON_ACCOUNT (fora do caixa); o resto, CAPTURED — o mesmo molde do balcão.
+            orderPaymentRepository.save(toPaymentLine(saved.id(), payment));
         }
+        recordReceivableIfOnAccount(saved, null, payments, username);
         // E a cobrança de gateway aberta no checkout (ShopService grava uma PENDING/GATEWAY_PIX em
         // todo pedido de marketplace) é encerrada: pago no balcão, nenhum webhook vai confirmá-la,
         // e deixá-la PENDING para sempre descreveria uma cobrança em aberto que não existe.

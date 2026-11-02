@@ -300,6 +300,10 @@ public class OrderRepositoryImpl implements OrderRepository {
         entity.setDeliveryState(address == null ? null : address.state());
         entity.setDeliveryCountry(address == null ? null : address.country());
         entity.setDeliveryReference(address == null ? null : address.reference());
+        entity.setDeliveryLatitude(address == null || address.latitude() == null ? null
+                : java.math.BigDecimal.valueOf(address.latitude()).setScale(6, java.math.RoundingMode.HALF_UP));
+        entity.setDeliveryLongitude(address == null || address.longitude() == null ? null
+                : java.math.BigDecimal.valueOf(address.longitude()).setScale(6, java.math.RoundingMode.HALF_UP));
         entity.setDeliveryCourierName(delivery == null ? null : delivery.courierName());
         entity.setDeliveryCourierPhone(delivery == null ? null : delivery.courierPhone());
         entity.setDeliveryPickupCode(delivery == null ? null : delivery.pickupCode());
@@ -316,7 +320,9 @@ public class OrderRepositoryImpl implements OrderRepository {
         DeliveryAddress address = e.getDeliveryStreet() == null ? null : new DeliveryAddress(
                 e.getDeliveryStreet(), e.getDeliveryNumber(), e.getDeliveryComplement(), e.getDeliveryZipCode(),
                 e.getDeliveryDistrict(), e.getDeliveryCity(), e.getDeliveryState(), e.getDeliveryCountry(),
-                e.getDeliveryReference());
+                e.getDeliveryReference(),
+                e.getDeliveryLatitude() == null ? null : e.getDeliveryLatitude().doubleValue(),
+                e.getDeliveryLongitude() == null ? null : e.getDeliveryLongitude().doubleValue());
         return new OrderDelivery(DeliveryType.valueOf(e.getDeliveryType()), address,
                 e.getDeliveryMethod() == null ? null : DeliveryMethod.valueOf(e.getDeliveryMethod()),
                 e.getDeliveryCourierName(), e.getDeliveryCourierPhone(), e.getDeliveryPickupCode(),
