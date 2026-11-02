@@ -26,6 +26,9 @@ public class ComandaResponseDTO {
     @Schema(description = "Soma dos subtotais dos itens já lançados.")
     private BigDecimal runningTotal;
 
+    @Schema(description = "Desconto de promoção por quantidade nas linhas em aberto (\"Promoções −R$ X\"). O runningTotal já sai líquido dele.")
+    private BigDecimal promotionDiscountTotal;
+
     @Schema(description = "Preenchido só depois do fechamento — o pedido gerado a partir dos itens.")
     private Long orderId;
 

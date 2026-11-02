@@ -1,5 +1,9 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.model.estoque.PromotionChannel;
+import com.cernecommerce.core.domain.model.estoque.QuantityPromotionEngine;
+import com.cernecommerce.core.ports.in.PdvUseCase;
+import com.cernecommerce.core.ports.in.QuantityPromotionUseCase;
 import com.cernecommerce.core.ports.in.ComandaUseCase.DuploUndone;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorHora;
 import com.cernecommerce.core.ports.in.ComandaUseCase.PorMesa;
@@ -118,6 +122,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -225,6 +230,9 @@ public class ComandaService implements ComandaUseCase {
      * do Salão); desligada, o servidor garante a mesma regra que o PDV já segue.
      */
     private final boolean freeTextEssenceAllowed;
+
+    /** Promoção por quantidade ("leve 4 por R$ 10"); ver {@link #recalculatePromotions}. */
+    private QuantityPromotionUseCase quantityPromotions;
 
     /** Categoria usada para resolver a taxa de cashback da linha de sessão, que não tem produto. */
     static final String SESSION_CASHBACK_CATEGORY = "Sessão";
@@ -400,7 +408,7 @@ public class ComandaService implements ComandaUseCase {
                     "Comanda #" + comandaId, username);
         }
 
-        return comandaRepository.save(comanda.withAddedItem(item));
+        return comandaRepository.save(recalculatePromotions(comanda.withAddedItem(item)));
     }
 
     @Override
@@ -427,7 +435,7 @@ public class ComandaService implements ComandaUseCase {
                     "Comanda #" + comandaId + " (kit " + quote.template().name() + ")", username);
             updated = updated.withAddedItem(item);
         }
-        return comandaRepository.save(updated);
+        return comandaRepository.save(recalculatePromotions(updated));
     }
 
     @Override
@@ -448,7 +456,7 @@ public class ComandaService implements ComandaUseCase {
             semKit = semKit.withRemovedItem(linha.id());
             undoStock(linha, comanda.warehouseCode(), "Remoção de kit da comanda #" + comandaId, username);
         }
-        return comandaRepository.save(semKit);
+        return comandaRepository.save(recalculatePromotions(semKit));
     }
 
     /**
@@ -866,10 +874,68 @@ public class ComandaService implements ComandaUseCase {
                 .orElseThrow(() -> new NotASessionLineException(itemId, comanda.id()));
     }
 
-    /** PDV-F060 — ver {@link ComandaUseCase#addStorePurchaseToTab}. */
+    /** Ligado pelo {@code CoreBeanConfig}. Nulo nos testes antigos: a comanda não aplica promoção. */
+    public void setQuantityPromotions(QuantityPromotionUseCase quantityPromotions) {
+        this.quantityPromotions = quantityPromotions;
+    }
+
+    /**
+     * Promoção por quantidade na mesa (canal COMANDA): recalcula a comanda inteira a cada item que entra
+     * ou sai e grava o desconto nas linhas em aberto. Remover uma unidade e deixar o grupo incompleto
+     * derruba a promoção daquelas linhas, o que é esperado.
+     *
+     * <p>Só conta o consumo comum: linha {@code NORMAL} em aberto, fora de kit, sem cortesia e que não
+     * seja compra na loja (que já levou a promoção do balcão no lançamento). Sessão, rosh, sabor extra
+     * e troca ficam de fora.</p>
+     */
+    private Comanda recalculatePromotions(Comanda comanda) {
+        if (quantityPromotions == null) {
+            return comanda;
+        }
+        List<ComandaItem> pool = comanda.items().stream().filter(ComandaService::inPromotionPool).toList();
+        QuantityPromotionEngine.Result result = pool.isEmpty() ? QuantityPromotionEngine.Result.EMPTY
+                : quantityPromotions.calculate(PromotionChannel.COMANDA, Instant.now(), pool.stream()
+                        .map(i -> new QuantityPromotionEngine.CartLine(i.sku(), i.quantity(), i.unitPrice()))
+                        .toList(), Map.of());
+
+        Map<ComandaItem, ComandaItem> replaced = new IdentityHashMap<>();
+        for (ComandaItem item : pool) {
+            replaced.put(item, item.withoutPromotion());
+        }
+        result.bySku().forEach((sku, promo) -> {
+            List<ComandaItem> lines = pool.stream().filter(i -> i.sku().equals(sku)).toList();
+            List<BigDecimal> room = lines.stream().map(ComandaItem::subtotal).toList();
+            BigDecimal amount = promo.discount().min(room.stream().reduce(BigDecimal.ZERO, BigDecimal::add));
+            if (amount.signum() <= 0) {
+                return;
+            }
+            List<BigDecimal> parts = DiscountProration.distribute(room, amount);
+            for (int k = 0; k < lines.size(); k++) {
+                replaced.put(lines.get(k), lines.get(k).withPromotion(promo.promotionId(), promo.promotionName(),
+                        parts.get(k)));
+            }
+        });
+        boolean changed = replaced.entrySet().stream().anyMatch(e -> !e.getKey().equals(e.getValue()));
+        return changed ? comanda.withItemsReplaced(i -> replaced.getOrDefault(i, i)) : comanda;
+    }
+
+    private static boolean inPromotionPool(ComandaItem i) {
+        return i.isOpen() && i.mode() == ConsumptionMode.NORMAL && !i.inKit() && !i.courtesy()
+                && !i.storePurchase() && !i.isWithdrawn() && i.unitPrice() != null && i.unitPrice().signum() > 0;
+    }
+
+    /** Sobrescrita para levar o {@code @Transactional} (o default da interface chamaria por fora do proxy). */
     @Override
     @Transactional
     public Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username) {
+        return addStorePurchaseToTab(comandaId, items, username, PdvUseCase.PromotionCheck.strict(null));
+    }
+
+    /** PDV-F060 — ver {@link ComandaUseCase#addStorePurchaseToTab}. */
+    @Override
+    @Transactional
+    public Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username,
+            PdvUseCase.PromotionCheck promotionCheck) {
         Comanda comanda = getComandaForUpdate(comandaId);
         pdvService.requireOpenSession(comanda.sessionId());
         requireOpen(comanda);
@@ -902,8 +968,28 @@ public class ComandaService implements ComandaUseCase {
                             command.note(), null);
             linhas.add(linha.asStorePurchase(discount));
         }
-        pdvService.requireDiscountWithinLimit(Order.openMesa(comanda.sessionId(), comanda.warehouseCode(),
-                comanda.customerId(), comandaId, comanda.tableOrCustomerLabel(), conferencia));
+        // Promoção por quantidade: é compra de balcão, então vale o canal PDV, com a mesma conferência
+        // (409 PROMOTION_CHANGED) da venda do caixa. O desconto vai na linha e fica fora do recálculo da mesa.
+        PdvUseCase.PromotionCheck check = promotionCheck == null ? PdvUseCase.PromotionCheck.strict(null)
+                : promotionCheck;
+        QuantityPromotionUseCase.PromotedSale promovidos = quantityPromotions == null
+                ? QuantityPromotionUseCase.withoutPromotions(conferencia, check)
+                : quantityPromotions.applyToSale(Instant.now(), conferencia, items, check, null);
+        conferencia = promovidos.items();
+        for (int i = 0; i < linhas.size(); i++) {
+            OrderItem conferida = conferencia.get(i);
+            if (conferida.promotionDiscountAmount().signum() > 0) {
+                linhas.set(i, linhas.get(i).withPromotion(conferida.promotionId(), conferida.promotionName(),
+                        conferida.promotionDiscountAmount()));
+            }
+        }
+        Order conferenciaDaCompra = Order.openMesa(comanda.sessionId(), comanda.warehouseCode(),
+                comanda.customerId(), comandaId, comanda.tableOrCustomerLabel(), conferencia);
+        if (promovidos.total().signum() > 0) {
+            pdvService.requireDiscountWithinLimit(conferenciaDaCompra, promovidos.total());
+        } else {
+            pdvService.requireDiscountWithinLimit(conferenciaDaCompra);
+        }
 
         // Baixa agora, do depósito da comanda — o da sessão de caixa, o mesmo da venda do balcão. E como
         // no balcão, sempre a unidade inteira: a lata de essência vendida na loja sai fechada, não é uso
@@ -1210,8 +1296,8 @@ public class ComandaService implements ComandaUseCase {
 
         // Sem checagem de "última linha": comanda vazia é estado legítimo — é como ela nasce, e o
         // COMANDA_EMPTY do fechamento já barra fechá-la assim.
-        return comandaRepository.save(withoutLine(comanda, alvo,
-                "Remoção de item da comanda #" + comandaId, username));
+        return comandaRepository.save(recalculatePromotions(withoutLine(comanda, alvo,
+                "Remoção de item da comanda #" + comandaId, username)));
     }
 
     /**
@@ -1267,7 +1353,7 @@ public class ComandaService implements ComandaUseCase {
         Comanda desistida = comanda.withWithdrawnItem(alvo.id(), reason.trim(), username, agora);
         // Mesmo acerto do recolhimento: o vaso volta quando o grupo inteiro saiu do salão, e a fila anda.
         Long raiz = alvo.mode() == ConsumptionMode.SESSAO ? alvo.id() : alvo.linkedItemId();
-        return comandaRepository.save(settleSessionGroup(desistida, raiz, agora));
+        return comandaRepository.save(recalculatePromotions(settleSessionGroup(desistida, raiz, agora)));
     }
 
     @Override
@@ -1407,13 +1493,15 @@ public class ComandaService implements ComandaUseCase {
             // PDV-F011: notes e surchargeAmount atravessam junto com mode/courtesy. A nota porque
             // "qual pinça saiu com aquela mesa" é pergunta feita DEPOIS do fechamento; o acréscimo
             // porque não dá para reconstruí-lo do unitPrice, que já é a soma.
+            // Promoção por quantidade: já está em lineDiscount(); aqui só atravessa o detalhamento.
             orderItems.add(OrderItem.of(null, item.sku(), item.quantity(), item.unitPrice(), item.costPrice(),
                     lineDiscounts.get(i).add(item.lineDiscount()), rate == null ? null : rate.percent(),
                     item.productName(), item.mode(),
                     item.courtesy(), item.notes(), item.surchargeAmount(),
                     // PDV-F024 — o carvão atravessa como o notes: só registro.
                     item.setup() == null || item.setup().charcoal() == null ? null
-                            : item.setup().charcoal().name()));
+                            : item.setup().charcoal().name(),
+                    item.promotionId(), item.promotionName(), item.promotionDiscount()));
         }
 
         // O canal é imutável: o pedido da mesa precisa NASCER MESA, não virar depois. O depósito

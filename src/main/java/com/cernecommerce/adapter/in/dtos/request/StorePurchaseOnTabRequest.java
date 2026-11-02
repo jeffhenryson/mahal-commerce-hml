@@ -21,4 +21,9 @@ public class StorePurchaseOnTabRequest {
     @NotEmpty
     @Valid
     private List<SaleItemRequest> items;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0")
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Desconto total de promoção por quantidade que a tela "
+            + "mostrou (canal PDV). Divergiu do recalculado: 409 PROMOTION_CHANGED. Ausente vale 0.")
+    private java.math.BigDecimal expectedPromotionDiscount;
 }

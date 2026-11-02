@@ -126,7 +126,8 @@ public class PdvOfflineController {
         List<SaleItemCommand> items = orderConverter.toCommands(r.getItems());
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(r.getPayments());
         return new OfflineSaleCommand(r.getClientSaleId(), r.getSoldAt(), r.getCustomerId(),
-                items.stream().map(i -> new OfflineSaleItem(i.sku(), i.quantity(), i.discountAmount(), i.note())).toList(),
+                items.stream().map(i -> new OfflineSaleItem(i.sku(), i.quantity(), i.discountAmount(), i.note(),
+                        i.kitQuantity(), i.promotionDiscountAmount())).toList(),
                 payments.stream().map(p -> new OfflineSalePayment(p.method(), p.amount(), p.installments())).toList());
     }
 

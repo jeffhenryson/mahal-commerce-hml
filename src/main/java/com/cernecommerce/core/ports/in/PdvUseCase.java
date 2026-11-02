@@ -228,9 +228,43 @@ public interface PdvUseCase {
      * que {@code clientSoldAt} guarda a hora em que a venda aconteceu no balcão. Sem chave, é a venda
      * de sempre.
      */
+    default SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt) {
+        return registerSaleIdempotent(sessionId, customerId, items, payments, username, reserveForPickup, delivery,
+                clientSaleId, clientSoldAt, PromotionCheck.strict(null));
+    }
+
+    /**
+     * Igual à anterior, com a conferência da promoção por quantidade. O servidor recalcula o desconto
+     * (canal PDV, regras vigentes em {@code clientSoldAt}, ou agora) e o compara com
+     * {@link PromotionCheck#expectedDiscount()}. Com {@link PromotionCheck#lenient()} falso, uma
+     * divergência é {@code 409 PROMOTION_CHANGED}. Com verdadeiro (venda offline, já cobrada), vale o
+     * valor do cliente e fica um aviso no log.
+     */
     SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
-            String clientSaleId, Instant clientSoldAt);
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck);
+
+    /**
+     * O que o cliente mostrou de promoção por quantidade. {@code expectedDiscount} nulo vale zero.
+     *
+     * @param lenient venda offline: aceita o valor do cliente quando diverge, em vez de recusar
+     */
+    record PromotionCheck(BigDecimal expectedDiscount, boolean lenient) {
+
+        public PromotionCheck {
+            expectedDiscount = expectedDiscount == null ? BigDecimal.ZERO : Money.of(expectedDiscount);
+        }
+
+        public static PromotionCheck strict(BigDecimal expectedDiscount) {
+            return new PromotionCheck(expectedDiscount, false);
+        }
+
+        public static PromotionCheck lenient(BigDecimal expectedDiscount) {
+            return new PromotionCheck(expectedDiscount, true);
+        }
+    }
 
     /** O pedido já gravado com esta chave de venda, se houver (PDV-F043). */
     Optional<Long> findOrderIdByClientSaleId(String clientSaleId);
@@ -301,11 +335,27 @@ public interface PdvUseCase {
      * pelo cliente HTTP, e quem tivesse {@code PDV_SALE_MANAGE} vendia qualquer coisa por qualquer
      * valor sem deixar trilha de desconto.</p>
      */
-    record SaleItemCommand(String sku, BigDecimal quantity, BigDecimal discountAmount, String note) {
+    record SaleItemCommand(String sku, BigDecimal quantity, BigDecimal discountAmount, String note,
+            Integer kitQuantity, BigDecimal promotionDiscountAmount) {
 
-        /** O desconto é dinheiro e vai a 2 casas (ver {@link Money#of}); a quantidade, nunca. */
+        /**
+         * O desconto é dinheiro e vai a 2 casas (ver {@link Money#of}); a quantidade, nunca.
+         *
+         * <p>{@code kitQuantity}: unidades da linha presas a kit montável, que não entram na promoção
+         * por quantidade. {@code promotionDiscountAmount}: o desconto de promoção que a tela mostrou na
+         * linha. É só informativo, porque o servidor recalcula, e só é usado na venda offline quando o
+         * valor diverge.</p>
+         */
         public SaleItemCommand {
             discountAmount = Money.of(discountAmount);
+            promotionDiscountAmount = Money.of(promotionDiscountAmount);
+            if (kitQuantity != null && kitQuantity < 0) {
+                throw new IllegalArgumentException("kitQuantity não pode ser negativo");
+            }
+        }
+
+        public SaleItemCommand(String sku, BigDecimal quantity, BigDecimal discountAmount, String note) {
+            this(sku, quantity, discountAmount, note, null, null);
         }
 
         /** Sem observação — forma anterior a PDV-F022. */

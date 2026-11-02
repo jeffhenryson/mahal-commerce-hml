@@ -20,6 +20,7 @@ public class ComandaDTOConverter {
         dto.setStatus(comanda.status().name());
         dto.setItems(comanda.items().stream().map(this::toResponse).toList());
         dto.setRunningTotal(comanda.runningTotal());
+        dto.setPromotionDiscountTotal(comanda.promotionDiscountTotal());
         dto.setOrderId(comanda.orderId());
         dto.setOpenedBy(comanda.openedBy());
         dto.setOpenedAt(comanda.openedAt());
@@ -55,6 +56,9 @@ public class ComandaDTOConverter {
         dto.setKitBundleId(item.kitBundleId());
         dto.setKitTemplateId(item.kitTemplateId());
         dto.setKitDiscountAmount(item.kitDiscountAmount());
+        dto.setPromotionId(item.promotionId());
+        dto.setPromotionName(item.promotionName());
+        dto.setPromotionDiscountAmount(item.promotionDiscount());
         dto.setCompraNaLoja(item.storePurchase());
         dto.setStoreDiscountAmount(item.storeDiscountAmount());
         if (item.session() != null) {

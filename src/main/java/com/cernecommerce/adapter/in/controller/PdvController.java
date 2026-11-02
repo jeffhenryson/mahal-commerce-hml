@@ -310,7 +310,8 @@ public class PdvController {
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
         PdvUseCase.SaleRegistration registration = pdvUseCase.registerSaleIdempotent(sessionId,
                 request.getCustomerId(), items, payments, authentication.getName(),
-                Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null);
+                Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null,
+                PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()));
         Order order = registration.order();
         // PDV-F043 — reenvio da mesma venda: nada aconteceu agora, então nenhum evento é publicado de
         // novo (estoque, cashback, automação de pós-venda). 200 com o pedido que já existia.

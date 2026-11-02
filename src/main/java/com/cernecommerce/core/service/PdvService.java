@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.ports.in.PdvUseCase.PromotionCheck;
+import com.cernecommerce.core.ports.in.QuantityPromotionUseCase;
 import com.cernecommerce.core.domain.exception.pagamento.ChangeNotSupportedException;
 import com.cernecommerce.core.domain.exception.pagamento.InsufficientPaymentException;
 import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTotalException;
@@ -60,6 +62,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 public class PdvService implements PdvUseCase {
@@ -92,6 +95,17 @@ public class PdvService implements PdvUseCase {
     static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
 
     private final ReceivableUseCase receivableUseCase;
+
+    /**
+     * Promoção por quantidade ("leve 4 por R$ 10"). Nulo nos testes antigos: a venda segue sem promoção
+     * e confere {@code expectedPromotionDiscount} contra zero.
+     */
+    private QuantityPromotionUseCase quantityPromotions;
+
+    /** Ligado pelo {@code CoreBeanConfig}. Setter para não multiplicar mais um construtor. */
+    public void setQuantityPromotions(QuantityPromotionUseCase quantityPromotions) {
+        this.quantityPromotions = quantityPromotions;
+    }
 
     public PdvService(CashRegisterRepository cashRegisterRepository,
             CashMovementRepository cashMovementRepository, OrderRepository orderRepository,
@@ -452,11 +466,25 @@ public class PdvService implements PdvUseCase {
         return orderRepository.findIdByClientSaleId(clientSaleId);
     }
 
+    /**
+     * Sobrescrita só para levar o {@code @Transactional}: o default da interface chamaria a versão com
+     * {@link PromotionCheck} por {@code this}, por fora do proxy, e a venda rodaria sem transação (a baixa
+     * de estoque não reverteria na colisão da chave).
+     */
     @Override
     @Transactional
     public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
             String clientSaleId, Instant clientSoldAt) {
+        return registerSaleIdempotent(sessionId, customerId, items, payments, username, reserveForPickup, delivery,
+                clientSaleId, clientSoldAt, PromotionCheck.strict(null));
+    }
+
+    @Override
+    @Transactional
+    public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
         // PDV-F043 — o reenvio da mesma venda devolve o pedido já gravado, ANTES de qualquer checagem
         // de caixa: o timeout pode ter acontecido no último segundo do turno, e o caixa já fechado não
         // pode transformar um reenvio inofensivo em erro. Nada é tocado — estoque, pedido, pagamento.
@@ -492,8 +520,16 @@ public class PdvService implements PdvUseCase {
         // PDV-C004: o depósito vem da SESSÃO, não do request. É o que impede o operador de baixar
         // estoque de um depósito que não é o do caixa dele.
         String warehouseCode = session.warehouseCode();
+        // Promoção por quantidade: calculada aqui, nunca aceita do cliente (a não ser na venda offline
+        // divergente, que já foi cobrada). É regra da loja, então fica fora do teto de desconto.
+        PromotionCheck check = promotionCheck == null ? PromotionCheck.strict(null) : promotionCheck;
+        QuantityPromotionUseCase.PromotedSale promoted = quantityPromotions == null
+                ? QuantityPromotionUseCase.withoutPromotions(orderItems, check)
+                : quantityPromotions.applyToSale(clientSoldAt == null ? clock.instant() : clientSoldAt, orderItems,
+                        items, check, clientSaleId);
+        orderItems = promoted.items();
         Order order = Order.openBalcao(sessionId, warehouseCode, customerId, orderItems, delivery);
-        requireDiscountWithinLimit(order);
+        requireDiscountWithinLimit(order, promoted.total());
 
         // PDV-F006: pagamento é validado ANTES de tocar o estoque — um pagamento insuficiente não
         // deveria custar um adjustStock que só vai ser desfeito pelo rollback da transação.

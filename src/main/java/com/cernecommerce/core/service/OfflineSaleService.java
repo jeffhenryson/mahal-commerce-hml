@@ -27,6 +27,7 @@ import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
 
 import java.time.Duration;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -196,13 +197,18 @@ public class OfflineSaleService implements OfflineSaleUseCase {
     private SaleRegistration register(Long sessionId, Long customerId, List<OfflineSaleItem> items,
             List<OfflineSalePayment> payments, String operator, String clientSaleId, Instant soldAt) {
         List<SaleItemCommand> itemCommands = items.stream()
-                .map(i -> new SaleItemCommand(i.sku(), i.quantity(), i.discountAmount(), i.note()))
+                .map(i -> new SaleItemCommand(i.sku(), i.quantity(), i.discountAmount(), i.note(),
+                        i.kitQuantity(), i.promotionDiscountAmount()))
                 .toList();
         List<PaymentCommand> paymentCommands = payments.stream()
                 .map(p -> new PaymentCommand(p.method(), p.amount(), p.installments()))
                 .toList();
+        // Promoção por quantidade: as regras de soldAt, e o valor do caixa vale se divergir — a venda já
+        // foi cobrada, recusar não devolve o dinheiro (o servidor registra um aviso).
+        BigDecimal applied = items.stream().map(OfflineSaleItem::promotionDiscountAmount)
+                .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
         return pdvUseCase.registerSaleIdempotent(sessionId, customerId, itemCommands, paymentCommands, operator,
-                false, null, clientSaleId, soldAt);
+                false, null, clientSaleId, soldAt, PdvUseCase.PromotionCheck.lenient(applied));
     }
 
     private OfflineSaleRejection requireRejection(Long rejectionId) {

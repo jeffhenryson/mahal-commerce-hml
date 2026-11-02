@@ -375,6 +375,24 @@ public record Comanda(
     }
 
     /**
+     * Promoção por quantidade: a mesma comanda com cada linha passada pela função (mesma ordem, mesmo
+     * tamanho). Usado pelo recálculo, que troca só os campos de promoção. Cópia — a comanda permanece imutável.
+     */
+    public Comanda withItemsReplaced(java.util.function.UnaryOperator<ComandaItem> replacement) {
+        requireOpen();
+        List<ComandaItem> newItems = items.stream().map(replacement).toList();
+        return new Comanda(id, sessionId, warehouseCode, tableOrCustomerLabel, customerId, status, newItems, orderId,
+                openedBy, openedAt, closedAt);
+    }
+
+    /**
+     * Desconto de promoção por quantidade nas linhas em aberto (a mesa mostra "Promoções −R$ X").
+     */
+    public BigDecimal promotionDiscountTotal() {
+        return openItems().stream().map(ComandaItem::promotionDiscount).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
      * PDV-F044 — troca a linha {@code updated.id()} pela versão com o sabor do 2º rosh. Cópia — a
      * comanda permanece imutável.
      */

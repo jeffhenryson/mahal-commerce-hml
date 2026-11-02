@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -37,4 +38,14 @@ public class SaleItemRequest {
     @Size(max = 200)
     @Schema(description = "PDV-F022 — observação da linha, gravada no item do pedido.", example = "Sem gelo")
     private String note;
+
+    @Min(0)
+    @Schema(description = "Unidades desta linha presas a kit montável: não entram na promoção por quantidade.",
+            example = "2")
+    private Integer kitQuantity;
+
+    @DecimalMin(value = "0.0")
+    @Schema(description = "Desconto de promoção por quantidade que a tela mostrou nesta linha. Informativo: o "
+            + "servidor recalcula e confere o total com `expectedPromotionDiscount`. Não exige PDV_SALE_DISCOUNT.")
+    private BigDecimal promotionDiscountAmount;
 }

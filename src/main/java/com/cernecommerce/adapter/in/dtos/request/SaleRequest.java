@@ -3,6 +3,8 @@ package com.cernecommerce.adapter.in.dtos.request;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.DecimalMin;
+import java.math.BigDecimal;
 import lombok.Data;
 
 import java.util.List;
@@ -50,4 +52,10 @@ public class SaleRequest {
     /** UUID em texto, minúsculo ou maiúsculo. */
     public static final String CLIENT_SALE_ID_PATTERN =
             "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
+    @DecimalMin(value = "0.0")
+    @Schema(description = "Desconto total de promoção por quantidade que a tela mostrou. O servidor recalcula; "
+            + "se divergir (inclusive ausente com promoção aplicável), 409 PROMOTION_CHANGED com "
+            + "`currentPromotionDiscount`. Ausente vale 0.")
+    private BigDecimal expectedPromotionDiscount;
 }

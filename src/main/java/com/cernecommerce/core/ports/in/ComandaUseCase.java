@@ -684,7 +684,16 @@ public interface ComandaUseCase {
      * @throws com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException mesa sem sessão
      *         paga no final ainda em aberto
      */
-    Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username);
+    default Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username) {
+        return addStorePurchaseToTab(comandaId, items, username, PdvUseCase.PromotionCheck.strict(null));
+    }
+
+    /**
+     * Igual à anterior, com a conferência da promoção por quantidade do balcão (canal PDV): divergiu do
+     * {@code expectedPromotionDiscount} da tela, {@code 409 PROMOTION_CHANGED}.
+     */
+    Comanda addStorePurchaseToTab(Long comandaId, List<SaleItemCommand> items, String username,
+            PdvUseCase.PromotionCheck promotionCheck);
 
     /**
      * Encerra a mesa cujas linhas já foram todas cobradas em fechamentos parciais (PDV-F023). Não

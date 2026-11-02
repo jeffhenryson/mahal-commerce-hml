@@ -138,6 +138,16 @@ public class ComandaItemEntity {
     @Column(name = "store_discount_amount", precision = 14, scale = 2)
     private BigDecimal storeDiscountAmount;
 
+    // Promoção por quantidade (V180): recalculada a cada item que entra ou sai. promotion_id sem FK.
+    @Column(name = "promotion_id")
+    private Long promotionId;
+
+    @Column(name = "promotion_name", length = 150)
+    private String promotionName;
+
+    @Column(name = "promotion_discount_amount", nullable = false, precision = 14, scale = 2)
+    private BigDecimal promotionDiscountAmount = BigDecimal.ZERO;
+
     // PDV-F023 — status e tempo de mesa da sessão. Nulos em linha de catálogo.
     @Column(name = "session_status", length = 20)
     private String sessionStatus;

@@ -31,4 +31,13 @@ public class SaleReceiptItemResponseDTO {
 
     /** PDV-F024 — carvão da sessão (CUBO/JUMBO); nulo fora de sessão do cardápio. */
     private String carvao;
+
+    @Schema(description = "Regra de promoção por quantidade aplicada na linha (a de maior desconto). Nulo sem promoção.")
+    private Long promotionId;
+
+    @Schema(description = "Nome da regra como estava na venda.")
+    private String promotionName;
+
+    @Schema(description = "Parte de discountAmount que veio de promoção por quantidade.")
+    private java.math.BigDecimal promotionDiscountAmount;
 }

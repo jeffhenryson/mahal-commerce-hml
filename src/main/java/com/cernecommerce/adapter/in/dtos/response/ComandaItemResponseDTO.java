@@ -81,6 +81,16 @@ public class ComandaItemResponseDTO {
     private Long kitTemplateId;
     private BigDecimal kitDiscountAmount;
 
+    @Schema(description = "Promoção por quantidade aplicada na linha (a de maior desconto). Recalculada pelo servidor "
+            + "a cada item que entra ou sai da mesa. Nulo sem promoção.")
+    private Long promotionId;
+
+    @Schema(description = "Nome da regra de promoção por quantidade.", example = "Seda — leve 4 por R$ 10")
+    private String promotionName;
+
+    @Schema(description = "Desconto de promoção por quantidade nesta linha (zero sem promoção). Já sai do runningTotal.")
+    private BigDecimal promotionDiscountAmount;
+
     @Schema(description = "Onde está a sessão no salão (PDV-F023): NA_FILA, PREPARANDO, ENTREGUE ou "
             + "RECOLHIDO. Só em SESSAO/ROSH_EXTRA; nulo em linha de catálogo.")
     private SessionStatus sessionStatus;

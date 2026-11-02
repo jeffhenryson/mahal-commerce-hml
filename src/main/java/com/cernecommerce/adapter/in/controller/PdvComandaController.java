@@ -35,6 +35,7 @@ import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.ports.in.ComandaUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
+import com.cernecommerce.core.ports.in.PdvUseCase;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 import com.cernecommerce.core.ports.in.PdvUseCase.SaleItemCommand;
 import io.swagger.v3.oas.annotations.Operation;
@@ -527,21 +528,23 @@ public class PdvComandaController {
             @ApiResponse(responseCode = "400", description = "Sem itens, ou desconto maior que o item (ITEM_DISCOUNT_EXCEEDS_GROSS)", content = @Content),
             @ApiResponse(responseCode = "403", description = "Desconto sem PDV_SALE_DISCOUNT", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda ou produto não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); mesa sem sessão paga no final (NO_PAY_LATER_SESSION); desconto acima do teto (DISCOUNT_LIMIT_EXCEEDED); sem saldo", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta (COMANDA_NOT_OPEN); mesa sem sessão paga no final (NO_PAY_LATER_SESSION); desconto acima do teto (DISCOUNT_LIMIT_EXCEEDED); promoção por quantidade divergente (PROMOTION_CHANGED, com currentPromotionDiscount); sem saldo", content = @Content)
     })
     @PostMapping("/{id}/compra-na-loja")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<ComandaResponseDTO> addStorePurchaseToTab(@PathVariable("id") Long comandaId,
             @Valid @RequestBody StorePurchaseOnTabRequest request, Authentication authentication) {
         List<SaleItemCommand> items = request.getItems().stream()
-                .map(i -> new SaleItemCommand(i.getSku(), i.getQuantity(), i.getDiscountAmount(), i.getNote()))
+                .map(i -> new SaleItemCommand(i.getSku(), i.getQuantity(), i.getDiscountAmount(), i.getNote(),
+                        i.getKitQuantity(), i.getPromotionDiscountAmount()))
                 .toList();
         // Mesma alçada do desconto de linha do caixa: é a mesma venda, só cobrada na mesa.
         if (items.stream().anyMatch(i -> i.discountAmount() != null && i.discountAmount().signum() > 0)) {
             requireAuthority(SALE_DISCOUNT_AUTHORITY, authentication, () -> new AccessDeniedException(
                     "Conceder desconto exige a permissão " + SALE_DISCOUNT_AUTHORITY + "."));
         }
-        Comanda comanda = comandaUseCase.addStorePurchaseToTab(comandaId, items, authentication.getName());
+        Comanda comanda = comandaUseCase.addStorePurchaseToTab(comandaId, items, authentication.getName(),
+                PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()));
         publisher.publishEvent(AuditEvent.of(EventType.COMANDA_STORE_PURCHASE_RECORDED, authentication.getName(),
                 auditPayload(comandaId, "boughtInStore", true, "naContaDaMesa", true,
                         "skus", items.stream().map(SaleItemCommand::sku).toList())));
