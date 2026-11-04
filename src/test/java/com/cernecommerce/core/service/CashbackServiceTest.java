@@ -266,6 +266,8 @@ class CashbackServiceTest {
                 "LOJA-01", List.of(noRate), new BigDecimal("50.00"), BigDecimal.ZERO, BigDecimal.ZERO,
                 new BigDecimal("50.00"), null, null, paidAt, paidAt, paidAt, null, null, 0L);
         when(customerRepository.findById(42L)).thenReturn(Optional.of(officialCustomer()));
+        when(systemConfigPort.getInt("cashback.carencia.dias", 7)).thenReturn(7);
+        when(systemConfigPort.getInt("cashback.expiracao.dias", 180)).thenReturn(180);
 
         cashbackService.recordEarnedForOrder(order);
 

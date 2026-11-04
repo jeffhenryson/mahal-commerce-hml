@@ -245,12 +245,19 @@ public interface ShopUseCase {
     /**
      * ECM-F009 — o que o cliente escolhe no checkout. {@code delivery} nula é retirada; na entrega
      * a taxa vem zerada (o caixa define no aceite) e a preferência tem de ser Pix.
+     * {@code cashbackToRedeem} (V186): quanto do saldo de cashback usar; debitado já no checkout, e
+     * devolvido se o pedido for recusado, expirar ou for cancelado.
      */
     record CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao,
-            BigDecimal expectedPromotionDiscount) {
+            BigDecimal expectedPromotionDiscount, BigDecimal cashbackToRedeem) {
+
+        public CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao,
+                BigDecimal expectedPromotionDiscount) {
+            this(delivery, preferenciaPagamento, observacao, expectedPromotionDiscount, null);
+        }
 
         public CheckoutCommand(OrderDelivery delivery, PreferenciaPagamento preferenciaPagamento, String observacao) {
-            this(delivery, preferenciaPagamento, observacao, null);
+            this(delivery, preferenciaPagamento, observacao, null, null);
         }
 
         /** O checkout sem corpo, como o front antigo chama: retirada, pagando no balcão. */
@@ -258,6 +265,18 @@ public interface ShopUseCase {
             return new CheckoutCommand(null, null, null);
         }
     }
+
+    /** V186 — saldo de cashback do cliente e a prévia de resgate para um carrinho que vale {@code amount}. */
+    record ShopCashbackView(com.cernecommerce.core.domain.model.cashback.CashbackBalance balance,
+            com.cernecommerce.core.domain.model.cashback.CashbackRedemptionQuote quote) {
+    }
+
+    /**
+     * V186 — saldo de cashback do cliente autenticado e quanto ele pode usar numa compra cuja
+     * mercadoria vale {@code merchandiseAmount} (o total do carrinho, já com desconto/promoção).
+     * Nulo vale zero — só o saldo.
+     */
+    ShopCashbackView getCashback(String username, BigDecimal merchandiseAmount);
 
     /** Checkout sem escolhas — retirada no balcão. Ver {@link #checkout(String, CheckoutCommand)}. */
     default CheckoutResult checkout(String username) {

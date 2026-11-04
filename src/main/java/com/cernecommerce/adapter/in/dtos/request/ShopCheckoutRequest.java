@@ -38,4 +38,11 @@ public class ShopCheckoutRequest {
             + "mostrou (promotionDiscountTotal). Divergiu do recalculado: 409 PROMOTION_CHANGED com "
             + "currentPromotionDiscount. Ausente: vale o calculado, sem conferência.")
     private java.math.BigDecimal expectedPromotionDiscount;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0")
+    @io.swagger.v3.oas.annotations.media.Schema(description = "V186 — quanto do saldo de cashback usar neste pedido "
+            + "(o máximo vem de GET /shop/cashback). Abate do total; o saldo é debitado já no checkout e volta se o "
+            + "pedido for recusado, expirar ou for cancelado. Fora das regras: 422 CASHBACK_*. Ausente/0: sem resgate.",
+            example = "10.00")
+    private java.math.BigDecimal cashbackToRedeem;
 }

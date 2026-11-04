@@ -259,10 +259,24 @@ public interface PdvUseCase {
      *
      * @param kits pode ser vazio; nulo vale vazio. {@code items} pode ser vazio quando há kit.
      */
+    default SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
+        return registerSaleIdempotent(sessionId, customerId, items, kits, payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck, BigDecimal.ZERO);
+    }
+
+    /**
+     * Igual à anterior, com resgate de cashback (V186). {@code cashbackToRedeem} abate do líquido a
+     * pagar — depois do desconto e da promoção, antes de validar o pagamento — e é debitado do saldo
+     * do cliente na mesma transação. Nulo ou zero: sem resgate. Fora das regras do programa é
+     * {@code 422 CASHBACK_*} ({@code CashbackRedemptionNotAllowedException}).
+     */
     SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
-            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck);
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck, BigDecimal cashbackToRedeem);
 
     /**
      * O que o cliente mostrou de promoção por quantidade. {@code expectedDiscount} nulo vale zero.

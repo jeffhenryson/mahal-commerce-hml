@@ -2379,6 +2379,15 @@ public class GlobalExceptionHandler {
         }
     }
 
+    // Resgate de cashback fora das regras (saldo, mínimo, teto, cliente sem CPF, offline). O code
+    // diz qual regra falhou.
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException.class)
+    public ResponseEntity<ApiError> handleCashbackRedemptionNotAllowed(
+            com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), ex.code(), req);
+    }
+
     private ResponseEntity<ApiError> error(HttpStatus status, String message, String code, HttpServletRequest req) {
         return ResponseEntity.status(status)
                 .body(ApiError.of(message, code, req.getRequestURI(), MDC.get("traceId")));

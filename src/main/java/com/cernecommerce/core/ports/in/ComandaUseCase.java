@@ -286,8 +286,21 @@ public interface ComandaUseCase {
      * @throws com.cernecommerce.core.domain.exception.pdv.LinkedItemMustCloseTogetherException se a
      *         seleção separar linhas ligadas
      */
+    default Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
+            boolean applyServiceFee, List<Long> itemIds, String username) {
+        return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, BigDecimal.ZERO, username);
+    }
+
+    /**
+     * Igual à anterior, com resgate de cashback do cliente da comanda (V186). O resgate abate do
+     * total a pagar deste fechamento — depois do desconto e da taxa de serviço (que continua sobre
+     * a mercadoria, não encolhe) — e o teto é sobre a mercadoria do escopo. Nulo ou zero: sem resgate.
+     *
+     * @throws com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException
+     *         fora das regras do programa (422 CASHBACK_*)
+     */
     Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
-            boolean applyServiceFee, List<Long> itemIds, String username);
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username);
 
     /**
      * Percentual da taxa de serviço vigente (PDV-F015), para a tela mostrar ao operador quanto será

@@ -162,6 +162,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         ORDER_CREATED, PDV_SALE_COMPLETED, PAYMENT_APPROVED, PAYMENT_DECLINED, STOCK_BELOW_REORDER_POINT,
         // Cashback (CRM-F003)
         CASHBACK_RATE_CHANGED, CASHBACK_EARNED,
+        // V186 — resgate no balcão/comanda/app e ajuste dos parâmetros do programa.
+        CASHBACK_REDEEMED, CASHBACK_SETTINGS_CHANGED,
         // Support
         BUG_REPORT_CREATED,
         // Integrações da loja (e-mail/Resend, WhatsApp, n8n/Make)

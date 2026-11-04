@@ -1409,10 +1409,18 @@ public class ComandaService implements ComandaUseCase {
         return comandaIds == null || comandaIds.isEmpty() ? List.of() : comandaRepository.findAllByIds(comandaIds);
     }
 
+    /** Sobrescrita só para levar o {@code @Transactional} — o default da interface chamaria por {@code this}. */
     @Override
     @Transactional
     public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
             boolean applyServiceFee, List<Long> itemIds, String username) {
+        return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, BigDecimal.ZERO, username);
+    }
+
+    @Override
+    @Transactional
+    public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username) {
         // 2 casas antes do rateio: DiscountProration fecha no centavo e não sabe distribuir 0,005.
         discountAmount = Money.of(discountAmount);
         // PDV-C008 — ver getComandaForUpdate. É aqui que a trava mais importa: sem ela, dois
@@ -1547,6 +1555,12 @@ public class ComandaService implements ComandaUseCase {
             }
             order = order.withServiceFeeOnCatalogLines(serviceFeePercent, semTaxa);
         }
+        // V186 — resgate de cashback do cliente da comanda, depois da taxa (que é sobre as linhas e
+        // não encolhe) e antes de validar o pagamento. Conta dividida: o teto é sobre este escopo.
+        if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
+            cashbackUseCase.validateRedemption(comanda.customerId(), order.merchandiseNet(), cashbackToRedeem);
+            order = order.withCashbackRedeemed(cashbackToRedeem);
+        }
 
         // Valida contra totalPayable, não contra netAmount: o cliente paga a mercadoria MAIS a
         // taxa, e o troco sai dessa conta. É o único lugar do módulo em que os dois números diferem.
@@ -1563,6 +1577,7 @@ public class ComandaService implements ComandaUseCase {
             orderPaymentRepository.save(PdvService.toPaymentLine(saved.id(), payment));
         }
         pdvService.recordReceivableIfOnAccount(saved, comandaId, payments, username);
+        cashbackUseCase.redeemForOrder(saved);
         cashbackUseCase.recordEarnedForOrder(saved);
 
         // PDV-F017 — marca as linhas cobradas e só ENCERRA a mesa quando não sobra nenhuma aberta.

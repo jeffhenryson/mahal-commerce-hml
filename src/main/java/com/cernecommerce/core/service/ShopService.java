@@ -254,6 +254,14 @@ public class ShopService implements ShopUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public ShopCashbackView getCashback(String username, BigDecimal merchandiseAmount) {
+        Long customerId = requireCustomerId(username);
+        return new ShopCashbackView(cashbackUseCase.getCustomerBalance(customerId),
+                cashbackUseCase.quoteRedemption(customerId, merchandiseAmount == null ? BigDecimal.ZERO : merchandiseAmount));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public CartView getCart(String username) {
         Long customerId = requireCustomerId(username);
         Cart cart = cartRepository.findByCustomerId(customerId).orElse(Cart.empty(customerId));
@@ -388,7 +396,16 @@ public class ShopService implements ShopUseCase {
                 && order.netAmount().compareTo(recebimento.entrega().pedidoMinimo()) < 0) {
             throw PedidoAppIndisponivelException.pedidoMinimo(recebimento.entrega().pedidoMinimo());
         }
+        // V186 — resgate no checkout: o saldo sai debitado já aqui, para o mesmo saldo não ser usado
+        // em dois pedidos abertos; recusa/expiração/cancelamento devolvem (OrderService.cancelOrder).
+        // Depois do pedido mínimo, que é sobre a mercadoria.
+        BigDecimal cashbackToRedeem = escolha.cashbackToRedeem();
+        if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
+            cashbackUseCase.validateRedemption(customerId, order.merchandiseNet(), cashbackToRedeem);
+            order = order.withCashbackRedeemed(cashbackToRedeem);
+        }
         Order saved = orderRepository.save(order);
+        cashbackUseCase.redeemForOrder(saved);
 
         // ECM-F011 — no balcão a reserva segura o estoque até o fim do dia; no gateway, a janela
         // curta padrão do pagamento online.

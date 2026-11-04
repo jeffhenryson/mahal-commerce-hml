@@ -22,6 +22,14 @@ public class SaleRequest {
             + "incentivo que faz o operador perguntar \"CPF na nota?\".", example = "42")
     private Long customerId;
 
+    @DecimalMin("0.0")
+    @Schema(description = "V186 — quanto do saldo de cashback do cliente usar nesta venda. Abate do total a pagar "
+            + "(os pagamentos somam o total já abatido). Exige customerId com CPF; respeita o saldo disponível, "
+            + "o saldo mínimo e o teto (% da mercadoria) de GET /cashback/settings — use "
+            + "GET /cashback/customers/{id}/redemption-quote para saber o máximo. Fora das regras: 422 CASHBACK_*. "
+            + "Omitido/0: sem resgate.", example = "20.00")
+    private BigDecimal cashbackToRedeem;
+
     @Valid
     @Schema(description = "Itens avulsos. Pode ser vazio quando a venda tem `kits`; sem itens e sem kits, "
             + "400 SALE_EMPTY.")

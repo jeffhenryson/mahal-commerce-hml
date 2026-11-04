@@ -5,7 +5,9 @@ import com.cernecommerce.core.domain.model.cashback.CashbackBalance;
 import com.cernecommerce.core.domain.model.cashback.CashbackEntry;
 import com.cernecommerce.core.domain.model.cashback.CashbackMarginImpactItem;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
+import com.cernecommerce.core.domain.model.cashback.CashbackRedemptionQuote;
 import com.cernecommerce.core.domain.model.cashback.CashbackScope;
+import com.cernecommerce.core.domain.model.cashback.CashbackSettings;
 import com.cernecommerce.core.domain.model.pedido.Order;
 
 import java.math.BigDecimal;
@@ -15,11 +17,11 @@ import java.util.List;
 /**
  * Caso de uso do programa de cashback (CRM-F003, §2.4 do plano de arquitetura).
  *
- * <p>Esta fatia cobre <b>ganhar</b> cashback (taxa por abrangência, ledger, lançamento na
- * conclusão da venda, expiração) e as consultas de saldo/extrato/diagnóstico de margem.
- * Resgate no balcão ({@code CASHBACK_REDEEM}) e ajuste manual ({@code CASHBACK_ADJUST}) ficam
- * para uma fatia seguinte. A reversão por reembolso ({@link #reverseEarningsForOrder}) já entrou,
- * via Fatia 5 (PDV-F007) — é o {@code OrderService.refundOrder} que a aciona.</p>
+ * <p>Cobre <b>ganhar</b> cashback (taxa por abrangência, ledger, lançamento na conclusão da venda,
+ * expiração), as consultas de saldo/extrato/diagnóstico de margem e, desde a V186, o
+ * <b>resgate</b> (balcão, comanda e app) com os parâmetros que o admin ajusta
+ * ({@link #getSettings}/{@link #updateSettings}). A reversão por reembolso
+ * ({@link #reverseEarningsForOrder}) é acionada pelo {@code OrderService.refundOrder}.</p>
  */
 public interface CashbackUseCase {
 
@@ -143,4 +145,45 @@ public interface CashbackUseCase {
      * @return quantos ganhos foram expirados nesta passada
      */
     int expireEntries(int batchSize);
+
+    // ------------------------------------------------------------------------------------------
+    // V186 — parâmetros e resgate
+    // ------------------------------------------------------------------------------------------
+
+    /** Parâmetros atuais do programa (carência, expiração, teto e mínimo do resgate). */
+    CashbackSettings getSettings();
+
+    /** Grava os quatro parâmetros. Carência e expiração novas valem para ganhos novos. */
+    CashbackSettings updateSettings(CashbackSettings settings, String username);
+
+    /**
+     * Prévia: quanto o cliente pode resgatar numa compra cuja mercadoria (bruto − desconto) vale
+     * {@code merchandiseNet}. Nunca lança por regra de resgate — devolve o motivo em {@code reason}.
+     */
+    CashbackRedemptionQuote quoteRedemption(Long customerId, BigDecimal merchandiseNet);
+
+    /**
+     * Confere se {@code requested} pode ser resgatado na compra. Chamado pelos canais antes de
+     * aplicar o resgate ao pedido (e de novo, sob trava, em {@link #redeemForOrder}).
+     *
+     * @throws com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException
+     *         com o código da regra que falhou
+     */
+    void validateRedemption(Long customerId, BigDecimal merchandiseNet, BigDecimal requested);
+
+    /**
+     * Debita do saldo o {@code order.cashbackRedeemed()} do pedido já salvo: grava o
+     * {@code REDEEMED} e a alocação FIFO nos ganhos. Sem resgate no pedido, não faz nada. Trava o
+     * cliente até o fim da transação — dois resgates simultâneos não gastam o mesmo saldo.
+     */
+    void redeemForOrder(Order savedOrder);
+
+    /**
+     * Devolve ao saldo o resgate do pedido (cancelamento/estorno). {@code amount} nulo devolve
+     * tudo o que ainda não foi devolvido; com valor, até esse limite (estorno parcial). A parte
+     * que veio de ganho já vencido não volta. Sem resgate no pedido, não faz nada.
+     *
+     * @return o crédito efetivamente devolvido
+     */
+    BigDecimal restoreRedemptionForOrder(Order order, BigDecimal amount);
 }

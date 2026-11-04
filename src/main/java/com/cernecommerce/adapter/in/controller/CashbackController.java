@@ -3,15 +3,19 @@ package com.cernecommerce.adapter.in.controller;
 import com.cernecommerce.adapter.in.converter.CashbackDTOConverter;
 import com.cernecommerce.adapter.in.dtos.request.CashbackRatePatchRequest;
 import com.cernecommerce.adapter.in.dtos.request.CashbackRateRequest;
+import com.cernecommerce.adapter.in.dtos.request.CashbackSettingsRequest;
 import com.cernecommerce.adapter.in.dtos.response.CashbackBalanceResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackEntryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackMarginImpactResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackRateResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.CashbackRedemptionQuoteResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.CashbackSettingsResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.cashback.CashbackEntry;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
+import com.cernecommerce.core.domain.model.cashback.CashbackSettings;
 import com.cernecommerce.core.ports.in.CashbackUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -40,8 +44,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Programa de cashback (CRM-F003): taxas por abrangência, extrato do cliente e diagnóstico de
- * margem. Resgate no balcão e ajuste manual ficam para uma fatia seguinte.
+ * Programa de cashback (CRM-F003): taxas por abrangência, extrato do cliente, diagnóstico de
+ * margem e, desde a V186, parâmetros do programa e prévia de resgate. O resgate em si acontece nos
+ * canais de venda (balcão, comanda, app), pelo campo {@code cashbackToRedeem}.
  */
 @RestController
 @RequestMapping("/cashback")
@@ -172,5 +177,52 @@ public class CashbackController {
         PageResult<CashbackEntry> result = cashbackUseCase.listCustomerEntries(id, page, size);
         return ResponseEntity.ok(new PageResult<>(result.content().stream().map(converter::toResponse).toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages()));
+    }
+
+    @Operation(summary = "Parâmetros do programa de cashback",
+            description = "Carência e expiração (dias) do ganho; teto (% da mercadoria) e saldo mínimo do resgate.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = CashbackSettingsResponseDTO.class))),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/settings")
+    @PreAuthorize("hasAuthority('CASHBACK_READ')")
+    public ResponseEntity<CashbackSettingsResponseDTO> getSettings() {
+        return ResponseEntity.ok(converter.toResponse(cashbackUseCase.getSettings()));
+    }
+
+    @Operation(summary = "Altera os parâmetros do programa de cashback",
+            description = "Grava os quatro parâmetros. Carência e expiração novas valem só para ganhos novos — "
+                    + "cada ganho já lançado guarda as próprias datas. Teto 0 desliga o resgate em todos os canais.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Atualizado", content = @Content(schema = @Schema(implementation = CashbackSettingsResponseDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Campo ausente ou fora de faixa", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PutMapping("/settings")
+    @PreAuthorize("hasAuthority('CASHBACK_RATE_MANAGE')")
+    public ResponseEntity<CashbackSettingsResponseDTO> updateSettings(@Valid @RequestBody CashbackSettingsRequest request,
+            Authentication authentication) {
+        CashbackSettings saved = cashbackUseCase.updateSettings(converter.toSettings(request), authentication.getName());
+        publisher.publishEvent(AuditEvent.of(EventType.CASHBACK_SETTINGS_CHANGED, authentication.getName(),
+                Map.of("carenciaDias", saved.carenciaDias(), "expiracaoDias", saved.expiracaoDias(),
+                        "resgateTetoPercent", saved.resgateTetoPercent(),
+                        "resgateMinimoSaldo", saved.resgateMinimoSaldo())));
+        return ResponseEntity.ok(converter.toResponse(saved));
+    }
+
+    @Operation(summary = "Prévia do resgate: quanto o cliente pode usar nesta compra",
+            description = "amount = valor da mercadoria da compra (bruto − desconto, sem taxa de serviço/entrega). "
+                    + "Nunca recusa por regra de resgate — devolve maxRedeemable = 0 e o motivo em reason.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = CashbackRedemptionQuoteResponseDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Cliente não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/customers/{id}/redemption-quote")
+    @PreAuthorize("hasAnyAuthority('PDV_SALE_MANAGE', 'PDV_COMANDA_MANAGE', 'CASHBACK_READ')")
+    public ResponseEntity<CashbackRedemptionQuoteResponseDTO> quoteRedemption(@PathVariable Long id,
+            @RequestParam @DecimalMin("0.0") BigDecimal amount) {
+        return ResponseEntity.ok(converter.toResponse(cashbackUseCase.quoteRedemption(id, amount)));
     }
 }

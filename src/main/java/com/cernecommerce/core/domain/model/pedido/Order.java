@@ -2,6 +2,7 @@ package com.cernecommerce.core.domain.model.pedido;
 
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidOrderStatusTransitionException;
+import com.cernecommerce.core.domain.model.Money;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -477,6 +478,10 @@ public record Order(
      */
     public Order withCashbackRedeemed(BigDecimal redeemed) {
         BigDecimal value = redeemed == null ? BigDecimal.ZERO : redeemed;
+        if (value.compareTo(merchandiseNet()) > 0) {
+            throw new IllegalArgumentException("cashback resgatado (" + value
+                    + ") não pode passar do valor da mercadoria (" + merchandiseNet() + ")");
+        }
         BigDecimal newNet = grossAmount.subtract(discountAmount).subtract(value);
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, value, newNet, changeAmount, cancelReason, createdAt,
@@ -666,12 +671,36 @@ public record Order(
                 deliveredAt, version, comandaId, tableLabel, fee, delivery);
     }
 
-    /** Soma do cashback gerado por todos os itens; ignora itens sem taxa carimbada. */
+    /**
+     * Soma do cashback gerado por todos os itens; ignora itens sem taxa carimbada. Reduzida por
+     * {@link #cashbackEarningFraction()}: a parte paga com cashback resgatado não gera cashback.
+     */
     public BigDecimal totalCashbackEarned() {
-        return items.stream()
+        BigDecimal raw = items.stream()
                 .map(OrderItem::cashbackAmount)
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal fraction = cashbackEarningFraction();
+        return fraction.compareTo(BigDecimal.ONE) == 0 ? raw
+                : raw.multiply(fraction).setScale(Money.MONEY_SCALE, Money.ROUNDING);
+    }
+
+    /** Valor da mercadoria depois dos descontos e antes do resgate de cashback: {@code bruto − desconto}. */
+    public BigDecimal merchandiseNet() {
+        return grossAmount.subtract(discountAmount);
+    }
+
+    /**
+     * Fração da mercadoria paga com dinheiro (não com cashback resgatado): {@code líquido ÷
+     * merchandiseNet}. 1 sem resgate. O ganho de cashback do pedido é multiplicado por ela — quem
+     * paga com cashback não ganha cashback sobre essa parte.
+     */
+    public BigDecimal cashbackEarningFraction() {
+        BigDecimal base = merchandiseNet();
+        if (cashbackRedeemed.signum() == 0 || base.signum() <= 0) {
+            return BigDecimal.ONE;
+        }
+        return netAmount.divide(base, Money.INTERMEDIATE_SCALE, Money.ROUNDING);
     }
 
     /** Indica se o pedido ainda pode mudar de estado. */

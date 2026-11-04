@@ -194,6 +194,9 @@ public class OrderService implements OrderUseCase {
         try (var origem = StockMovementOriginContext.open(StockMovementOrigin.order(orderId))) {
             estoqueUseCase.releaseReservationsByOwner(Order.reservationOwnerReference(orderId), username);
         }
+        // V186 — o cashback resgatado no checkout do app volta ao saldo do cliente. Cobre recusa,
+        // expiração no fim do dia, cancelamento pelo cliente e pelo admin — todos passam por aqui.
+        cashbackUseCase.restoreRedemptionForOrder(order, null);
         return orderRepository.save(cancelled);
     }
 
@@ -263,13 +266,23 @@ public class OrderService implements OrderUseCase {
         returnToStock(order, lines, command.itemLots(), completes, username);
 
         BigDecimal requested = lines.stream().map(RefundPlanLine::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        refundPayments(orderId, payments, completes, requested, refundSessionId, reason, username);
+        // V186 — num pedido pago em parte com cashback, o valor do item volta na mesma proporção em
+        // que foi pago: a fração em dinheiro pelas linhas de pagamento, o resto como cashback.
+        BigDecimal cashFraction = order.cashbackEarningFraction();
+        BigDecimal cashPart = cashFraction.compareTo(BigDecimal.ONE) == 0 ? requested
+                : requested.multiply(cashFraction).setScale(Money.MONEY_SCALE, Money.ROUNDING);
+        refundPayments(orderId, payments, completes, cashPart, refundSessionId, reason, username);
 
         // O ledger reverte uma entrada EARNED inteira: no parcial, só a do item que zerou agora.
         if (completes) {
             cashbackUseCase.reverseEarningsForOrder(order);
+            cashbackUseCase.restoreRedemptionForOrder(order, null);
         } else {
             cashbackUseCase.reverseEarningsForOrderItems(order, zeroedItems(order, already, planned));
+            BigDecimal cashbackPart = requested.subtract(cashPart);
+            if (cashbackPart.signum() > 0) {
+                cashbackUseCase.restoreRedemptionForOrder(order, cashbackPart);
+            }
         }
 
         itemRefundRepository.saveAll(lines.stream()

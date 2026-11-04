@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface CashbackEntryJpaRepository extends JpaRepository<CashbackEntryEntity, Long> {
 
@@ -48,13 +49,32 @@ public interface CashbackEntryJpaRepository extends JpaRepository<CashbackEntryE
             @Param("from") Instant from, @Param("to") Instant to);
 
     /**
+     * V186 — a parte dos ganhos de {@link #sumExpiringSoonByCustomerId} que já foi consumida por
+     * resgate. "Expirando em breve" é o bruto menos isto: só a sobra ainda pode vencer.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(a.amount), 0) FROM CashbackRedemptionAllocationEntity a
+            WHERE a.earnedEntryId IN (
+                SELECT e.id FROM CashbackEntryEntity e
+                WHERE e.customerId = :customerId AND e.type = 'EARNED'
+                  AND e.availableAt <= :from AND e.expiresAt BETWEEN :from AND :to
+                  AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id))
+            """)
+    BigDecimal sumConsumedExpiringSoonByCustomerId(@Param("customerId") Long customerId,
+            @Param("from") Instant from, @Param("to") Instant to);
+
+    /**
      * Ganhos {@code EARNED} vencidos e ainda não expirados, mais antigos primeiro — mesmo padrão
-     * de lote e desempate do varredor de reserva de estoque.
+     * de lote e desempate do varredor de reserva de estoque. V186: ignora o ganho todo consumido
+     * por resgate — não há sobra a expirar, e sem o filtro ele voltaria em todo lote, travando a
+     * varredura.
      */
     @Query("""
             SELECT e FROM CashbackEntryEntity e
             WHERE e.type = 'EARNED' AND e.expiresAt <= :now
               AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id)
+              AND e.amount > COALESCE((SELECT SUM(a.amount) FROM CashbackRedemptionAllocationEntity a
+                                       WHERE a.earnedEntryId = e.id), 0)
             ORDER BY e.expiresAt ASC, e.id ASC
             """)
     List<CashbackEntryEntity> findEarnedPendingExpiry(@Param("now") Instant now, Pageable pageable);
@@ -87,4 +107,37 @@ public interface CashbackEntryJpaRepository extends JpaRepository<CashbackEntryE
               AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id)
             """)
     int releasePendingEarned(@Param("customerId") Long customerId, @Param("now") Instant now);
+
+    /**
+     * V186 — ganhos do cliente que podem ser consumidos por resgate agora: liberados, não vencidos e
+     * não anulados. A sobra de cada um é calculada à parte; ordem FIFO por vencimento.
+     */
+    @Query("""
+            SELECT e FROM CashbackEntryEntity e
+            WHERE e.customerId = :customerId AND e.type = 'EARNED' AND e.availableAt <= :now
+              AND (e.expiresAt IS NULL OR e.expiresAt > :now)
+              AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id)
+            ORDER BY e.expiresAt ASC NULLS LAST, e.id ASC
+            """)
+    List<CashbackEntryEntity> findLiveEarnedByCustomerId(@Param("customerId") Long customerId,
+            @Param("now") Instant now);
+
+    Optional<CashbackEntryEntity> findFirstByOrderIdAndType(Long orderId, String type);
+
+    @Query("""
+            SELECT COALESCE(SUM(e.amount), 0) FROM CashbackEntryEntity e
+            WHERE e.reversesEntryId = :redeemedId AND e.type = 'REDEMPTION_REVERSED'
+            """)
+    BigDecimal sumRedemptionReversed(@Param("redeemedId") Long redeemedId);
+
+    @Query("SELECT e FROM CashbackEntryEntity e WHERE e.id IN :ids")
+    List<CashbackEntryEntity> findAllByIdIn(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * Trava a linha do cliente até o fim da transação: serializa resgate, devolução e expiração do
+     * MESMO cliente (inclusive entre instâncias). Nativa, no mesmo padrão de
+     * {@code OrderJpaRepository.lockById}.
+     */
+    @Query(value = "SELECT id FROM customers WHERE id = :id FOR UPDATE", nativeQuery = true)
+    Optional<Long> lockCustomer(@Param("id") Long customerId);
 }

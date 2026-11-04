@@ -604,6 +604,7 @@ public class PdvComandaController {
             @ApiResponse(responseCode = "403", description = "Desconto sem PDV_COMANDA_DISCOUNT (COMANDA_DISCOUNT_NOT_ALLOWED)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content),
             @ApiResponse(responseCode = "400", description = "Linha inexistente ou já cobrada em itemIds (ITEM_NOT_OPEN_IN_COMANDA)", content = @Content),
+            @ApiResponse(responseCode = "422", description = "Resgate de cashback fora das regras (CASHBACK_*)", content = @Content),
             @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sem itens (COMANDA_EMPTY), só com cortesias (COMANDA_ONLY_COURTESY), quem fecha não tem caixa aberto, desconto acima do teto (DISCOUNT_LIMIT_EXCEEDED), pagamento não-dinheiro acima do total, ou seleção que separa linhas ligadas (LINKED_ITEM_MUST_CLOSE_TOGETHER) ou sessão não recolhida no fechamento total (SESSION_NOT_COLLECTED)", content = @Content)
     })
     @PostMapping("/{id}/close")
@@ -617,7 +618,8 @@ public class PdvComandaController {
         // A sobrecarga completa, sempre: as de conveniência de ComandaUseCase são `default` da
         // interface e perdem a transação quando chamadas pelo proxy (PLAT-C047).
         Order order = comandaUseCase.closeComanda(comandaId, payments, request.getDiscountAmount(),
-                request.isServiceFeeApplied(), request.getItemIds(), authentication.getName());
+                request.isServiceFeeApplied(), request.getItemIds(), request.getCashbackToRedeem(),
+                authentication.getName());
         // PDV-C014 — era o pior dos três: STOCK_MOVEMENT_REGISTERED num caminho que NÃO move
         // estoque nenhum (o débito aconteceu item a item, no lançamento). O evento entrava na
         // trilha de movimentação descrevendo algo que não aconteceu.
@@ -635,6 +637,11 @@ public class PdvComandaController {
             publisher.publishEvent(AuditEvent.of(EventType.CASHBACK_EARNED, authentication.getName(),
                     Map.of("orderId", order.id(), "orderNumber", order.orderNumber(),
                             "amount", order.totalCashbackEarned())));
+        }
+        if (order.cashbackRedeemed() != null && order.cashbackRedeemed().signum() > 0) {
+            publisher.publishEvent(AuditEvent.of(EventType.CASHBACK_REDEEMED, authentication.getName(),
+                    Map.of("orderId", order.id(), "orderNumber", order.orderNumber(),
+                            "customerId", order.customerId(), "amount", order.cashbackRedeemed())));
         }
         return ResponseEntity.ok(orderConverter.toResponse(order));
     }

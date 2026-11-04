@@ -325,7 +325,7 @@ class PdvComandaControllerTest {
      */
     @Test
     void closeComanda_discountGreaterThanTheBill_returns_409_withItsOwnErrorCode() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenThrow(new DiscountExceedsBillException(10L, new BigDecimal("150.00"),
                         new BigDecimal("100.00")));
 
@@ -348,7 +348,7 @@ class PdvComandaControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_PAYMENT_METHOD"));
 
-        verify(comandaUseCase, never()).closeComanda(any(), any(), any(), anyBoolean(), any(), anyString());
+        verify(comandaUseCase, never()).closeComanda(any(), any(), any(), anyBoolean(), any(), any(), anyString());
     }
 
     @Test
@@ -361,13 +361,13 @@ class PdvComandaControllerTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("COMANDA_DISCOUNT_NOT_ALLOWED"));
 
-        verify(comandaUseCase, never()).closeComanda(any(), any(), any(), anyBoolean(), any(), anyString());
+        verify(comandaUseCase, never()).closeComanda(any(), any(), any(), anyBoolean(), any(), any(), anyString());
     }
 
     /** Fechamento comum não pode exigir a permissão — seria 403 em toda mesa do salão. */
     @Test
     void closeComanda_withoutDiscount_doesNotRequireTheAuthority() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -380,7 +380,7 @@ class PdvComandaControllerTest {
     /** Desconto zero é um no-op: cobrar permissão por ele só produziria 403 inexplicável. */
     @Test
     void closeComanda_zeroDiscount_doesNotRequireTheAuthority() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -393,7 +393,7 @@ class PdvComandaControllerTest {
 
     @Test
     void closeComanda_discountWithAuthority_passesItThrough() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -404,13 +404,13 @@ class PdvComandaControllerTest {
                 .andExpect(status().isOk());
 
         verify(comandaUseCase).closeComanda(eq(10L), any(), eq(new BigDecimal("10.00")), eq(true),
-                any(), anyString());
+                any(), any(), anyString());
     }
 
     /** PDV-F015 — omitir applyServiceFee significa SIM: a taxa é o padrão do salão. */
     @Test
     void closeComanda_omittingApplyServiceFee_appliesTheFee() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -419,12 +419,12 @@ class PdvComandaControllerTest {
                         .content("{\"payments\":[{\"method\":\"DINHEIRO\",\"amount\":25.00}]}"))
                 .andExpect(status().isOk());
 
-        verify(comandaUseCase).closeComanda(eq(10L), any(), isNull(), eq(true), any(), anyString());
+        verify(comandaUseCase).closeComanda(eq(10L), any(), isNull(), eq(true), any(), any(), anyString());
     }
 
     @Test
     void closeComanda_applyServiceFeeFalse_isTheCustomerRefusing() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -434,7 +434,7 @@ class PdvComandaControllerTest {
                                 + "\"applyServiceFee\":false}"))
                 .andExpect(status().isOk());
 
-        verify(comandaUseCase).closeComanda(eq(10L), any(), isNull(), eq(false), any(), anyString());
+        verify(comandaUseCase).closeComanda(eq(10L), any(), isNull(), eq(false), any(), any(), anyString());
     }
 
     @Test
@@ -449,7 +449,7 @@ class PdvComandaControllerTest {
     /** A resposta expõe os dois números: o que a loja vendeu e o que o cliente pagou. */
     @Test
     void closeComanda_responseCarriesServiceFeeAndTotalPayable() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder().withServiceFeeOf(new BigDecimal("10")));
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -473,7 +473,7 @@ class PdvComandaControllerTest {
     void closeComanda_whenAnAuditFieldIsNull_stillReturns_200() throws Exception {
         Order semId = concludedMesaOrder();
         assertThat(semId.id()).as("o cenário só vale com orderId nulo").isNull();
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(semId);
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -497,7 +497,7 @@ class PdvComandaControllerTest {
                         OrderItem.of(1L, "ESS-MENTA", BigDecimal.ONE, new BigDecimal("25.00"),
                                 new BigDecimal("10.00"), BigDecimal.ZERO, null, "Essência Menta")))
                 .concluded("000001000", null, Instant.now());
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString())).thenReturn(order);
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString())).thenReturn(order);
 
         mockMvc.perform(post("/pdv/comandas/10/close")
                         .principal(AUTH)
@@ -931,7 +931,7 @@ class PdvComandaControllerTest {
 
     @Test
     void closeComanda_forwardsTheSelectedItemIds() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenReturn(concludedMesaOrder());
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -942,12 +942,12 @@ class PdvComandaControllerTest {
                 .andExpect(status().isOk());
 
         verify(comandaUseCase).closeComanda(eq(10L), any(), isNull(), eq(true),
-                eq(List.of(3L, 5L)), anyString());
+                eq(List.of(3L, 5L)), any(), anyString());
     }
 
     @Test
     void closeComanda_withAnItemIdThatIsNotOpen_returns_400() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenThrow(new ItemNotOpenInComandaException(10L, List.of(42L)));
 
         mockMvc.perform(post("/pdv/comandas/10/close")
@@ -961,7 +961,7 @@ class PdvComandaControllerTest {
 
     @Test
     void closeComanda_selectionThatSplitsLinkedLines_returns_409() throws Exception {
-        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), anyString()))
+        when(comandaUseCase.closeComanda(eq(10L), any(), any(), anyBoolean(), any(), any(), anyString()))
                 .thenThrow(new LinkedItemMustCloseTogetherException(10L, List.of(2L)));
 
         mockMvc.perform(post("/pdv/comandas/10/close")

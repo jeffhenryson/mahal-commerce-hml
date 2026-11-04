@@ -1,6 +1,9 @@
 package com.cernecommerce.adapter.in.converter;
 
+import com.cernecommerce.adapter.in.dtos.request.CashbackSettingsRequest;
 import com.cernecommerce.adapter.in.dtos.response.CashbackBalanceResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.CashbackRedemptionQuoteResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.CashbackSettingsResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackEntryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackMarginImpactResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.CashbackRateResponseDTO;
@@ -8,7 +11,9 @@ import com.cernecommerce.core.domain.model.cashback.CashbackBalance;
 import com.cernecommerce.core.domain.model.cashback.CashbackEntry;
 import com.cernecommerce.core.domain.model.cashback.CashbackMarginImpactItem;
 import com.cernecommerce.core.domain.model.cashback.CashbackRate;
+import com.cernecommerce.core.domain.model.cashback.CashbackRedemptionQuote;
 import com.cernecommerce.core.domain.model.cashback.CashbackScope;
+import com.cernecommerce.core.domain.model.cashback.CashbackSettings;
 
 public class CashbackDTOConverter {
 
@@ -59,6 +64,31 @@ public class CashbackDTOConverter {
         dto.setMarginPercent(item.marginPercent());
         dto.setCashbackPercent(item.cashbackPercent());
         dto.setMarginShareConsumed(item.marginShareConsumed());
+        return dto;
+    }
+
+    public CashbackSettingsResponseDTO toResponse(CashbackSettings settings) {
+        CashbackSettingsResponseDTO dto = new CashbackSettingsResponseDTO();
+        dto.setCarenciaDias(settings.carenciaDias());
+        dto.setExpiracaoDias(settings.expiracaoDias());
+        dto.setResgateTetoPercent(settings.resgateTetoPercent());
+        dto.setResgateMinimoSaldo(settings.resgateMinimoSaldo());
+        return dto;
+    }
+
+    public CashbackSettings toSettings(CashbackSettingsRequest request) {
+        return new CashbackSettings(request.getCarenciaDias(), request.getExpiracaoDias(),
+                request.getResgateTetoPercent(), request.getResgateMinimoSaldo());
+    }
+
+    public CashbackRedemptionQuoteResponseDTO toResponse(CashbackRedemptionQuote quote) {
+        CashbackRedemptionQuoteResponseDTO dto = new CashbackRedemptionQuoteResponseDTO();
+        dto.setAvailable(quote.available());
+        dto.setMinimumBalance(quote.minimumBalance());
+        dto.setCapPercent(quote.capPercent());
+        dto.setCapAmount(quote.capAmount());
+        dto.setMaxRedeemable(quote.maxRedeemable());
+        dto.setReason(quote.reason());
         return dto;
     }
 }

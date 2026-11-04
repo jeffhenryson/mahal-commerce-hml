@@ -49,6 +49,13 @@ public class CloseComandaRequest {
             example = "[3, 5, 7]")
     private List<Long> itemIds;
 
+    @jakarta.validation.constraints.DecimalMin("0.0")
+    @Schema(description = "V186 — quanto do saldo de cashback do cliente da comanda usar neste fechamento. Abate "
+            + "do total a pagar, depois do desconto e da taxa de serviço (a taxa não encolhe). O teto é sobre a "
+            + "mercadoria deste fechamento (conta dividida: cada fechamento tem o seu). Exige comanda com cliente "
+            + "com CPF. Fora das regras: 422 CASHBACK_*. Omitido/0: sem resgate.", example = "15.00")
+    private BigDecimal cashbackToRedeem;
+
     /** Ausente é "sim": a taxa é o padrão do salão, e omitir não pode significar deixar de cobrar. */
     public boolean isServiceFeeApplied() {
         return applyServiceFee == null || applyServiceFee;

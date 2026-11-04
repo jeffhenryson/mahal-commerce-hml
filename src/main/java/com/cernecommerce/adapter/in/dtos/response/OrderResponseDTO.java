@@ -40,7 +40,7 @@ public class OrderResponseDTO {
 
     private BigDecimal discountAmount;
 
-    @Schema(description = "Cashback usado como abatimento. Sempre zero enquanto CRM-F003 não existir.")
+    @Schema(description = "Saldo de cashback do cliente usado como abatimento neste pedido (V186). Zero sem resgate.")
     private BigDecimal cashbackRedeemed;
 
     @Schema(description = "Líquido a pagar: bruto - desconto - cashback resgatado.")

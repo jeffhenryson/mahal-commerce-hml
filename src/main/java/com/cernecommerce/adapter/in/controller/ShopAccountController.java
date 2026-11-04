@@ -9,6 +9,7 @@ import com.cernecommerce.adapter.in.dtos.request.OrderCancelRequest;
 import com.cernecommerce.adapter.in.dtos.request.ShopCheckoutRequest;
 import com.cernecommerce.adapter.in.dtos.response.OrderResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ShopCartResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.ShopCashbackResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -117,6 +118,32 @@ public class ShopAccountController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(summary = "Saldo de cashback do cliente e quanto ele pode usar nesta compra",
+            description = "V186 — amount = total da mercadoria do carrinho (já com desconto/promoção, sem taxa de "
+                    + "entrega). Devolve o saldo (disponível, pendente, a vencer em 30 dias) e a prévia: maxRedeemable "
+                    + "é o máximo a mandar em cashbackToRedeem no checkout; reason diz por que não pode, quando não pode.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/cashback")
+    @PreAuthorize("hasAuthority('SHOP_CASHBACK_OWN')")
+    public ResponseEntity<ShopCashbackResponseDTO> getCashback(
+            @RequestParam(required = false) @jakarta.validation.constraints.DecimalMin("0.0") java.math.BigDecimal amount,
+            Authentication authentication) {
+        ShopUseCase.ShopCashbackView view = shopUseCase.getCashback(authentication.getName(), amount);
+        ShopCashbackResponseDTO dto = new ShopCashbackResponseDTO();
+        dto.setAvailable(view.balance().available());
+        dto.setPending(view.balance().pending());
+        dto.setExpiringSoon(view.balance().expiringSoon());
+        dto.setMinimumBalance(view.quote().minimumBalance());
+        dto.setCapPercent(view.quote().capPercent());
+        dto.setCapAmount(view.quote().capAmount());
+        dto.setMaxRedeemable(view.quote().maxRedeemable());
+        dto.setReason(view.quote().reason());
+        return ResponseEntity.ok(dto);
+    }
+
     @Operation(summary = "Checkout: cria o pedido a partir do carrinho inteiro e reserva o estoque",
             description = "Preço, custo e taxa de cashback são resolvidos do catálogo agora, não do "
                     + "que estava no carrinho. O carrinho só é esvaziado se tudo suceder, na mesma transação. "
@@ -129,6 +156,7 @@ public class ShopAccountController {
             @ApiResponse(responseCode = "201", description = "Pedido criado, AGUARDANDO_PAGAMENTO"),
             @ApiResponse(responseCode = "400", description = "Estoque insuficiente, ou entrega sem endereço/método, ou entrega com pagamento que não seja Pix", content = @Content),
             @ApiResponse(responseCode = "409", description = "Carrinho vazio, ou item sem preço", content = @Content),
+            @ApiResponse(responseCode = "422", description = "Resgate de cashback fora das regras (CASHBACK_*)", content = @Content),
             @ApiResponse(responseCode = "502", description = "Falha ao criar cobrança no gateway", content = @Content),
             @ApiResponse(responseCode = "503", description = "Depósito padrão do marketplace não configurado", content = @Content)
     })
@@ -162,7 +190,7 @@ public class ShopAccountController {
             delivery = orderConverter.toDelivery(entrega);
         }
         return new ShopUseCase.CheckoutCommand(delivery, request.getPaymentPreference(), request.getNotes(),
-                request.getExpectedPromotionDiscount());
+                request.getExpectedPromotionDiscount(), request.getCashbackToRedeem());
     }
 
     @Operation(summary = "Pedidos do cliente autenticado, de qualquer canal, do mais recente para o mais antigo")

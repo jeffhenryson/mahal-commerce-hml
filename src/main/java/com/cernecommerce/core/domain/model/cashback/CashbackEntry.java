@@ -28,8 +28,10 @@ import java.time.Instant;
  *        igual a {@link #createdAt} — o débito é imediato.
  * @param expiresAt só relevante para {@link CashbackEntryType#EARNED}: instante em que o valor
  *        vence se não for resgatado. {@code null} para os demais tipos.
- * @param reversesEntryId entrada original que este lançamento reverte/expira. Obrigatório para
- *        todo tipo que não seja {@link CashbackEntryType#EARNED}.
+ * @param reversesEntryId entrada original que este lançamento reverte/expira/devolve.
+ *        Obrigatório para todo tipo que não seja {@link CashbackEntryType#EARNED} nem
+ *        {@link CashbackEntryType#REDEEMED} — o resgate consome vários ganhos, e o vínculo com
+ *        eles mora em {@link CashbackRedemptionAllocation}.
  */
 public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderItemId,
         CashbackEntryType type, BigDecimal amount, Instant availableAt, Instant expiresAt,
@@ -45,10 +47,10 @@ public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderIt
         if (amount == null || amount.signum() == 0) {
             throw new IllegalArgumentException("amount não pode ser nulo ou zero");
         }
-        boolean shouldBePositive = type == CashbackEntryType.EARNED;
+        boolean shouldBePositive = type.isCredit();
         if (shouldBePositive != (amount.signum() > 0)) {
             throw new IllegalArgumentException(
-                    shouldBePositive ? "amount de EARNED deve ser positivo" : "amount de " + type + " deve ser negativo");
+                    "amount de " + type + " deve ser " + (shouldBePositive ? "positivo" : "negativo"));
         }
         if (availableAt == null) {
             throw new IllegalArgumentException("availableAt é obrigatório");
@@ -56,7 +58,7 @@ public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderIt
         if (createdAt == null) {
             throw new IllegalArgumentException("createdAt é obrigatório");
         }
-        if (type != CashbackEntryType.EARNED && reversesEntryId == null) {
+        if (type != CashbackEntryType.EARNED && type != CashbackEntryType.REDEEMED && reversesEntryId == null) {
             throw new IllegalArgumentException("reversesEntryId é obrigatório para " + type);
         }
         if (type == CashbackEntryType.EARNED && expiresAt != null && !expiresAt.isAfter(availableAt)) {
@@ -76,12 +78,51 @@ public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderIt
      * disponível imediatamente, referenciando a entrada original.
      */
     public static CashbackEntry expired(CashbackEntry original, Instant expiredAt) {
+        return expired(original, original.amount(), expiredAt);
+    }
+
+    /**
+     * Expira só a {@code remaining} do ganho — a parte que nenhum resgate consumiu (V186). Expirar o
+     * valor cheio de um ganho já resgatado debitaria o mesmo dinheiro duas vezes.
+     */
+    public static CashbackEntry expired(CashbackEntry original, BigDecimal remaining, Instant expiredAt) {
         if (original.type() != CashbackEntryType.EARNED) {
             throw new IllegalArgumentException("só se expira uma entrada EARNED");
         }
+        if (remaining == null || remaining.signum() <= 0 || remaining.compareTo(original.amount()) > 0) {
+            throw new IllegalArgumentException("remaining deve estar entre 0 (exclusivo) e o valor do ganho");
+        }
         return new CashbackEntry(null, original.customerId(), original.orderId(),
-                original.orderItemId(), CashbackEntryType.EXPIRED, original.amount().negate(),
+                original.orderItemId(), CashbackEntryType.EXPIRED, remaining.negate(),
                 expiredAt, null, original.id(), expiredAt);
+    }
+
+    /**
+     * Resgate de {@code amount} (positivo) do saldo do cliente no pedido {@code orderId}: débito
+     * imediato. Os ganhos consumidos são registrados à parte, em {@link CashbackRedemptionAllocation}.
+     */
+    public static CashbackEntry redeemed(Long customerId, Long orderId, BigDecimal amount, Instant at) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("valor do resgate deve ser positivo");
+        }
+        return new CashbackEntry(null, customerId, orderId, null, CashbackEntryType.REDEEMED,
+                amount.negate(), at, null, null, at);
+    }
+
+    /**
+     * Devolve {@code credit} (positivo) de um {@link CashbackEntryType#REDEEMED} — pedido cancelado ou
+     * estornado. Crédito imediato, sem novo vencimento: o que volta é a sobra dos ganhos originais,
+     * que continuam vencendo nas datas deles.
+     */
+    public static CashbackEntry redemptionReversed(CashbackEntry redeemed, BigDecimal credit, Instant at) {
+        if (redeemed.type() != CashbackEntryType.REDEEMED) {
+            throw new IllegalArgumentException("só se devolve uma entrada REDEEMED");
+        }
+        if (credit == null || credit.signum() <= 0 || credit.compareTo(redeemed.amount().negate()) > 0) {
+            throw new IllegalArgumentException("crédito deve estar entre 0 (exclusivo) e o valor resgatado");
+        }
+        return new CashbackEntry(null, redeemed.customerId(), redeemed.orderId(), null,
+                CashbackEntryType.REDEMPTION_REVERSED, credit, at, null, redeemed.id(), at);
     }
 
     /**
@@ -93,9 +134,13 @@ public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderIt
         if (original.type() != CashbackEntryType.EARNED) {
             throw new IllegalArgumentException("só se reverte uma entrada EARNED");
         }
+        // V186 — um ganho revertido ainda em carência não conta no saldo disponível; o débito também
+        // não pode contar antes dele, ou o disponível cai abaixo do real (e é ele que o resgate
+        // confere). Por isso o débito vale a partir do mais tarde entre agora e a liberação do ganho.
+        Instant availableAt = original.availableAt().isAfter(reversedAt) ? original.availableAt() : reversedAt;
         return new CashbackEntry(null, original.customerId(), original.orderId(),
                 original.orderItemId(), CashbackEntryType.REVERSED, original.amount().negate(),
-                reversedAt, null, original.id(), reversedAt);
+                availableAt, null, original.id(), reversedAt);
     }
 
     /** Reconstitui um lançamento a partir de persistência. */

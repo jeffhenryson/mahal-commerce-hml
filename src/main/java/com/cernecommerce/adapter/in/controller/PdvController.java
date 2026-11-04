@@ -319,7 +319,8 @@ public class PdvController {
         PdvUseCase.SaleRegistration registration = pdvUseCase.registerSaleIdempotent(sessionId,
                 request.getCustomerId(), items, kits, payments, authentication.getName(),
                 Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null,
-                PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()));
+                PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()),
+                request.getCashbackToRedeem());
         Order order = registration.order();
         // PDV-F043 — reenvio da mesma venda: nada aconteceu agora, então nenhum evento é publicado de
         // novo (estoque, cashback, automação de pós-venda). 200 com o pedido que já existia.
@@ -339,6 +340,7 @@ public class PdvController {
                         "itemCount", order.items().size(),
                         "kitCount", kits.size())));
         publishCashbackEarnedIfAny(order, authentication.getName());
+        publishCashbackRedeemedIfAny(order, authentication.getName());
         OnAccountGuard.publishCreatedIfOnAccount(publisher, order, payments, authentication.getName());
         // Venda paga (concluída ou reservada para retirada): dispara as automações de VENDA_PDV_CONCLUIDA.
         Map<String, Object> saleDetails = new HashMap<>();
@@ -507,6 +509,17 @@ public class PdvController {
                     Map.of("orderId", order.id(),
                             "orderNumber", order.orderNumber(),
                             "amount", order.totalCashbackEarned())));
+        }
+    }
+
+    /** V186 — resgate de cashback na venda: evento próprio, só quando houve resgate. */
+    private void publishCashbackRedeemedIfAny(Order order, String username) {
+        if (order.cashbackRedeemed() != null && order.cashbackRedeemed().signum() > 0) {
+            publisher.publishEvent(AuditEvent.of(EventType.CASHBACK_REDEEMED, username,
+                    Map.of("orderId", order.id(),
+                            "orderNumber", order.orderNumber(),
+                            "customerId", order.customerId(),
+                            "amount", order.cashbackRedeemed())));
         }
     }
 

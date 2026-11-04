@@ -197,4 +197,58 @@ public class CashbackControllerTest {
                 .andExpect(jsonPath("$.content[0].type").value("EARNED"))
                 .andExpect(jsonPath("$.content[0].amount").value(10.0));
     }
+
+    // ── V186 — parâmetros e prévia de resgate ───────────────────────────────────────────────
+
+    @Test
+    void getSettings_returns_current_values() throws Exception {
+        when(cashbackUseCase.getSettings()).thenReturn(com.cernecommerce.core.domain.model.cashback.CashbackSettings.defaults());
+
+        mockMvc.perform(get("/cashback/settings").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.carenciaDias").value(7))
+                .andExpect(jsonPath("$.expiracaoDias").value(180))
+                .andExpect(jsonPath("$.resgateTetoPercent").value(50))
+                .andExpect(jsonPath("$.resgateMinimoSaldo").value(50.00));
+    }
+
+    @Test
+    void putSettings_saves_and_publishes_audit() throws Exception {
+        when(cashbackUseCase.updateSettings(any(), eq("admin"))).thenAnswer(inv -> inv.getArgument(0));
+
+        mockMvc.perform(put("/cashback/settings").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"carenciaDias\":3,\"expiracaoDias\":90,\"resgateTetoPercent\":30,\"resgateMinimoSaldo\":20}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.carenciaDias").value(3))
+                .andExpect(jsonPath("$.resgateTetoPercent").value(30));
+
+        verify(cashbackUseCase).updateSettings(eq(new com.cernecommerce.core.domain.model.cashback.CashbackSettings(
+                3, 90, new BigDecimal("30"), new BigDecimal("20"))), eq("admin"));
+        verify(publisher).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void putSettings_out_of_range_returns_400() throws Exception {
+        mockMvc.perform(put("/cashback/settings").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"carenciaDias\":7,\"expiracaoDias\":180,\"resgateTetoPercent\":101,\"resgateMinimoSaldo\":50}"))
+                .andExpect(status().isBadRequest());
+
+        verify(cashbackUseCase, never()).updateSettings(any(), any());
+    }
+
+    @Test
+    void redemptionQuote_returns_max_and_reason() throws Exception {
+        when(cashbackUseCase.quoteRedemption(eq(5L), eq(new BigDecimal("100"))))
+                .thenReturn(new com.cernecommerce.core.domain.model.cashback.CashbackRedemptionQuote(
+                        new BigDecimal("30.00"), new BigDecimal("50.00"), new BigDecimal("50"),
+                        new BigDecimal("50.00"), BigDecimal.ZERO, "CASHBACK_BELOW_MINIMUM_BALANCE"));
+
+        mockMvc.perform(get("/cashback/customers/5/redemption-quote").param("amount", "100").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(30.00))
+                .andExpect(jsonPath("$.maxRedeemable").value(0))
+                .andExpect(jsonPath("$.reason").value("CASHBACK_BELOW_MINIMUM_BALANCE"));
+    }
 }

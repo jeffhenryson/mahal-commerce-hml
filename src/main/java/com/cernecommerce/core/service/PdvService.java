@@ -506,11 +506,22 @@ public class PdvService implements PdvUseCase {
                 delivery, clientSaleId, clientSoldAt, promotionCheck);
     }
 
+    /** Mesmo motivo da sobrescrita acima: o default da interface perderia o {@code @Transactional}. */
     @Override
     @Transactional
     public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<KitSelection> kits, List<PaymentCommand> payments, String username, boolean reserveForPickup,
             OrderDelivery delivery, String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck) {
+        return registerSaleIdempotent(sessionId, customerId, items, kits, payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck, BigDecimal.ZERO);
+    }
+
+    @Override
+    @Transactional
+    public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<KitSelection> kits, List<PaymentCommand> payments, String username, boolean reserveForPickup,
+            OrderDelivery delivery, String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck,
+            BigDecimal cashbackToRedeem) {
         items = items == null ? List.of() : items;
         kits = kits == null ? List.of() : kits;
         if (items.isEmpty() && kits.isEmpty()) {
@@ -591,6 +602,12 @@ public class PdvService implements PdvUseCase {
         orderItems = promoted.items();
         Order order = Order.openBalcao(sessionId, warehouseCode, customerId, orderItems, delivery);
         requireDiscountWithinLimit(order, promoted.total().add(kitDiscountTotal));
+        // V186 — resgate de cashback: depois do desconto e da promoção (o teto é sobre a mercadoria),
+        // antes de validar o pagamento (que passa a ser contra o total já abatido).
+        if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
+            cashbackUseCase.validateRedemption(customerId, order.merchandiseNet(), cashbackToRedeem);
+            order = order.withCashbackRedeemed(cashbackToRedeem);
+        }
 
         // PDV-F006: pagamento é validado ANTES de tocar o estoque — um pagamento insuficiente não
         // deveria custar um adjustStock que só vai ser desfeito pelo rollback da transação.
@@ -631,6 +648,8 @@ public class PdvService implements PdvUseCase {
             orderPaymentRepository.save(toPaymentLine(saved.id(), payment));
         }
         recordReceivableIfOnAccount(saved, null, payments, username);
+        // V186 — o débito do resgate antes do ganho; o ganho já sai reduzido pela parte resgatada.
+        cashbackUseCase.redeemForOrder(saved);
         // Depois das linhas: o cashback desconta a fração marcada (ver CashbackService).
         cashbackUseCase.recordEarnedForOrder(saved);
         // PDV-F043 — com flush: é o índice único da chave que barra dois envios simultâneos da mesma

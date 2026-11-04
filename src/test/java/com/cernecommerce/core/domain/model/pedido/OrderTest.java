@@ -556,4 +556,47 @@ class OrderTest {
         assertThat(concluded.changeAmount()).isEqualByComparingTo("6.00");
         assertThat(concluded.status()).isEqualTo(OrderStatus.CONCLUIDO);
     }
+
+    // ── V186 — resgate de cashback ──────────────────────────────────────────────────────────
+
+    @Test
+    void withCashbackRedeemed_reducesNetAndPayableButNotMerchandise() {
+        Order order = balcao().withCashbackRedeemed(new BigDecimal("11.00"));
+
+        assertThat(order.merchandiseNet()).isEqualByComparingTo("44.00");
+        assertThat(order.netAmount()).isEqualByComparingTo("33.00");
+        assertThat(order.totalPayable()).isEqualByComparingTo("33.00");
+        assertThat(order.cashbackEarningFraction()).isEqualByComparingTo("0.75");
+    }
+
+    @Test
+    void withCashbackRedeemed_rejectsMoreThanMerchandise() {
+        assertThatThrownBy(() -> balcao().withCashbackRedeemed(new BigDecimal("44.01")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mercadoria");
+    }
+
+    @Test
+    void cashbackEarningFraction_isOneWithoutRedemption() {
+        assertThat(balcao().cashbackEarningFraction()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void totalCashbackEarned_excludesThePartPaidWithCashback() {
+        List<OrderItem> items = List.of(OrderItem.fromCatalog("CARV-001", new BigDecimal("2.000"), carvao(), null)
+                .withCashbackPercent(new BigDecimal("3")));
+        Order order = Order.openBalcao(1L, "LOJA-01", 7L, items);
+        assertThat(order.totalCashbackEarned()).isEqualByComparingTo("1.32");
+
+        Order redeemed = order.withCashbackRedeemed(new BigDecimal("22.00"));
+
+        assertThat(redeemed.totalCashbackEarned()).isEqualByComparingTo("0.66");
+    }
+
+    @Test
+    void serviceFee_isNotShrunkByRedemptionAppliedAfterwards() {
+        Order order = mesa().withServiceFeeOf(BigDecimal.TEN).withCashbackRedeemed(new BigDecimal("4.00"));
+
+        assertThat(order.serviceFeeAmount()).isEqualByComparingTo("4.40");
+        assertThat(order.totalPayable()).isEqualByComparingTo("44.40");
+    }
 }

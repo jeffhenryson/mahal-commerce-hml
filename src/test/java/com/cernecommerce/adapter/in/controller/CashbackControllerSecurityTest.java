@@ -34,6 +34,29 @@ public class CashbackControllerSecurityTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
+    // ── V186 — parâmetros e prévia de resgate ───────────────────────────────────────────────
+
+    @Test
+    void get_settings_without_auth_returns_401() throws Exception {
+        mockMvc.perform(get("/cashback/settings")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void put_settings_without_cashback_rate_manage_returns_403() throws Exception {
+        mockMvc.perform(put("/cashback/settings")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"carenciaDias\":7,\"expiracaoDias\":180,\"resgateTetoPercent\":50,\"resgateMinimoSaldo\":50}")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("CASHBACK_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void redemption_quote_without_pdv_or_cashback_read_returns_403() throws Exception {
+        mockMvc.perform(get("/cashback/customers/1/redemption-quote").param("amount", "100")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ORDER_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void create_rate_without_auth_returns_401() throws Exception {
         mockMvc.perform(post("/cashback/rates")

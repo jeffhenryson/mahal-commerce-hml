@@ -120,4 +120,83 @@ class CashbackEntryTest {
         assertThat(entry.id()).isEqualTo(42L);
         assertThat(entry.customerId()).isEqualTo(1L);
     }
+
+    @Test
+    void reversed_duringCarencia_onlyCountsWhenTheEarningWouldHave() {
+        Instant availableAt = NOW.plus(7, ChronoUnit.DAYS);
+        CashbackEntry original = CashbackEntry.of(10L, 1L, 2L, 3L, CashbackEntryType.EARNED, new BigDecimal("2.50"),
+                availableAt, availableAt.plus(180, ChronoUnit.DAYS), null, NOW);
+
+        CashbackEntry reversed = CashbackEntry.reversed(original, NOW.plus(1, ChronoUnit.DAYS));
+
+        assertThat(reversed.availableAt()).isEqualTo(availableAt);
+        assertThat(reversed.createdAt()).isEqualTo(NOW.plus(1, ChronoUnit.DAYS));
+    }
+
+    // ── V186 — resgate ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void redeemed_isImmediateNegativeDebitWithoutReversal() {
+        CashbackEntry entry = CashbackEntry.redeemed(1L, 2L, new BigDecimal("12.50"), NOW);
+
+        assertThat(entry.type()).isEqualTo(CashbackEntryType.REDEEMED);
+        assertThat(entry.amount()).isEqualByComparingTo("-12.50");
+        assertThat(entry.availableAt()).isEqualTo(NOW);
+        assertThat(entry.reversesEntryId()).isNull();
+        assertThat(entry.orderItemId()).isNull();
+    }
+
+    @Test
+    void redeemed_rejectsNonPositiveAmount() {
+        assertThatThrownBy(() -> CashbackEntry.redeemed(1L, 2L, BigDecimal.ZERO, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void redemptionReversed_isPositiveCreditPointingToRedemption() {
+        CashbackEntry redeemed = CashbackEntry.of(20L, 1L, 2L, null, CashbackEntryType.REDEEMED,
+                new BigDecimal("-10.00"), NOW, null, null, NOW);
+
+        CashbackEntry credit = CashbackEntry.redemptionReversed(redeemed, new BigDecimal("4.00"), NOW);
+
+        assertThat(credit.type()).isEqualTo(CashbackEntryType.REDEMPTION_REVERSED);
+        assertThat(credit.amount()).isEqualByComparingTo("4.00");
+        assertThat(credit.reversesEntryId()).isEqualTo(20L);
+    }
+
+    @Test
+    void redemptionReversed_rejectsCreditAboveRedeemed() {
+        CashbackEntry redeemed = CashbackEntry.of(20L, 1L, 2L, null, CashbackEntryType.REDEEMED,
+                new BigDecimal("-10.00"), NOW, null, null, NOW);
+
+        assertThatThrownBy(() -> CashbackEntry.redemptionReversed(redeemed, new BigDecimal("10.01"), NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void redemptionReversed_requiresReversesEntryId() {
+        assertThatThrownBy(() -> CashbackEntry.of(1L, 1L, 2L, null, CashbackEntryType.REDEMPTION_REVERSED,
+                new BigDecimal("1.00"), NOW, null, null, NOW))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reversesEntryId");
+    }
+
+    @Test
+    void expired_withRemaining_debitsOnlyTheUnconsumedPart() {
+        CashbackEntry original = CashbackEntry.of(10L, 1L, 2L, 3L, CashbackEntryType.EARNED,
+                new BigDecimal("10.00"), NOW, NOW.plus(1, ChronoUnit.DAYS), null, NOW);
+
+        CashbackEntry expired = CashbackEntry.expired(original, new BigDecimal("6.00"), NOW);
+
+        assertThat(expired.amount()).isEqualByComparingTo("-6.00");
+        assertThat(expired.reversesEntryId()).isEqualTo(10L);
+    }
+
+    @Test
+    void expired_rejectsRemainingAboveOriginal() {
+        CashbackEntry original = CashbackEntry.of(10L, 1L, 2L, 3L, CashbackEntryType.EARNED,
+                new BigDecimal("10.00"), NOW, NOW.plus(1, ChronoUnit.DAYS), null, NOW);
+
+        assertThatThrownBy(() -> CashbackEntry.expired(original, new BigDecimal("10.01"), NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
