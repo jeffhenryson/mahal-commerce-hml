@@ -83,6 +83,10 @@ services:
       # XMLs de NF-e importados ficam no mesmo volume (default ./data/nfe-imports não persiste).
       NFE_IMPORT_STORAGE_DIR: /app/uploads/nfe-imports
       EMAIL_VERIFICATION_FRONTEND_URL: ${EMAIL_VERIFICATION_FRONTEND_URL:-https://mahaltabacaria.com.br/verify}
+      PASSWORD_RESET_FRONTEND_URL: ${PASSWORD_RESET_FRONTEND_URL:-https://admin.mahaltabacaria.com.br/auth/reset-password}
+      PASSWORD_RESET_CUSTOMER_FRONTEND_URL: ${PASSWORD_RESET_CUSTOMER_FRONTEND_URL:-}
+      EMAIL_CHANGE_FRONTEND_URL: ${EMAIL_CHANGE_FRONTEND_URL:-https://admin.mahaltabacaria.com.br/auth/confirm-email-change}
+      EMAIL_MARKET_BASE_URL: ${EMAIL_MARKET_BASE_URL:-https://mahaltabacaria.com.br}
       EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-https://mahaltabacaria.com.br}
       REDIS_HOST: redis
       REDIS_PORT: 6379
