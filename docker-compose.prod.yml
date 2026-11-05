@@ -87,7 +87,7 @@ services:
       PASSWORD_RESET_CUSTOMER_FRONTEND_URL: ${PASSWORD_RESET_CUSTOMER_FRONTEND_URL:-}
       EMAIL_CHANGE_FRONTEND_URL: ${EMAIL_CHANGE_FRONTEND_URL:-https://admin.mahaltabacaria.com.br/auth/confirm-email-change}
       EMAIL_MARKET_BASE_URL: ${EMAIL_MARKET_BASE_URL:-https://mahaltabacaria.com.br}
-      EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-https://mahaltabacaria.com.br}
+      EMAIL_APP_BASE_URL: ${EMAIL_APP_BASE_URL:-https://admin.mahaltabacaria.com.br}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
