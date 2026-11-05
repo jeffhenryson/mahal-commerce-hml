@@ -251,6 +251,10 @@ Inicia o fluxo de recuperação de senha. Sempre retorna 204 (sem disclosure de 
 
 **Erros:** `400 PASSWORD_RESET_TOKEN_INVALID`, `400 PASSWORD_RESET_TOKEN_EXPIRED`, `400 VALIDATION_ERROR`
 
+> Com o token de um convite, a resposta é a mesma, mas o evento é `USER_INVITE_ACCEPTED`: o e-mail fica verificado e não sai o alerta de senha redefinida. O link do convite termina em `&convite=1`.
+>
+> O link do e-mail usa `password-reset.frontend-url` para operadores. Para clientes do app, usa `password-reset.customer-frontend-url` quando configurada.
+
 ---
 
 ### POST /auth/confirm-email-change — Público
@@ -302,6 +306,8 @@ Conta criada com `enabled=false`. Email de verificação enviado automaticamente
 { "email": "string" }
 // Response 204 (sempre, sem disclosure). Cooldown 60s por email.
 ```
+
+> Conta desativada não recebe código: a verificação liga a conta, e o endpoint é público.
 
 ---
 
@@ -2481,7 +2487,7 @@ Envia o comprovante da compra (balcão ou mesa) para o e-mail do **cliente vincu
 | Erro | Quando |
 |------|--------|
 | 404 | Pedido não encontrado |
-| 422 `RECEIPT_EMAIL_UNAVAILABLE` | Pedido cancelado, sem cliente vinculado ou cliente sem e-mail |
+| 422 `RECEIPT_EMAIL_UNAVAILABLE` | Pedido cancelado, reembolsado ou sem pagamento confirmado; sem cliente vinculado ou cliente sem e-mail |
 
 ### GET /pdv/sessions/{id}/sales — Permissão: PDV_READ
 
@@ -4199,7 +4205,7 @@ Retorna todos os tipos de evento válidos para uso no filtro `?action=`.
 |-------|---------|
 | Auth | `USER_LOGGED_IN`, `USER_LOGGED_OUT`, `USER_SESSIONS_CLEARED`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`, `TOKEN_THEFT_DETECTED` |
 | Lifecycle | `USER_REGISTERED`, `USER_EMAIL_VERIFIED`, `USER_CREATED`, `USER_DELETED`, `USER_UPDATED`, `USER_EMAIL_CHANGED`, `USER_ROLE_ASSIGNED`, `USER_ROLE_REMOVED`, `USER_ENABLED`, `USER_DISABLED`, `USER_PASSWORD_CHANGED` |
-| Password | `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET_COMPLETED` |
+| Password | `PASSWORD_RESET_REQUESTED`, `PASSWORD_RESET_COMPLETED`, `USER_INVITE_ACCEPTED` |
 | Email | `EMAIL_CHANGE_REQUESTED`, `EMAIL_CHANGE_CONFIRMED` |
 | RBAC | `ROLE_CREATED`, `ROLE_DELETED`, `PERMISSION_CREATED`, `PERMISSION_DELETED`, `PERMISSION_ASSIGNED_TO_ROLE`, `PERMISSION_REMOVED_FROM_ROLE` |
 | 2FA | `TOTP_ENABLED`, `TOTP_DISABLED`, `TOTP_BACKUP_CODES_REGENERATED`, `TOTP_REPLACED` |
@@ -4419,7 +4425,7 @@ Atualiza a preferência de notificação para um tipo específico. O path `{type
 
 Fora das preferências também: **fiado** para o cliente — comprovante ao marcar (`RECEIVABLE_CREATED`), lembrete 3 dias antes e no dia do vencimento (job às 9h, `pdv.on-account.reminder.cron`) e confirmação de pagamento (`RECEIVABLE_PAID`).
 
-Fora das preferências: **boas-vindas** (`USER_EMAIL_VERIFIED`, `USER_CREATED`) e e-mails do **comprador** — confirmação, status, cancelamento/reembolso (só pedidos `MARKETPLACE`, com itens e valores) e comprovante do PDV (`POST /pdv/sales/{id}/receipt/email`). Todos os e-mails usam nome, logo e rodapé de Dados da loja; links do painel usam `email.app-base-url` (`EMAIL_APP_BASE_URL`).
+Fora das preferências: **boas-vindas** (`USER_EMAIL_VERIFIED`, `USER_CREATED`) e e-mails do **comprador** — confirmação, status, cancelamento/reembolso (só pedidos `MARKETPLACE`, com itens e valores) e comprovante do PDV (`POST /pdv/sales/{id}/receipt/email`). O motivo digitado em `/cancel` e `/refund` não vai ao cliente; só o da recusa vai. Todos os e-mails usam nome, logo e rodapé de Dados da loja; links do painel usam `email.app-base-url` (`EMAIL_APP_BASE_URL`) e os do app do cliente usam `email.market-base-url` (`EMAIL_MARKET_BASE_URL`; vazia, o e-mail sai sem o link).
 
 > **Preferências:** o comportamento de cada coluna ("in-app" e "email") pode ser sobrescrito individualmente via `PUT /notifications/preferences/{type}`. O `NotificationEventListener` verifica as preferências antes de persistir ou enviar email.
 
@@ -4797,7 +4803,7 @@ Envia exemplos com dados fictícios, **de forma síncrona**. Sem `sample`, envia
     "error": "Failed to send email: 403 {\"name\":\"validation_error\",\"message\":\"The domain is not verified\"}" } ]
 ```
 
-`sample` ∈ `VERIFICATION_CODE`, `PASSWORD_RESET`, `EMAIL_CHANGE`, `PASSWORD_CHANGED`, `ACCOUNT_LOCKED`, `TOTP_STATUS`, `TOKEN_THEFT`, `ORDER_CONFIRMATION`, `ORDER_STATUS_UPDATE`, `ORDER_CANCELLATION`, `WELCOME`, `PURCHASE_RECEIPT`, `CASH_SESSION_CLOSED`, `STOCK_REORDER_ALERT`, `DEV_ALERT`, `ACCOUNT_CHANGE`, `RECEIVABLE_REMINDER`, `CASH_SESSION_STALE`, `DAILY_DIGEST`.
+`sample` ∈ `VERIFICATION_CODE`, `PASSWORD_RESET`, `USER_INVITE`, `EMAIL_CHANGE_REQUEST`, `EMAIL_CHANGE`, `EMAIL_CHANGE_CONFIRMED`, `WELCOME`, `CUSTOMER_WELCOME`, `ACCOUNT_CHANGE`, `PASSWORD_CHANGED`, `ACCOUNT_LOCKED`, `TOTP_STATUS`, `TOKEN_THEFT`, `PASSWORD_RESET_ALERT`, `GOOGLE_LINKED`, `ORDER_CONFIRMATION`, `ORDER_CONFIRMATION_DELIVERY`, `ORDER_STATUS_UPDATE`, `ORDER_CANCELLATION`, `ORDER_REFUND`, `PURCHASE_RECEIPT`, `RECEIVABLE_CREATED`, `RECEIVABLE_REMINDER`, `RECEIVABLE_PAID`, `CASH_SESSION_OPENED`, `CASH_MOVEMENT`, `CASH_SESSION_CLOSED`, `CASH_SESSION_STALE`, `ORDER_CANCELLED_ALERT`, `PAYMENT_CORRECTED_ALERT`, `PRICE_CHANGED_ALERT`, `DAILY_DIGEST`, `STOCK_REORDER_ALERT`, `DEV_ALERT`.
 
 **Erros:** `400` destinatário inválido; `422 INVALID_EMAIL_INTEGRATION` sem chave/remetente salvos (só com `target=STORE`).
 

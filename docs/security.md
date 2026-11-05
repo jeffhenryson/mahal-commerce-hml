@@ -391,11 +391,15 @@ Todos os emails são normalizados para `lowercase + strip` em `UserService` e `O
 
 | Evento | Assunto do email |
 |--------|-----------------|
-| `USER_PASSWORD_CHANGED` | "Alerta de segurança: senha alterada" |
-| `ACCOUNT_LOCKED` | "Alerta de segurança: conta bloqueada" |
-| `TOTP_ENABLED` | "Alerta de segurança: 2FA ativada" |
-| `TOTP_DISABLED` | "Alerta de segurança: 2FA desativada" |
-| `TOKEN_THEFT_DETECTED` | "Alerta de segurança: acesso suspeito" |
+| `USER_PASSWORD_CHANGED` | "Sua senha da {loja} foi alterada" |
+| `ACCOUNT_LOCKED` | "Bloqueamos sua conta na {loja} por alguns minutos" |
+| `TOTP_ENABLED` | "A verificação em duas etapas foi ativada" |
+| `TOTP_DISABLED` | "A verificação em duas etapas foi desativada" |
+| `TOKEN_THEFT_DETECTED` | "Desconectamos sua conta na {loja} por segurança" |
+| `PASSWORD_RESET_COMPLETED` | "Sua senha da {loja} foi redefinida" |
+| `OAUTH_GOOGLE_LINKED` | "Login com Google ativado na sua conta" |
+
+`USER_INVITE_ACCEPTED` não gera alerta: é a pessoa criando a primeira senha pelo convite.
 
 O listener busca o email do usuário via `UserRepository.findByUsername()`. Se o usuário não tiver email ou a busca falhar, o alerta é descartado com log de erro. Em dev, os alertas são logados pelo `LoggingEmailAdapter`.
 
