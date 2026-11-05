@@ -1,23 +1,19 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Confirmação de cadastro', '#1e40af', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Confirme seu e-mail', ${theme.brand}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#111">Confirmação de cadastro</h2>
-  <p>Olá, <strong th:text="${username}">username</strong>!</p>
-  <p>Clique no botão abaixo para confirmar seu email e ativar sua conta:</p>
-  <p style="text-align:center;margin:28px 0">
-    <a th:href="${verifyUrl}" style="display:inline-block;background:#1e40af;color:#fff;padding:13px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:1rem">
-      Confirmar email
-    </a>
-  </p>
-  <p style="color:#555;font-size:.875rem;text-align:center">Ou insira o código manualmente na página de verificação:</p>
-  <div th:text="${code}" style="font-size:1.75rem;font-weight:bold;letter-spacing:.4rem;background:#f4f4f4;padding:16px;text-align:center;border-radius:8px;margin:8px 0;color:#111">
-    000000
+  <h2 th:style="${theme.title()}">Confirme seu e-mail</h2>
+  <p>E aí, <strong th:text="${username}">username</strong>!</p>
+  <p>Falta só um clique para a gente confirmar que este e-mail é seu.</p>
+  <table th:replace="~{email/components :: button(${verifyUrl}, 'Confirmar e-mail')}"></table>
+  <p th:style="'margin:20px 0 8px;text-align:center;font-size:14px;color:' + ${theme.muted}">Se preferir, use este código na página de verificação:</p>
+  <!--/* Monoespaçada e 22px: os 12 caracteres cabem numa linha no celular, e O não se confunde com 0. */-->
+  <div th:text="${code}" th:style="'margin:8px 0;padding:14px 8px;border-radius:8px;text-align:center;font-family:Courier New,Courier,monospace;font-size:22px;font-weight:bold;letter-spacing:2px;background:' + ${theme.surface} + ';color:' + ${theme.wine}">
+    000000000000
   </div>
-  <p style="color:#777;font-size:.8rem;margin-top:20px">
-    Este código expira em <span th:text="${ttlMinutes}">15</span> minutos.<br>
-    Se você não solicitou este cadastro, ignore este email.
+  <p th:style="${theme.note()}">
+    O link e o código valem por <span th:text="${ttlMinutes}">15</span> minutos. Se não foi você, é só ignorar este e-mail.
   </p>
 </div>
 </body>

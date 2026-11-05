@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Boas-vindas', '#1e40af', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Sua conta está pronta', ${theme.brand}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#111">Sua conta está pronta</h2>
-  <p>Olá, <strong th:text="${username}">username</strong>!</p>
-  <p>Boas-vindas à conta da <strong th:text="${store.name}">loja</strong>. A partir de agora você recebe por aqui
-    as confirmações de pedido e os avisos de segurança da sua conta.</p>
-  <p th:if="${appUrl}" style="text-align:center;margin:28px 0">
-    <a th:href="${appUrl}" style="display:inline-block;background:#1e40af;color:#fff;padding:13px 32px;border-radius:6px;text-decoration:none;font-weight:bold">Acessar minha conta</a>
-  </p>
-  <p style="color:#777;font-size:.8rem;margin-top:20px">Se você não criou esta conta, entre em contato com a loja.</p>
+  <h2 th:style="${theme.title()}">Sua conta está pronta</h2>
+  <p>E aí, <strong th:text="${username}">username</strong>!</p>
+  <p>Criaram sua conta no painel da <span th:text="${store.name}">loja</span>. Entre com o usuário
+    <strong th:text="${username}">username</strong> e a senha que a pessoa responsável passou para você.</p>
+  <th:block th:if="${appUrl}">
+    <table th:replace="~{email/components :: button(${appUrl}, 'Entrar no painel')}"></table>
+  </th:block>
+  <p th:style="${theme.note()}">Depois do primeiro acesso, troque a senha no seu perfil. Se você não esperava esta conta, fale com a loja.</p>
 </div>
 </body>
 </html>

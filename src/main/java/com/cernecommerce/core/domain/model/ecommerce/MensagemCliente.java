@@ -1,11 +1,12 @@
 package com.cernecommerce.core.domain.model.ecommerce;
 
+import com.cernecommerce.core.domain.model.notification.EmailFormat;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.domain.model.pedido.OrderStatus;
 
 /**
- * O texto que o cliente lê sobre a etapa do pedido do app (ECM-F013) — no e-mail, na notificação do
- * app e no {@code GET /shop/orders/{id}}. Um lugar só, para os três dizerem a mesma coisa.
+ * O texto que o cliente lê sobre a etapa do pedido do app (ECM-F013) — na notificação do app e no
+ * {@code GET /shop/orders/{id}}. O e-mail da etapa tem texto próprio em {@link EmailEtapaPedido}.
  */
 public final class MensagemCliente {
 
@@ -43,7 +44,7 @@ public final class MensagemCliente {
     }
 
     private static String aceiteDaEntrega(Order order, String pixChave) {
-        String total = "Pedido aceito — total R$ " + order.totalPayable().toPlainString() + " com o frete. ";
+        String total = "Pedido aceito — total " + EmailFormat.money(order.totalPayable()) + " com o frete. ";
         return pixChave == null
                 ? total + "A loja vai te mandar o Pix pelo WhatsApp"
                 : total + "Pague por Pix na chave " + pixChave + " e a loja confirma o pagamento";

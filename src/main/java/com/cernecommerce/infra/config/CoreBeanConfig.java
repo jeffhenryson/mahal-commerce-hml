@@ -238,14 +238,16 @@ class CoreBeanConfig {
             @Value("${email.verification.ttl-minutes:15}") long verificationCodeTtlMinutes,
             @Value("${email.verification.resend-cooldown-seconds:60}") long resendCooldownSeconds,
             @Value("${password-reset.ttl-minutes:15}") long passwordResetTtlMinutes,
-            @Value("${password-reset.frontend-url:http://localhost:3000/reset-password}") String passwordResetFrontendUrl,
+            @Value("${password-reset.frontend-url:http://localhost:4200/auth/reset-password}") String passwordResetFrontendUrl,
+            @Value("${password-reset.customer-frontend-url:}") String customerPasswordResetFrontendUrl,
             @Value("${user.invite.ttl-hours:48}") long inviteTtlHours) {
         return new UserService(userRepository, roleRepository, passwordHashPort,
                 refreshTokenPort, tokenBlocklistPort, emailPort,
                 verificationCodeRepository, passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
                 twoFactorAuthPort, avatarStoragePort, customerRepository, verificationCodeTtlMinutes,
-                resendCooldownSeconds, passwordResetTtlMinutes, passwordResetFrontendUrl, inviteTtlHours);
+                resendCooldownSeconds, passwordResetTtlMinutes, passwordResetFrontendUrl,
+                customerPasswordResetFrontendUrl, inviteTtlHours);
     }
 
     @Bean
@@ -447,8 +449,11 @@ class CoreBeanConfig {
 
     @Bean
     ReceiptEmailUseCase receiptEmailUseCase(OrderRepository orderRepository, CustomerRepository customerRepository,
-            EmailPort emailPort) {
-        return new ReceiptEmailService(orderRepository, customerRepository, emailPort);
+            EmailPort emailPort, OrderPaymentRepository orderPaymentRepository,
+            OrderItemRefundRepository orderItemRefundRepository, CashbackEntryRepository cashbackEntryRepository,
+            CustomerReceivableRepository customerReceivableRepository) {
+        return new ReceiptEmailService(orderRepository, customerRepository, emailPort, orderPaymentRepository,
+                orderItemRefundRepository, cashbackEntryRepository, customerReceivableRepository);
     }
 
     /** CRM-F010 — "Marcar": venda a prazo para cliente VIP. Não depende do PdvService (sem ciclo). */

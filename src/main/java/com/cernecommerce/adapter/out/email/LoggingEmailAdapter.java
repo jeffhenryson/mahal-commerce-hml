@@ -1,8 +1,12 @@
 package com.cernecommerce.adapter.out.email;
 
+import com.cernecommerce.core.domain.model.notification.AccountChange;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
+import com.cernecommerce.core.domain.model.notification.OrderClosureEmail;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
+import com.cernecommerce.core.domain.model.notification.PurchaseReceiptEmail;
 import com.cernecommerce.core.domain.model.notification.SecurityEventContext;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
 import org.slf4j.Logger;
@@ -31,13 +35,19 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendEmailChangeCode(String to, String username, String code) {
+        log.info("DEV EMAIL >> to={} username={} emailChangeCode={}", to, username, code);
+        lastCodeByUsername.put(username, code);
+    }
+
+    @Override
     public void sendPasswordResetLink(String to, String username, String resetLink, long ttlMinutes) {
         log.info("DEV EMAIL >> to={} username={} passwordResetLink={} ttlMinutes={}", to, username, resetLink, ttlMinutes);
         lastCodeByUsername.put("reset:" + username, resetLink);
     }
 
     @Override
-    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
+    public void sendUserInvite(String to, String username, String roles, String inviteLink, long ttlHours) {
         log.info("DEV EMAIL >> to={} username={} inviteLink={} ttlHours={}", to, username, inviteLink, ttlHours);
         lastCodeByUsername.put("invite:" + username, inviteLink);
     }
@@ -54,8 +64,8 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendAccountChange(String to, String username, String title, String message) {
-        log.info("DEV EMAIL >> to={} username={} title={} [account-change]", to, username, title);
+    public void sendAccountChange(String to, String username, AccountChange change, String role) {
+        log.info("DEV EMAIL >> to={} username={} change={} [account-change]", to, username, change);
     }
 
     @Override
@@ -76,6 +86,11 @@ public class LoggingEmailAdapter implements EmailPort {
     @Override
     public void sendWelcome(String to, String username) {
         log.info("DEV EMAIL >> to={} username={} [welcome]", to, username);
+    }
+
+    @Override
+    public void sendCustomerWelcome(String to, String firstName) {
+        log.info("DEV EMAIL >> to={} firstName={} [customer-welcome]", to, firstName);
     }
 
     @Override
@@ -106,20 +121,20 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendOrderStatusUpdate(String to, OrderEmailView order, String newStatusLabel) {
-        log.info("DEV EMAIL >> to={} order={} newStatusLabel={} [order-status-update]",
-                to, order.orderReference(), newStatusLabel);
+    public void sendOrderStatusUpdate(String to, OrderEmailView order, OrderStageEmail stage) {
+        log.info("DEV EMAIL >> to={} order={} stage={} [order-status-update]",
+                to, order.orderReference(), stage.title());
     }
 
     @Override
-    public void sendOrderCancellation(String to, OrderEmailView order, String reason, boolean refunded) {
-        log.info("DEV EMAIL >> to={} order={} reason={} refunded={} [order-cancellation]",
-                to, order.orderReference(), reason, refunded);
+    public void sendOrderCancellation(String to, OrderEmailView order, OrderClosureEmail email) {
+        log.info("DEV EMAIL >> to={} order={} subject={} [order-cancellation]",
+                to, order.orderReference(), email.subject());
     }
 
     @Override
-    public void sendPurchaseReceipt(String to, OrderEmailView order) {
-        log.info("DEV EMAIL >> to={} order={} total={} [purchase-receipt]", to, order.orderReference(), order.total());
+    public void sendPurchaseReceipt(String to, OrderEmailView order, PurchaseReceiptEmail receipt) {
+        log.info("DEV EMAIL >> to={} receipt={} total={} [purchase-receipt]", to, receipt.reference(), order.total());
     }
 
     @Override

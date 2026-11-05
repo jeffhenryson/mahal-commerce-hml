@@ -1,5 +1,6 @@
 package com.cernecommerce.core.ports.in;
 
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
 import com.cernecommerce.core.domain.model.pedido.Order;
 
 /**
@@ -8,12 +9,12 @@ import com.cernecommerce.core.domain.model.pedido.Order;
  */
 public interface AvisoClientePedidoAppUseCase {
 
-    /** Etapa nova — {@code mensagem} vem de {@code MensagemCliente}. E-mail e notificação. */
-    void etapa(Order order, String mensagem);
+    /** Etapa nova: {@code email} vem de {@code EmailEtapaPedido} e {@code mensagem}, de {@code MensagemCliente}. */
+    void etapa(Order order, String mensagem, OrderStageEmail email);
 
     /** Só a notificação no app, quando o e-mail sai por outro caminho (a recusa). */
     void soNotificacao(Order order, String mensagem);
 
-    /** Cancelado pela loja ou expirado — e-mail de cancelamento e notificação. */
+    /** Expirado no fim do dia — e-mail de cancelamento e notificação. */
     void cancelamento(Order order, String motivo);
 }

@@ -1,15 +1,31 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Pedido recebido', '#15803d', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Pedido recebido', ${theme.success}, ~{::mailcontent})}">
 <body>
-<div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#15803d">Recebemos seu pedido <span th:text="${order.orderReference}">#123</span></h2>
-  <p>Olá, <strong th:text="${order.customerName}">cliente</strong>!</p>
-  <p>Seu pedido foi registrado. Assim que o pagamento for confirmado, avisaremos por aqui.</p>
-  <table th:replace="~{email/order-items :: table(${order})}"></table>
-  <p th:if="${checkoutUrl}" style="text-align:center;margin:24px 0">
-    <a th:href="${checkoutUrl}" style="background:#15803d;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;display:inline-block;font-weight:bold">Concluir pagamento</a>
-  </p>
+<div th:fragment="mailcontent" th:with="online=${checkoutUrl != null}">
+  <h2 th:style="${theme.title()}" th:text="${online} ? 'Falta só o pagamento' : 'Pedido ' + ${order.orderReference} + ' na área!'">Pedido #123 na área!</h2>
+  <p>E aí, <strong th:text="${order.firstName()}">cliente</strong>!</p>
+
+  <th:block th:if="${online}">
+    <p>Seu pedido <strong th:text="${order.orderReference}">#123</strong> está guardado aqui. Conclua o pagamento e a gente já começa a separar.</p>
+  </th:block>
+
+  <th:block th:unless="${online}">
+    <p>Seu pedido chegou aqui na <span th:text="${store.name}">loja</span>.
+      <span th:text="${order.delivery} ? 'Agora a loja confere tudo e calcula o frete.' : 'Agora a loja confere tudo e te avisa assim que aceitar.'">Agora a loja confere tudo.</span></p>
+    <div th:replace="~{email/components :: labeledCallout(${theme.caramel}, 'Pagamento:', ${order.delivery} ? 'quando a loja aceitar, você recebe o total com o frete e as instruções para pagar por Pix.' : 'é só pagar no caixa quando vier retirar.')}"></div>
+  </th:block>
+
+  <th:block th:with="totalLabel=${order.delivery and !online} ? 'Total sem o frete' : 'Total'">
+    <table th:replace="~{email/order-items :: table(${order})}"></table>
+  </th:block>
+
+  <th:block th:if="${online}">
+    <table th:replace="~{email/components :: button(${checkoutUrl}, 'Pagar agora')}"></table>
+  </th:block>
+  <th:block th:if="${!online and trackingUrl != null}">
+    <table th:replace="~{email/components :: button(${trackingUrl}, 'Acompanhar pedido')}"></table>
+  </th:block>
 </div>
 </body>
 </html>

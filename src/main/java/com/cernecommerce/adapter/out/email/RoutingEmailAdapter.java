@@ -1,9 +1,13 @@
 package com.cernecommerce.adapter.out.email;
 
 import com.cernecommerce.core.domain.model.config.EmailSenderConfig;
+import com.cernecommerce.core.domain.model.notification.AccountChange;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
+import com.cernecommerce.core.domain.model.notification.OrderClosureEmail;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
+import com.cernecommerce.core.domain.model.notification.PurchaseReceiptEmail;
 import com.cernecommerce.core.domain.model.notification.SecurityEventContext;
 import com.cernecommerce.core.ports.in.EmailIntegrationUseCase;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
@@ -49,13 +53,18 @@ public class RoutingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendEmailChangeCode(String to, String username, String code) {
+        route(p -> p.sendEmailChangeCode(to, username, code));
+    }
+
+    @Override
     public void sendPasswordResetLink(String to, String username, String resetLink, long ttlMinutes) {
         route(p -> p.sendPasswordResetLink(to, username, resetLink, ttlMinutes));
     }
 
     @Override
-    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
-        route(p -> p.sendUserInvite(to, username, inviteLink, ttlHours));
+    public void sendUserInvite(String to, String username, String roles, String inviteLink, long ttlHours) {
+        route(p -> p.sendUserInvite(to, username, roles, inviteLink, ttlHours));
     }
 
     @Override
@@ -69,8 +78,8 @@ public class RoutingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendAccountChange(String to, String username, String title, String message) {
-        route(p -> p.sendAccountChange(to, username, title, message));
+    public void sendAccountChange(String to, String username, AccountChange change, String role) {
+        route(p -> p.sendAccountChange(to, username, change, role));
     }
 
     @Override
@@ -91,6 +100,11 @@ public class RoutingEmailAdapter implements EmailPort {
     @Override
     public void sendWelcome(String to, String username) {
         route(p -> p.sendWelcome(to, username));
+    }
+
+    @Override
+    public void sendCustomerWelcome(String to, String firstName) {
+        route(p -> p.sendCustomerWelcome(to, firstName));
     }
 
     @Override
@@ -119,18 +133,18 @@ public class RoutingEmailAdapter implements EmailPort {
     }
 
     @Override
-    public void sendOrderStatusUpdate(String to, OrderEmailView order, String newStatusLabel) {
-        route(p -> p.sendOrderStatusUpdate(to, order, newStatusLabel));
+    public void sendOrderStatusUpdate(String to, OrderEmailView order, OrderStageEmail stage) {
+        route(p -> p.sendOrderStatusUpdate(to, order, stage));
     }
 
     @Override
-    public void sendOrderCancellation(String to, OrderEmailView order, String reason, boolean refunded) {
-        route(p -> p.sendOrderCancellation(to, order, reason, refunded));
+    public void sendOrderCancellation(String to, OrderEmailView order, OrderClosureEmail email) {
+        route(p -> p.sendOrderCancellation(to, order, email));
     }
 
     @Override
-    public void sendPurchaseReceipt(String to, OrderEmailView order) {
-        route(p -> p.sendPurchaseReceipt(to, order));
+    public void sendPurchaseReceipt(String to, OrderEmailView order, PurchaseReceiptEmail receipt) {
+        route(p -> p.sendPurchaseReceipt(to, order, receipt));
     }
 
     @Override

@@ -8,7 +8,8 @@ public record PasswordResetToken(
         String tokenHash,
         Instant expiresAt,
         Instant requestedAt,
-        Instant usedAt) {
+        Instant usedAt,
+        PasswordResetPurpose purpose) {
 
     public boolean isExpired() {
         return Instant.now().isAfter(expiresAt);
@@ -16,5 +17,9 @@ public record PasswordResetToken(
 
     public boolean isUsed() {
         return usedAt != null;
+    }
+
+    public boolean isInvite() {
+        return purpose == PasswordResetPurpose.INVITE;
     }
 }

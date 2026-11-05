@@ -62,7 +62,7 @@ class EmailSampleSenderAdapterTest {
         when(renderer.render(anyString(), anyMap())).thenReturn("<html/>");
         MailpitEmailAdapter mailpit = new MailpitEmailAdapter(
                 RestClient.builder().baseUrl("http://localhost:1/api/v1/send").build(),
-                "noreply@mahal.local", 15, "s", "http://front", renderer, new SimpleMeterRegistry());
+                "noreply@mahal.local", 15, "s", "http://front", "http://front/troca", renderer, new SimpleMeterRegistry());
 
         EmailSampleSenderAdapter adapter = new EmailSampleSenderAdapter(mock(StoreResendAdapterFactory.class), mailpit);
 

@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page('Boas-vindas', ${theme.brand}, ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <h2 th:style="${theme.title()}">Boas-vindas à <span th:text="${store.name}">loja</span>!</h2>
+  <p>E aí, <strong th:text="${firstName}">Maria</strong>!</p>
+  <p>Sua conta está pronta. Agora você faz seus pedidos pelo app e acompanha cada etapa até a retirada ou a entrega.</p>
+  <th:block th:if="${shopUrl}">
+    <table th:replace="~{email/components :: button(${shopUrl}, 'Ir para a loja')}"></table>
+  </th:block>
+  <p th:style="${theme.note()}">Se não foi você que criou esta conta, fale com a loja pelos contatos abaixo.</p>
+</div>
+</body>
+</html>

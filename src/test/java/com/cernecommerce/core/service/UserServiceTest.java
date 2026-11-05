@@ -31,6 +31,9 @@ import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountLinkImmutableException;
 import com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException;
 import com.cernecommerce.core.domain.model.auth.UserType;
+import com.cernecommerce.core.domain.model.auth.PasswordResetPurpose;
+import com.cernecommerce.core.domain.model.auth.PasswordResetResult;
+import com.cernecommerce.core.domain.model.auth.PasswordResetToken;
 import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.crm.CustomerStage;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,7 +81,8 @@ class UserServiceTest {
                 refreshTokenPort, tokenBlocklistPort, emailPort, verificationCodeRepository,
                 passwordResetTokenRepository, userCachePort,
                 totpConfigRepository, totpBackupCodeRepository, totpChallengeTokenRepository,
-                twoFactorAuthPort, avatarStoragePort, customerRepository, 15L, 60L, 15L, "http://localhost:3000/reset-password", 48L);
+                twoFactorAuthPort, avatarStoragePort, customerRepository, 15L, 60L, 15L, "http://localhost:3000/reset-password",
+                "http://loja/redefinir-senha", 48L);
     }
 
     @Test
@@ -149,9 +153,11 @@ class UserServiceTest {
         assertThat(created.getPassword()).isEqualTo("hashed-random");
         verify(passwordResetTokenRepository).deleteByUsername("novo");
         verify(passwordResetTokenRepository).save(eq("novo"), anyString(),
-                argThat((Instant expiresAt) -> expiresAt.isAfter(Instant.now().plusSeconds(47 * 3600))));
-        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"),
-                argThat((String link) -> link.startsWith("http://localhost:3000/reset-password?token=")), eq(48L));
+                argThat((Instant expiresAt) -> expiresAt.isAfter(Instant.now().plusSeconds(47 * 3600))),
+                eq(PasswordResetPurpose.INVITE));
+        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"), any(),
+                argThat((String link) -> link.startsWith("http://localhost:3000/reset-password?token=")
+                        && link.endsWith("&convite=1")), eq(48L));
     }
 
     @Test
@@ -163,14 +169,14 @@ class UserServiceTest {
 
     @Test
     void resendInvite_replacesTokenAndSendsAgain() {
-        User user = User.of("novo", "hashed", null);
+        User user = User.of("novo", "hashed", java.util.Set.of(new com.cernecommerce.core.domain.model.rbac.Role("ROLE_ATENDENTE")));
         user.assignEmail("novo@test.com");
         when(userRepository.findById(7L)).thenReturn(Optional.of(user));
 
         userService.resendInvite(7L);
 
         verify(passwordResetTokenRepository).deleteByUsername("novo");
-        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"), anyString(), eq(48L));
+        verify(emailPort).sendUserInvite(eq("novo@test.com"), eq("novo"), eq("Atendente"), anyString(), eq(48L));
     }
 
     @Test
@@ -427,6 +433,28 @@ class UserServiceTest {
     }
 
     @Test
+    void resendVerification_naoEnviaCodigoParaContaDesativada() {
+        User user = User.fromPersisted(1L, "alice", "hashed", false, "alice@test.com", false, null, null, null, java.util.Set.of(), null, null);
+        when(userRepository.findByEmail("alice@test.com")).thenReturn(Optional.of(user));
+
+        userService.resendVerification("alice@test.com");
+
+        verify(verificationCodeRepository, never()).save(anyString(), anyString(), any());
+        verify(emailPort, never()).sendVerificationCode(any(), any(), any());
+    }
+
+    @Test
+    void setUserEnabled_aoDesativarApagaOsCodigosEmAberto() {
+        User user = User.fromPersisted(1L, "alice", "hashed", true, "alice@test.com", false, null, null, null, java.util.Set.of(), null, null);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        userService.setUserEnabled(1L, false);
+
+        verify(verificationCodeRepository).deleteByUsername("alice");
+    }
+
+    @Test
     void verifyEmail_throwsWhenCodeNotFound() {
         when(verificationCodeRepository.findByCode("INVALID")).thenReturn(Optional.empty());
 
@@ -497,7 +525,8 @@ class UserServiceTest {
 
         assertThat(result.user().getPendingEmail()).isEqualTo("alice@new.com");
         assertThat(result.emailChangePending()).isTrue();
-        verify(emailPort).sendVerificationCode(eq("alice@new.com"), eq("alice"), anyString());
+        verify(emailPort).sendEmailChangeCode(eq("alice@new.com"), eq("alice"), anyString());
+        verify(emailPort, never()).sendVerificationCode(any(), any(), any());
         verify(userCachePort, atLeastOnce()).evict("alice");
     }
 
@@ -544,7 +573,7 @@ class UserServiceTest {
         assertThat(result.user().isEnabled()).isTrue();
         assertThat(result.user().getPendingEmail()).isEqualTo("alice@new.com");
         assertThat(result.user().getEmail()).isEqualTo("alice@old.com");
-        verify(emailPort).sendVerificationCode(eq("alice@new.com"), eq("alice"), anyString());
+        verify(emailPort).sendEmailChangeCode(eq("alice@new.com"), eq("alice"), anyString());
         verify(refreshTokenPort, never()).revokeAll(any());
     }
 
@@ -589,6 +618,95 @@ class UserServiceTest {
     }
 
     @Test
+    void requestPasswordReset_operadorVaiParaOPainelESaudadoPeloUsername() {
+        User user = User.fromPersisted(1L, "alice", "hashed", true, "alice@test.com", true, null, null, null, java.util.Set.of(), null, null);
+        when(userRepository.findByEmail("alice@test.com")).thenReturn(Optional.of(user));
+
+        userService.requestPasswordReset("alice@test.com");
+
+        verify(emailPort).sendPasswordResetLink(eq("alice@test.com"), eq("alice"),
+                argThat((String link) -> link.startsWith("http://localhost:3000/reset-password?token=")), eq(15L));
+    }
+
+    @Test
+    void requestPasswordReset_clienteVaiParaOAppESaudadoPeloPrimeiroNome() {
+        User user = User.customer("maria@test.com", "hashed", "maria@test.com", 42L, java.util.Set.of());
+        when(userRepository.findByEmail("maria@test.com")).thenReturn(Optional.of(user));
+        when(customerRepository.findById(42L)).thenReturn(Optional.of(new Customer(42L, "Maria Souza", null,
+                "maria@test.com", null, "MARKETPLACE", Instant.now(), CustomerStage.NOVO_LEAD, null)));
+
+        userService.requestPasswordReset("maria@test.com");
+
+        verify(emailPort).sendPasswordResetLink(eq("maria@test.com"), eq("Maria"),
+                argThat((String link) -> link.startsWith("http://loja/redefinir-senha?token=")), eq(15L));
+    }
+
+    @Test
+    void requestPasswordReset_clienteUsaOPainelEnquantoOAppNaoTemPagina() {
+        UserService semPaginaNoApp = new UserService(userRepository, roleRepository, passwordHash,
+                refreshTokenPort, tokenBlocklistPort, emailPort, verificationCodeRepository,
+                passwordResetTokenRepository, userCachePort, totpConfigRepository, totpBackupCodeRepository,
+                totpChallengeTokenRepository, twoFactorAuthPort, avatarStoragePort, customerRepository,
+                15L, 60L, 15L, "http://localhost:3000/reset-password", "", 48L);
+        User user = User.customer("maria@test.com", "hashed", "maria@test.com", 42L, java.util.Set.of());
+        when(userRepository.findByEmail("maria@test.com")).thenReturn(Optional.of(user));
+        when(customerRepository.findById(42L)).thenReturn(Optional.empty());
+
+        semPaginaNoApp.requestPasswordReset("maria@test.com");
+
+        verify(emailPort).sendPasswordResetLink(eq("maria@test.com"), eq("maria@test.com"),
+                argThat((String link) -> link.startsWith("http://localhost:3000/reset-password?token=")), eq(15L));
+    }
+
+    @Test
+    void confirmEmailChange_marcaONovoEnderecoComoVerificadoEAvisaOAntigo() {
+        EmailVerificationCode code = new EmailVerificationCode(
+                1L, "alice", "HASH", Instant.now().plusSeconds(900), Instant.now(), false);
+        User user = User.fromPersisted(1L, "alice", "hashed", true, "alice@old.com", false, "alice@new.com", null, null, java.util.Set.of(), null, null);
+        when(verificationCodeRepository.findByCode("ABC123")).thenReturn(Optional.of(code));
+        when(verificationCodeRepository.markAsUsed("ABC123")).thenReturn(true);
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        userService.confirmEmailChange("ABC123");
+
+        assertThat(user.getEmail()).isEqualTo("alice@new.com");
+        assertThat(user.isEmailVerified()).isTrue();
+        verify(emailPort).sendEmailChangeNotification("alice@old.com", "alice", "alice@new.com");
+    }
+
+    @Test
+    void resetPassword_comConviteVerificaOEmailSemLigarAConta() {
+        User user = User.fromPersisted(1L, "alice", "hashed", false, "alice@test.com", false, null, null, null, java.util.Set.of(), null, null);
+        when(passwordResetTokenRepository.findByToken("TOKEN")).thenReturn(Optional.of(new PasswordResetToken(
+                1L, "alice", "HASH", Instant.now().plusSeconds(900), Instant.now(), null, PasswordResetPurpose.INVITE)));
+        when(passwordResetTokenRepository.markAsUsed("TOKEN")).thenReturn(true);
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(passwordHash.hash(anyString())).thenReturn("novo-hash");
+
+        PasswordResetResult result = userService.resetPassword("TOKEN", "Password@123");
+
+        assertThat(result.invite()).isTrue();
+        assertThat(user.isEmailVerified()).isTrue();
+        assertThat(user.isEnabled()).isFalse();
+    }
+
+    @Test
+    void resetPassword_recuperacaoNaoMexeNaVerificacao() {
+        User user = User.fromPersisted(1L, "alice", "hashed", true, "alice@test.com", false, null, null, null, java.util.Set.of(), null, null);
+        when(passwordResetTokenRepository.findByToken("TOKEN")).thenReturn(Optional.of(new PasswordResetToken(
+                1L, "alice", "HASH", Instant.now().plusSeconds(900), Instant.now(), null, PasswordResetPurpose.RESET)));
+        when(passwordResetTokenRepository.markAsUsed("TOKEN")).thenReturn(true);
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(passwordHash.hash(anyString())).thenReturn("novo-hash");
+
+        PasswordResetResult result = userService.resetPassword("TOKEN", "Password@123");
+
+        assertThat(result.invite()).isFalse();
+        assertThat(user.isEmailVerified()).isFalse();
+    }
+
+    @Test
     void requestPasswordReset_normalizesEmail() {
         when(userRepository.findByEmail("alice@test.com")).thenReturn(Optional.empty());
 
@@ -612,7 +730,7 @@ class UserServiceTest {
 
         assertThat(result.user().getPendingEmail()).isEqualTo("alice@new.com");
         verify(userRepository).findByEmail("alice@new.com");
-        verify(emailPort).sendVerificationCode(eq("alice@new.com"), eq("alice"), anyString());
+        verify(emailPort).sendEmailChangeCode(eq("alice@new.com"), eq("alice"), anyString());
     }
 
     // ── PLAT-C054 — conta de cliente da loja não recebe nem perde roles pela gestão ─────────

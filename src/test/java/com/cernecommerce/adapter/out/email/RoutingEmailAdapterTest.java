@@ -98,7 +98,7 @@ class RoutingEmailAdapterTest {
         ThymeleafEmailRenderer renderer = mock(ThymeleafEmailRenderer.class);
         when(renderer.render(anyString(), anyMap())).thenReturn("<html/>");
         StoreResendAdapterFactory real = new StoreResendAdapterFactory("http://localhost:1/emails", 15, "s",
-                "http://front", renderer, new SimpleMeterRegistry(), mock(ObjectProvider.class));
+                "http://front", "http://front/troca", renderer, new SimpleMeterRegistry(), mock(ObjectProvider.class));
 
         ResendEmailAdapter a = real.adapterFor(CONFIG);
 

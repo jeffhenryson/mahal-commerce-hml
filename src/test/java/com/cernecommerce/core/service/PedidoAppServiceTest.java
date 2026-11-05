@@ -20,6 +20,7 @@ import com.cernecommerce.core.domain.model.ecommerce.PreferenciaPagamento;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
 import com.cernecommerce.core.domain.model.notification.Notification;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
 import com.cernecommerce.core.domain.model.pedido.DeliveryAddress;
 import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
@@ -60,6 +61,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -166,9 +168,13 @@ class PedidoAppServiceTest {
         assertThat(aceito.atendimento().sessionId()).isEqualTo(1L);
         assertThat(aceito.order().totalPayable()).isEqualByComparingTo("52.00");
         assertThat(aceito.cliente().nome()).isEqualTo("Maria");
-        ArgumentCaptor<String> etapa = ArgumentCaptor.forClass(String.class);
+        assertThat(aceito.mensagemCliente()).contains("52,00").doesNotContain("52.00");
+        ArgumentCaptor<OrderStageEmail> etapa = ArgumentCaptor.forClass(OrderStageEmail.class);
         verify(emailPort).sendOrderStatusUpdate(eq("maria@x.com"), any(), etapa.capture());
-        assertThat(etapa.getValue()).contains("52.00").contains("Pix");
+        assertThat(etapa.getValue().subject()).isEqualTo("Pedido #7 aceito: falta o Pix");
+        assertThat(etapa.getValue().body()).contains("WhatsApp");
+        assertThat(etapa.getValue().details()).singleElement()
+                .satisfies(d -> assertThat(d.value()).contains("52,00"));
     }
 
     @Test
@@ -186,8 +192,11 @@ class PedidoAppServiceTest {
 
         PedidoAppUseCase.PedidoApp aceito = service.aceitar(7L, 1L, new BigDecimal("8.00"), "caixa1");
 
-        assertThat(aceito.mensagemCliente()).contains("52.00").contains("pix@mahal.com");
-        verify(emailPort).sendOrderStatusUpdate(eq("maria@x.com"), any(), eq(aceito.mensagemCliente()));
+        assertThat(aceito.mensagemCliente()).contains("52,00").contains("pix@mahal.com");
+        ArgumentCaptor<OrderStageEmail> etapa = ArgumentCaptor.forClass(OrderStageEmail.class);
+        verify(emailPort).sendOrderStatusUpdate(eq("maria@x.com"), any(), etapa.capture());
+        assertThat(etapa.getValue().subject()).doesNotContain("pix@mahal.com");
+        assertThat(etapa.getValue().details()).extracting(OrderStageEmail.Detail::value).contains("pix@mahal.com");
         verify(notificationUseCase).notify("maria", NotificationType.PEDIDO_CLIENTE, "Pedido #7",
                 aceito.mensagemCliente(), "/pedidos/7");
         verify(ssePort).send("maria", salva);
@@ -246,7 +255,7 @@ class PedidoAppServiceTest {
         PedidoAppUseCase.PedidoApp pronto = service.pronto(7L, "caixa1");
         assertThat(pronto.atendimento().status()).isEqualTo(AtendimentoStatus.PRONTO);
         verify(emailPort).sendOrderStatusUpdate(eq("maria@x.com"), any(),
-                eq("Pedido separado, aguardando o entregador"));
+                argThat(etapa -> "Pedido separado!".equals(etapa.title()) && !etapa.showItems()));
     }
 
     @Test
@@ -261,7 +270,8 @@ class PedidoAppServiceTest {
         assertThat(saiu.atendimento().status()).isEqualTo(AtendimentoStatus.SAIU_PARA_ENTREGA);
         assertThat(saiu.order().delivery().trackingUrl()).isEqualTo("https://99app.com/t/abc");
         verify(emailPort).sendOrderStatusUpdate(eq("maria@x.com"), any(),
-                eq("Pedido saiu para entrega — acompanhe a viagem: https://99app.com/t/abc"));
+                argThat(etapa -> "https://99app.com/t/abc".equals(etapa.rideUrl())
+                        && "Pedido #7 saiu para entrega".equals(etapa.subject()) && !etapa.showItems()));
     }
 
     @Test
@@ -315,7 +325,8 @@ class PedidoAppServiceTest {
         ArgumentCaptor<AtendimentoPedidoApp> captor = ArgumentCaptor.forClass(AtendimentoPedidoApp.class);
         verify(atendimentos).save(captor.capture());
         assertThat(captor.getValue().status()).isEqualTo(AtendimentoStatus.EXPIRADO);
-        verify(emailPort).sendOrderCancellation(eq("maria@x.com"), any(), anyString(), eq(false));
+        verify(emailPort).sendOrderCancellation(eq("maria@x.com"), any(),
+                argThat(email -> email.subject().equals("Pedido #7 cancelado: o prazo acabou")));
     }
 
     @Test

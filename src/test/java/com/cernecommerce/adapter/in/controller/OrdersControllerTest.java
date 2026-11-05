@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.exception.pedido.OrderHasNoDeliveryException;
 import com.cernecommerce.core.domain.exception.pedido.InvalidDeliveryException;
@@ -371,6 +372,9 @@ public class OrdersControllerTest {
         when(after.status()).thenReturn(OrderStatus.REEMBOLSADO);
         when(orderUseCase.refundOrder(eq(1L), any(OrderUseCase.RefundCommand.class), eq("admin"), anyBoolean()))
                 .thenReturn(after);
+        when(orderUseCase.getRefundSnapshot(1L)).thenReturn(
+                new OrderUseCase.RefundSnapshot(new BigDecimal("20.00"), false, List.of()),
+                new OrderUseCase.RefundSnapshot(new BigDecimal("50.00"), false, List.of()));
 
         OrderAdminResponseDTO mockResponse = mock(OrderAdminResponseDTO.class);
         when(orderConverter.toAdminResponse(after)).thenReturn(mockResponse);
@@ -381,7 +385,9 @@ public class OrdersControllerTest {
                         .content("{\"reason\":\"Motivo\"}"))
                 .andExpect(status().isOk());
 
-        verify(publisher).publishEvent(any(Object.class));
+        // Só o que este estorno devolveu, sem os R$ 20,00 de um estorno anterior.
+        verify(publisher).publishEvent(argThat((Object e) -> e instanceof AuditEvent a
+                && new BigDecimal("30.00").compareTo((BigDecimal) a.details().get("moneyRefunded")) == 0));
     }
 
     /** PED-F006 — a troca devolve o pedido atualizado e audita com a diferença. */

@@ -612,9 +612,11 @@ public class OrdersController {
         boolean restock = request.getRestock() == null || request.getRestock();
         // PED-F004 — sem ORDER_REFUND, a rota só foi liberada por ORDER_REFUND_OWN_SESSION (o vendedor).
         boolean ownSessionOnly = !AuthUtils.hasAuthority(authentication, REFUND_AUTHORITY);
+        OrderUseCase.RefundSnapshot refundedBefore = orderUseCase.getRefundSnapshot(orderId);
         Order order = orderUseCase.refundOrder(orderId,
                 new OrderUseCase.RefundCommand(request.getReason(), restock, itemLots, items),
                 authentication.getName(), ownSessionOnly);
+        OrderUseCase.RefundSnapshot refunded = orderUseCase.getRefundSnapshot(orderId).since(refundedBefore);
         Map<String, Object> details = new HashMap<>();
         details.put("orderId", orderId);
         details.put("orderNumber", String.valueOf(order.orderNumber()));
@@ -623,6 +625,11 @@ public class OrdersController {
         details.put("reason", request.getReason());
         details.put("partial", !items.isEmpty() && order.status() != OrderStatus.REEMBOLSADO);
         details.put("restock", restock);
+        details.put("moneyRefunded", refunded.money());
+        details.put("onAccount", refunded.onAccount());
+        details.put("refundedItems", refunded.items().stream()
+                .map(i -> Map.of("orderItemId", i.orderItemId(), "quantity", i.quantity(), "amount", i.amount()))
+                .toList());
         details.put("skus", items.isEmpty()
                 ? order.items().stream().map(item -> item.sku()).toList()
                 : items.stream().map(i -> i.sku() + " x" + i.quantity().stripTrailingZeros().toPlainString()

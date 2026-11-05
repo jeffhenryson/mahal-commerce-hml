@@ -236,6 +236,7 @@ public class ShopAccountController {
         details.put("orderId", orderId);
         details.put("orderNumber", String.valueOf(order.orderNumber()));
         details.put("statusBefore", before.status().name());
+        details.put("origin", "CLIENTE");
         details.put("reason", request.getReason());
         publisher.publishEvent(AuditEvent.of(EventType.ORDER_CANCELLED, authentication.getName(), details));
         return ResponseEntity.ok(toShopResponse(order));

@@ -68,6 +68,10 @@ public record Customer(
         }
     }
 
+    public String firstName() {
+        return nome.trim().split("\\s+")[0];
+    }
+
     /** Forma anterior a V183 (sem cidade, avatar nem segmento). */
     public Customer(Long id, String nome, String contato, String email, String cpf, String origem,
             Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento) {

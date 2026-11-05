@@ -9,8 +9,9 @@ import java.util.Map;
 
 /**
  * Renderiza {@code templates/email/<nome>.html}. Todo template recebe {@code ${store}} (marca da loja,
- * ver {@link EmailBranding}) além das variáveis do e-mail, e o locale pt-BR faz
- * {@code #numbers.formatCurrency} sair em R$.
+ * ver {@link EmailBranding}) e {@code ${theme}} (ver {@link EmailTheme}) além das variáveis do e-mail,
+ * e o locale pt-BR faz {@code #numbers.formatCurrency} sair em R$. {@code ${preheader}} é opcional: é o
+ * texto que a caixa de entrada mostra ao lado do assunto.
  */
 @Component
 class ThymeleafEmailRenderer {
@@ -26,6 +27,7 @@ class ThymeleafEmailRenderer {
     String render(String templateName, Map<String, Object> variables) {
         Context ctx = new Context(Locale.forLanguageTag("pt-BR"));
         ctx.setVariables(variables);
+        ctx.setVariable("theme", EmailTheme.DEFAULT);
         if (!variables.containsKey("store")) {
             ctx.setVariable("store", branding.brand());
         }
@@ -38,5 +40,13 @@ class ThymeleafEmailRenderer {
 
     String appUrl(String path) {
         return branding.appUrl(path);
+    }
+
+    String marketUrl(String path) {
+        return branding.marketUrl(path);
+    }
+
+    String whatsappUrl(String message) {
+        return branding.whatsappUrl(message);
     }
 }

@@ -20,6 +20,7 @@ class StoreResendAdapterFactory {
     private final long ttlMinutes;
     private final String emailSubject;
     private final String verificationFrontendUrl;
+    private final String emailChangeFrontendUrl;
     private final ThymeleafEmailRenderer renderer;
     private final MeterRegistry meterRegistry;
     private final ObjectProvider<DevAlertPort> devAlertPort;
@@ -31,8 +32,9 @@ class StoreResendAdapterFactory {
     StoreResendAdapterFactory(
             @Value("${resend.api-url:https://api.resend.com/emails}") String apiUrl,
             @Value("${email.verification.ttl-minutes:15}") long ttlMinutes,
-            @Value("${email.verification.subject:Código de confirmação de cadastro}") String emailSubject,
+            @Value("${email.verification.subject:Confirme seu e-mail na Mahal Tabacaria}") String emailSubject,
             @Value("${email.verification.frontend-url:http://localhost:4200/auth/verify-email}") String verificationFrontendUrl,
+            @Value("${email.change.frontend-url:http://localhost:4200/auth/confirm-email-change}") String emailChangeFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry,
             ObjectProvider<DevAlertPort> devAlertPort) {
@@ -40,6 +42,7 @@ class StoreResendAdapterFactory {
         this.ttlMinutes = ttlMinutes;
         this.emailSubject = emailSubject;
         this.verificationFrontendUrl = verificationFrontendUrl;
+        this.emailChangeFrontendUrl = emailChangeFrontendUrl;
         this.renderer = renderer;
         this.meterRegistry = meterRegistry;
         this.devAlertPort = devAlertPort;
@@ -55,7 +58,7 @@ class StoreResendAdapterFactory {
                 .defaultHeader("Authorization", "Bearer " + config.apiKey())
                 .build();
         ResendEmailAdapter adapter = new ResendEmailAdapter(restClient, config.formattedFrom(), config.replyTo(),
-                ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+                ttlMinutes, emailSubject, verificationFrontendUrl, emailChangeFrontendUrl, renderer, meterRegistry);
         adapter.reportFailuresTo(devAlertPort::getIfAvailable);
         cached = new Cached(config, adapter);
         return adapter;

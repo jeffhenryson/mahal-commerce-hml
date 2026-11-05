@@ -1,13 +1,37 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Comprovante de compra', '#15803d', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Comprovante de compra', ${theme.success}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#15803d">Obrigado pela sua compra!</h2>
-  <p>Olá, <strong th:text="${order.customerName}">cliente</strong>!</p>
-  <p>Segue o comprovante da sua compra <strong th:text="${order.orderReference}">#123</strong> na
-    <span th:text="${store.name}">loja</span>. Este comprovante não tem valor fiscal.</p>
+  <h2 th:style="${theme.title()}">Valeu pela compra!</h2>
+  <p>E aí, <strong th:text="${order.firstName()}">cliente</strong>!</p>
+  <p>Segue o comprovante da sua compra na <span th:text="${store.name}">loja</span>.</p>
+  <div th:style="${theme.callout(theme.caramel)}">
+    <p th:each="detail : ${receipt.summary}" th:style="'margin:0;font-size:14px;color:' + ${theme.text}">
+      <strong th:text="${detail.label}">Rótulo:</strong> <span th:text="${detail.value}">Valor</span>
+    </p>
+  </div>
   <table th:replace="~{email/order-items :: table(${order})}"></table>
+  <th:block th:if="${receipt.hasPayments()}">
+    <h3 th:style="'margin:24px 0 8px;font-size:15px;color:' + ${theme.wine}">Pagamento</h3>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px">
+      <tr th:each="payment : ${receipt.payments}" th:style="'border-bottom:1px solid ' + ${theme.line}">
+        <td th:style="'padding:8px 0;vertical-align:top;color:' + ${theme.muted}" th:text="${payment.label}">Forma</td>
+        <td th:style="'padding:8px 0 8px 12px;text-align:right;white-space:nowrap;color:' + ${theme.text}" th:text="${payment.value}">R$ 0,00</td>
+      </tr>
+    </table>
+  </th:block>
+  <th:block th:if="${receipt.cashback}">
+    <div th:replace="~{email/components :: labeledCallout(${theme.caramel}, 'Cashback:', ${receipt.cashback})}"></div>
+  </th:block>
+  <th:block th:if="${receipt.partiallyRefunded}">
+    <div th:replace="~{email/components :: labeledCallout(${theme.caramel}, 'Reembolso:', 'parte desta compra foi reembolsada. Os valores acima são os da compra original.')}"></div>
+  </th:block>
+  <p th:style="${theme.note()}">
+    Comprovante sem valor fiscal.
+    <span th:if="${store.legalLine()}" th:text="${store.legalLine()}">Razão social · CNPJ</span>
+  </p>
+  <p th:if="${store.receiptFooter}" th:style="${theme.note()} + ';white-space:pre-line'" th:text="${store.receiptFooter}">Rodapé do cupom</p>
 </div>
 </body>
 </html>

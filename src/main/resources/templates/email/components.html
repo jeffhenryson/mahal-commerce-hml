@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- Botão em tabela: o Outlook ignora padding e border-radius em link solto. -->
+<table th:fragment="button(href, label)" role="presentation" align="center" cellpadding="0" cellspacing="0"
+       style="margin:28px auto 8px">
+  <tr><td align="center" th:bgcolor="${theme.wine}" th:style="'border-radius:8px;background:' + ${theme.wine}">
+    <a th:href="${href}" th:text="${label}"
+       th:style="'display:inline-block;padding:13px 32px;border-radius:8px;font-size:15px;font-weight:bold;text-decoration:none;background:' + ${theme.wine} + ';color:' + ${theme.cream}">Ação</a>
+  </td></tr>
+</table>
+
+<div th:fragment="callout(color, text)"
+     th:style="${theme.callout(color)}">
+  <p th:style="'margin:0;font-size:14px;color:' + ${theme.text}" th:text="${text}">Mensagem</p>
+</div>
+
+<div th:fragment="labeledCallout(color, label, text)"
+     th:style="${theme.callout(color)}">
+  <p th:style="'margin:0;font-size:14px;color:' + ${theme.text}"><strong th:text="${label}">Rótulo:</strong> <span th:text="${text}">Mensagem</span></p>
+</div>
+</body>
+</html>

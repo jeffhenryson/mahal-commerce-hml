@@ -1154,4 +1154,39 @@ class OrderServiceTest {
 
         assertThat(orderService.getPaymentHistory(7L)).isEmpty();
     }
+
+    @Test
+    void getRefundSnapshot_soma_o_dinheiro_sem_marcado_e_sem_pernas_de_troca() {
+        OrderPayment pix = OrderPayment.captured(1L, PaymentMethod.PIX, new BigDecimal("50.00"), null);
+        OrderPayment marcado = mock(OrderPayment.class);
+        when(marcado.status()).thenReturn(com.cernecommerce.core.domain.model.pagamento.PaymentStatus.ON_ACCOUNT);
+        when(marcado.method()).thenReturn(PaymentMethod.MARCADO);
+        when(orderPaymentRepository.findByOrderId(1L)).thenReturn(List.of(pix,
+                OrderPayment.refunded(pix, new BigDecimal("30.00"), null), marcado));
+        OrderItemRefund comum = new OrderItemRefund(1L, 1L, 10L, "SKU", BigDecimal.ONE, RefundDestination.RESTOCK,
+                new BigDecimal("30.00"), BigDecimal.ZERO, "r", null, "u", java.time.Instant.now());
+        OrderItemRefund troca = new OrderItemRefund(2L, 1L, 10L, "SKU", BigDecimal.ONE, RefundDestination.RESTOCK,
+                new BigDecimal("30.00"), BigDecimal.ZERO, "r", null, "u", java.time.Instant.now(), 9L);
+        when(itemRefundRepository.findByOrderId(1L)).thenReturn(List.of(comum, troca));
+
+        OrderUseCase.RefundSnapshot snapshot = orderService.getRefundSnapshot(1L);
+
+        assertThat(snapshot.money()).isEqualByComparingTo("30.00");
+        assertThat(snapshot.onAccount()).isTrue();
+        assertThat(snapshot.items()).containsExactly(comum);
+    }
+
+    @Test
+    void refundSnapshot_since_tira_o_que_ja_tinha_sido_devolvido() {
+        OrderItemRefund antigo = new OrderItemRefund(1L, 1L, 10L, "SKU", BigDecimal.ONE, RefundDestination.RESTOCK,
+                new BigDecimal("20.00"), BigDecimal.ZERO, "r", null, "u", java.time.Instant.now());
+        OrderItemRefund novo = new OrderItemRefund(2L, 1L, 11L, "SKU2", BigDecimal.ONE, RefundDestination.RESTOCK,
+                new BigDecimal("30.00"), BigDecimal.ZERO, "r", null, "u", java.time.Instant.now());
+
+        OrderUseCase.RefundSnapshot delta = new OrderUseCase.RefundSnapshot(new BigDecimal("50.00"), false, List.of(antigo, novo))
+                .since(new OrderUseCase.RefundSnapshot(new BigDecimal("20.00"), false, List.of(antigo)));
+
+        assertThat(delta.money()).isEqualByComparingTo("30.00");
+        assertThat(delta.items()).containsExactly(novo);
+    }
 }

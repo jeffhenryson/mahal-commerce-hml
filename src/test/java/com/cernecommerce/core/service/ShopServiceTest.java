@@ -500,6 +500,7 @@ class ShopServiceTest {
                 eq("https://checkout.infinitepay.io/loja?lenc=abc"));
         assertThat(viewCaptor.getValue().customerName()).isEqualTo("Maria");
         assertThat(viewCaptor.getValue().orderReference()).isEqualTo("#99");
+        assertThat(viewCaptor.getValue().orderId()).isEqualTo(99L);
         assertThat(viewCaptor.getValue().itemCount()).isEqualTo(2);
         assertThat(viewCaptor.getValue().total()).isEqualByComparingTo(result.order().totalPayable());
     }

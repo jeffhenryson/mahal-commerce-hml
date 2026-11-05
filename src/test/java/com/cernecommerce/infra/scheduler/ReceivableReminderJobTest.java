@@ -66,12 +66,30 @@ class ReceivableReminderJobTest {
         ArgumentCaptor<NotificationEmail> first = ArgumentCaptor.forClass(NotificationEmail.class);
         verify(emailPort).sendCustomerNotice(eq("a@x.com"), first.capture());
         assertThat(first.getValue().category()).isEqualTo("fiado.lembrete");
-        assertThat(first.getValue().subject()).contains("80,00").contains("08/10/2026");
+        assertThat(first.getValue().subject()).contains("80,00").contains("vence em 08/10/2026");
+        assertThat(first.getValue().title()).isEqualTo("Seu marcado vence em 3 dias");
+        assertThat(first.getValue().intro()).contains("Olá, Cliente!").contains("08/10/2026");
+        assertThat(first.getValue().whatsappMessage()).contains("80,00");
+        assertThat(first.getValue().footnote()).contains("Já pagou?");
 
         ArgumentCaptor<NotificationEmail> today = ArgumentCaptor.forClass(NotificationEmail.class);
         verify(emailPort).sendCustomerNotice(eq("b@x.com"), today.capture());
         assertThat(today.getValue().category()).isEqualTo("fiado.vence-hoje");
         assertThat(today.getValue().tone()).isEqualTo(NotificationEmail.Tone.WARNING);
+        assertThat(today.getValue().subject()).contains("vence hoje");
+        assertThat(today.getValue().preheader()).startsWith("Para pagar hoje");
+    }
+
+    @Test
+    void compra_com_parte_paga_aparece_como_saldo_e_sem_horario() {
+        CustomerReceivable parcial = receivable(42L, "50.00", TODAY)
+                .applyPayment(new BigDecimal("20.00"), Instant.parse("2026-10-02T15:00:00Z"), TODAY);
+
+        NotificationEmail email = ReceivableReminderJob.email(customer(42L, "a@x.com"),
+                List.of(parcial, receivable(42L, "10.00", TODAY)), TODAY, true);
+
+        assertThat(email.sections().get(0).rows()).extracting(NotificationEmail.Row::label)
+                .containsExactly("Saldo da compra de 01/10/2026", "Compra de 01/10/2026", "Total");
     }
 
     @Test

@@ -26,9 +26,11 @@ public class ResendEmailAdapter extends TemplatedEmailAdapter {
             long ttlMinutes,
             String emailSubject,
             String verificationFrontendUrl,
+            String emailChangeFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry) {
-        this(restClient, fromAddress, null, ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+        this(restClient, fromAddress, null, ttlMinutes, emailSubject, verificationFrontendUrl, emailChangeFrontendUrl,
+                renderer, meterRegistry);
     }
 
     public ResendEmailAdapter(
@@ -38,9 +40,10 @@ public class ResendEmailAdapter extends TemplatedEmailAdapter {
             long ttlMinutes,
             String emailSubject,
             String verificationFrontendUrl,
+            String emailChangeFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry) {
-        super(ttlMinutes, emailSubject, verificationFrontendUrl, renderer, meterRegistry);
+        super(ttlMinutes, emailSubject, verificationFrontendUrl, emailChangeFrontendUrl, renderer, meterRegistry);
         this.restClient = restClient;
         this.fromAddress = fromAddress;
         this.replyTo = replyTo;

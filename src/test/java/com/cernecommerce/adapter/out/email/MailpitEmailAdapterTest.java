@@ -14,7 +14,7 @@ class MailpitEmailAdapterTest {
         MailpitEmailAdapter adapter = new MailpitEmailAdapter(
                 RestClient.builder().baseUrl("http://mailpit-mahal:8025/api/v1/send").build(),
                 "noreply@cernedsgn.xyz", 15, "Confirme seu cadastro",
-                "http://localhost:4201/auth/verify-email", null, new SimpleMeterRegistry());
+                "http://localhost:4201/auth/verify-email", "http://localhost:4201/auth/confirm-email-change", null, new SimpleMeterRegistry());
 
         EmailChannelStatus status = adapter.channelStatus();
 

@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.core.domain.model.auth.PasswordResetResult;
 import com.cernecommerce.adapter.in.dtos.request.ForgotPasswordRequest;
 import com.cernecommerce.adapter.in.dtos.request.LoginRequest;
 import com.cernecommerce.adapter.in.dtos.request.LogoutRequest;
@@ -215,8 +216,9 @@ public class AuthController {
     })
     @PostMapping("/reset-password")
     ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
-        String username = userUseCase.resetPassword(request.getToken(), request.getNewPassword());
-        publisher.publishEvent(AuditEvent.of(EventType.PASSWORD_RESET_COMPLETED, username));
+        PasswordResetResult result = userUseCase.resetPassword(request.getToken(), request.getNewPassword());
+        publisher.publishEvent(AuditEvent.of(
+                result.invite() ? EventType.USER_INVITE_ACCEPTED : EventType.PASSWORD_RESET_COMPLETED, result.username()));
         return ResponseEntity.noContent().build();
     }
 

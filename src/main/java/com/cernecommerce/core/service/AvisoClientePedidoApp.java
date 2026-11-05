@@ -2,9 +2,11 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.domain.model.ecommerce.EmailEncerramentoPedido;
 import com.cernecommerce.core.domain.model.notification.Notification;
 import com.cernecommerce.core.domain.model.notification.NotificationType;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
 import com.cernecommerce.core.domain.model.pedido.Order;
 import com.cernecommerce.core.ports.in.AvisoClientePedidoAppUseCase;
 import com.cernecommerce.core.ports.in.CrmUseCase;
@@ -48,9 +50,9 @@ public class AvisoClientePedidoApp implements AvisoClientePedidoAppUseCase {
         this.afterCommit = afterCommit;
     }
 
-    /** Etapa nova — {@code mensagem} vem de {@code MensagemCliente}. */
+    /** Etapa nova: {@code email} vem de {@code EmailEtapaPedido} e {@code mensagem}, de {@code MensagemCliente}. */
     @Override
-    public void etapa(Order order, String mensagem) {
+    public void etapa(Order order, String mensagem, OrderStageEmail email) {
         Customer cliente = cliente(order);
         if (cliente == null) {
             return;
@@ -59,7 +61,7 @@ public class AvisoClientePedidoApp implements AvisoClientePedidoAppUseCase {
         afterCommit.accumulate("shop.pedido-app.etapa:" + order.id() + ":" + mensagem, order, pedidos -> {
             if (temEmail(cliente)) {
                 try {
-                    emailPort.sendOrderStatusUpdate(cliente.email(), view, mensagem);
+                    emailPort.sendOrderStatusUpdate(cliente.email(), view, email);
                 } catch (RuntimeException e) {
                     log.warn("E-mail da etapa do pedido {} não enviado: {}", order.id(), e.getMessage(), e);
                 }
@@ -81,7 +83,7 @@ public class AvisoClientePedidoApp implements AvisoClientePedidoAppUseCase {
                 pedidos -> notificar(order, mensagem));
     }
 
-    /** Cancelado pela loja ou expirado — e-mail de cancelamento e notificação. */
+    /** Expirado no fim do dia — e-mail de cancelamento e notificação. */
     @Override
     public void cancelamento(Order order, String motivo) {
         Customer cliente = cliente(order);
@@ -92,7 +94,7 @@ public class AvisoClientePedidoApp implements AvisoClientePedidoAppUseCase {
         afterCommit.accumulate("shop.pedido-app.cancelado:" + order.id(), order, pedidos -> {
             if (temEmail(cliente)) {
                 try {
-                    emailPort.sendOrderCancellation(cliente.email(), view, motivo, false);
+                    emailPort.sendOrderCancellation(cliente.email(), view, EmailEncerramentoPedido.expirado(view));
                 } catch (RuntimeException e) {
                     log.warn("E-mail de cancelamento do pedido {} não enviado: {}", order.id(), e.getMessage(), e);
                 }

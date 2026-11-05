@@ -1,9 +1,13 @@
 package com.cernecommerce.adapter.out.email;
 
 import com.cernecommerce.core.domain.model.config.EmailSample;
+import com.cernecommerce.core.domain.model.notification.AccountChange;
 import com.cernecommerce.core.domain.model.notification.EmailFormat;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
+import com.cernecommerce.core.domain.model.notification.OrderClosureEmail;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
+import com.cernecommerce.core.domain.model.notification.PurchaseReceiptEmail;
 import com.cernecommerce.core.domain.model.notification.SecurityEventContext;
 import com.cernecommerce.core.ports.out.notification.DevAlertPort;
 import com.cernecommerce.core.ports.out.notification.EmailPort;
@@ -27,18 +31,29 @@ import java.util.function.Supplier;
  */
 abstract class TemplatedEmailAdapter implements EmailPort {
 
+    private static final String IF_IT_WAS_YOU = "Se foi você, não precisa fazer nada.";
+    private static final String NOT_YOU = "Não foi você?";
+    private static final String CREATE_NEW_PASSWORD = "Crie uma nova senha agora. Isso desconecta todos os aparelhos.";
+    private static final String TALK_TO_STORE = "Falar com a loja no WhatsApp";
+
+    private record SecurityAlert(String subject, String preheader, String title, String message, String calloutLabel,
+            String calloutText, String accent, String actionUrl, String actionLabel) {
+    }
+
     private final long ttlMinutes;
     private final String emailSubject;
     private final String verificationFrontendUrl;
+    private final String emailChangeFrontendUrl;
     protected final ThymeleafEmailRenderer renderer;
     protected final MeterRegistry meterRegistry;
     private volatile Supplier<DevAlertPort> devAlerts = () -> null;
 
     protected TemplatedEmailAdapter(long ttlMinutes, String emailSubject, String verificationFrontendUrl,
-            ThymeleafEmailRenderer renderer, MeterRegistry meterRegistry) {
+            String emailChangeFrontendUrl, ThymeleafEmailRenderer renderer, MeterRegistry meterRegistry) {
         this.ttlMinutes = ttlMinutes;
         this.emailSubject = emailSubject;
         this.verificationFrontendUrl = verificationFrontendUrl;
+        this.emailChangeFrontendUrl = emailChangeFrontendUrl;
         this.renderer = renderer;
         this.meterRegistry = meterRegistry;
     }
@@ -74,8 +89,20 @@ abstract class TemplatedEmailAdapter implements EmailPort {
                 "username", username,
                 "code", code,
                 "verifyUrl", verifyUrl,
-                "ttlMinutes", ttlMinutes));
+                "ttlMinutes", ttlMinutes,
+                "preheader", "Falta só um clique. O link vale por " + ttlMinutes + " minutos."));
         deliver(to, emailSubject, html, "email.verification");
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public void sendEmailChangeCode(String to, String username, String code) {
+        String html = renderer.render("email-change-request", vars(
+                "username", username,
+                "confirmUrl", emailChangeFrontendUrl + "?code=" + code,
+                "ttlMinutes", ttlMinutes,
+                "preheader", "A troca só vale depois da sua confirmação. O link vale por " + ttlMinutes + " minutos."));
+        deliver(to, "Confirme seu novo e-mail", html, "email.email-change-request");
     }
 
     @Async("emailTaskExecutor")
@@ -84,18 +111,21 @@ abstract class TemplatedEmailAdapter implements EmailPort {
         String html = renderer.render("password-reset", vars(
                 "username", username,
                 "resetLink", resetLink,
-                "ttlMinutes", resetTtlMinutes));
-        deliver(to, "Recuperação de senha", html, "email.password-reset");
+                "ttlMinutes", resetTtlMinutes,
+                "preheader", "O link vale por " + resetTtlMinutes + " minutos. Se não foi você, pode ignorar."));
+        deliver(to, "Redefina sua senha da " + renderer.storeName(), html, "email.password-reset");
     }
 
     @Async("emailTaskExecutor")
     @Override
-    public void sendUserInvite(String to, String username, String inviteLink, long ttlHours) {
+    public void sendUserInvite(String to, String username, String roles, String inviteLink, long ttlHours) {
         String html = renderer.render("user-invite", vars(
                 "username", username,
+                "roles", roles,
                 "inviteLink", inviteLink,
-                "ttlHours", ttlHours));
-        deliver(to, "Você foi convidado para o painel da loja", html, "email.user-invite");
+                "ttlHours", ttlHours,
+                "preheader", "Crie sua senha para entrar. O link vale por " + ttlHours + " horas."));
+        deliver(to, "Seu acesso ao painel da " + renderer.storeName(), html, "email.user-invite");
     }
 
     @Async("emailTaskExecutor")
@@ -103,8 +133,10 @@ abstract class TemplatedEmailAdapter implements EmailPort {
     public void sendEmailChangeNotification(String oldEmail, String username, String newEmail) {
         String html = renderer.render("email-change", vars(
                 "username", username,
-                "newEmail", newEmail));
-        deliver(oldEmail, "Seu email foi alterado", html, "email.email-change-notification");
+                "newEmail", newEmail,
+                "supportUrl", renderer.whatsappUrl("Oi! Recebi um aviso de troca de e-mail da minha conta e não fui eu."),
+                "preheader", "Agora a conta usa outro endereço. Se não foi você, fale com a loja."));
+        deliver(oldEmail, "O e-mail da sua conta foi alterado", html, "email.email-change-notification");
     }
 
     @Async("emailTaskExecutor")
@@ -113,18 +145,29 @@ abstract class TemplatedEmailAdapter implements EmailPort {
         String html = renderer.render("email-change", vars(
                 "username", username,
                 "newEmail", newEmail,
-                "confirmed", true));
-        deliver(newEmail, "Este é o novo email da sua conta", html, "email.email-change-confirmed");
+                "confirmed", true,
+                "preheader", "Os avisos da sua conta agora chegam aqui."));
+        deliver(newEmail, "Seu novo e-mail já está valendo", html, "email.email-change-confirmed");
     }
 
     @Async("emailTaskExecutor")
     @Override
-    public void sendAccountChange(String to, String username, String title, String message) {
-        String html = renderer.render("role-changed", vars(
+    public void sendAccountChange(String to, String username, AccountChange change, String role) {
+        String store = renderer.storeName();
+        String subject = change == AccountChange.DISABLED
+                ? "Sua conta na " + store + " foi desativada"
+                : "Seu acesso ao painel da " + store + " mudou";
+        String preheader = switch (change) {
+            case ROLE_ASSIGNED -> "Você agora tem o papel " + role + ".";
+            case ROLE_REMOVED -> "O papel " + role + " saiu da sua conta.";
+            case DISABLED -> "Você não consegue mais entrar. Fale com a loja se precisar de ajuda.";
+        };
+        String html = renderer.render("account-change", vars(
                 "username", username,
-                "title", title,
-                "message", message));
-        deliver(to, title, html, "email.account-change");
+                "change", change.name(),
+                "role", role,
+                "preheader", preheader));
+        deliver(to, subject, html, "email.account-change");
     }
 
     @Async("emailTaskExecutor")
@@ -132,100 +175,169 @@ abstract class TemplatedEmailAdapter implements EmailPort {
     public void sendWelcome(String to, String username) {
         String html = renderer.render("welcome", vars(
                 "username", username,
-                "appUrl", renderer.appUrl("/")));
-        deliver(to, "Boas-vindas — " + renderer.storeName(), html, "email.welcome");
+                "appUrl", renderer.appUrl("/auth/login"),
+                "preheader", "Entre no painel com o usuário " + username + "."));
+        deliver(to, "Sua conta na " + renderer.storeName() + " está pronta", html, "email.welcome");
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public void sendCustomerWelcome(String to, String firstName) {
+        String html = renderer.render("customer-welcome", vars(
+                "firstName", firstName,
+                "shopUrl", renderer.marketUrl("/"),
+                "preheader", "Sua conta está pronta. Seus pedidos ficam todos num lugar só."));
+        deliver(to, "Boas-vindas à " + renderer.storeName() + ", " + firstName + "!", html, "email.customer-welcome");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendPasswordChangedAlert(String to, String username, SecurityEventContext context) {
-        sendSecurityAlert(to, username, context, "Sua senha foi alterada",
-                "A senha da sua conta foi alterada.",
-                "Se não foi você, entre em contato com o suporte imediatamente e revogue suas sessões.",
-                "Alerta de segurança: senha alterada", "email.security-alert.password-changed");
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "Sua senha da " + renderer.storeName() + " foi alterada", IF_IT_WAS_YOU,
+                "Sua senha foi alterada", "A senha da sua conta foi alterada.",
+                NOT_YOU, CREATE_NEW_PASSWORD, EmailTheme.DEFAULT.warning(),
+                recoveryUrl(context), "Recuperar minha conta"), "email.security-alert.password-changed");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendAccountLockedAlert(String to, String username, SecurityEventContext context) {
-        sendSecurityAlert(to, username, context, "Conta temporariamente bloqueada",
-                "Sua conta foi bloqueada temporariamente devido a múltiplas tentativas de login malsucedidas.",
-                "Aguarde alguns minutos e tente novamente. Se não foi você, sua senha pode estar comprometida.",
-                "Alerta de segurança: conta bloqueada", "email.security-alert.account-locked");
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "Bloqueamos sua conta na " + renderer.storeName() + " por alguns minutos",
+                "Foram várias tentativas de entrada com a senha errada.",
+                "Sua conta está bloqueada por alguns minutos",
+                "Bloqueamos a entrada na sua conta depois de várias tentativas com a senha errada.",
+                "Foi você?", "Espere alguns minutos e tente de novo, ou crie uma nova senha. Se não foi você, crie uma nova senha por precaução.",
+                EmailTheme.DEFAULT.warning(), recoveryUrl(context), "Criar nova senha"),
+                "email.security-alert.account-locked");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendTotpStatusAlert(String to, String username, boolean enabled, SecurityEventContext context) {
         String action = enabled ? "ativada" : "desativada";
-        sendSecurityAlert(to, username, context, "Autenticação em dois fatores " + action,
-                "A autenticação em dois fatores foi " + action + " na sua conta.",
-                "Se não foi você, acesse sua conta e revogue todas as sessões ativas imediatamente.",
-                "Alerta de segurança: 2FA " + action, "email.security-alert.totp-" + (enabled ? "enabled" : "disabled"));
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "A verificação em duas etapas foi " + action, IF_IT_WAS_YOU,
+                "Verificação em duas etapas " + action,
+                enabled ? "Agora sua conta pede um código extra ao entrar." : "Sua conta deixou de pedir o código extra ao entrar.",
+                NOT_YOU, CREATE_NEW_PASSWORD, EmailTheme.DEFAULT.warning(),
+                recoveryUrl(context), "Recuperar minha conta"),
+                "email.security-alert.totp-" + (enabled ? "enabled" : "disabled"));
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendTokenTheftAlert(String to, String username, SecurityEventContext context) {
-        sendSecurityAlert(to, username, context, "Acesso suspeito detectado",
-                "Detectamos o reuso de uma credencial de sessão já utilizada — todas as sessões da sua conta foram encerradas automaticamente.",
-                "Se não foi você, sua conta pode estar comprometida. Troque sua senha imediatamente.",
-                "Alerta de segurança: acesso suspeito", "email.security-alert.token-theft");
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "Desconectamos sua conta na " + renderer.storeName() + " por segurança",
+                "Você precisa entrar de novo. Recomendamos criar uma nova senha.",
+                "Desconectamos sua conta por segurança",
+                "Notamos um uso estranho do acesso à sua conta e, por precaução, desconectamos todos os aparelhos. Para continuar, entre de novo.",
+                "Recomendamos criar uma nova senha,", "principalmente se você não reconhece o aparelho acima.",
+                EmailTheme.DEFAULT.danger(), recoveryUrl(context), "Criar nova senha"),
+                "email.security-alert.token-theft");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendPasswordResetAlert(String to, String username, SecurityEventContext context) {
-        sendSecurityAlert(to, username, context, "Sua senha foi redefinida",
-                "A senha da sua conta foi redefinida pelo link de recuperação enviado para este e-mail.",
-                "Se não foi você, alguém tem acesso ao seu e-mail. Troque a senha do e-mail e da conta imediatamente.",
-                "Alerta de segurança: senha redefinida", "email.security-alert.password-reset");
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "Sua senha da " + renderer.storeName() + " foi redefinida", IF_IT_WAS_YOU,
+                "Sua senha foi redefinida", "A senha da sua conta foi trocada pelo link enviado para este e-mail.",
+                NOT_YOU, "Alguém pode ter acesso ao seu e-mail. Troque a senha do e-mail primeiro e depois fale com a loja.",
+                EmailTheme.DEFAULT.warning(), supportUrl(), TALK_TO_STORE), "email.security-alert.password-reset");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context) {
-        sendSecurityAlert(to, username, context, "Login com Google ativado",
-                "Sua conta passou a aceitar login com a conta Google deste e-mail.",
-                "Se não foi você, entre em contato com o suporte imediatamente.",
-                "Alerta de segurança: login com Google", "email.security-alert.google-linked");
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "Login com Google ativado na sua conta", IF_IT_WAS_YOU,
+                "Login com Google ativado", "Agora você também pode entrar na sua conta com o Google deste e-mail.",
+                NOT_YOU, "Fale com a loja agora.", EmailTheme.DEFAULT.warning(), supportUrl(), TALK_TO_STORE),
+                "email.security-alert.google-linked");
+    }
+
+    /** A recuperação encerra todas as sessões, então também serve de "desconectar tudo". */
+    private String recoveryUrl(SecurityEventContext context) {
+        return context != null && context.customer()
+                ? renderer.marketUrl("/conta")
+                : renderer.appUrl("/auth/forgot-password");
+    }
+
+    private String supportUrl() {
+        return renderer.whatsappUrl("Oi! Recebi um aviso de segurança da minha conta e não fui eu.");
     }
 
     @Async("emailTaskExecutor")
     @Override
     public void sendOrderConfirmation(String to, OrderEmailView order, String checkoutUrl) {
+        String reference = order.orderReference();
         String html = renderer.render("order-confirmation", vars(
                 "order", order,
-                "checkoutUrl", checkoutUrl));
-        deliver(to, "Recebemos seu pedido " + order.orderReference(), html, "email.order-confirmation");
+                "checkoutUrl", checkoutUrl,
+                "trackingUrl", orderUrl(order),
+                "preheader", confirmationPreheader(order, checkoutUrl)));
+        String subject = checkoutUrl != null ? "Falta só pagar o pedido " + reference : "Pedido " + reference + " na área!";
+        deliver(to, subject, html, "email.order-confirmation");
+    }
+
+    private static String confirmationPreheader(OrderEmailView order, String checkoutUrl) {
+        if (checkoutUrl != null) {
+            return "Conclua o pagamento e a gente já começa a separar.";
+        }
+        return order.delivery() ? "A loja confere tudo e já te manda o total com o frete."
+                : "A loja confere tudo e te avisa assim que aceitar.";
     }
 
     @Async("emailTaskExecutor")
     @Override
-    public void sendOrderStatusUpdate(String to, OrderEmailView order, String newStatusLabel) {
+    public void sendOrderStatusUpdate(String to, OrderEmailView order, OrderStageEmail stage) {
+        boolean ride = stage.rideUrl() != null;
         String html = renderer.render("order-status-update", vars(
                 "order", order,
-                "newStatusLabel", newStatusLabel));
-        deliver(to, newStatusLabel + " — pedido " + order.orderReference(), html, "email.order-status");
+                "stage", stage,
+                "preheader", stage.preheader(),
+                "actionUrl", ride ? stage.rideUrl() : (stage.tracking() ? orderUrl(order) : null),
+                "actionLabel", ride ? "Acompanhar entrega" : "Acompanhar pedido"));
+        deliver(to, stage.subject(), html, "email.order-status");
+    }
+
+    /** O pedido no app do cliente; {@code null} se não há pedido real ou {@code email.market-base-url}. */
+    private String orderUrl(OrderEmailView order) {
+        return order.orderId() == null ? null : renderer.marketUrl("/conta/pedidos/" + order.orderId());
     }
 
     @Async("emailTaskExecutor")
     @Override
-    public void sendOrderCancellation(String to, OrderEmailView order, String reason, boolean refunded) {
+    public void sendOrderCancellation(String to, OrderEmailView order, OrderClosureEmail email) {
+        String actionUrl = null;
+        String actionLabel = null;
+        if (email.whatsapp()) {
+            actionUrl = renderer.whatsappUrl("Oi! Quero combinar a devolução do pedido " + order.orderReference());
+            actionLabel = "Falar no WhatsApp";
+        } else if (email.newOrder()) {
+            actionUrl = renderer.marketUrl("/");
+            actionLabel = "Fazer novo pedido";
+        }
         String html = renderer.render("order-cancellation", vars(
                 "order", order,
-                "reason", reason == null || reason.isBlank() ? null : reason,
-                "refunded", refunded));
-        String subject = refunded ? "Pedido " + order.orderReference() + " reembolsado"
-                : "Pedido " + order.orderReference() + " cancelado";
-        deliver(to, subject, html, "email.order-cancellation");
+                "email", email,
+                "preheader", email.preheader(),
+                "actionUrl", actionUrl,
+                "actionLabel", actionLabel));
+        deliver(to, email.subject(), html, "email.order-cancellation");
     }
 
     @Async("emailTaskExecutor")
     @Override
-    public void sendPurchaseReceipt(String to, OrderEmailView order) {
-        String html = renderer.render("purchase-receipt", vars("order", order));
-        deliver(to, "Comprovante da sua compra " + order.orderReference(), html, "email.purchase-receipt");
+    public void sendPurchaseReceipt(String to, OrderEmailView order, PurchaseReceiptEmail receipt) {
+        String html = renderer.render("purchase-receipt", vars(
+                "order", order,
+                "receipt", receipt,
+                "preheader", receipt.preheader()));
+        deliver(to, "Comprovante da sua compra " + receipt.reference(), html, "email.purchase-receipt");
     }
 
     @Async("emailTaskExecutor")
@@ -247,7 +359,10 @@ abstract class TemplatedEmailAdapter implements EmailPort {
         return renderer.render("notification", vars(
                 "email", email,
                 "accent", accent(email.tone()),
-                "actionUrl", renderer.appUrl(email.actionPath())));
+                "preheader", email.preheader() != null ? email.preheader() : email.intro(),
+                "actionUrl", email.whatsappMessage() != null
+                        ? renderer.whatsappUrl(email.whatsappMessage())
+                        : renderer.appUrl(email.actionPath())));
     }
 
     /**
@@ -258,33 +373,30 @@ abstract class TemplatedEmailAdapter implements EmailPort {
         EmailSamples.send(this, to, sample);
     }
 
-    private void sendSecurityAlert(String to, String username, SecurityEventContext context, String title,
-            String message, String footerMessage, String subject, String type) {
+    private void sendSecurityAlert(String to, String username, SecurityEventContext context, SecurityAlert alert,
+            String type) {
         String html = renderer.render("security-alert", vars(
                 "username", username,
-                "title", title,
-                "message", message,
-                "footerMessage", footerMessage,
+                "title", alert.title(),
+                "message", alert.message(),
+                "calloutLabel", alert.calloutLabel(),
+                "footerMessage", alert.calloutText(),
+                "accent", alert.accent(),
+                "actionUrl", alert.actionUrl(),
+                "actionLabel", alert.actionLabel(),
+                "preheader", alert.preheader(),
                 "occurredAt", context == null ? null : EmailFormat.dateTime(context.occurredAt()),
                 "ip", context == null ? null : context.ip(),
-                "device", context == null ? null : device(context.userAgent())));
-        deliver(to, subject, html, type);
-    }
-
-    /** User agent cru é ilegível; corta no tamanho de uma linha. */
-    private static String device(String userAgent) {
-        if (userAgent == null || userAgent.isBlank()) {
-            return null;
-        }
-        return userAgent.length() > 120 ? userAgent.substring(0, 117) + "..." : userAgent;
+                "device", context == null ? null : DeviceLabel.of(context.userAgent())));
+        deliver(to, alert.subject(), html, type);
     }
 
     private static String accent(NotificationEmail.Tone tone) {
         return switch (tone) {
-            case SUCCESS -> "#15803d";
-            case WARNING -> "#b45309";
-            case DANGER -> "#b91c1c";
-            case INFO -> "#1d4ed8";
+            case SUCCESS -> EmailTheme.DEFAULT.success();
+            case WARNING -> EmailTheme.DEFAULT.warning();
+            case DANGER -> EmailTheme.DEFAULT.danger();
+            case INFO -> EmailTheme.DEFAULT.brand();
         };
     }
 

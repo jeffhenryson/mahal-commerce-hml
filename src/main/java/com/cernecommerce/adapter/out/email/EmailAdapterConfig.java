@@ -47,8 +47,9 @@ class EmailAdapterConfig {
             @Value("${resend.from:noreply@example.com}") String fromAddress,
             @Value("${resend.api-url:https://api.resend.com/emails}") String apiUrl,
             @Value("${email.verification.ttl-minutes:15}") long ttlMinutes,
-            @Value("${email.verification.subject:Código de confirmação de cadastro}") String emailSubject,
+            @Value("${email.verification.subject:Confirme seu e-mail na Mahal Tabacaria}") String emailSubject,
             @Value("${email.verification.frontend-url:http://localhost:4200/auth/verify-email}") String verificationFrontendUrl,
+            @Value("${email.change.frontend-url:http://localhost:4200/auth/confirm-email-change}") String emailChangeFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry,
             ObjectProvider<DevAlertPort> devAlertPort) {
@@ -57,7 +58,7 @@ class EmailAdapterConfig {
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .build();
         ResendEmailAdapter adapter = new ResendEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject,
-                verificationFrontendUrl, renderer, meterRegistry);
+                verificationFrontendUrl, emailChangeFrontendUrl, renderer, meterRegistry);
         adapter.reportFailuresTo(devAlertPort::getIfAvailable);
         return adapter;
     }
@@ -69,8 +70,9 @@ class EmailAdapterConfig {
             @Value("${mailpit.from:noreply@cernedsgn.xyz}") String fromAddress,
             @Value("${mailpit.api-url:http://mailpit-mahal:8025/api/v1/send}") String apiUrl,
             @Value("${email.verification.ttl-minutes:15}") long ttlMinutes,
-            @Value("${email.verification.subject:Código de confirmação de cadastro}") String emailSubject,
+            @Value("${email.verification.subject:Confirme seu e-mail na Mahal Tabacaria}") String emailSubject,
             @Value("${email.verification.frontend-url:http://localhost:4201/auth/verify-email}") String verificationFrontendUrl,
+            @Value("${email.change.frontend-url:http://localhost:4201/auth/confirm-email-change}") String emailChangeFrontendUrl,
             ThymeleafEmailRenderer renderer,
             MeterRegistry meterRegistry,
             ObjectProvider<DevAlertPort> devAlertPort) {
@@ -78,7 +80,7 @@ class EmailAdapterConfig {
                 .baseUrl(apiUrl)
                 .build();
         MailpitEmailAdapter adapter = new MailpitEmailAdapter(restClient, fromAddress, ttlMinutes, emailSubject,
-                verificationFrontendUrl, renderer, meterRegistry);
+                verificationFrontendUrl, emailChangeFrontendUrl, renderer, meterRegistry);
         adapter.reportFailuresTo(devAlertPort::getIfAvailable);
         return adapter;
     }

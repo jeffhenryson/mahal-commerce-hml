@@ -210,8 +210,13 @@
     {
       "name": "password-reset.frontend-url",
       "type": "java.lang.String",
-      "description": "URL base do frontend para o link de reset de senha. O token é anexado como query param ?token=.",
-      "defaultValue": "http://localhost:3000/reset-password"
+      "description": "URL do painel para o link de reset de senha e de convite. O token é anexado como query param ?token=.",
+      "defaultValue": "http://localhost:4200/auth/reset-password"
+    },
+    {
+      "name": "password-reset.customer-frontend-url",
+      "type": "java.lang.String",
+      "description": "URL do app do cliente para o link de reset de senha. Vazia, o cliente usa password-reset.frontend-url."
     },
     {
       "name": "avatar.storage.type",

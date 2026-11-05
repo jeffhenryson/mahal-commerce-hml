@@ -1,28 +1,48 @@
 package com.cernecommerce.core.ports.out.notification;
 
+import com.cernecommerce.core.domain.model.notification.AccountChange;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail;
+import com.cernecommerce.core.domain.model.notification.OrderClosureEmail;
 import com.cernecommerce.core.domain.model.notification.OrderEmailView;
+import com.cernecommerce.core.domain.model.notification.OrderStageEmail;
+import com.cernecommerce.core.domain.model.notification.PurchaseReceiptEmail;
 import com.cernecommerce.core.domain.model.notification.SecurityEventContext;
 
 public interface EmailPort {
     void sendVerificationCode(String to, String username, String code);
 
+    /** Pedido de confirmação, no endereço NOVO, para concluir a troca de e-mail da conta. */
+    void sendEmailChangeCode(String to, String username, String code);
+
+    /** @param username nome usado na saudação: o primeiro nome, para o cliente do app. */
     void sendPasswordResetLink(String to, String username, String resetLink, long ttlMinutes);
 
-    /** Convite de usuário criado por dev/admin: link para definir a senha (token de redefinição). */
-    void sendUserInvite(String to, String username, String inviteLink, long ttlHours);
+    /**
+     * Convite de usuário criado por dev/admin: link para definir a senha (token de redefinição).
+     *
+     * @param roles papéis em texto legível, ou {@code null} sem papel
+     */
+    void sendUserInvite(String to, String username, String roles, String inviteLink, long ttlHours);
 
     void sendEmailChangeNotification(String oldEmail, String username, String newEmail);
 
     /** Confirmação, no endereço NOVO, de que a troca de e-mail foi concluída. */
     void sendEmailChangeConfirmed(String newEmail, String username);
 
-    /** Papel atribuído/removido ou conta desativada por um administrador. */
-    void sendAccountChange(String to, String username, String title, String message);
+    /**
+     * Papel atribuído/removido ou conta desativada por um administrador.
+     *
+     * @param username nome usado na saudação: o primeiro nome, para o cliente do app
+     * @param role nome legível do papel, ou {@code null} em {@link AccountChange#DISABLED}
+     */
+    void sendAccountChange(String to, String username, AccountChange change, String role);
 
-    /** Boas-vindas depois de verificar o e-mail ou de ter a conta criada por um admin. */
+    /** Boas-vindas de quem teve a conta do painel criada por um admin, já com senha. */
     void sendWelcome(String to, String username);
+
+    /** Boas-vindas do cliente que acabou de se cadastrar no app. */
+    void sendCustomerWelcome(String to, String firstName);
 
     void sendPasswordChangedAlert(String to, String username, SecurityEventContext context);
 
@@ -41,17 +61,17 @@ public interface EmailPort {
     /** Confirmação de pedido criado, disparada no checkout (marketplace). */
     void sendOrderConfirmation(String to, OrderEmailView order, String checkoutUrl);
 
-    /** Aviso de mudança de status do pedido (pagamento confirmado, separado, enviado, entregue). */
-    void sendOrderStatusUpdate(String to, OrderEmailView order, String newStatusLabel);
+    /** Aviso de nova etapa do pedido (aceito, pago, pronto, saiu para entrega, entregue). */
+    void sendOrderStatusUpdate(String to, OrderEmailView order, OrderStageEmail stage);
 
     /**
-     * Aviso de pedido cancelado ou reembolsado — {@code refunded} muda o texto entre os dois casos;
-     * {@code reason} nulo/vazio omite o bloco de motivo.
+     * Aviso de pedido cancelado ou reembolsado. {@code order} é o que a lista mostra: no reembolso
+     * parcial, só os itens devolvidos.
      */
-    void sendOrderCancellation(String to, OrderEmailView order, String reason, boolean refunded);
+    void sendOrderCancellation(String to, OrderEmailView order, OrderClosureEmail email);
 
     /** Comprovante de compra presencial (balcão/mesa), enviado só quando o operador pede. */
-    void sendPurchaseReceipt(String to, OrderEmailView order);
+    void sendPurchaseReceipt(String to, OrderEmailView order, PurchaseReceiptEmail receipt);
 
     /**
      * Aviso ao cliente no formato de {@link NotificationEmail} (fiado: compra marcada, vencimento,

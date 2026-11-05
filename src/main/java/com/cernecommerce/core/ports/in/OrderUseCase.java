@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Collection;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Port de entrada da visão de <b>pedidos do administrador</b> — atravessa canais.
@@ -173,6 +174,33 @@ public interface OrderUseCase {
 
     /** PED-F004 — unidades já estornadas por item do pedido; item sem estorno fica fora do mapa. */
     Map<Long, java.math.BigDecimal> getRefundedQuantities(Long orderId);
+
+    /**
+     * O que já foi reembolsado no pedido. Comparando antes e depois de um estorno, sai o que ele
+     * devolveu, para contar ao cliente sem repetir estornos anteriores.
+     *
+     * @param money dinheiro devolvido: não conta marcado nem a parte paga com cashback
+     * @param onAccount o pedido tem pagamento marcado
+     * @param items estornos por item, fora as pernas de troca
+     */
+    record RefundSnapshot(java.math.BigDecimal money, boolean onAccount,
+            List<com.cernecommerce.core.domain.model.pedido.OrderItemRefund> items) {
+
+        public RefundSnapshot {
+            items = List.copyOf(items);
+        }
+
+        /** O dinheiro e os itens que entraram desde {@code before}. */
+        public RefundSnapshot since(RefundSnapshot before) {
+            Set<Long> known = before.items().stream()
+                    .map(com.cernecommerce.core.domain.model.pedido.OrderItemRefund::id)
+                    .collect(java.util.stream.Collectors.toSet());
+            return new RefundSnapshot(money.subtract(before.money()), onAccount,
+                    items.stream().filter(i -> !known.contains(i.id())).toList());
+        }
+    }
+
+    RefundSnapshot getRefundSnapshot(Long orderId);
 
     /**
      * A troca de um item (PED-F006).

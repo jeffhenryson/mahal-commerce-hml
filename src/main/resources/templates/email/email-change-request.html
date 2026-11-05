@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page('Confirme seu novo e-mail', ${theme.brand}, ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <h2 th:style="${theme.title()}">Confirme seu novo e-mail</h2>
+  <p>Olá, <strong th:text="${username}">username</strong>!</p>
+  <p>Recebemos um pedido para usar este endereço na sua conta da <span th:text="${store.name}">Mahal</span>. A troca só vale depois que você confirmar.</p>
+  <table th:replace="~{email/components :: button(${confirmUrl}, 'Confirmar novo e-mail')}"></table>
+  <p th:style="${theme.note()}">
+    O link vale por <span th:text="${ttlMinutes}">15</span> minutos. Se você não reconhece esse pedido, ignore este e-mail: a conta continua como está.
+  </p>
+</div>
+</body>
+</html>

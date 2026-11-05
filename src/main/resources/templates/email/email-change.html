@@ -1,21 +1,25 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Email da conta alterado', '#1e40af', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Troca de e-mail', ${theme.brand}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#111" th:text="${confirmed} ? 'Este é o novo email da sua conta' : 'Email da conta alterado'">Email da conta alterado</h2>
+  <h2 th:style="${theme.title()}" th:text="${confirmed} ? 'Seu novo e-mail já está valendo' : 'O e-mail da sua conta foi alterado'">O e-mail da sua conta foi alterado</h2>
   <p>Olá, <strong th:text="${username}">username</strong>!</p>
-  <p th:unless="${confirmed}">
-    Foi solicitada a troca do email de acesso à sua conta para
+  <p th:if="${confirmed}">
+    A troca foi concluída. Agora os avisos da sua conta na <span th:text="${store.name}">loja</span> chegam em
     <strong th:text="${newEmail}">novo@email.com</strong>.
   </p>
-  <p th:if="${confirmed}">
-    A troca foi concluída: a partir de agora o acesso à sua conta, os avisos de segurança e as
-    confirmações de pedido vão para <strong th:text="${newEmail}">novo@email.com</strong>.
-  </p>
-  <p style="color:#777;font-size:.8rem;margin-top:20px">
-    Se você não realizou esta alteração, entre em contato com o suporte imediatamente.
-  </p>
+  <th:block th:unless="${confirmed}">
+    <p>
+      O e-mail da sua conta na <span th:text="${store.name}">loja</span> agora é
+      <strong th:text="${newEmail}">novo@email.com</strong>. Este endereço deixou de receber os avisos da conta.
+    </p>
+    <div th:replace="~{email/components :: labeledCallout(${theme.warning}, 'Não foi você?', 'Fale com a loja agora para recuperar o acesso.')}"></div>
+    <th:block th:if="${supportUrl}">
+      <table th:replace="~{email/components :: button(${supportUrl}, 'Falar com a loja no WhatsApp')}"></table>
+    </th:block>
+    <p th:style="${theme.note()}">Se foi você, não precisa fazer nada.</p>
+  </th:block>
 </div>
 </body>
 </html>

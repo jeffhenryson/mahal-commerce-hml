@@ -1,5 +1,6 @@
 package com.cernecommerce.core.ports.in;
 
+import com.cernecommerce.core.domain.model.auth.PasswordResetResult;
 import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.auth.UpdateProfileResult;
 import com.cernecommerce.core.domain.model.auth.User;
@@ -92,7 +93,7 @@ public interface UserUseCase {
     void requestPasswordReset(String email);
 
     /** Conclui o fluxo de recuperação de senha. Revoga todas as sessões ao final. Retorna o username para auditoria. */
-    String resetPassword(String token, String newPassword);
+    PasswordResetResult resetPassword(String token, String newPassword);
 
     /** Confirma a troca de email via código enviado ao novo endereço. Retorna o username para auditoria. */
     String confirmEmailChange(String code);

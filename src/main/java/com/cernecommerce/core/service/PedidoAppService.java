@@ -14,6 +14,7 @@ import com.cernecommerce.core.domain.model.crm.Customer;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoStatus;
 import com.cernecommerce.core.domain.model.ecommerce.CentralPedidosConfig;
+import com.cernecommerce.core.domain.model.ecommerce.EmailEtapaPedido;
 import com.cernecommerce.core.domain.model.ecommerce.MensagemCliente;
 import com.cernecommerce.core.domain.model.ecommerce.MotivoRecusa;
 import com.cernecommerce.core.domain.model.pdv.CashRegisterSession;
@@ -362,8 +363,10 @@ public class PedidoAppService implements PedidoAppUseCase {
         return config.taxaPara(bairro);
     }
 
-    /** O aviso da etapa ao cliente, com o texto de {@link MensagemCliente} e a chave Pix da loja. */
+    /** O aviso da etapa ao cliente, com os textos do app e do e-mail e a chave Pix da loja. */
     private void avisarCliente(AtendimentoPedidoApp atendimento, Order order) {
-        avisoCliente.etapa(order, MensagemCliente.para(atendimento, order, centralConfig.atual().pixChave()));
+        String pixChave = centralConfig.atual().pixChave();
+        avisoCliente.etapa(order, MensagemCliente.para(atendimento, order, pixChave),
+                EmailEtapaPedido.para(atendimento, order, pixChave));
     }
 }

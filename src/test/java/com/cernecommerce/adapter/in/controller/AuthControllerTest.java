@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cernecommerce.core.domain.model.auth.PasswordResetResult;
 import com.cernecommerce.adapter.in.dtos.request.LoginRequest;
 import com.cernecommerce.adapter.in.dtos.request.LogoutRequest;
 import com.cernecommerce.adapter.in.dtos.request.RefreshRequest;
@@ -264,7 +265,7 @@ public class AuthControllerTest {
 
     @Test
     void reset_password_returns_204_on_success() throws Exception {
-        when(userUseCase.resetPassword("validtoken", "NewPass@1")).thenReturn("alice");
+        when(userUseCase.resetPassword("validtoken", "NewPass@1")).thenReturn(new PasswordResetResult("alice", false));
 
         mockMvc.perform(post("/auth/reset-password")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -272,6 +273,19 @@ public class AuthControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(userUseCase).resetPassword("validtoken", "NewPass@1");
+    }
+
+    @Test
+    void reset_password_com_convite_publica_evento_proprio() throws Exception {
+        when(userUseCase.resetPassword("validtoken", "NewPass@1")).thenReturn(new PasswordResetResult("alice", true));
+
+        mockMvc.perform(post("/auth/reset-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"validtoken\",\"newPassword\":\"NewPass@1\"}"))
+                .andExpect(status().isNoContent());
+
+        verify(publisher).publishEvent((Object) argThat(e -> e instanceof AuditEvent event
+                && event.type() == AuditEvent.EventType.USER_INVITE_ACCEPTED));
     }
 
     @Test

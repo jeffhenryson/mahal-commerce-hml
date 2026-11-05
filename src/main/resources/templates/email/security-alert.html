@@ -1,29 +1,30 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Alerta de segurança', '#b91c1c', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Aviso de segurança', ${accent}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#b91c1c" th:text="${title}">Título do alerta</h2>
+  <h2 th:style="${theme.title()}" th:text="${title}">Título do alerta</h2>
   <p>Olá, <strong th:text="${username}">username</strong>!</p>
   <p th:text="${message}">Mensagem principal do alerta.</p>
   <table th:if="${occurredAt != null or ip != null or device != null}" role="presentation" width="100%"
-         cellpadding="0" cellspacing="0" style="background:#f9f9f9;border-radius:6px;margin:20px 0;font-size:14px">
+         cellpadding="0" cellspacing="0" th:style="'margin:20px 0;border-radius:6px;font-size:14px;background:' + ${theme.surface}">
     <tr th:if="${occurredAt}">
-      <td style="padding:10px 16px;color:#555;width:110px">Quando</td>
-      <td style="padding:10px 16px;color:#111" th:text="${occurredAt}">01/01/2026 às 10:00</td>
+      <td th:style="'padding:10px 16px;width:110px;color:' + ${theme.muted}">Quando</td>
+      <td th:style="'padding:10px 16px;color:' + ${theme.text}" th:text="${occurredAt}">01/01/2026 às 10:00</td>
     </tr>
     <tr th:if="${ip}">
-      <td style="padding:10px 16px;color:#555">IP</td>
-      <td style="padding:10px 16px;color:#111" th:text="${ip}">0.0.0.0</td>
+      <td th:style="'padding:10px 16px;color:' + ${theme.muted}">IP</td>
+      <td th:style="'padding:10px 16px;color:' + ${theme.text}" th:text="${ip}">0.0.0.0</td>
     </tr>
     <tr th:if="${device}">
-      <td style="padding:10px 16px;color:#555">Dispositivo</td>
-      <td style="padding:10px 16px;color:#111;font-size:12px" th:text="${device}">navegador</td>
+      <td th:style="'padding:10px 16px;color:' + ${theme.muted}">Aparelho</td>
+      <td th:style="'padding:10px 16px;color:' + ${theme.text}" th:text="${device}">Chrome no Windows</td>
     </tr>
   </table>
-  <div style="background:#fff3f3;border-left:4px solid #b91c1c;padding:12px 16px;margin:20px 0;border-radius:0 6px 6px 0">
-    <p style="color:#555;font-size:.875rem;margin:0" th:text="${footerMessage}">Instrução adicional de segurança.</p>
-  </div>
+  <div th:replace="~{email/components :: labeledCallout(${accent}, ${calloutLabel}, ${footerMessage})}"></div>
+  <th:block th:if="${actionUrl}">
+    <table th:replace="~{email/components :: button(${actionUrl}, ${actionLabel})}"></table>
+  </th:block>
 </div>
 </body>
 </html>

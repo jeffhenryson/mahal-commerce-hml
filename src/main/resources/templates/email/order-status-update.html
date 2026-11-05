@@ -1,13 +1,25 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Atualização do pedido', '#1d4ed8', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page(${stage.title}, ${theme.brand}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#1d4ed8" th:text="${newStatusLabel}">Status atualizado</h2>
-  <p>Olá, <strong th:text="${order.customerName}">cliente</strong>!</p>
-  <p>Seu pedido <strong th:text="${order.orderReference}">#123</strong> teve o status atualizado para
-    <strong th:text="${newStatusLabel}">status</strong>.</p>
-  <table th:replace="~{email/order-items :: table(${order})}"></table>
+  <h2 th:style="${theme.title()}" th:text="${stage.title}">Pedido aceito!</h2>
+  <p>E aí, <strong th:text="${order.firstName()}">cliente</strong>!</p>
+  <p th:text="${stage.body}">O que aconteceu com o pedido.</p>
+  <div th:if="${stage.hasCallout()}" th:style="${theme.callout(theme.caramel)}">
+    <p th:if="${stage.pickup and store.address != null}" th:style="'margin:0;font-size:14px;color:' + ${theme.text}">
+      <strong>Onde retirar:</strong> <span th:text="${store.address}">Endereço</span>
+    </p>
+    <p th:each="detail : ${stage.details}" th:style="'margin:0;font-size:14px;color:' + ${theme.text}">
+      <strong th:text="${detail.label}">Rótulo:</strong> <span th:text="${detail.value}">Valor</span>
+    </p>
+  </div>
+  <th:block th:if="${stage.showItems}">
+    <table th:replace="~{email/order-items :: table(${order})}"></table>
+  </th:block>
+  <th:block th:if="${actionUrl}">
+    <table th:replace="~{email/components :: button(${actionUrl}, ${actionLabel})}"></table>
+  </th:block>
 </div>
 </body>
 </html>

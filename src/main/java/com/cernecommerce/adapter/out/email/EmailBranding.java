@@ -8,6 +8,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,21 +29,34 @@ class EmailBranding {
 
     private final ObjectProvider<StoreProfileUseCase> storeProfile;
     private final String appBaseUrl;
+    private final String marketBaseUrl;
 
     EmailBranding(ObjectProvider<StoreProfileUseCase> storeProfile,
-            @Value("${email.app-base-url:http://localhost:4200}") String appBaseUrl) {
+            @Value("${email.app-base-url:http://localhost:4200}") String appBaseUrl,
+            @Value("${email.market-base-url:}") String marketBaseUrl) {
         this.storeProfile = storeProfile;
-        this.appBaseUrl = appBaseUrl.endsWith("/") ? appBaseUrl.substring(0, appBaseUrl.length() - 1) : appBaseUrl;
+        this.appBaseUrl = withoutTrailingSlash(appBaseUrl);
+        this.marketBaseUrl = withoutTrailingSlash(marketBaseUrl);
     }
 
     /** O que os templates leem como {@code ${store}}. */
-    record Brand(String name, String logoUrl, String address, String phone, String instagram, String website) { }
+    record Brand(String name, String logoUrl, String address, String phone, String instagram, String website,
+            String legalName, String cnpj, String receiptFooter) {
+
+        /** Razão social e CNPJ como no cupom; {@code null} se a loja não preencheu nenhum. */
+        public String legalLine() {
+            if (legalName == null) {
+                return cnpj == null ? null : "CNPJ " + cnpj;
+            }
+            return cnpj == null ? legalName : legalName + " · CNPJ " + cnpj;
+        }
+    }
 
     Brand brand() {
         StoreProfile profile = profile();
         String name = profile.tradeName() != null ? profile.tradeName() : DEFAULT_NAME;
         return new Brand(name, profile.logoUrl(), address(profile), profile.phone(), instagram(profile.instagram()),
-                profile.website());
+                profile.website(), profile.legalName(), profile.cnpj(), profile.receiptFooter());
     }
 
     /** URL absoluta no painel para um caminho como {@code /app/pdv}; {@code null} se não houver caminho. */
@@ -50,6 +65,35 @@ class EmailBranding {
             return null;
         }
         return path.startsWith("http") ? path : appBaseUrl + (path.startsWith("/") ? path : "/" + path);
+    }
+
+    /** URL absoluta no app do cliente; {@code null} sem {@code email.market-base-url}, e o e-mail sai sem o link. */
+    String marketUrl(String path) {
+        return marketBaseUrl.isBlank() ? null : marketBaseUrl + (path.startsWith("/") ? path : "/" + path);
+    }
+
+    /**
+     * Conversa no WhatsApp da loja, já com {@code message} digitada. O perfil não tem campo próprio de
+     * WhatsApp: usa o telefone. {@code null} se ele não parecer um número brasileiro.
+     */
+    String whatsappUrl(String message) {
+        String phone = profile().phone();
+        if (phone == null) {
+            return null;
+        }
+        String digits = phone.replaceAll("\\D", "").replaceFirst("^0+", "");
+        if (digits.length() == 10 || digits.length() == 11) {
+            digits = "55" + digits;
+        }
+        if (!digits.matches("55\\d{10,11}")) {
+            return null;
+        }
+        return "https://wa.me/" + digits + "?text="
+                + URLEncoder.encode(message, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static String withoutTrailingSlash(String url) {
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
     private StoreProfile profile() {

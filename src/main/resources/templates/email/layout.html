@@ -3,22 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
   <title th:text="${pageTitle}">Título</title>
 </head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:32px 16px">
+<body th:style="'margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:' + ${theme.page}">
+<div th:if="${preheader}" th:text="${preheader}"
+     style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;font-size:1px;line-height:1px;mso-hide:all">Prévia</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" th:style="'padding:24px 12px;background:' + ${theme.page}">
   <tr><td align="center">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <tr><td th:style="'background:#fff;padding:20px 32px;border-top:4px solid ' + ${pageAccent} + ';border-bottom:1px solid #eee'">
-        <img th:if="${store.logoUrl}" th:src="${store.logoUrl}" th:alt="${store.name}" height="40"
-             style="display:block;max-height:40px;border:0">
-        <span th:unless="${store.logoUrl}" th:style="'color:' + ${pageAccent} + ';font-size:1.25rem;font-weight:bold'"
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+           th:style="'width:100%;max-width:600px;border-radius:12px;overflow:hidden;background:' + ${theme.card}">
+      <tr><td align="center" th:bgcolor="${theme.wine}" th:style="'padding:20px 32px;background:' + ${theme.wine}">
+        <img th:if="${store.logoUrl}" th:src="${store.logoUrl}" th:alt="${store.name}" height="64"
+             style="display:block;height:64px;max-height:64px;width:auto;border:0;margin:0 auto">
+        <span th:unless="${store.logoUrl}" th:style="'font-size:22px;font-weight:bold;color:' + ${theme.cream}"
               th:text="${store.name}">Mahal</span>
       </td></tr>
-      <tr><td style="padding:32px;color:#333;font-size:15px;line-height:1.5">
+      <tr th:with="strip=${pageAccent == theme.brand ? theme.caramel : pageAccent}">
+        <td height="4" th:bgcolor="${strip}" th:style="'height:4px;font-size:0;line-height:0;background:' + ${strip}">&nbsp;</td>
+      </tr>
+      <tr><td th:style="'padding:32px;font-size:15px;line-height:1.55;color:' + ${theme.text}">
         <div th:replace="${pageContent}">conteúdo</div>
       </td></tr>
-      <tr><td style="background:#f9f9f9;padding:16px 32px;border-top:1px solid #eee;text-align:center;color:#888;font-size:12px;line-height:1.6">
+      <tr><td align="center" th:bgcolor="${theme.wine}"
+              th:style="'padding:20px 32px;text-align:center;font-size:12px;line-height:1.6;background:' + ${theme.wine} + ';color:' + ${theme.cream}">
         <strong th:text="${store.name}">Mahal</strong>
         <span th:if="${store.address}"><br><span th:text="${store.address}">Endereço</span></span>
         <span th:if="${store.phone != null or store.instagram != null}"><br>
@@ -26,8 +35,8 @@
           <span th:if="${store.phone != null and store.instagram != null}"> · </span>
           <span th:if="${store.instagram}" th:text="${store.instagram}">@loja</span>
         </span>
-        <span th:if="${store.website}"><br><a th:href="${store.website}" th:text="${store.website}" style="color:#888">site</a></span>
-        <br><span style="color:#aaa">E-mail enviado automaticamente.</span>
+        <span th:if="${store.website}"><br><a th:href="${store.website}" th:text="${store.website}" th:style="'color:' + ${theme.cream}">site</a></span>
+        <br><span th:style="'color:' + ${theme.caramel}">E-mail enviado automaticamente.</span>
       </td></tr>
     </table>
   </td></tr>

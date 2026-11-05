@@ -66,9 +66,12 @@ email.verification.resend-cooldown-seconds=${EMAIL_RESEND_COOLDOWN_SECONDS:60}
 # Para testar envio real: defina EMAIL_PROVIDER=resend e RESEND_API_KEY=<sua-chave>, ou configure
 # o Resend em Configurações > Dados da loja > Integrações (ativo, tem prioridade sobre este valor).
 email.provider=${EMAIL_PROVIDER:logging}
+# Base do app do cliente para os links dos e-mails de pedido. Vazia, o e-mail sai sem o link.
+email.market-base-url=${EMAIL_MARKET_BASE_URL:}
 resend.api-key=${RESEND_API_KEY:dev-placeholder-key}
 resend.from=${RESEND_FROM:noreply@example.com}
-email.verification.subject=${EMAIL_VERIFICATION_SUBJECT:Código de confirmação de cadastro}
+email.verification.subject=${EMAIL_VERIFICATION_SUBJECT:Confirme seu e-mail na Mahal Tabacaria}
+email.change.frontend-url=${EMAIL_CHANGE_FRONTEND_URL:http://localhost:4200/auth/confirm-email-change}
 
 # Mailpit (EMAIL_PROVIDER=mailpit): api-url é por onde o backend envia; ui-url é a caixa de entrada
 # que o navegador abre (aba "Caixa de teste" em Integrações). Rodando pela IDE, suba só o Mailpit:
@@ -93,7 +96,9 @@ auth.registration.default-roles=${AUTH_REGISTRATION_DEFAULT_ROLES:}
 
 # Password reset
 password-reset.ttl-minutes=${PASSWORD_RESET_TTL_MINUTES:15}
-password-reset.frontend-url=${PASSWORD_RESET_FRONTEND_URL:http://localhost:3000/reset-password}
+password-reset.frontend-url=${PASSWORD_RESET_FRONTEND_URL:http://localhost:4200/auth/reset-password}
+# Página de redefinição do app do cliente. Vazia, o cliente usa a do painel.
+password-reset.customer-frontend-url=${PASSWORD_RESET_CUSTOMER_FRONTEND_URL:}
 
 # 2FA / TOTP
 # ATENÇÃO: gere uma chave real com: openssl rand -base64 32 (deve ter 32 bytes = 256 bits)

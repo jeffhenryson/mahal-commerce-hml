@@ -145,6 +145,11 @@ public class User {
         this.enabled = true;
     }
 
+    /** Sem ligar a conta: quem confirma o endereço por outro fluxo não muda se ela está ativa. */
+    public void markEmailVerified() {
+        this.emailVerified = true;
+    }
+
     public void setPendingEmail(String email) {
         Objects.requireNonNull(email, "pendingEmail is required");
         this.pendingEmail = email;
@@ -154,6 +159,8 @@ public class User {
         Objects.requireNonNull(pendingEmail, "no pending email to apply");
         this.email = this.pendingEmail;
         this.pendingEmail = null;
+        // A troca só chega aqui com o código enviado ao endereço novo: ele já foi provado.
+        this.emailVerified = true;
     }
 
     public void setAvatar(String avatarFilename) {

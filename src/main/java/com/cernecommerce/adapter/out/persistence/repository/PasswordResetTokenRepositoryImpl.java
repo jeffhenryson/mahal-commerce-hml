@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.PasswordResetTokenEntity;
 import com.cernecommerce.core.domain.TokenHashUtils;
+import com.cernecommerce.core.domain.model.auth.PasswordResetPurpose;
 import com.cernecommerce.core.domain.model.auth.PasswordResetToken;
 import com.cernecommerce.core.ports.out.notification.PasswordResetTokenRepository;
 import org.springframework.stereotype.Repository;
@@ -21,11 +22,12 @@ public class PasswordResetTokenRepositoryImpl implements PasswordResetTokenRepos
     }
 
     @Override
-    public PasswordResetToken save(String username, String rawToken, Instant expiresAt) {
+    public PasswordResetToken save(String username, String rawToken, Instant expiresAt, PasswordResetPurpose purpose) {
         PasswordResetTokenEntity entity = new PasswordResetTokenEntity();
         entity.setUsername(username);
         entity.setTokenHash(TokenHashUtils.sha256(rawToken));
         entity.setExpiresAt(expiresAt);
+        entity.setPurpose(purpose);
         return toDomain(jpaRepository.save(entity));
     }
 
@@ -52,6 +54,6 @@ public class PasswordResetTokenRepositoryImpl implements PasswordResetTokenRepos
 
     private PasswordResetToken toDomain(PasswordResetTokenEntity e) {
         return new PasswordResetToken(e.getId(), e.getUsername(), e.getTokenHash(),
-                e.getExpiresAt(), e.getRequestedAt(), e.getUsedAt());
+                e.getExpiresAt(), e.getRequestedAt(), e.getUsedAt(), e.getPurpose());
     }
 }

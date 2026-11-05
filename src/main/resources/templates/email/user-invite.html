@@ -1,20 +1,16 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page('Convite', '#1e40af', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page('Falta só criar sua senha', ${theme.brand}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#111">Você foi convidado</h2>
-  <p>Olá! Criamos um acesso para você no painel da loja com o usuário <strong th:text="${username}">username</strong>.</p>
-  <p>Para entrar, defina a sua senha:</p>
-  <p style="text-align:center;margin:28px 0">
-    <a th:href="${inviteLink}" style="display:inline-block;background:#1e40af;color:#fff;padding:13px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:1rem">
-      Definir minha senha
-    </a>
+  <h2 th:style="${theme.title()}">Falta só criar sua senha</h2>
+  <p>E aí, <strong th:text="${username}">username</strong>!</p>
+  <p>Você recebeu acesso ao painel da <strong th:text="${store.name}">loja</strong><th:block th:if="${roles}"> como <strong th:text="${roles}">Atendente</strong></th:block>. Seu usuário é <strong th:text="${username}">username</strong>.</p>
+  <table th:replace="~{email/components :: button(${inviteLink}, 'Criar minha senha')}"></table>
+  <p th:style="${theme.note()}">
+    O link vale por <span th:text="${ttlHours}">48</span> horas. Se expirar, peça um novo convite a quem cuida dos acessos da loja.
   </p>
-  <p style="color:#777;font-size:.8rem;margin-top:20px">
-    Este link expira em <span th:text="${ttlHours}">48</span> horas. Se expirar, peça a um administrador para reenviar o convite.<br>
-    Se você não esperava este convite, ignore este e-mail.
-  </p>
+  <p th:style="${theme.note()}">Se você não esperava este convite, ignore este e-mail.</p>
 </div>
 </body>
 </html>

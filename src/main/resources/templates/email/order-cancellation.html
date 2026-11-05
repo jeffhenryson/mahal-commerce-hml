@@ -1,18 +1,26 @@
 <!DOCTYPE html>
 <html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
-      th:replace="~{email/layout :: page(${refunded} ? 'Pedido reembolsado' : 'Pedido cancelado', '#b91c1c', ~{::mailcontent})}">
+      th:replace="~{email/layout :: page(${email.title}, ${email.refund} ? ${theme.brand} : ${theme.danger}, ~{::mailcontent})}">
 <body>
 <div th:fragment="mailcontent">
-  <h2 style="margin:0 0 16px;color:#b91c1c" th:text="${refunded} ? 'Seu pedido foi reembolsado' : 'Seu pedido foi cancelado'">Seu pedido foi cancelado</h2>
-  <p>Olá, <strong th:text="${order.customerName}">cliente</strong>!</p>
-  <p>
-    O pedido <strong th:text="${order.orderReference}">#123</strong>
-    <span th:text="${refunded} ? 'foi reembolsado. O valor volta pela mesma forma de pagamento usada na compra.' : 'foi cancelado.'">foi cancelado.</span>
-  </p>
-  <div th:if="${reason}" style="background:#fff3f3;border-left:4px solid #b91c1c;padding:12px 16px;margin:20px 0;border-radius:0 6px 6px 0">
-    <p style="color:#555;font-size:.875rem;margin:0"><strong>Motivo:</strong> <span th:text="${reason}">Motivo</span></p>
+  <h2 th:style="${theme.title()}" th:text="${email.title}">Pedido cancelado</h2>
+  <p>Olá, <strong th:text="${order.firstName()}">cliente</strong>.</p>
+  <p th:text="${email.body}">O que aconteceu com o pedido.</p>
+  <div th:if="${email.hasCallout()}" th:style="${theme.callout(theme.caramel)}">
+    <p th:each="detail : ${email.details}" th:style="'margin:0;font-size:14px;color:' + ${theme.text}">
+      <strong th:text="${detail.label}">Rótulo:</strong> <span th:text="${detail.value}">Valor</span>
+    </p>
   </div>
-  <table th:replace="~{email/order-items :: table(${order})}"></table>
+  <p th:if="${email.followUp}" th:text="${email.followUp}">O que acontece com o dinheiro.</p>
+  <th:block th:with="totalLabel=${email.totalLabel}">
+    <table th:replace="~{email/order-items :: table(${order})}"></table>
+  </th:block>
+  <th:block th:if="${actionUrl}">
+    <table th:replace="~{email/components :: button(${actionUrl}, ${actionLabel})}"></table>
+  </th:block>
+  <p th:if="${store.phone}" th:style="${theme.note()}">
+    Ficou com alguma dúvida? Fale com a loja: <span th:text="${store.phone}">telefone</span>.
+  </p>
 </div>
 </body>
 </html>

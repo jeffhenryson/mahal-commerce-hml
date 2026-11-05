@@ -1,12 +1,13 @@
 package com.cernecommerce.core.ports.out.notification;
 
+import com.cernecommerce.core.domain.model.auth.PasswordResetPurpose;
 import com.cernecommerce.core.domain.model.auth.PasswordResetToken;
 
 import java.time.Instant;
 import java.util.Optional;
 
 public interface PasswordResetTokenRepository {
-    PasswordResetToken save(String username, String rawToken, Instant expiresAt);
+    PasswordResetToken save(String username, String rawToken, Instant expiresAt, PasswordResetPurpose purpose);
 
     Optional<PasswordResetToken> findByToken(String rawToken);
 

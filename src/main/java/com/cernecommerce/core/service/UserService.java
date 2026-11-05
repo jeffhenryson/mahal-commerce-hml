@@ -12,12 +12,15 @@ import com.cernecommerce.core.domain.exception.crm.CustomerNotFoundException;
 import com.cernecommerce.core.domain.exception.user.CustomerAccountRolesImmutableException;
 import com.cernecommerce.core.domain.exception.user.CustomerAlreadyLinkedException;
 import com.cernecommerce.core.domain.model.crm.Customer;
+import com.cernecommerce.core.domain.model.rbac.RoleLabels;
 import com.cernecommerce.core.ports.out.crm.CustomerRepository;
 import com.cernecommerce.core.domain.exception.user.EmailAlreadyExistsException;
 import com.cernecommerce.core.domain.exception.user.InviteEmailRequiredException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.exception.user.UsernameAlreadyExistsException;
 import com.cernecommerce.core.domain.model.auth.EmailVerificationCode;
+import com.cernecommerce.core.domain.model.auth.PasswordResetPurpose;
+import com.cernecommerce.core.domain.model.auth.PasswordResetResult;
 import com.cernecommerce.core.domain.model.auth.PasswordResetToken;
 import com.cernecommerce.core.domain.model.auth.UpdateProfileResult;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -82,6 +85,7 @@ public class UserService implements UserUseCase {
     private final long resendCooldownSeconds;
     private final long passwordResetTtlMinutes;
     private final String passwordResetFrontendUrl;
+    private final String customerPasswordResetFrontendUrl;
     private final long inviteTtlHours;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -104,6 +108,7 @@ public class UserService implements UserUseCase {
             long resendCooldownSeconds,
             long passwordResetTtlMinutes,
             String passwordResetFrontendUrl,
+            String customerPasswordResetFrontendUrl,
             long inviteTtlHours) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
@@ -124,6 +129,7 @@ public class UserService implements UserUseCase {
         this.resendCooldownSeconds = resendCooldownSeconds;
         this.passwordResetTtlMinutes = passwordResetTtlMinutes;
         this.passwordResetFrontendUrl = passwordResetFrontendUrl;
+        this.customerPasswordResetFrontendUrl = customerPasswordResetFrontendUrl;
         this.inviteTtlHours = inviteTtlHours;
     }
 
@@ -185,9 +191,10 @@ public class UserService implements UserUseCase {
         // Convite novo invalida o anterior (e qualquer "esqueci a senha" pendente).
         passwordResetTokenRepository.deleteByUsername(user.getUsername());
         String token = generateResetToken();
-        passwordResetTokenRepository.save(user.getUsername(), token, Instant.now().plus(inviteTtlHours, ChronoUnit.HOURS));
-        emailPort.sendUserInvite(user.getEmail(), user.getUsername(), passwordResetFrontendUrl + "?token=" + token,
-                inviteTtlHours);
+        passwordResetTokenRepository.save(user.getUsername(), token, Instant.now().plus(inviteTtlHours, ChronoUnit.HOURS),
+                PasswordResetPurpose.INVITE);
+        emailPort.sendUserInvite(user.getEmail(), user.getUsername(), RoleLabels.join(user.getRoles()),
+                passwordResetFrontendUrl + "?token=" + token + "&convite=1", inviteTtlHours);
     }
 
     @Override
@@ -268,7 +275,9 @@ public class UserService implements UserUseCase {
         // Return silently when email is not found to prevent user enumeration.
         // Callers always receive 204 regardless of whether the email exists.
         userRepository.findByEmail(normalizeEmail(email)).ifPresent(user -> {
-            if (user.isEmailVerified()) return;
+            // confirmEmail() liga a conta: sem esta checagem, quem foi desativado por um admin
+            // pediria um código por este endpoint público e se reativaria sozinho.
+            if (user.isEmailVerified() || !user.isEnabled()) return;
             // Cooldown por destinatário: evita spam e custo excessivo no provedor de email.
             boolean onCooldown = verificationCodeRepository.findByUsername(user.getUsername())
                     .map(c -> c.isOnCooldown(resendCooldownSeconds))
@@ -421,6 +430,7 @@ public class UserService implements UserUseCase {
         String username = user.getUsername();
         userCachePort.evict(username);
         if (!enabled) {
+            verificationCodeRepository.deleteByUsername(username);
             refreshTokenPort.revokeAll(username);
             tokenBlocklistPort.blockAllBefore(username, Instant.now());
         }
@@ -461,7 +471,7 @@ public class UserService implements UserUseCase {
 
         if (emailChanging) {
             verificationCodeRepository.deleteByUsername(saved.getUsername());
-            issueAndSendCode(saved.getUsername(), normalizedEmail);
+            emailPort.sendEmailChangeCode(normalizedEmail, saved.getUsername(), issueCode(saved.getUsername()));
         }
 
         return new UpdateProfileResult(saved, emailChanging);
@@ -504,15 +514,29 @@ public class UserService implements UserUseCase {
             passwordResetTokenRepository.deleteByUsername(user.getUsername());
             String token = generateResetToken();
             Instant expiresAt = Instant.now().plus(passwordResetTtlMinutes, ChronoUnit.MINUTES);
-            passwordResetTokenRepository.save(user.getUsername(), token, expiresAt);
-            String link = passwordResetFrontendUrl + "?token=" + token;
-            emailPort.sendPasswordResetLink(normalizedEmail, user.getUsername(), link, passwordResetTtlMinutes);
+            passwordResetTokenRepository.save(user.getUsername(), token, expiresAt, PasswordResetPurpose.RESET);
+            String link = passwordResetUrlFor(user) + "?token=" + token;
+            emailPort.sendPasswordResetLink(normalizedEmail, greetingName(user), link, passwordResetTtlMinutes);
         });
+    }
+
+    /** Sem a URL do app configurada, o cliente usa a página do painel, que funciona para qualquer conta. */
+    private String passwordResetUrlFor(User user) {
+        boolean hasCustomerPage = customerPasswordResetFrontendUrl != null && !customerPasswordResetFrontendUrl.isBlank();
+        return user.isCustomer() && hasCustomerPage ? customerPasswordResetFrontendUrl : passwordResetFrontendUrl;
+    }
+
+    /** O username do cliente é o e-mail, que não serve de saudação. */
+    private String greetingName(User user) {
+        if (!user.isCustomer()) return user.getUsername();
+        return customerRepository.findById(user.getCustomerId())
+                .map(Customer::firstName)
+                .orElse(user.getUsername());
     }
 
     @Override
     @Transactional
-    public String resetPassword(String token, String newPassword) {
+    public PasswordResetResult resetPassword(String token, String newPassword) {
         if (!isValidPassword(newPassword)) throw new InvalidPasswordException();
 
         PasswordResetToken record = passwordResetTokenRepository.findByToken(token)
@@ -530,11 +554,13 @@ public class UserService implements UserUseCase {
                 .orElseThrow(() -> new UserNotFoundException(record.username()));
 
         user.changePassword(passwordHash.hash(newPassword));
+        // O link do convite foi para este endereço: abri-lo prova que ele é da pessoa.
+        if (record.isInvite()) user.markEmailVerified();
         userRepository.save(user);
         userCachePort.evict(user.getUsername());
         refreshTokenPort.revokeAll(user.getUsername());
         tokenBlocklistPort.blockAllBefore(user.getUsername(), Instant.now());
-        return user.getUsername();
+        return new PasswordResetResult(user.getUsername(), record.isInvite());
     }
 
     @Override
@@ -564,10 +590,14 @@ public class UserService implements UserUseCase {
     }
 
     private void issueAndSendCode(String username, String email) {
+        emailPort.sendVerificationCode(email, username, issueCode(username));
+    }
+
+    private String issueCode(String username) {
         String code = generateCode();
         Instant expiresAt = Instant.now().plus(verificationCodeTtlMinutes, ChronoUnit.MINUTES);
         verificationCodeRepository.save(username, code, expiresAt);
-        emailPort.sendVerificationCode(email, username, code);
+        return code;
     }
 
     private static final String CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

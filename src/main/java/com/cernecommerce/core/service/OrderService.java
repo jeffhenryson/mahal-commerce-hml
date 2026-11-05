@@ -305,6 +305,20 @@ public class OrderService implements OrderUseCase {
         return itemRefundRepository.sumQuantityByOrderItem(orderId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public RefundSnapshot getRefundSnapshot(Long orderId) {
+        List<OrderPayment> payments = orderPaymentRepository.findByOrderId(orderId);
+        BigDecimal money = payments.stream()
+                .filter(p -> p.status() == PaymentStatus.REFUNDED && p.method() != PaymentMethod.MARCADO)
+                .map(OrderPayment::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        boolean onAccount = payments.stream().anyMatch(p -> p.method() == PaymentMethod.MARCADO);
+        return new RefundSnapshot(money, onAccount, itemRefundRepository.findByOrderId(orderId).stream()
+                .filter(refund -> refund.exchangeId() == null)
+                .toList());
+    }
+
     // ── PED-F006: troca de item ─────────────────────────────────────────────────────────────
 
     @Override

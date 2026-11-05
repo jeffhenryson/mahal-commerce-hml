@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.out.persistence.entity;
 
+import com.cernecommerce.core.domain.model.auth.PasswordResetPurpose;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -34,6 +35,10 @@ public class PasswordResetTokenEntity {
 
     @Column
     private Instant usedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private PasswordResetPurpose purpose = PasswordResetPurpose.RESET;
 
     @PrePersist
     void prePersist() {

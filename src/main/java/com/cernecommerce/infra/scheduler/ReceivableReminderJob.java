@@ -8,6 +8,7 @@ import com.cernecommerce.core.domain.model.notification.NotificationEmail;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail.Row;
 import com.cernecommerce.core.domain.model.notification.NotificationEmail.Tone;
 import com.cernecommerce.core.domain.model.recebivel.CustomerReceivable;
+import com.cernecommerce.core.domain.model.recebivel.ReceivableEmailText;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
@@ -131,17 +132,33 @@ public class ReceivableReminderJob {
                 .map(CustomerReceivable::amountOpen)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         List<Row> rows = new ArrayList<>(receivables.stream()
-                .map(r -> Row.of("Compra de " + EmailFormat.dateTime(r.createdAt()),
-                        EmailFormat.money(r.amountOpen())))
+                .map(r -> Row.of(purchaseLabel(r), EmailFormat.money(r.amountOpen())))
                 .toList());
         rows.add(Row.highlighted("Total", EmailFormat.money(total)));
-        String when = dueToday ? "vence hoje" : "vence em " + EmailFormat.date(dueDate);
+        String amount = EmailFormat.money(total);
+        String due = EmailFormat.date(dueDate);
         return NotificationEmail.builder(dueToday ? "fiado.vence-hoje" : "fiado.lembrete",
-                        "Seu marcado de " + EmailFormat.money(total) + " " + when)
-                .title(dueToday ? "Seu marcado vence hoje" : "Lembrete: seu marcado vence em " + DAYS_BEFORE + " dias")
-                .intro("Olá, " + customer.nome() + "! Passando para lembrar do pagamento do que ficou marcado na loja.")
+                        "Seu marcado de " + amount + (dueToday ? " vence hoje" : " vence em " + due))
+                .title(dueToday ? "Seu marcado vence hoje" : "Seu marcado vence em " + DAYS_BEFORE + " dias")
+                .intro(dueToday
+                        ? "Olá, " + customer.firstName() + "! O valor marcado na loja vence hoje."
+                        : "Olá, " + customer.firstName() + "! Este é um lembrete do valor marcado na loja, que vence em " + due + ".")
+                .preheader(dueToday
+                        ? "Para pagar hoje, passe no caixa da loja ou fale com a gente no WhatsApp."
+                        : ReceivableEmailText.PREHEADER)
                 .tone(dueToday ? Tone.WARNING : Tone.INFO)
-                .section("Vencimento " + EmailFormat.date(dueDate), rows)
+                .section("Vencimento " + due, rows)
+                .text(dueToday
+                        ? "Para pagar, passe no caixa da loja hoje ou fale com a gente no WhatsApp para combinar."
+                        : ReceivableEmailText.HOW_TO_PAY)
+                .whatsapp(ReceivableEmailText.ACTION, ReceivableEmailText.whatsappMessage(amount))
+                .footnote("Já pagou? Pode desconsiderar este aviso.")
                 .build();
+    }
+
+    /** O valor da linha é o saldo: com parte paga, "Compra de" faria ele parecer errado. */
+    private static String purchaseLabel(CustomerReceivable receivable) {
+        String date = EmailFormat.date(receivable.createdAt().atZone(EmailFormat.ZONE).toLocalDate());
+        return (receivable.amountPaid().signum() > 0 ? "Saldo da compra de " : "Compra de ") + date;
     }
 }

@@ -16,6 +16,7 @@ import com.cernecommerce.core.ports.out.pdv.OfflineSaleRejectionRepository;
 import com.cernecommerce.core.domain.exception.ecommerce.AtendimentoTransicaoInvalidaException;
 import com.cernecommerce.core.domain.exception.ecommerce.PedidoAppOutroCaixaException;
 import com.cernecommerce.core.domain.model.ecommerce.AtendimentoPedidoApp;
+import com.cernecommerce.core.domain.model.ecommerce.EmailEtapaPedido;
 import com.cernecommerce.core.domain.model.ecommerce.MensagemCliente;
 import com.cernecommerce.core.ports.out.ecommerce.AtendimentoPedidoAppRepository;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
@@ -829,7 +830,8 @@ public class PdvService implements PdvUseCase {
             pedidoAppAtendimentos.save(atendimento.retirado(Instant.now(clock)));
         }
         if (atendimento != null && avisoCliente != null) {
-            avisoCliente.etapa(saved, MensagemCliente.pagamentoConfirmado(atendimento));
+            avisoCliente.etapa(saved, MensagemCliente.pagamentoConfirmado(atendimento),
+                    EmailEtapaPedido.pagamentoConfirmado(atendimento, saved));
         }
         return saved;
     }

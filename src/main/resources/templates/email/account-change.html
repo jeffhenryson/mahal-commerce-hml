@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page('Alteração na sua conta', ${theme.brand}, ~{::mailcontent})}">
+<body>
+<div th:fragment="mailcontent">
+  <th:block th:if="${change == 'ROLE_ASSIGNED'}">
+    <h2 th:style="${theme.title()}">Novo papel na sua conta</h2>
+    <p>Olá, <strong th:text="${username}">username</strong>!</p>
+    <p>Você agora tem o papel <strong th:text="${role}">Atendente</strong> no painel da <span th:text="${store.name}">loja</span>.</p>
+    <p th:style="${theme.note()}">Se achar que foi um engano, fale com quem cuida dos acessos da loja.</p>
+  </th:block>
+  <th:block th:if="${change == 'ROLE_REMOVED'}">
+    <h2 th:style="${theme.title()}">Papel removido da sua conta</h2>
+    <p>Olá, <strong th:text="${username}">username</strong>!</p>
+    <p>O papel <strong th:text="${role}">Atendente</strong> foi removido da sua conta no painel da <span th:text="${store.name}">loja</span>. Algumas áreas podem deixar de aparecer para você.</p>
+    <p th:style="${theme.note()}">Se achar que foi um engano, fale com quem cuida dos acessos da loja.</p>
+  </th:block>
+  <th:block th:if="${change == 'DISABLED'}">
+    <h2 th:style="${theme.title()}">Sua conta foi desativada</h2>
+    <p>Olá, <strong th:text="${username}">username</strong>!</p>
+    <p>Sua conta na <span th:text="${store.name}">loja</span> foi desativada pela loja, e você não consegue mais entrar.</p>
+    <p th:style="${theme.note()}">Se achar que foi um engano, fale com a loja pelos contatos abaixo.</p>
+  </th:block>
+</div>
+</body>
+</html>
