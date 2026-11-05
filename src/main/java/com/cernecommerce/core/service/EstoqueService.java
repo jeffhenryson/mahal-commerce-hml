@@ -2024,14 +2024,25 @@ public class EstoqueService implements EstoqueUseCase {
         }
         // PDV-F045 — produto de categoria de cigarros ainda sem embalagem (o cigarro antigo, antes da
         // conversão): entra assim mesmo, com cada SKU vendável numa cadeia de um nível só. Quem já
-        // tem embalagem saiu acima, pela cadeia.
+        // tem embalagem saiu acima, pela cadeia — mas o cadastro misto (só alguns modelos com embalagem
+        // ligada) ganha aqui os modelos que ficaram fora de toda cadeia, senão eles somem da central.
         for (Category categoria : categoryRepository.findCigarette()) {
             for (Product p : productRepository.findAllByCategoryId(categoria.id())) {
-                if (!p.active() || p.isKit() || products.containsKey(p.sku())) {
+                if (!p.active() || p.isKit()) {
                     continue;
                 }
+                boolean jaNaCentral = products.containsKey(p.sku());
+                if (jaNaCentral && p.variants().isEmpty()) {
+                    continue;
+                }
+                Set<String> nasCadeias = jaNaCentral
+                        ? lines.get(p.sku()).stream().flatMap(l -> l.levels().stream())
+                                .map(EstoqueUseCase.PackagedLevel::sku)
+                                .collect(java.util.stream.Collectors.toSet())
+                        : Set.of();
                 List<String> skus = p.variants().isEmpty() ? List.of(p.sku())
-                        : p.variants().stream().filter(ProductVariant::active).map(ProductVariant::sku).toList();
+                        : p.variants().stream().filter(ProductVariant::active).map(ProductVariant::sku)
+                                .filter(sku -> !nasCadeias.contains(sku)).toList();
                 List<EstoqueUseCase.PackagedLine> single = new ArrayList<>();
                 for (String sku : skus) {
                     BigDecimal available = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
@@ -2041,8 +2052,8 @@ public class EstoqueService implements EstoqueUseCase {
                             null))));
                 }
                 if (!single.isEmpty()) {
-                    products.put(p.sku(), p);
-                    lines.put(p.sku(), single);
+                    products.putIfAbsent(p.sku(), p);
+                    lines.computeIfAbsent(p.sku(), k -> new ArrayList<>()).addAll(single);
                 }
             }
         }

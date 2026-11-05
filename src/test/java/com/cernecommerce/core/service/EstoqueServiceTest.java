@@ -5103,6 +5103,44 @@ class EstoqueServiceTest {
         });
     }
 
+    /**
+     * Cadastro misto (o JC Palheiro): só o Tradicional tem maço → solto ligado; Menta e Blue Ice são
+     * maço sem embalagem. Os dois entram como linhas de um nível depois da cadeia — antes sumiam da
+     * central e ela mostrava "1 modelo".
+     */
+    @Test
+    void listPackagedFamilies_comCadastroMisto_incluiOsModelosSemEmbalagem() {
+        SkuPackaging unNoMaco = new SkuPackaging("JC-TRAD-UN", "JC-TRAD-MACO", 20);
+        Product jc = Product.of(466L, "JC", "JC PALHEIRO", "Cigarros", true, List.of(
+                ProductVariant.create("JC-TRAD-MACO", List.of(new ProductAttribute("Modelo", "Tradicional"),
+                        new ProductAttribute("Embalagem", "Maço")), Pricing.of(null, null, new BigDecimal("15.00"))),
+                ProductVariant.create("JC-TRAD-UN", List.of(new ProductAttribute("Modelo", "Tradicional"),
+                        new ProductAttribute("Embalagem", "Solto")), Pricing.of(null, null, new BigDecimal("1.50"))),
+                ProductVariant.create("JC-MENTA-MACO", List.of(new ProductAttribute("Modelo", "Menta"),
+                        new ProductAttribute("Embalagem", "Maço")), Pricing.of(null, null, new BigDecimal("15.00"))),
+                ProductVariant.create("JC-BLUE-MACO", List.of(new ProductAttribute("Modelo", "Blue Ice"),
+                        new ProductAttribute("Embalagem", "Maço")), Pricing.of(null, null, new BigDecimal("15.00")))));
+        comSaldos("JC-TRAD-MACO", "9", "JC-TRAD-UN", "4", "JC-MENTA-MACO", "3", "JC-BLUE-MACO", "2");
+        when(skuPackagingRepository.findAll()).thenReturn(List.of(unNoMaco));
+        when(skuPackagingRepository.findByParent("JC-TRAD-MACO")).thenReturn(List.of(unNoMaco));
+        when(productRepository.findByAnySku("JC-TRAD-MACO")).thenReturn(Optional.of(jc));
+        when(categoryRepository.findCigarette()).thenReturn(List.of(Category.of(7L, "Cigarros", false, 0, true)));
+        when(productRepository.findAllByCategoryId(7L)).thenReturn(List.of(jc));
+
+        List<EstoqueUseCase.PackagedFamily> familias = estoqueService.listPackagedFamilies("LOJA-01");
+
+        assertThat(familias).singleElement().satisfies(f -> {
+            assertThat(f.productSku()).isEqualTo("JC");
+            assertThat(f.lines()).extracting(l -> l.levels().stream().map(EstoqueUseCase.PackagedLevel::sku).toList())
+                    .containsExactly(List.of("JC-TRAD-MACO", "JC-TRAD-UN"), List.of("JC-MENTA-MACO"),
+                            List.of("JC-BLUE-MACO"));
+            EstoqueUseCase.PackagedLevel menta = f.lines().get(1).levels().get(0);
+            assertThat(menta.label()).isEqualTo("Menta · Maço");
+            assertThat(menta.available()).isEqualByComparingTo("3");
+            assertThat(menta.containsSku()).isNull();
+        });
+    }
+
     /** Produto desativado sai da central: não se vende o que foi tirado de circulação. */
     @Test
     void listPackagedFamilies_ignoraProdutoInativo() {
