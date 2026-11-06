@@ -685,6 +685,19 @@ public record Order(
                 : raw.multiply(fraction).setScale(Money.MONEY_SCALE, Money.ROUNDING);
     }
 
+    /**
+     * Fração do total a pagar que não foi MARCADA: 1 numa venda sem marcar. A parte marcada ainda não foi
+     * paga, e o ganho de cashback dela vem na quitação.
+     */
+    public BigDecimal unmarkedFraction(BigDecimal onAccountAmount) {
+        BigDecimal total = totalPayable();
+        if (total.signum() <= 0 || onAccountAmount.signum() == 0) {
+            return BigDecimal.ONE;
+        }
+        return total.subtract(onAccountAmount).max(BigDecimal.ZERO)
+                .divide(total, Money.INTERMEDIATE_SCALE, Money.ROUNDING);
+    }
+
     /** Valor da mercadoria depois dos descontos e antes do resgate de cashback: {@code bruto − desconto}. */
     public BigDecimal merchandiseNet() {
         return grossAmount.subtract(discountAmount);

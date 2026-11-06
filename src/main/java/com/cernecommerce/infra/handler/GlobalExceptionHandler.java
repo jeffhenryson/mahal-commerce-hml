@@ -1073,6 +1073,20 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "TOTP_ALREADY_ENABLED", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.cashback.CashbackRetroactiveStaleException.class)
+    public ResponseEntity<ApiError> handleCashbackRetroactiveStale(
+            com.cernecommerce.core.domain.exception.cashback.CashbackRetroactiveStaleException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CASHBACK_RETROACTIVE_STALE", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.cashback.CashbackRetroactiveNotAllowedException.class)
+    public ResponseEntity<ApiError> handleCashbackRetroactiveNotAllowed(
+            com.cernecommerce.core.domain.exception.cashback.CashbackRetroactiveNotAllowedException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), ex.code(), req);
+    }
+
     @ExceptionHandler(com.cernecommerce.core.domain.exception.notification.FailedEmailNotFoundException.class)
     public ResponseEntity<ApiError> handleFailedEmailNotFound(
             com.cernecommerce.core.domain.exception.notification.FailedEmailNotFoundException ex,

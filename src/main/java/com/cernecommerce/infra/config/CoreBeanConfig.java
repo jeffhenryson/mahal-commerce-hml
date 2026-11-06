@@ -92,10 +92,12 @@ import com.cernecommerce.core.service.BugReportService;
 import com.cernecommerce.core.service.NotificationPreferenceService;
 import com.cernecommerce.core.service.NotificationService;
 import com.cernecommerce.core.auth.LoginStepResolver;
+import com.cernecommerce.core.ports.in.CashbackRetroactiveUseCase;
 import com.cernecommerce.core.ports.in.FailedEmailUseCase;
 import com.cernecommerce.core.ports.in.PendingLoginUseCase;
 import com.cernecommerce.core.ports.out.notification.FailedEmailRepository;
 import com.cernecommerce.core.service.FailedEmailService;
+import com.cernecommerce.core.service.CashbackRetroactiveService;
 import com.cernecommerce.core.ports.in.UserSecurityUseCase;
 import com.cernecommerce.core.service.UserSecurityService;
 import com.cernecommerce.core.ports.out.token.PendingLoginTokenRepository;
@@ -690,6 +692,15 @@ class CoreBeanConfig {
     @Bean
     LogisticaUseCase logisticaUseCase() {
         return new LogisticaService();
+    }
+
+    @Bean
+    CashbackRetroactiveUseCase cashbackRetroactiveUseCase(CustomerRepository customerRepository,
+            OrderRepository orderRepository, OrderPaymentRepository orderPaymentRepository,
+            OrderItemRefundRepository orderItemRefundRepository, CashbackEntryRepository cashbackEntryRepository,
+            CashbackRateRepository cashbackRateRepository, CashbackUseCase cashbackUseCase) {
+        return new CashbackRetroactiveService(customerRepository, orderRepository, orderPaymentRepository,
+                orderItemRefundRepository, cashbackEntryRepository, cashbackRateRepository, cashbackUseCase);
     }
 
     @Bean

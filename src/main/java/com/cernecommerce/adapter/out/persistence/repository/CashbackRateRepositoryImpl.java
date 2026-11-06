@@ -60,6 +60,12 @@ public class CashbackRateRepositoryImpl implements CashbackRateRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public Optional<CashbackRate> findGlobal(Instant at) {
+        return jpaRepository.findGlobalCandidates(at, PageRequest.of(0, 1)).stream().findFirst().map(this::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public boolean existsActiveOpenEnded(CashbackScope scope, String scopeRef) {
         return jpaRepository.existsActiveOpenEnded(scope.name(), scopeRef);
     }

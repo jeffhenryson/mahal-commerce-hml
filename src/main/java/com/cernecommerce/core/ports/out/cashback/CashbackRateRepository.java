@@ -24,6 +24,9 @@ public interface CashbackRateRepository {
      */
     Optional<CashbackRate> findApplicable(String sku, String category, Instant at);
 
+    /** A taxa GLOBAL ativa e vigente, ignorando SKU e categoria. */
+    Optional<CashbackRate> findGlobal(Instant at);
+
     /**
      * Indica se já existe uma taxa ativa, sem {@code validTo}, para a mesma abrangência — usado
      * para recusar uma segunda taxa GLOBAL ou uma segunda taxa para a mesma categoria/SKU

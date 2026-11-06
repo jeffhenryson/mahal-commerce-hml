@@ -213,19 +213,10 @@ public class CashbackService implements CashbackUseCase {
 
     /** Fração do total a pagar que não foi MARCADA: 1 numa venda sem marcar. */
     private BigDecimal paidFraction(Order order) {
-        BigDecimal total = order.totalPayable();
-        if (total.signum() <= 0) {
-            return BigDecimal.ONE;
-        }
-        BigDecimal onAccount = orderPaymentRepository.findByOrderId(order.id()).stream()
+        return order.unmarkedFraction(orderPaymentRepository.findByOrderId(order.id()).stream()
                 .filter(p -> p.status() == PaymentStatus.ON_ACCOUNT)
                 .map(OrderPayment::amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (onAccount.signum() == 0) {
-            return BigDecimal.ONE;
-        }
-        return total.subtract(onAccount).max(BigDecimal.ZERO)
-                .divide(total, Money.INTERMEDIATE_SCALE, Money.ROUNDING);
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
     }
 
     @Override

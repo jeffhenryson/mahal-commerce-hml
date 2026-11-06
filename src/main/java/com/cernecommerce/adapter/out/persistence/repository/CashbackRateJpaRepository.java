@@ -44,4 +44,15 @@ public interface CashbackRateJpaRepository extends JpaRepository<CashbackRateEnt
               AND ((:scopeRef IS NULL AND r.scopeRef IS NULL) OR r.scopeRef = :scopeRef)
             """)
     boolean existsActiveOpenEnded(@Param("scope") String scope, @Param("scopeRef") String scopeRef);
+
+    @Query("""
+            SELECT r FROM CashbackRateEntity r
+            WHERE r.scope = 'GLOBAL'
+              AND r.active = true
+              AND r.validFrom <= :at
+              AND (r.validTo IS NULL OR r.validTo > :at)
+            ORDER BY r.validFrom DESC
+            """)
+    List<CashbackRateEntity> findGlobalCandidates(@Param("at") Instant at,
+            org.springframework.data.domain.Pageable pageable);
 }
