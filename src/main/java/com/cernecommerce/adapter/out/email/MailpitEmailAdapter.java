@@ -55,7 +55,7 @@ public class MailpitEmailAdapter extends TemplatedEmailAdapter {
         } catch (Exception ex) {
             log.error("{}.failed to={} via Mailpit error={}", logPrefix, to, ex.getMessage());
             meterRegistry.counter("email.failed.total", "type", logPrefix).increment();
-            reportFailure(logPrefix, to, ex.getMessage());
+            reportFailure(logPrefix, to, ex.getMessage(), subject, html);
             throw new EmailDeliveryException(ex.getMessage());
         }
     }

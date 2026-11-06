@@ -15,9 +15,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import com.cernecommerce.core.domain.model.notification.FailedEmail;
+import com.cernecommerce.core.ports.out.notification.FailedEmailRepository;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,22 +47,26 @@ public class DevAlertNotifier implements DevAlertPort {
     private final NotificationUseCase notificationUseCase;
     private final NotificationSsePort ssePort;
     private final UserRepository userRepository;
+    private final FailedEmailRepository failedEmails;
     private final Executor executor;
     private final Clock clock;
     private final Map<String, Instant> lastSent = new ConcurrentHashMap<>();
 
     @Autowired
     public DevAlertNotifier(OperationalEmailDispatcher dispatcher, NotificationUseCase notificationUseCase,
-            NotificationSsePort ssePort, UserRepository userRepository, @Qualifier("taskExecutor") Executor executor) {
-        this(dispatcher, notificationUseCase, ssePort, userRepository, executor, Clock.systemUTC());
+            NotificationSsePort ssePort, UserRepository userRepository, FailedEmailRepository failedEmails,
+            @Qualifier("taskExecutor") Executor executor) {
+        this(dispatcher, notificationUseCase, ssePort, userRepository, failedEmails, executor, Clock.systemUTC());
     }
 
     DevAlertNotifier(OperationalEmailDispatcher dispatcher, NotificationUseCase notificationUseCase,
-            NotificationSsePort ssePort, UserRepository userRepository, Executor executor, Clock clock) {
+            NotificationSsePort ssePort, UserRepository userRepository, FailedEmailRepository failedEmails,
+            Executor executor, Clock clock) {
         this.dispatcher = dispatcher;
         this.notificationUseCase = notificationUseCase;
         this.ssePort = ssePort;
         this.userRepository = userRepository;
+        this.failedEmails = failedEmails;
         this.executor = executor;
         this.clock = clock;
     }
@@ -77,27 +85,45 @@ public class DevAlertNotifier implements DevAlertPort {
                 .build();
         String body = rows.stream().map(r -> r.label() + ": " + r.value()).reduce((a, b) -> a + "\n" + b).orElse("");
         run(() -> {
-            notifyInApp(subject, body);
+            notifyInApp(subject, body, new LinkedHashMap<>(details), null);
             dispatcher.toRole(DEV_ROLE, NotificationType.DEV, email);
         });
     }
 
     @Override
-    public void emailDeliveryFailed(String emailType, String to, String error) {
+    public void emailDeliveryFailed(String emailType, String to, String error, String subject, String html) {
+        String failedEmailId = store(emailType, to, error, subject, html);
         if (!firstInWindow("email-failed|" + emailType)) {
             return;
         }
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("Tipo", emailType);
+        details.put("Destinatário", to);
+        details.put("Erro", String.valueOf(error));
+        Map<String, String> metadata = failedEmailId == null ? null : Map.of("failedEmailId", failedEmailId);
         run(() -> notifyInApp("Falha ao enviar e-mail",
-                "Tipo: " + emailType + "\nDestinatário: " + to + "\nErro: " + error));
+                "Tipo: " + emailType + "\nDestinatário: " + to + "\nErro: " + error, details, metadata));
     }
 
-    private void notifyInApp(String title, String body) {
+    /** Guarda sempre, mesmo dentro da janela do aviso. Falha aqui não pode virar outra falha de envio. */
+    private String store(String emailType, String to, String error, String subject, String html) {
+        try {
+            return String.valueOf(failedEmails.save(FailedEmail.of(emailType, to, subject, html,
+                    String.valueOf(error), clock.instant())).id());
+        } catch (Exception ex) {
+            log.error("dev-alert.failed-email.store.failed type={} error={}", emailType, ex.getMessage());
+            return null;
+        }
+    }
+
+    private void notifyInApp(String title, String body, Map<String, String> details, Map<String, String> metadata) {
         for (String username : userRepository.findUsernamesByRole(DEV_ROLE)) {
             if (!dispatcher.preference(username, NotificationType.DEV).inAppEnabled()) {
                 continue;
             }
             try {
-                Notification saved = notificationUseCase.notify(username, NotificationType.DEV, title, body);
+                Notification saved = notificationUseCase.notifyStructured(username, NotificationType.DEV, title, body,
+                        details, metadata);
                 ssePort.send(username, saved);
             } catch (Exception ex) {
                 log.error("dev-alert.inapp.failed username={} error={}", username, ex.getMessage());

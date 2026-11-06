@@ -74,6 +74,11 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void resendRendered(String to, String subject, String html, String type) {
+        log.info("DEV EMAIL >> to={} subject={} [resend:{}]", to, subject, type);
+    }
+
+    @Override
     public void sendTwoFactorRequired(String to, String username) {
         log.info("DEV EMAIL >> to={} username={} [two-factor-required]", to, username);
     }

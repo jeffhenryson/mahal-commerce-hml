@@ -77,6 +77,13 @@ public class NotificationController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Uma notificação do usuário autenticado",
+            description = "404 NOTIFICATION_NOT_FOUND também para a notificação de outra pessoa.")
+    @GetMapping("/{id:\\d+}")
+    public ResponseEntity<NotificationResponseDTO> get(@PathVariable Long id, Authentication auth) {
+        return ResponseEntity.ok(NotificationResponseDTO.from(useCase.getNotification(auth.getName(), id)));
+    }
+
     @Operation(summary = "Retorna quantidade de notificações não lidas")
     @GetMapping("/unread-count")
     public ResponseEntity<Map<String, Long>> unreadCount(Authentication auth) {

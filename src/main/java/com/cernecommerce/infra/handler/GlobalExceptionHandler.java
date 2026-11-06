@@ -1073,6 +1073,20 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "TOTP_ALREADY_ENABLED", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.notification.FailedEmailNotFoundException.class)
+    public ResponseEntity<ApiError> handleFailedEmailNotFound(
+            com.cernecommerce.core.domain.exception.notification.FailedEmailNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "FAILED_EMAIL_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.notification.NotificationNotFoundException.class)
+    public ResponseEntity<ApiError> handleNotificationNotFound(
+            com.cernecommerce.core.domain.exception.notification.NotificationNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "NOTIFICATION_NOT_FOUND", req);
+    }
+
     @ExceptionHandler(com.cernecommerce.core.domain.exception.user.SelfTargetNotAllowedException.class)
     public ResponseEntity<ApiError> handleSelfTargetNotAllowed(
             com.cernecommerce.core.domain.exception.user.SelfTargetNotAllowedException ex, HttpServletRequest req) {

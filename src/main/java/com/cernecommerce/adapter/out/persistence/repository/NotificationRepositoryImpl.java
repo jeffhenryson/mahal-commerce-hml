@@ -12,11 +12,19 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Repository
 public class NotificationRepositoryImpl implements NotificationRepository {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final NotificationJpaRepository jpaRepo;
 
@@ -72,6 +80,34 @@ public class NotificationRepositoryImpl implements NotificationRepository {
         jpaRepo.deleteReadBefore(before);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.Optional<Notification> findById(Long id, String username) {
+        return jpaRepo.findById(id).filter(e -> username.equals(e.getUsername())).map(this::toDomain);
+    }
+
+    private static String toJson(Map<String, String> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        try {
+            return MAPPER.writeValueAsString(values);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Mapa da notificação não serializa", ex);
+        }
+    }
+
+    private static Map<String, String> fromJson(String json) {
+        if (json == null) {
+            return null;
+        }
+        try {
+            return MAPPER.readValue(json, new TypeReference<LinkedHashMap<String, String>>() { });
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Mapa da notificação ilegível", ex);
+        }
+    }
+
     private NotificationEntity toEntity(Notification n) {
         NotificationEntity e = new NotificationEntity();
         e.setId(n.id());
@@ -82,6 +118,8 @@ public class NotificationRepositoryImpl implements NotificationRepository {
         e.setTargetUrl(n.targetUrl());
         e.setReadAt(n.readAt());
         e.setCreatedAt(n.createdAt());
+        e.setDetails(toJson(n.details()));
+        e.setMetadata(toJson(n.metadata()));
         return e;
     }
 
@@ -94,7 +132,9 @@ public class NotificationRepositoryImpl implements NotificationRepository {
                 e.getBody(),
                 e.getTargetUrl(),
                 e.getReadAt(),
-                e.getCreatedAt()
+                e.getCreatedAt(),
+                fromJson(e.getDetails()),
+                fromJson(e.getMetadata())
         );
     }
 }

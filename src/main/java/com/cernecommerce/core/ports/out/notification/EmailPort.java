@@ -58,6 +58,13 @@ public interface EmailPort {
     /** Primeiro login com Google — conta criada ou vinculada ao Google. */
     void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context);
 
+    /**
+     * Reenvia uma mensagem já renderizada, de forma síncrona.
+     *
+     * @throws com.cernecommerce.core.domain.exception.email.EmailDeliveryException se o provedor recusar
+     */
+    void resendRendered(String to, String subject, String html, String type);
+
     /** Um admin exigiu 2FA: o próximo login vai pedir a ativação. */
     void sendTwoFactorRequired(String to, String username);
 

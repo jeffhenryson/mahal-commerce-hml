@@ -40,6 +40,7 @@ abstract class TemplatedEmailAdapter implements EmailPort {
             String calloutText, String accent, String actionUrl, String actionLabel) {
     }
 
+    private final ThreadLocal<Boolean> resending = new ThreadLocal<>();
     private final long ttlMinutes;
     private final String emailSubject;
     private final String verificationFrontendUrl;
@@ -67,14 +68,29 @@ abstract class TemplatedEmailAdapter implements EmailPort {
     }
 
     /** Chamado pela subclasse no {@code catch} do envio, antes de relançar. Nunca lança. */
-    protected void reportFailure(String type, String to, String error) {
+    protected void reportFailure(String type, String to, String error, String subject, String html) {
+        // O reenvio manual já mostra o erro a quem pediu, e não pode virar uma nova falha guardada.
+        if (resending.get() != null) {
+            return;
+        }
         try {
             DevAlertPort port = devAlerts.get();
             if (port != null) {
-                port.emailDeliveryFailed(type, to, error);
+                port.emailDeliveryFailed(type, to, error, subject, html);
             }
         } catch (Exception ignored) {
             // O log e o contador email.failed.total da subclasse já registram a falha.
+        }
+    }
+
+    /** Síncrono: quem pede o reenvio espera o resultado. */
+    @Override
+    public void resendRendered(String to, String subject, String html, String type) {
+        resending.set(Boolean.TRUE);
+        try {
+            deliver(to, subject, html, type);
+        } finally {
+            resending.remove();
         }
     }
 

@@ -36,6 +36,12 @@ public class NotificationEntity {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(columnDefinition = "TEXT")
+    private String details;
+
+    @Column(columnDefinition = "TEXT")
+    private String metadata;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -59,4 +65,10 @@ public class NotificationEntity {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public String getDetails() { return details; }
+    public void setDetails(String details) { this.details = details; }
+
+    public String getMetadata() { return metadata; }
+    public void setMetadata(String metadata) { this.metadata = metadata; }
 }

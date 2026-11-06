@@ -28,6 +28,7 @@ class DevAlertNotifierTest {
     private OperationalEmailDispatcher dispatcher;
     private NotificationUseCase notificationUseCase;
     private UserRepository userRepository;
+    private com.cernecommerce.core.ports.out.notification.FailedEmailRepository failedEmails;
     private MutableClock clock;
     private DevAlertNotifier notifier;
 
@@ -36,12 +37,27 @@ class DevAlertNotifierTest {
         dispatcher = mock(OperationalEmailDispatcher.class);
         notificationUseCase = mock(NotificationUseCase.class);
         userRepository = mock(UserRepository.class);
+        failedEmails = mock(com.cernecommerce.core.ports.out.notification.FailedEmailRepository.class);
         when(userRepository.findUsernamesByRole("ROLE_DEV")).thenReturn(Set.of("dev"));
         when(dispatcher.preference(anyString(), any()))
                 .thenAnswer(inv -> NotificationPreference.defaultFor(inv.getArgument(0), inv.getArgument(1)));
         clock = new MutableClock(Instant.parse("2026-10-05T12:00:00Z"));
+        when(failedEmails.save(any())).thenAnswer(inv -> {
+            com.cernecommerce.core.domain.model.notification.FailedEmail e = inv.getArgument(0);
+            return new com.cernecommerce.core.domain.model.notification.FailedEmail(99L, e.type(), e.recipient(),
+                    e.subject(), e.html(), e.error(), e.createdAt(), 0, null, null, null);
+        });
         notifier = new DevAlertNotifier(dispatcher, notificationUseCase, mock(NotificationSsePort.class),
-                userRepository, Runnable::run, clock);
+                userRepository, failedEmails, Runnable::run, clock);
+    }
+
+    @Test
+    void falha_de_email_guarda_o_conteudo_mesmo_dentro_da_janela_do_aviso() {
+        notifier.emailDeliveryFailed("email.welcome", "x@y.com", "erro", "Assunto", "<p/>");
+        notifier.emailDeliveryFailed("email.welcome", "z@y.com", "erro", "Assunto", "<p/>");
+
+        verify(failedEmails, times(2)).save(any());
+        verify(notificationUseCase, times(1)).notifyStructured(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -52,7 +68,8 @@ class DevAlertNotifierTest {
         verify(dispatcher).toRole(eq("ROLE_DEV"), eq(NotificationType.DEV), email.capture());
         assertThat(email.getValue().category()).isEqualTo("dev.erro-500");
         assertThat(email.getValue().tone()).isEqualTo(NotificationEmail.Tone.DANGER);
-        verify(notificationUseCase).notify(eq("dev"), eq(NotificationType.DEV), eq("Erro 500 em GET /x"), contains("GET /x"));
+        verify(notificationUseCase).notifyStructured(eq("dev"), eq(NotificationType.DEV), eq("Erro 500 em GET /x"),
+                contains("Rota: GET /x"), eq(Map.of("Rota", "GET /x")), isNull());
     }
 
     @Test
@@ -80,10 +97,11 @@ class DevAlertNotifierTest {
 
     @Test
     void falha_de_email_avisa_so_in_app() {
-        notifier.emailDeliveryFailed("email.welcome", "x@y.com", "403 domain not verified");
+        notifier.emailDeliveryFailed("email.welcome", "x@y.com", "403 domain not verified", "Bem-vindo", "<p/>");
 
-        verify(notificationUseCase).notify(eq("dev"), eq(NotificationType.DEV), eq("Falha ao enviar e-mail"),
-                contains("403 domain not verified"));
+        verify(notificationUseCase).notifyStructured(eq("dev"), eq(NotificationType.DEV),
+                eq("Falha ao enviar e-mail"), contains("403 domain not verified"), any(),
+                eq(Map.of("failedEmailId", "99")));
         verify(dispatcher, never()).toRole(any(), any(), any());
     }
 

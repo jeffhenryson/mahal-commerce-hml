@@ -92,7 +92,10 @@ import com.cernecommerce.core.service.BugReportService;
 import com.cernecommerce.core.service.NotificationPreferenceService;
 import com.cernecommerce.core.service.NotificationService;
 import com.cernecommerce.core.auth.LoginStepResolver;
+import com.cernecommerce.core.ports.in.FailedEmailUseCase;
 import com.cernecommerce.core.ports.in.PendingLoginUseCase;
+import com.cernecommerce.core.ports.out.notification.FailedEmailRepository;
+import com.cernecommerce.core.service.FailedEmailService;
 import com.cernecommerce.core.ports.in.UserSecurityUseCase;
 import com.cernecommerce.core.service.UserSecurityService;
 import com.cernecommerce.core.ports.out.token.PendingLoginTokenRepository;
@@ -305,6 +308,11 @@ class CoreBeanConfig {
             TotpBackupCodeRepository totpBackupCodeRepository, UserCachePort userCachePort, EmailPort emailPort) {
         return new UserSecurityService(userRepository, userUseCase, authUseCase, passwordHashPort, refreshToken,
                 tokenBlocklist, totpConfigRepository, totpBackupCodeRepository, userCachePort, emailPort);
+    }
+
+    @Bean
+    FailedEmailUseCase failedEmailUseCase(FailedEmailRepository failedEmailRepository, EmailPort emailPort) {
+        return new FailedEmailService(failedEmailRepository, emailPort, Clock.systemUTC());
     }
 
     @Bean

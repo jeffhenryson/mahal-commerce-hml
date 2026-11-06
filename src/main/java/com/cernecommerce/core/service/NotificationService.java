@@ -25,6 +25,22 @@ public class NotificationService implements NotificationUseCase {
     }
 
     @Override
+    @Transactional
+    public Notification notifyStructured(String username, NotificationType type, String title, String body,
+            java.util.Map<String, String> details, java.util.Map<String, String> metadata) {
+        return notificationRepository.save(new Notification(null, username, type, title, body, null, null,
+                Instant.now(), details, metadata));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Notification getNotification(String username, Long notificationId) {
+        return notificationRepository.findById(notificationId, username)
+                .orElseThrow(() -> new com.cernecommerce.core.domain.exception.notification
+                        .NotificationNotFoundException(notificationId));
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public PageResult<Notification> getNotifications(String username, boolean unreadOnly, int page, int size) {
         return notificationRepository.findByUsername(username, unreadOnly, page, size);

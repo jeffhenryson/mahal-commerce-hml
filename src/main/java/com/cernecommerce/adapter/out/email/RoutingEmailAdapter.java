@@ -87,6 +87,14 @@ public class RoutingEmailAdapter implements EmailPort {
         route(p -> p.sendPasswordResetAlert(to, username, context));
     }
 
+    /** Fora de {@link #route}, que envia em segundo plano e engole a falha: aqui o resultado importa. */
+    @Override
+    public void resendRendered(String to, String subject, String html, String type) {
+        Optional<EmailSenderConfig> config = storeConfig();
+        EmailPort target = config.<EmailPort>map(storeAdapterFactory::adapterFor).orElse(fallback);
+        target.resendRendered(to, subject, html, type);
+    }
+
     @Override
     public void sendTwoFactorRequired(String to, String username) {
         route(p -> p.sendTwoFactorRequired(to, username));

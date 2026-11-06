@@ -18,6 +18,13 @@ public interface NotificationUseCase {
      */
     Notification notify(String username, NotificationType type, String title, String body, String targetUrl);
 
+    /** Com os pares do alerta e as ligações com outros registros. */
+    Notification notifyStructured(String username, NotificationType type, String title, String body,
+            java.util.Map<String, String> details, java.util.Map<String, String> metadata);
+
+    /** @throws com.cernecommerce.core.domain.exception.notification.NotificationNotFoundException de outra pessoa */
+    Notification getNotification(String username, Long notificationId);
+
     PageResult<Notification> getNotifications(String username, boolean unreadOnly, int page, int size);
 
     void markAsRead(String username, Long notificationId);

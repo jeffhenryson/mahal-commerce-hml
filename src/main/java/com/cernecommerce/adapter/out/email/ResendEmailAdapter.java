@@ -80,7 +80,7 @@ public class ResendEmailAdapter extends TemplatedEmailAdapter {
                     : ex.getMessage();
             log.error("{}.failed to={} error={}", logPrefix, to, error);
             meterRegistry.counter("email.failed.total", "type", logPrefix).increment();
-            reportFailure(logPrefix, to, error);
+            reportFailure(logPrefix, to, error, subject, html);
             throw new EmailDeliveryException(error);
         }
     }

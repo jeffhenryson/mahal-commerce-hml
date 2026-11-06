@@ -20,5 +20,5 @@ public interface DevAlertPort {
      * Falha de entrega de e-mail. Só in-app: avisar por e-mail que o e-mail falhou cairia no mesmo
      * provedor quebrado — e cada falha geraria outra.
      */
-    void emailDeliveryFailed(String emailType, String to, String error);
+    void emailDeliveryFailed(String emailType, String to, String error, String subject, String html);
 }

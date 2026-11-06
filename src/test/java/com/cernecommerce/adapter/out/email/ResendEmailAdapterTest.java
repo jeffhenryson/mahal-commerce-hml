@@ -361,7 +361,8 @@ class ResendEmailAdapterTest {
 
         assertThatThrownBy(() -> adapter.sendWelcome("user@example.com", "alice"))
                 .isInstanceOf(EmailDeliveryException.class);
-        verify(devAlerts).emailDeliveryFailed(eq("email.welcome"), eq("user@example.com"), anyString());
+        verify(devAlerts).emailDeliveryFailed(eq("email.welcome"), eq("user@example.com"), anyString(), anyString(),
+                eq("<html/>"));
     }
 
     @Test
