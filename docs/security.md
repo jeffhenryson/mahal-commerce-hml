@@ -248,6 +248,16 @@ Implementações:
 - Validação: janela de ±1 período (30s × 2 = 60s de tolerância para dessincronização de relógio)
 - Backup codes: 10 códigos únicos, consumo one-time, armazenados como SHA-256 hashes
 
+**Login em etapas (V188):** depois de provar a identidade, `LoginStepResolver` decide o próximo passo, na ordem: desafio
+de 2FA, troca de senha temporária, cadastro de 2FA exigido, tokens. Senha, código de 2FA e Google passam por ele, e nenhuma
+porta emite token sem ele. As pendências usam tokens opacos de `pending_login_tokens`, guardados como hash, com 10 minutos
+de validade e uso único, que só servem em `/auth/password-change-required` e `/auth/2fa/enroll/*`. `security.2fa.required`
+vale para operadores. A exigência individual (`users.two_factor_required`) vale para qualquer conta.
+
+**Conta de dev como alvo:** toda escrita em `/users/{id}` e `/users/{username}/roles` sobre conta com `ROLE_DEV` exige
+`DEV_ELEVATED`, senão `403 TARGET_PROTECTED`. Senha temporária, 2FA e sessões de outro usuário exigem
+`USER_SECURITY_MANAGE` e recusam a própria conta com `403 SELF_TARGET_NOT_ALLOWED`.
+
 **Fora de escopo:** WebAuthn/FIDO2, Passkeys, fingerprint, face recognition. Estas não estão implementadas e não estão no roadmap.
 
 ---

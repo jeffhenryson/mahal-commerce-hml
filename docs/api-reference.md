@@ -4215,6 +4215,65 @@ Retorna todos os tipos de evento válidos para uso no filtro `?action=`.
 
 ---
 
+## Segurança de usuários, login em etapas e novembro/2026 (V188, V189)
+
+### Login em etapas
+
+`POST /auth/login`, `/auth/2fa/verify` e `/auth/oauth2/google` podem devolver, em 200, uma pendência no lugar dos tokens:
+
+```json
+{ "status": "TOTP_ENROLLMENT_REQUIRED", "enrollmentToken": "...", "expiresInSeconds": 600 }
+{ "status": "PASSWORD_CHANGE_REQUIRED", "passwordChangeToken": "...", "expiresInSeconds": 600 }
+```
+
+| Rota (pública, com rate limit) | Corpo | Resposta |
+|---|---|---|
+| `POST /auth/password-change-required` | `{ passwordChangeToken, newPassword }` | Tokens, ou `enrollmentToken` |
+| `POST /auth/2fa/enroll/setup` | `{ enrollmentToken }` | `{ secret, otpauthUri }` |
+| `POST /auth/2fa/enroll/confirm` | `{ enrollmentToken, code }` | `{ backupCodes, tokens }` |
+
+Token inválido: `400 PENDING_LOGIN_TOKEN_INVALID`. Senha recusada ou código errado não gastam o token.
+
+### Ações do admin sobre usuários
+
+| Rota | Permissão |
+|---|---|
+| `POST /users/{id}/password-reset` | `USER_SECURITY_MANAGE` |
+| `PUT /users/{id}/password` `{ temporaryPassword }` | `USER_SECURITY_MANAGE` |
+| `GET /users/{id}/security` | `USER_SECURITY_MANAGE` |
+| `PUT /users/{id}/2fa/required` `{ required }` | `USER_SECURITY_MANAGE` |
+| `DELETE /users/{id}/2fa` | `USER_SECURITY_MANAGE` |
+| `GET` e `DELETE /users/{id}/sessions`, `DELETE /users/{id}/sessions/{sessionId}` | `USER_SECURITY_MANAGE` |
+| `PUT /users/{id}/email` `{ email }` | `USER_SECURITY_MANAGE` |
+| `POST` e `DELETE /users/{id}/avatar` | `USER_UPDATE` |
+| `POST /users/{id}/restore` | `USER_STATUS` |
+
+`GET /users?deleted=true` lista as contas excluídas e exige `USER_STATUS`. `PATCH /users/{id}` aceita `fullName` e `phone`:
+ausente mantém, `null` limpa.
+
+### Cashback retroativo — Permissão: CASHBACK_ADJUST
+
+`GET /crm/customers/{id}/cashback/retroactive/preview` e `POST /crm/customers/{id}/cashback/retroactive`
+`{ expectedCreditAmount }`. Erros: `409 CASHBACK_RETROACTIVE_STALE`; `422 CASHBACK_CUSTOMER_NOT_ELIGIBLE`,
+`CASHBACK_NOTHING_TO_CREDIT`, `CASHBACK_GLOBAL_RATE_MISSING`.
+
+### Vendas
+
+- `GET /orders/summary` traz `deliveryFeeTotal` e `serviceFeeTotal`. A soma de `/orders/analytics/payment-methods` é
+  `totalRevenueNet + deliveryFeeTotal + serviceFeeTotal`.
+- `DELETE /vendas/metas/{yyyy-MM}` (`SALES_GOAL_MANAGE`): 204 ou `404 SALES_GOAL_NOT_FOUND`.
+- `SaleRequest.kits[].picks[]` aceita `note` e `discountAmount`. Esse desconto exige `PDV_SALE_DISCOUNT` e conta no teto.
+
+### Estoque
+
+`GET /estoque/products` aceita `visibleInMarketplace`.
+
+### E-mails que falharam — ROLE_DEV
+
+`GET /failed-emails/{id}` devolve `{ id, type, recipient, subject, html, error, createdAt, resendCount, lastResendAt,
+lastResendStatus, lastResendError }`. `POST /failed-emails/{id}/resend` devolve o mesmo corpo: 200 mesmo com nova recusa do
+provedor (`lastResendStatus = FAILED`), `429` a menos de 30 s do reenvio anterior. A falha expira em 30 dias.
+
 ## Notificações — `/notifications`
 
 Todas as rotas exigem autenticação Bearer. Operações são sempre escopadas ao usuário autenticado — não é possível ler ou marcar notificações de outro usuário.
@@ -4251,6 +4310,11 @@ Lista as notificações do usuário. Suporta filtro por não-lidas e paginação
 ```
 
 ---
+
+### GET /notifications/{id} — Autenticado
+
+Só do dono, senão `404 NOTIFICATION_NOT_FOUND`. Os alertas técnicos trazem `details` (pares rótulo e valor) e, na falha de
+e-mail, `metadata.failedEmailId`.
 
 ### GET /notifications/unread-count — Autenticado
 
