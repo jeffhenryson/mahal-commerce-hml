@@ -137,6 +137,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
               AND (:kitComponentEligible IS NULL OR p.kitComponentEligible = :kitComponentEligible)
               AND (:status   IS NULL OR p.status = :status)
               AND (:sessionProduct IS NULL OR p.sessionProduct = :sessionProduct)
+              AND (:visibleInMarketplace IS NULL OR p.visibleInMarketplace = :visibleInMarketplace)
               AND ((:archived = TRUE AND p.status = 'ARQUIVADO')
                    OR (:archived = FALSE AND p.status <> 'ARQUIVADO'))
             """)
@@ -148,6 +149,7 @@ public interface ProductJpaRepository extends JpaRepository<ProductEntity, Long>
             @Param("kitComponentEligible") Boolean kitComponentEligible,
             @Param("status") String status,
             @Param("sessionProduct") Boolean sessionProduct,
+            @Param("visibleInMarketplace") Boolean visibleInMarketplace,
             @Param("archived") boolean archived,
             Pageable pageable);
 

@@ -17,7 +17,8 @@ package com.cernecommerce.core.domain.model.estoque;
  * nenhuma listagem que esqueça de pedir para escondê-lo.</p>
  */
 public record ProductFilter(String search, String category, String brand, Boolean active, ProductType type,
-        Boolean kitComponentEligible, ProductStatus status, Boolean sessionProduct, Boolean archived) {
+        Boolean kitComponentEligible, ProductStatus status, Boolean sessionProduct, Boolean archived,
+        Boolean visibleInMarketplace) {
 
     public static final ProductFilter EMPTY = new ProductFilter(null, null, null, null, null, null, null, null, null);
 
@@ -25,6 +26,12 @@ public record ProductFilter(String search, String category, String brand, Boolea
         search = normalize(search);
         category = normalize(category);
         brand = normalize(brand);
+    }
+
+    /** Mesma forma, sem filtro de {@code visibleInMarketplace}. */
+    public ProductFilter(String search, String category, String brand, Boolean active, ProductType type,
+            Boolean kitComponentEligible, ProductStatus status, Boolean sessionProduct, Boolean archived) {
+        this(search, category, brand, active, type, kitComponentEligible, status, sessionProduct, archived, null);
     }
 
     /** Mesma forma, sem filtro de {@code type} — compatibilidade com chamadores anteriores a EST-F022. */

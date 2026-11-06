@@ -310,7 +310,7 @@ public class ProductRepositoryImpl implements ProductRepository {
                 likePattern(filter.search()), filter.category(), filter.brand(), filter.active(),
                 filter.type() == null ? null : filter.type().name(), filter.kitComponentEligible(),
                 filter.status() == null ? null : filter.status().name(), filter.sessionProduct(),
-                Boolean.TRUE.equals(filter.archived()), pageable);
+                filter.visibleInMarketplace(), Boolean.TRUE.equals(filter.archived()), pageable);
         return toPageResult(idPage, page, size);
     }
 
