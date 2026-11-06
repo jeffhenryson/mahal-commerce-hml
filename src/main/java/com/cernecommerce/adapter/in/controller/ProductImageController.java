@@ -1,5 +1,8 @@
 package com.cernecommerce.adapter.in.controller;
 
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Content;
 import com.cernecommerce.core.domain.model.storage.FileServeResult;
 import com.cernecommerce.core.domain.model.storage.ImageFormat;
 import com.cernecommerce.core.ports.in.ProductImageUseCase;
@@ -35,6 +38,8 @@ public class ProductImageController {
 
     @Operation(summary = "Serve o arquivo de imagem de produto (público, cache longo). "
             + "Com S3/CDN retorna 308 redirect para a URL pública; com armazenamento local serve os bytes.")
+    @ApiResponse(responseCode = "200", description = "O arquivo de imagem",
+            content = @Content(mediaType = "image/*", schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/product-images/{filename}")
     public ResponseEntity<?> serve(@PathVariable String filename) {
         // Mesmo guard de AvatarController: o filename entra na resolução de um Path, e ".." ou

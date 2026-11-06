@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.response;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import com.cernecommerce.core.domain.model.salao.EssenciaDoDia;
 import com.cernecommerce.core.domain.model.salao.OrigemSelecao;
 import com.cernecommerce.core.ports.in.SalaoAutoatendimentoUseCase.SelecaoDoDia;
@@ -13,6 +14,7 @@ import java.util.List;
  */
 public record EssenciaDoDiaResponseDTO(LocalDate data, OrigemSelecao origem, List<Item> essencias) {
 
+    @Schema(name = "EssenciaDoDiaItem")
     public record Item(EssenciaOferecidaResponseDTO essencia, boolean selecionada) {
     }
 

@@ -32,6 +32,7 @@ public class OfflineRejectionResponseDTO {
     private Long orderId;
 
     @Data
+    @Schema(name = "OfflineRejectionItem")
     public static class Item {
         private String sku;
         private BigDecimal quantity;
@@ -40,6 +41,7 @@ public class OfflineRejectionResponseDTO {
     }
 
     @Data
+    @Schema(name = "OfflineRejectionPayment")
     public static class Payment {
         private String method;
         private BigDecimal amount;

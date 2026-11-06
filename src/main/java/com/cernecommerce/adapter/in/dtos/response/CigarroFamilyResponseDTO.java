@@ -26,6 +26,7 @@ public class CigarroFamilyResponseDTO {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    @Schema(name = "CigarroLine")
     public static class Line {
         private List<Level> levels;
     }

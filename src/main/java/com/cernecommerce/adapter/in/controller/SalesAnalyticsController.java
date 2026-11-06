@@ -56,6 +56,7 @@ public class SalesAnalyticsController {
     @Operation(summary = "Mapa de calor: receita por dia da semana e hora",
             description = "weekday ISO (1 = segunda … 7 = domingo) e hour 0–23, no fuso America/Sao_Paulo. Só as "
                     + "células com venda.")
+    @ApiResponse(responseCode = "200", description = "OK")
     @ApiResponse(responseCode = "400", description = "INVALID_REPORT_PERIOD", content = @Content)
     @GetMapping("/orders/analytics/heatmap")
     @PreAuthorize("hasAuthority('ORDER_READ')")
@@ -86,6 +87,7 @@ public class SalesAnalyticsController {
             description = "O operador é o do caixa que registrou/liquidou o pedido (o mesmo de "
                     + "OrderAdminResponseDto.operatorName). Pedidos sem caixa (pagos online) vêm numa linha com "
                     + "operatorUserId e operatorName nulos. Maior receita primeiro.")
+    @ApiResponse(responseCode = "200", description = "OK")
     @ApiResponse(responseCode = "400", description = "INVALID_REPORT_PERIOD", content = @Content)
     @GetMapping("/orders/analytics/operators")
     @PreAuthorize("hasAuthority('ORDER_READ')")
@@ -99,6 +101,7 @@ public class SalesAnalyticsController {
     @Operation(summary = "Clientes do período, paginado",
             description = "sortBy = revenue | orders | lastPurchase (desc). size até 100. `anonymous` soma as vendas "
                     + "sem cliente identificado.")
+    @ApiResponse(responseCode = "200", description = "OK")
     @ApiResponse(responseCode = "400", description = "INVALID_REPORT_PERIOD, sortBy ou size inválidos", content = @Content)
     @GetMapping("/orders/analytics/customers")
     @PreAuthorize("hasAuthority('ORDER_READ')")
@@ -114,6 +117,7 @@ public class SalesAnalyticsController {
             description = "Produtos ativos, publicados e não-kit com saldo > 0 em warehouseCode e quantitySold <= "
                     + "maxSold no período, por valor parado (stock × unitCost) desc. unitCost: custo médio, senão o "
                     + "cadastrado. lastSoldAt é a última venda em qualquer data, nulo se nunca vendeu.")
+    @ApiResponse(responseCode = "200", description = "OK")
     @ApiResponse(responseCode = "400", description = "warehouseCode ausente, limit fora de 1–100 ou período inválido",
             content = @Content)
     @GetMapping("/orders/analytics/slow-movers")

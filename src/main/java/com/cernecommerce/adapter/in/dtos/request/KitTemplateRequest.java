@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -44,6 +45,7 @@ public class KitTemplateRequest {
     private List<Step> steps;
 
     @Data
+    @Schema(name = "KitTemplateStepRequest")
     public static class Step {
         private Long id;
 

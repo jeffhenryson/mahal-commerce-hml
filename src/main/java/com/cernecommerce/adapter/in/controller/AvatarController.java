@@ -1,5 +1,8 @@
 package com.cernecommerce.adapter.in.controller;
 
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Content;
 import com.cernecommerce.core.domain.exception.avatar.InvalidAvatarFormatException;
 import com.cernecommerce.core.domain.model.storage.FileServeResult;
 import com.cernecommerce.core.domain.model.storage.ImageFormat;
@@ -55,6 +58,8 @@ public class AvatarController {
 
     @Operation(summary = "Serve o arquivo de avatar (público, cache longo). " +
                "Com S3/CDN retorna 308 redirect para a URL pública; com armazenamento local serve os bytes.")
+    @ApiResponse(responseCode = "200", description = "O arquivo de imagem",
+            content = @Content(mediaType = "image/*", schema = @Schema(type = "string", format = "binary")))
     @GetMapping("/avatars/{filename}")
     public ResponseEntity<?> serve(@PathVariable String filename) {
         if (filename.contains("/") || filename.contains("\\") || filename.contains("..")) {

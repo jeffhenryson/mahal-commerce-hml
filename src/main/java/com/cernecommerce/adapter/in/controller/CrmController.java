@@ -435,7 +435,9 @@ public class CrmController {
 
     @Operation(summary = "Baixa um anexo de nota (V183)")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "O arquivo"),
+            @ApiResponse(responseCode = "200", description = "O arquivo", content = @Content(
+                    mediaType = "application/octet-stream",
+                    schema = @io.swagger.v3.oas.annotations.media.Schema(type = "string", format = "binary"))),
             @ApiResponse(responseCode = "404", description = "Cliente, nota ou anexo não encontrado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })

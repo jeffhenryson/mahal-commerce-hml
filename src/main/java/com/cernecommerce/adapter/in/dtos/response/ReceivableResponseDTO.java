@@ -45,6 +45,7 @@ public class ReceivableResponseDTO {
     private List<Payment> payments;
 
     @Data
+    @Schema(name = "ReceivableItem")
     public static class Item {
         private Long orderItemId;
         private String sku;
@@ -57,6 +58,7 @@ public class ReceivableResponseDTO {
     }
 
     @Data
+    @Schema(name = "ReceivablePayment")
     public static class Payment {
         private Long id;
         private Long batchId;

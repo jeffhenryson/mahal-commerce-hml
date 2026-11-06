@@ -52,8 +52,10 @@ public class CentralPedidosConfigDTO {
 
     private boolean retiradaHabilitada = true;
 
-    @Size(max = 120)
-    @Schema(description = "Chave Pix da loja, enviada ao cliente no aceite da entrega.", example = "pix@mahal.com.br")
+    // Sem @Size de propósito: o limite é de CentralPedidosConfig, que responde INVALID_CENTRAL_CONFIG
+    // junto com os outros problemas da configuração.
+    @Schema(description = "Chave Pix da loja, enviada ao cliente no aceite da entrega.", example = "pix@mahal.com.br",
+            maxLength = 120)
     private String pixChave;
 
     @jakarta.validation.Valid

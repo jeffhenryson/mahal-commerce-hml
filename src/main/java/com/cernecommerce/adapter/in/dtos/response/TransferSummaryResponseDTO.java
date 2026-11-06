@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.response;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -9,6 +10,7 @@ import java.util.List;
  */
 public record TransferSummaryResponseDTO(List<Item> items, BigDecimal totalQuantity, BigDecimal totalCost) {
 
+    @Schema(name = "TransferSummaryItem")
     public record Item(String sku, String productName, BigDecimal quantity, BigDecimal totalCost) {
     }
 }

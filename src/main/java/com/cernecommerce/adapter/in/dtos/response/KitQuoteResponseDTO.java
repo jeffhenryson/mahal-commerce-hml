@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.response;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ public class KitQuoteResponseDTO {
     private List<Line> lines;
 
     @Data
+    @Schema(name = "KitQuoteLine")
     public static class Line {
         private Long stepId;
         private String stepName;

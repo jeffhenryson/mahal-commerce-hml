@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.response;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
 import com.cernecommerce.core.domain.model.pdv.SessionStatus;
@@ -18,6 +19,7 @@ public record MesaAtualResponseDTO(String mesa, String cliente, String codigo, I
         List<CompraLoja> comprasLoja) {
 
     /** {@code sessao} só nas linhas de sessão; nas demais, nula. */
+    @Schema(name = "MesaAtualItem")
     public record Item(String nome, BigDecimal quantidade, BigDecimal valor, boolean pago, Instant lancadoEm,
             Sessao sessao) {
 
