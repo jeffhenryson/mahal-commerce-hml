@@ -26,11 +26,29 @@ public record OrderSummary(
         BigDecimal cancelledOrRefundedRate,
         List<DailyRevenue> dailyRevenue,
         List<TopProduct> topProducts,
-        BigDecimal promotionDiscountTotal) {
+        BigDecimal promotionDiscountTotal,
+        BigDecimal deliveryFeeTotal,
+        BigDecimal serviceFeeTotal) {
 
-    /** {@code promotionDiscountTotal}: desconto de promoção por quantidade do período ("Promoções"). */
+    /**
+     * {@code promotionDiscountTotal}: desconto de promoção por quantidade do período ("Promoções").
+     * {@code deliveryFeeTotal} e {@code serviceFeeTotal}: frete e taxa de serviço dos mesmos pedidos de
+     * {@code totalRevenueNet}. Ficam fora do líquido (PDV-F015), mas o cliente paga, então a soma das formas
+     * de pagamento é líquido + frete + taxa.
+     */
     public OrderSummary {
         promotionDiscountTotal = promotionDiscountTotal == null ? BigDecimal.ZERO : promotionDiscountTotal;
+        deliveryFeeTotal = deliveryFeeTotal == null ? BigDecimal.ZERO : deliveryFeeTotal;
+        serviceFeeTotal = serviceFeeTotal == null ? BigDecimal.ZERO : serviceFeeTotal;
+    }
+
+    public OrderSummary(long totalOrders, BigDecimal totalRevenueNet, BigDecimal totalRevenueGross,
+            BigDecimal averageTicket, Map<SalesChannel, BigDecimal> revenueByChannel,
+            Map<OrderStatus, Long> ordersByStatus, BigDecimal cancelledOrRefundedRate,
+            List<DailyRevenue> dailyRevenue, List<TopProduct> topProducts, BigDecimal promotionDiscountTotal) {
+        this(totalOrders, totalRevenueNet, totalRevenueGross, averageTicket, revenueByChannel, ordersByStatus,
+                cancelledOrRefundedRate, dailyRevenue, topProducts, promotionDiscountTotal, BigDecimal.ZERO,
+                BigDecimal.ZERO);
     }
 
     public OrderSummary(long totalOrders, BigDecimal totalRevenueNet, BigDecimal totalRevenueGross,

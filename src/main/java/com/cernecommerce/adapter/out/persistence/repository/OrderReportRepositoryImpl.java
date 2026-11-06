@@ -87,7 +87,8 @@ public class OrderReportRepositoryImpl implements OrderReportRepository {
         return new OrderSummary(totalOrders, totals.getTotalRevenueNet(), totals.getTotalRevenueGross(),
                 averageTicket, revenueByChannel, ordersByStatus, cancelledOrRefundedRate,
                 dailyRevenue, topProducts,
-                orderItemJpaRepository.sumPromotionDiscount(channelName, statusName, customerId, warehouseCode, from, to));
+                orderItemJpaRepository.sumPromotionDiscount(channelName, statusName, customerId, warehouseCode, from, to),
+                totals.getDeliveryFeeTotal(), totals.getServiceFeeTotal());
     }
 
     @Override

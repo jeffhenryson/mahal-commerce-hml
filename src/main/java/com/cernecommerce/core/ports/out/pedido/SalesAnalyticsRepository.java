@@ -37,6 +37,9 @@ public interface SalesAnalyticsRepository {
     List<SalesAnalytics.SlowMover> slowMovers(String warehouseCode, Instant from, Instant to, BigDecimal maxSold,
             int limit);
 
+    /** @return {@code false} se não havia meta para o mês */
+    boolean deleteGoal(YearMonth month);
+
     Optional<SalesGoal> findGoal(YearMonth month);
 
     SalesGoal saveGoal(SalesGoal goal);

@@ -448,6 +448,8 @@ public class OrderDTOConverter {
                 .collect(Collectors.toMap(e -> e.getKey().name(), Map.Entry::getValue)));
         dto.setOrdersByStatus(summary.ordersByStatus().entrySet().stream()
                 .collect(Collectors.toMap(e -> e.getKey().name(), Map.Entry::getValue)));
+        dto.setDeliveryFeeTotal(summary.deliveryFeeTotal());
+        dto.setServiceFeeTotal(summary.serviceFeeTotal());
         dto.setCancelledOrRefundedRate(summary.cancelledOrRefundedRate());
         dto.setDailyRevenue(summary.dailyRevenue().stream().map(this::toResponse).toList());
         dto.setTopProducts(summary.topProducts().stream().map(this::toResponse).toList());

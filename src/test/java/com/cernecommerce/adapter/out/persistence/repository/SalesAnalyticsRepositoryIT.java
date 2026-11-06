@@ -7,7 +7,11 @@ import com.cernecommerce.core.domain.model.estoque.Pricing;
 import com.cernecommerce.core.domain.model.estoque.WarehouseType;
 import com.cernecommerce.core.domain.model.pagamento.OrderPayment;
 import com.cernecommerce.core.domain.model.pagamento.PaymentMethod;
+import com.cernecommerce.core.domain.model.pedido.DeliveryAddress;
+import com.cernecommerce.core.domain.model.pedido.DeliveryMethod;
+import com.cernecommerce.core.domain.model.pedido.DeliveryType;
 import com.cernecommerce.core.domain.model.pedido.Order;
+import com.cernecommerce.core.domain.model.pedido.OrderDelivery;
 import com.cernecommerce.core.domain.model.pedido.OrderItem;
 import com.cernecommerce.core.domain.model.pedido.OrderSummary;
 import com.cernecommerce.core.domain.model.pedido.SalesAnalytics;
@@ -176,6 +180,42 @@ class SalesAnalyticsRepositoryIT {
         assertThat(movers.get(0).stockValue()).isEqualByComparingTo("500.00");
         assertThat(movers.get(0).lastSoldAt()).isEqualTo(Instant.parse("2026-06-01T15:00:00Z"));
         assertThat(movers.get(1).lastSoldAt()).isNull();
+    }
+
+    @Test
+    void summarySeparaOFreteDoLiquido() {
+        String wh = deposito();
+        Instant t = Instant.parse("2026-10-16T18:00:00Z");
+        Order o = orderRepository.save(Order.openBalcao(1L, wh, null,
+                        List.of(OrderItem.fromCatalog("AN-SKU", new BigDecimal("2"), PRECO, null)),
+                        new OrderDelivery(DeliveryType.ENTREGA,
+                                new DeliveryAddress("Rua A", "10", null, null, null, "Botucatu", "SP", null, null),
+                                DeliveryMethod.APP_99, null, null, null, null, null, new BigDecimal("8.00")))
+                .reserved(orderRepository.nextOrderNumber(), null, Instant.now()));
+        em.flush();
+        em.createQuery("UPDATE OrderEntity o SET o.createdAt = :t WHERE o.id = :id")
+                .setParameter("t", t).setParameter("id", o.id()).executeUpdate();
+        em.clear();
+
+        OrderSummary summary = orderReportRepository.summarize(null, null, null, wh, t.minusSeconds(60),
+                t.plusSeconds(60), 10);
+
+        assertThat(summary.totalRevenueNet()).isEqualByComparingTo("20.00");
+        assertThat(summary.deliveryFeeTotal()).isEqualByComparingTo("8.00");
+        assertThat(summary.serviceFeeTotal()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void metaApagadaSomeEApagarDeNovoAvisa() {
+        YearMonth mes = YearMonth.of(2031, 3);
+        analytics.saveGoal(new SalesGoal(mes, new BigDecimal("1000.00"), "dono", Instant.now()));
+        em.flush();
+
+        assertThat(analytics.deleteGoal(mes)).isTrue();
+        em.flush();
+
+        assertThat(analytics.findGoal(mes)).isEmpty();
+        assertThat(analytics.deleteGoal(mes)).isFalse();
     }
 
     @Test

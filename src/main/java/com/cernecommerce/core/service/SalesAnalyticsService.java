@@ -179,6 +179,14 @@ public class SalesAnalyticsService implements SalesAnalyticsUseCase {
 
     @Override
     @Transactional
+    public void deleteGoal(YearMonth month) {
+        if (!repository.deleteGoal(month)) {
+            throw new SalesGoalNotFoundException(month);
+        }
+    }
+
+    @Override
+    @Transactional
     public SalesGoal saveGoal(YearMonth month, BigDecimal amount, String username) {
         return repository.saveGoal(new SalesGoal(month, amount, username, clock.instant()));
     }

@@ -33,4 +33,11 @@ public class OrderSummaryResponseDTO {
 
     @Schema(description = "Desconto de promoção por quantidade (\"leve 4 por R$ 10\") no período.")
     private java.math.BigDecimal promotionDiscountTotal;
+
+    @Schema(description = "Frete dos mesmos pedidos de totalRevenueNet, que não o inclui. A soma de "
+            + "/orders/analytics/payment-methods é totalRevenueNet + deliveryFeeTotal + serviceFeeTotal.")
+    private java.math.BigDecimal deliveryFeeTotal;
+
+    @Schema(description = "Taxa de serviço das mesas, dos mesmos pedidos de totalRevenueNet, que não a inclui.")
+    private java.math.BigDecimal serviceFeeTotal;
 }

@@ -20,6 +20,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -67,8 +68,10 @@ public class SalesAnalyticsController {
 
     @Operation(summary = "Receita por forma de pagamento",
             description = "Linhas CAPTURED e Marcado (ON_ACCOUNT) por método, com o troco descontado do dinheiro; "
-                    + "pedido pago com dois métodos entra em cada um pelo valor real. A soma bate com "
-                    + "totalRevenueNet. `orders` conta pedidos distintos. Maior valor primeiro.")
+                    + "pedido pago com dois métodos entra em cada um pelo valor real. É o que o cliente pagou, "
+                    + "então a soma é totalRevenueNet + deliveryFeeTotal + serviceFeeTotal de /orders/summary. "
+                    + "`orders` conta pedidos distintos. Maior valor primeiro.")
+    @ApiResponse(responseCode = "200", description = "OK")
     @ApiResponse(responseCode = "400", description = "INVALID_REPORT_PERIOD", content = @Content)
     @GetMapping("/orders/analytics/payment-methods")
     @PreAuthorize("hasAuthority('ORDER_READ')")
@@ -150,6 +153,23 @@ public class SalesAnalyticsController {
         publisher.publishEvent(AuditEvent.of(EventType.SALES_GOAL_UPDATED, authentication.getName(),
                 Map.of("month", saved.month().toString(), "amount", saved.amount().toPlainString())));
         return GoalResponse.of(saved);
+    }
+
+    @Operation(summary = "Apaga a meta do mês", description = "Exige SALES_GOAL_MANAGE. Auditado.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Apagada"),
+            @ApiResponse(responseCode = "400", description = "Mês inválido", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content),
+            @ApiResponse(responseCode = "404", description = "SALES_GOAL_NOT_FOUND — sem meta para o mês", content = @Content)
+    })
+    @DeleteMapping("/vendas/metas/{month}")
+    @PreAuthorize("hasAuthority('SALES_GOAL_MANAGE')")
+    public ResponseEntity<Void> deleteGoal(@PathVariable String month, Authentication authentication) {
+        YearMonth parsed = month(month);
+        useCase.deleteGoal(parsed);
+        publisher.publishEvent(AuditEvent.of(EventType.SALES_GOAL_DELETED, authentication.getName(),
+                Map.of("month", parsed.toString())));
+        return ResponseEntity.noContent().build();
     }
 
     public record GoalRequest(@NotNull @Schema(example = "15000.00") BigDecimal amount) {

@@ -167,6 +167,17 @@ public class SalesAnalyticsRepositoryImpl implements SalesAnalyticsRepository {
 
     @Override
     @Transactional
+    public boolean deleteGoal(YearMonth month) {
+        SalesGoalEntity entity = em.find(SalesGoalEntity.class, month.toString());
+        if (entity == null) {
+            return false;
+        }
+        em.remove(entity);
+        return true;
+    }
+
+    @Override
+    @Transactional
     public SalesGoal saveGoal(SalesGoal goal) {
         SalesGoalEntity e = Optional.ofNullable(em.find(SalesGoalEntity.class, goal.month().toString()))
                 .orElseGet(SalesGoalEntity::new);

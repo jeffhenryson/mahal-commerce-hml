@@ -153,7 +153,9 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
      */
     @Query("""
             SELECT COUNT(o) AS orderCount, COALESCE(SUM(o.netAmount), 0) AS totalRevenueNet,
-                   COALESCE(SUM(o.totalAmount), 0) AS totalRevenueGross
+                   COALESCE(SUM(o.totalAmount), 0) AS totalRevenueGross,
+                   COALESCE(SUM(o.deliveryFee), 0) AS deliveryFeeTotal,
+                   COALESCE(SUM(o.serviceFeeAmount), 0) AS serviceFeeTotal
             FROM OrderEntity o
             WHERE (:channel    IS NULL OR o.channel    = :channel)
               AND (:status     IS NULL OR o.status     = :status)
@@ -215,6 +217,8 @@ public interface OrderJpaRepository extends JpaRepository<OrderEntity, Long>,
         long getOrderCount();
         BigDecimal getTotalRevenueNet();
         BigDecimal getTotalRevenueGross();
+        BigDecimal getDeliveryFeeTotal();
+        BigDecimal getServiceFeeTotal();
     }
 
     interface ChannelRevenueProjection {

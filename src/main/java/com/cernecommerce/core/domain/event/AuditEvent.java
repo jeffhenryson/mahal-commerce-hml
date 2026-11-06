@@ -173,6 +173,7 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         INTEGRATION_UPDATED,
         // Pendência 9 — meta mensal de faturamento.
         SALES_GOAL_UPDATED,
+        SALES_GOAL_DELETED,
         // Financeiro (FIN-F004)
         CASH_FLOW_ENTRY_CREATED, CASH_FLOW_ENTRY_UPDATED, CASH_FLOW_ENTRY_DELETED
     }

@@ -32,6 +32,9 @@ public interface SalesAnalyticsUseCase {
     /** @throws com.cernecommerce.core.domain.exception.pedido.SalesGoalNotFoundException sem meta no mês */
     SalesGoal getGoal(YearMonth month);
 
+    /** @throws com.cernecommerce.core.domain.exception.pedido.SalesGoalNotFoundException sem meta para o mês */
+    void deleteGoal(YearMonth month);
+
     /** Grava ou substitui a meta do mês (idempotente). */
     SalesGoal saveGoal(YearMonth month, BigDecimal amount, String username);
 }
