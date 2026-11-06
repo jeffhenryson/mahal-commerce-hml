@@ -572,10 +572,17 @@ public class PdvService implements PdvUseCase {
             }
             for (KitSelection selection : kits) {
                 KitQuote quote = kitBuilder.quote(selection, KitChannel.PDV);
+                List<KitSelection.Pick> unmatchedPicks = new ArrayList<>(selection.picks());
                 for (KitQuote.Line line : quote.lines()) {
                     EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(line.sku());
+                    KitSelection.Pick pick = takePick(unmatchedPicks, line);
+                    BigDecimal grantedDiscount = pick == null || pick.discountAmount() == null
+                            ? BigDecimal.ZERO : pick.discountAmount();
                     OrderItem item = OrderItem.fromCatalog(line.sku(), BigDecimal.ONE, saleInfo.pricing(),
-                            line.discountAmount(), saleInfo.productName());
+                            line.discountAmount().add(grantedDiscount), saleInfo.productName());
+                    if (pick != null && pick.note() != null) {
+                        item = item.withNotes(pick.note());
+                    }
                     CashbackRate resolvedRate = saleInfo.category() != null
                             ? cashbackUseCase.resolveApplicableRate(line.sku(), saleInfo.category())
                             : cashbackUseCase.resolveApplicableRate(line.sku());
@@ -583,7 +590,8 @@ public class PdvService implements PdvUseCase {
                         item = item.withCashbackPercent(resolvedRate.percent());
                     }
                     orderItems.add(item);
-                    kitDiscountTotal = kitDiscountTotal.add(item.discountAmount());
+                    // Só o desconto da cotação fica fora do teto. O concedido na linha conta, como o do item avulso.
+                    kitDiscountTotal = kitDiscountTotal.add(line.discountAmount());
                     promotionCommands.add(new SaleItemCommand(line.sku(), BigDecimal.ONE, BigDecimal.ZERO, null,
                             1, null));
                 }
@@ -924,5 +932,16 @@ public class PdvService implements PdvUseCase {
         if (percent.compareTo(maxDiscountPercent) > 0) {
             throw new DiscountLimitExceededException(percent, maxDiscountPercent);
         }
+    }
+
+    /** A escolha que originou a linha da cotação. Duas escolhas iguais casam na ordem em que vieram. */
+    private static KitSelection.Pick takePick(List<KitSelection.Pick> picks, KitQuote.Line line) {
+        for (int i = 0; i < picks.size(); i++) {
+            KitSelection.Pick pick = picks.get(i);
+            if (pick.stepId().equals(line.stepId()) && pick.sku().equals(line.sku())) {
+                return picks.remove(i);
+            }
+        }
+        return null;
     }
 }

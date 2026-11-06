@@ -42,8 +42,9 @@ public class SaleRequest {
             + "Esse desconto NÃO exige PDV_SALE_DISCOUNT e não conta para o teto de desconto (como na "
             + "comanda), e as unidades do kit ficam fora da promoção por quantidade. Kit que não fecha "
             + "mais: 422 com code KIT_* (KIT_NOT_AVAILABLE, KIT_ITEM_NOT_SELLABLE, KIT_REQUIRED_STEP_MISSING…). "
-            + "Não mande as linhas do kit também em `items`.")
-    private List<KitSelectionRequest> kits;
+            + "Não mande as linhas do kit também em `items`. Cada escolha aceita `note` e `discountAmount`; "
+            + "este é um desconto concedido, com a permissão e o teto dos itens avulsos.")
+    private List<SaleKitSelectionRequest> kits;
 
     /** Venda vazia: nem item avulso nem kit. */
     @com.fasterxml.jackson.annotation.JsonIgnore

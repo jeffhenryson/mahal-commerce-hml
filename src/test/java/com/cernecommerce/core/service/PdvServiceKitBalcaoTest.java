@@ -161,6 +161,35 @@ class PdvServiceKitBalcaoTest {
         verify(orderRepository, never()).save(any());
     }
 
+    private static KitSelection comDesconto(String desconto) {
+        return new KitSelection(5L, List.of(
+                new KitSelection.Pick(1L, "ESS", "Sem gelo", new BigDecimal(desconto)),
+                new KitSelection.Pick(2L, "SEDA")));
+    }
+
+    @Test
+    void observacaoEDescontoDaEscolhaVaoParaALinhaDoKit() {
+        KitSelection selecao = comDesconto("1.00");
+        when(kitBuilder.quote(selecao, KitChannel.PDV)).thenReturn(COTACAO);
+
+        Order order = vender(List.of(), List.of(selecao), "25.80", PromotionCheck.strict(null));
+
+        assertThat(order.netAmount()).isEqualByComparingTo("25.80");
+        OrderItem essencia = order.items().get(0);
+        assertThat(essencia.discountAmount()).isEqualByComparingTo("7.00");
+        assertThat(essencia.notes()).isEqualTo("Sem gelo");
+    }
+
+    @Test
+    void descontoConcedidoNaLinhaDoKitContaNoTeto() {
+        KitSelection selecao = comDesconto("5.00");
+        when(kitBuilder.quote(selecao, KitChannel.PDV)).thenReturn(COTACAO);
+
+        // R$ 5,00 concedidos sobre R$ 33,50: 14,9% > 10%. Os R$ 6,70 do kit continuam fora da conta.
+        assertThatThrownBy(() -> vender(List.of(), List.of(selecao), "21.80", PromotionCheck.strict(null)))
+                .isInstanceOf(DiscountLimitExceededException.class);
+    }
+
     @Test
     void kitQueNaoFechaMaisPropagaKitStarAntesDeMexerNoEstoque() {
         when(kitBuilder.quote(SELECAO, KitChannel.PDV)).thenThrow(

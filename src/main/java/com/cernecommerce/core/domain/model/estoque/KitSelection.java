@@ -1,5 +1,6 @@
 package com.cernecommerce.core.domain.model.estoque;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -18,7 +19,17 @@ public record KitSelection(Long templateId, List<Pick> picks) {
         picks = picks == null ? List.of() : List.copyOf(picks);
     }
 
-    public record Pick(Long stepId, String sku) {
+    /**
+     * @param note           observação da linha; só a venda de balcão preenche
+     * @param discountAmount desconto concedido além do desconto do kit; só a venda de balcão preenche, e ele
+     *                       exige a permissão de desconto e conta no teto. Nunca vem do carrinho do cliente.
+     */
+    public record Pick(Long stepId, String sku, String note, BigDecimal discountAmount) {
+
+        public Pick(Long stepId, String sku) {
+            this(stepId, sku, null, null);
+        }
+
         public Pick {
             if (stepId == null) {
                 throw new IllegalArgumentException("stepId é obrigatório");

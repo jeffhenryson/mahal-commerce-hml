@@ -307,12 +307,13 @@ public class PdvController {
             throw new SaleEmptyException();
         }
         List<SaleItemCommand> items = orderConverter.toCommands(request.getItems());
-        // Kit montável: o desconto é da cotação do servidor, não do atendente. Por isso só os itens
-        // avulsos passam por requireDiscountAuthority.
+        // Kit montável: o desconto do kit é da cotação do servidor, não do atendente, e não pede permissão.
+        // O que pede é o desconto que o atendente deu a mais numa linha do kit.
         List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits =
                 orderConverter.toKitSelections(request.getKits());
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         requireDiscountAuthority(items, authentication);
+        requireDiscountAuthorityForKits(kits, authentication);
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
@@ -533,9 +534,23 @@ public class PdvController {
         boolean hasDiscount = items.stream()
                 .map(SaleItemCommand::discountAmount)
                 .anyMatch(discount -> discount != null && discount.compareTo(BigDecimal.ZERO) > 0);
-        if (!hasDiscount) {
-            return;
+        if (hasDiscount) {
+            requireDiscountPermission(authentication);
         }
+    }
+
+    private void requireDiscountAuthorityForKits(List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
+            Authentication authentication) {
+        boolean hasDiscount = kits.stream()
+                .flatMap(kit -> kit.picks().stream())
+                .map(com.cernecommerce.core.domain.model.estoque.KitSelection.Pick::discountAmount)
+                .anyMatch(discount -> discount != null && discount.compareTo(BigDecimal.ZERO) > 0);
+        if (hasDiscount) {
+            requireDiscountPermission(authentication);
+        }
+    }
+
+    private void requireDiscountPermission(Authentication authentication) {
         boolean allowed = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch(DISCOUNT_AUTHORITY::equals);

@@ -58,7 +58,7 @@ public class OrderDTOConverter {
 
     /** Kits montáveis da venda de balcão. Nulo vale lista vazia. */
     public List<com.cernecommerce.core.domain.model.estoque.KitSelection> toKitSelections(
-            List<com.cernecommerce.adapter.in.dtos.request.KitSelectionRequest> requests) {
+            List<com.cernecommerce.adapter.in.dtos.request.SaleKitSelectionRequest> requests) {
         if (requests == null) {
             return List.of();
         }
@@ -66,7 +66,7 @@ public class OrderDTOConverter {
                 .map(r -> new com.cernecommerce.core.domain.model.estoque.KitSelection(r.getTemplateId(),
                         r.getPicks() == null ? List.of() : r.getPicks().stream()
                                 .map(p -> new com.cernecommerce.core.domain.model.estoque.KitSelection.Pick(
-                                        p.getStepId(), p.getSku()))
+                                        p.getStepId(), p.getSku(), p.getNote(), p.getDiscountAmount()))
                                 .toList()))
                 .toList();
     }
