@@ -24,6 +24,13 @@ public class User {
     private AuthProvider authProvider = AuthProvider.LOCAL;
     private UserType userType = UserType.OPERATOR;
     private Long customerId;
+    private String fullName;
+    private String phone;
+    private boolean twoFactorRequired;
+    private boolean mustChangePassword;
+    private Instant lastLoginAt;
+    private String lastLoginIp;
+    private Instant deletedAt;
 
     User() {
     }
@@ -125,6 +132,35 @@ public class User {
     public void changePassword(String hashedPassword) {
         Objects.requireNonNull(hashedPassword, "hashedPassword is required");
         this.password = hashedPassword;
+        this.mustChangePassword = false;
+    }
+
+    /** Senha definida por um admin: a pessoa troca no próximo login. */
+    public void setTemporaryPassword(String hashedPassword) {
+        changePassword(hashedPassword);
+        this.mustChangePassword = true;
+    }
+
+    public void requireTwoFactor(boolean required) {
+        this.twoFactorRequired = required;
+    }
+
+    public void updateContact(String fullName, String phone) {
+        this.fullName = fullName;
+        this.phone = phone;
+    }
+
+    /** Campos de segurança e contato lidos do banco. Fora de {@code fromPersisted}, que já tem 14 parâmetros. */
+    public User withSecurityState(String fullName, String phone, boolean twoFactorRequired,
+            boolean mustChangePassword, Instant lastLoginAt, String lastLoginIp, Instant deletedAt) {
+        this.fullName = fullName;
+        this.phone = phone;
+        this.twoFactorRequired = twoFactorRequired;
+        this.mustChangePassword = mustChangePassword;
+        this.lastLoginAt = lastLoginAt;
+        this.lastLoginIp = lastLoginIp;
+        this.deletedAt = deletedAt;
+        return this;
     }
 
     public void rename(String newUsername) {
@@ -217,4 +253,11 @@ public class User {
     public UserType getUserType() { return userType; }
     public Long getCustomerId() { return customerId; }
     public boolean isCustomer() { return userType == UserType.CUSTOMER; }
+    public String getFullName() { return fullName; }
+    public String getPhone() { return phone; }
+    public boolean isTwoFactorRequired() { return twoFactorRequired; }
+    public boolean isMustChangePassword() { return mustChangePassword; }
+    public Instant getLastLoginAt() { return lastLoginAt; }
+    public String getLastLoginIp() { return lastLoginIp; }
+    public Instant getDeletedAt() { return deletedAt; }
 }

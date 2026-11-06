@@ -22,6 +22,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         USER_CREATED, USER_DELETED, USER_UPDATED, USER_EMAIL_CHANGED,
         USER_ROLE_ASSIGNED, USER_ROLE_REMOVED, USER_ENABLED, USER_DISABLED,
         USER_PASSWORD_CHANGED, USER_INVITE_ACCEPTED,
+        // Ações de um admin sobre a conta de outra pessoa
+        USER_PASSWORD_RESET_SENT, USER_TEMP_PASSWORD_SET, USER_2FA_REQUIRED, USER_2FA_RESET,
+        USER_SESSIONS_REVOKED, USER_EMAIL_FORCED, USER_RESTORED,
         // Password reset
         PASSWORD_RESET_REQUESTED, PASSWORD_RESET_COMPLETED,
         // Email change

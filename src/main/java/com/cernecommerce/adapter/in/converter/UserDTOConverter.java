@@ -29,6 +29,11 @@ public class UserDTOConverter {
         dto.setRoles(roles(user));
         dto.setPermissions(permissions(user));
         dto.setCustomerId(user.getCustomerId());
+        dto.setFullName(user.getFullName());
+        dto.setPhone(user.getPhone());
+        dto.setTwoFactorRequired(user.isTwoFactorRequired());
+        dto.setLastLoginAt(user.getLastLoginAt());
+        dto.setDeletedAt(user.getDeletedAt());
         return dto;
     }
 

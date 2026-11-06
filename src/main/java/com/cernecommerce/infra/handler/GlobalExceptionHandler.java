@@ -1073,6 +1073,24 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "TOTP_ALREADY_ENABLED", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.user.SelfTargetNotAllowedException.class)
+    public ResponseEntity<ApiError> handleSelfTargetNotAllowed(
+            com.cernecommerce.core.domain.exception.user.SelfTargetNotAllowedException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "SELF_TARGET_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.user.TargetProtectedException.class)
+    public ResponseEntity<ApiError> handleTargetProtected(
+            com.cernecommerce.core.domain.exception.user.TargetProtectedException ex, HttpServletRequest req) {
+        return error(HttpStatus.FORBIDDEN, ex.getMessage(), "TARGET_PROTECTED", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.auth.PendingLoginTokenInvalidException.class)
+    public ResponseEntity<ApiError> handlePendingLoginTokenInvalid(
+            com.cernecommerce.core.domain.exception.auth.PendingLoginTokenInvalidException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "PENDING_LOGIN_TOKEN_INVALID", req);
+    }
+
     @ExceptionHandler(TotpSetupRequiredException.class)
     public ResponseEntity<ApiError> handleTotpSetupRequired(TotpSetupRequiredException ex, HttpServletRequest req) {
         return error(HttpStatus.FORBIDDEN, ex.getMessage(), "TOTP_SETUP_REQUIRED", req);

@@ -13,6 +13,17 @@ public interface UserRepository {
 
     Optional<User> findByUsername(String username);
 
+    /** Conta com soft delete. As demais buscas não enxergam essas contas. */
+    Optional<User> findDeletedById(Long id);
+
+    PageResult<User> findDeleted(boolean excludeDevAccounts, int page, int size);
+
+    /** A conta volta inativa. */
+    void restoreDeleted(Long id);
+
+    /** Update direto: login concorrente com edição da conta não pode sobrescrever o resto do cadastro. */
+    void recordLogin(String username, java.time.Instant at, String ip);
+
     PageResult<User> findAll(int page, int size);
 
     void deleteById(Long id);

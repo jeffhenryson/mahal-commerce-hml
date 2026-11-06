@@ -34,6 +34,12 @@ public class TotpConfigRepositoryImpl implements TotpConfigRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public java.util.Set<String> findEnabledUsernames(java.util.Collection<String> usernames) {
+        return usernames.isEmpty() ? java.util.Set.of() : jpaRepository.findEnabledUsernames(usernames);
+    }
+
+    @Override
     public void enable(String username, Instant confirmedAt) {
         jpaRepository.enable(username, confirmedAt);
     }

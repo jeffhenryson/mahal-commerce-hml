@@ -46,6 +46,8 @@ class SecurityArchitectureTest {
     private static final Set<String> PUBLIC_ROUTE_CONTROLLERS = Set.of(
             "AuthController", "OAuthController", "RegistrationController", "DevAuthController",
             "TotpController", "ShopController",
+            // Pendências do login: públicas, e o token de pendência (uso único, 10 min) é a credencial.
+            "PendingLoginController",
             // ECM-F008: montador de kit da vitrine, público como o catálogo (rotas em SecurityConfig).
             "ShopKitController",
             // ECM-F004 (Fatia 10): é o gateway de pagamento chamando, sem sessão de usuário. A

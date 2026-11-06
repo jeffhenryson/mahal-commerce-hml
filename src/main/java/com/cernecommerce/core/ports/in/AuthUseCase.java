@@ -11,7 +11,10 @@ public interface AuthUseCase {
     LoginResponse login(String username, String password);
 
     /** Conclui o login após validação do código TOTP ou backup code. */
-    TokenPair completeTwoFactorLogin(String challengeToken, String totpCode);
+    LoginResponse completeTwoFactorLogin(String challengeToken, String totpCode);
+
+    /** Grava o último acesso, depois de emitir os tokens. Não vale para o refresh. */
+    void recordLogin(String username, String ip);
 
     /**
      * Conclui a elevação DEV: valida o segundo TOTP consecutivo e emite um access token

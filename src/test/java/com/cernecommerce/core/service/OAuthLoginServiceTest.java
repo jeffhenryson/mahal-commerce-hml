@@ -38,6 +38,9 @@ class OAuthLoginServiceTest {
     @Mock RefreshTokenPort refreshTokenPort;
     @Mock UserAuthoritiesPort userAuthoritiesPort;
     @Mock UserCachePort userCachePort;
+    @Mock com.cernecommerce.core.ports.out.twofa.TwoFactorAuthPort twoFactorAuth;
+    @Mock com.cernecommerce.core.ports.out.SystemConfigPort systemConfig;
+    @Mock com.cernecommerce.core.ports.out.token.PendingLoginTokenRepository pendingTokens;
 
     OAuthLoginService service;
 
@@ -46,8 +49,9 @@ class OAuthLoginServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthLoginService(tokenVerifier, userRepository,
-                accessTokenPort, refreshTokenPort, userAuthoritiesPort, userCachePort);
+        service = new OAuthLoginService(tokenVerifier, userRepository, userAuthoritiesPort, userCachePort,
+                twoFactorAuth, new com.cernecommerce.core.auth.LoginStepResolver(userRepository, accessTokenPort,
+                        refreshTokenPort, twoFactorAuth, systemConfig, pendingTokens));
     }
 
     // ── happy paths ───────────────────────────────────────────────────────────
@@ -176,5 +180,51 @@ class OAuthLoginServiceTest {
         assertThat(saved.getValue().getGoogleId()).isEqualTo("google-123");
         assertThat(saved.getValue().getUsername()).isEqualTo("alice"); // username não muda
         assertThat(result.username()).isEqualTo("alice");
+    }
+
+    // ── exigências do login ────────────────────
+
+    private User contaGoogle() {
+        return User.fromPersisted(1L, "alice", null, true, "alice@example.com",
+                true, null, null, null, Set.of(), "google-123", AuthProvider.GOOGLE);
+    }
+
+    @Test
+    void loginWithGoogle_com_2fa_ativo_devolve_desafio_e_nao_emite_tokens() {
+        when(tokenVerifier.verify(anyString())).thenReturn(GOOGLE_INFO);
+        when(userRepository.findByGoogleId("google-123")).thenReturn(Optional.of(contaGoogle()));
+        when(twoFactorAuth.isEnabled("alice")).thenReturn(true);
+        when(twoFactorAuth.issueChallengeToken("alice")).thenReturn("challenge");
+
+        OAuthLoginResult result = service.loginWithGoogle("id-token");
+
+        assertThat(result.login().challengeToken()).isEqualTo("challenge");
+        assertThat(result.tokenPair()).isNull();
+        verifyNoInteractions(accessTokenPort, refreshTokenPort);
+    }
+
+    @Test
+    void loginWithGoogle_com_2fa_exigido_sem_cadastro_devolve_token_de_cadastro() {
+        User user = contaGoogle();
+        user.requireTwoFactor(true);
+        when(tokenVerifier.verify(anyString())).thenReturn(GOOGLE_INFO);
+        when(userRepository.findByGoogleId("google-123")).thenReturn(Optional.of(user));
+
+        OAuthLoginResult result = service.loginWithGoogle("id-token");
+
+        assertThat(result.login().enrollmentToken()).isNotBlank();
+        verifyNoInteractions(accessTokenPort, refreshTokenPort);
+    }
+
+    @Test
+    void loginWithGoogle_ignora_a_troca_de_senha_pendente() {
+        User user = contaGoogle();
+        user.setTemporaryPassword("hash");
+        when(tokenVerifier.verify(anyString())).thenReturn(GOOGLE_INFO);
+        when(userRepository.findByGoogleId("google-123")).thenReturn(Optional.of(user));
+        when(accessTokenPort.generateFor(eq("alice"), any())).thenReturn("access-token");
+        when(refreshTokenPort.issue("alice")).thenReturn("refresh-token");
+
+        assertThat(service.loginWithGoogle("id-token").tokenPair()).isNotNull();
     }
 }

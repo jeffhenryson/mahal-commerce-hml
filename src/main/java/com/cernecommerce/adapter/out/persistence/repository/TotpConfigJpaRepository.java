@@ -12,6 +12,9 @@ import java.util.Optional;
 public interface TotpConfigJpaRepository extends JpaRepository<TotpConfigEntity, Long> {
     Optional<TotpConfigEntity> findByUsername(String username);
 
+    @Query("select t.username from TotpConfigEntity t where t.enabled = true and t.username in :usernames")
+    java.util.Set<String> findEnabledUsernames(@Param("usernames") java.util.Collection<String> usernames);
+
     @Modifying
     @Query("update TotpConfigEntity t set t.enabled = true, t.confirmedAt = :confirmedAt where t.username = :username")
     void enable(@Param("username") String username, @Param("confirmedAt") Instant confirmedAt);

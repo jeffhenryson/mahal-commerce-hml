@@ -13,6 +13,7 @@ import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.ports.in.UserUseCase;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
+import com.cernecommerce.core.domain.exception.user.TargetProtectedException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -90,6 +91,7 @@ public class UserController {
     @PreAuthorize("hasAuthority('USER_ROLE_ASSIGN')")
     public ResponseEntity<Void> assignRole(@PathVariable String username, @PathVariable String roleName,
             Authentication auth) {
+        requireCanTarget(username, auth);
         requireDevElevationIfAssigningDevRole(java.util.List.of(roleName), auth);
         useCase.assignRole(username, roleName);
         publisher.publishEvent(AuditEvent.of(EventType.USER_ROLE_ASSIGNED, username, Map.of("role", roleName)));
@@ -123,9 +125,12 @@ public class UserController {
     })
     @DeleteMapping("/{username}/roles/{roleName}")
     @PreAuthorize("hasAuthority('USER_ROLE_ASSIGN')")
-    public ResponseEntity<Void> removeRole(@PathVariable String username, @PathVariable String roleName) {
+    public ResponseEntity<Void> removeRole(@PathVariable String username, @PathVariable String roleName,
+            Authentication auth) {
+        requireCanTarget(username, auth);
         useCase.removeRole(username, roleName);
-        publisher.publishEvent(AuditEvent.of(EventType.USER_ROLE_REMOVED, username, Map.of("role", roleName)));
+        publisher.publishEvent(AuditEvent.of(EventType.USER_ROLE_REMOVED, username,
+                Map.of("role", roleName, "by", actor(auth))));
         return ResponseEntity.noContent().build();
     }
 
@@ -184,7 +189,11 @@ public class UserController {
     })
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_READ')")
-    public ResponseEntity<UserResponseDTO> get(@PathVariable Long id) {
+    public ResponseEntity<UserResponseDTO> get(@PathVariable Long id, Authentication auth) {
+        // Mesmo critério da listagem, que esconde as contas de dev de quem não é dev.
+        if (useCase.isDevAccount(id) && !AuthUtils.isDevAccess(auth)) {
+            throw new TargetProtectedException();
+        }
         return ResponseEntity.ok(withCustomerName(useCase.getUserById(id)));
     }
 
@@ -204,17 +213,26 @@ public class UserController {
             @RequestParam(defaultValue = "asc") String sortDir,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @io.swagger.v3.oas.annotations.Parameter(description = "true lista só as contas excluídas. Exige USER_STATUS.")
+            @RequestParam(defaultValue = "false") boolean deleted,
             Authentication auth) {
         Set<String> excludeRoles = AuthUtils.isDevAccess(auth) ? Set.of() : Set.of("ROLE_DEV");
-        PageResult<User> result = useCase.findFiltered(search, enabled, sortBy, sortDir, page, Math.min(size, 100), excludeRoles);
+        if (deleted && !AuthUtils.hasAuthority(auth, "USER_STATUS")) {
+            throw new org.springframework.security.access.AccessDeniedException("Listar contas excluídas exige USER_STATUS");
+        }
+        PageResult<User> result = deleted
+                ? useCase.findDeleted(!excludeRoles.isEmpty(), page, Math.min(size, 100))
+                : useCase.findFiltered(search, enabled, sortBy, sortDir, page, Math.min(size, 100), excludeRoles);
         // PLAT-F005 — nomes dos clientes vinculados numa consulta só por página.
         Map<Long, String> customerNames = useCase.getCustomerNames(
                 result.content().stream().map(User::getCustomerId).toList());
+        Set<String> totpEnabled = useCase.getTotpEnabledUsernames(result.content().stream().map(User::getUsername).toList());
         PageResult<UserResponseDTO> response = new PageResult<>(
                 result.content().stream()
                         // Sem vínculo não consulta o mapa: o vazio é Map.of(), que lança NPE em get(null).
-                        .map(u -> converter.toResponse(u,
-                                u.getCustomerId() == null ? null : customerNames.get(u.getCustomerId())))
+                        .map(u -> withTotp(converter.toResponse(u,
+                                u.getCustomerId() == null ? null : customerNames.get(u.getCustomerId())),
+                                totpEnabled))
                         .toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
@@ -231,6 +249,7 @@ public class UserController {
     @PostMapping("/{id}/invite/resend")
     @PreAuthorize("hasAuthority('USER_CREATE')")
     public ResponseEntity<Void> resendInvite(@PathVariable Long id, Authentication auth) {
+        requireCanTarget(id, auth);
         useCase.resendInvite(id);
         publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, auth == null ? "system" : auth.getName(),
                 Map.of("userId", id, "action", "invite-resent")));
@@ -245,9 +264,10 @@ public class UserController {
     })
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_DELETE')")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
+    public ResponseEntity<Void> delete(@PathVariable Long id, Authentication auth) {
+        requireCanTarget(id, auth);
         String username = useCase.deleteUser(id);
-        publisher.publishEvent(AuditEvent.of(EventType.USER_DELETED, username));
+        publisher.publishEvent(AuditEvent.of(EventType.USER_DELETED, username, Map.of("by", actor(auth))));
         return ResponseEntity.noContent().build();
     }
 
@@ -259,9 +279,10 @@ public class UserController {
     })
     @PutMapping("/{id}/disable")
     @PreAuthorize("hasAuthority('USER_STATUS')")
-    public ResponseEntity<Void> disable(@PathVariable Long id) {
+    public ResponseEntity<Void> disable(@PathVariable Long id, Authentication auth) {
+        requireCanTarget(id, auth);
         String username = useCase.setUserEnabled(id, false);
-        publisher.publishEvent(AuditEvent.of(EventType.USER_DISABLED, username));
+        publisher.publishEvent(AuditEvent.of(EventType.USER_DISABLED, username, Map.of("by", actor(auth))));
         return ResponseEntity.noContent().build();
     }
 
@@ -273,9 +294,10 @@ public class UserController {
     })
     @PutMapping("/{id}/enable")
     @PreAuthorize("hasAuthority('USER_STATUS')")
-    public ResponseEntity<Void> enable(@PathVariable Long id) {
+    public ResponseEntity<Void> enable(@PathVariable Long id, Authentication auth) {
+        requireCanTarget(id, auth);
         String username = useCase.setUserEnabled(id, true);
-        publisher.publishEvent(AuditEvent.of(EventType.USER_ENABLED, username));
+        publisher.publishEvent(AuditEvent.of(EventType.USER_ENABLED, username, Map.of("by", actor(auth))));
         return ResponseEntity.noContent().build();
     }
 
@@ -289,14 +311,19 @@ public class UserController {
     @PatchMapping("/{id}")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public ResponseEntity<UserResponseDTO> update(@PathVariable Long id,
-            @Valid @RequestBody UserUpdateRequest request) {
+            @Valid @RequestBody UserUpdateRequest request, Authentication auth) {
+        requireCanTarget(id, auth);
         UpdateProfileResult result = useCase.updateUser(id, request.getUsername(), request.getEmail());
         if (result.emailChangePending()) {
             publisher.publishEvent(AuditEvent.of(EventType.EMAIL_CHANGE_REQUESTED, result.user().getUsername()));
         } else {
             publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, result.user().getUsername()));
         }
-        return ResponseEntity.ok(withCustomerName(result.user()));
+        User updated = request.isFullNameSent() || request.isPhoneSent()
+                ? useCase.updateContact(id, request.isFullNameSent(), request.getFullName(), request.isPhoneSent(),
+                        request.getPhone())
+                : result.user();
+        return ResponseEntity.ok(withCustomerName(updated));
     }
 
     @Operation(summary = "Vincula o usuário a um cadastro de cliente do CRM",
@@ -311,7 +338,8 @@ public class UserController {
     @PutMapping("/{id}/customer")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
     public ResponseEntity<UserResponseDTO> linkCustomer(@PathVariable Long id,
-            @Valid @RequestBody UserCustomerLinkRequest request) {
+            @Valid @RequestBody UserCustomerLinkRequest request, Authentication auth) {
+        requireCanTarget(id, auth);
         User user = useCase.linkCustomer(id, request.getCustomerId());
         publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, user.getUsername(),
                 Map.of("customerId", user.getCustomerId())));
@@ -327,16 +355,44 @@ public class UserController {
     })
     @DeleteMapping("/{id}/customer")
     @PreAuthorize("hasAuthority('USER_UPDATE')")
-    public ResponseEntity<UserResponseDTO> unlinkCustomer(@PathVariable Long id) {
+    public ResponseEntity<UserResponseDTO> unlinkCustomer(@PathVariable Long id, Authentication auth) {
+        requireCanTarget(id, auth);
         User user = useCase.unlinkCustomer(id);
         publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, user.getUsername(),
                 Map.of("customerId", "removido")));
         return ResponseEntity.ok(withCustomerName(user));
     }
 
+    /**
+     * Conta de dev só é alterada por quem tem token elevado. A listagem já escondia essas contas, mas
+     * sem esta barreira quem tem USER_DELETE excluía um dev pelo id.
+     */
+    private void requireCanTarget(Long id, Authentication auth) {
+        if (useCase.isDevAccount(id) && !AuthUtils.hasAuthority(auth, "DEV_ELEVATED")) {
+            throw new TargetProtectedException();
+        }
+    }
+
+    private void requireCanTarget(String username, Authentication auth) {
+        if (useCase.isDevAccount(username) && !AuthUtils.hasAuthority(auth, "DEV_ELEVATED")) {
+            throw new TargetProtectedException();
+        }
+    }
+
+    private static String actor(Authentication auth) {
+        return auth == null ? "system" : auth.getName();
+    }
+
     private UserResponseDTO withCustomerName(User user) {
-        if (user.getCustomerId() == null) return converter.toResponse(user);
-        return converter.toResponse(user,
-                useCase.getCustomerNames(java.util.List.of(user.getCustomerId())).get(user.getCustomerId()));
+        Set<String> totpEnabled = useCase.getTotpEnabledUsernames(java.util.List.of(user.getUsername()));
+        if (user.getCustomerId() == null) return withTotp(converter.toResponse(user), totpEnabled);
+        return withTotp(converter.toResponse(user,
+                useCase.getCustomerNames(java.util.List.of(user.getCustomerId())).get(user.getCustomerId())),
+                totpEnabled);
+    }
+
+    private static UserResponseDTO withTotp(UserResponseDTO dto, Set<String> totpEnabled) {
+        dto.setTotpEnabled(totpEnabled.contains(dto.getUsername()));
+        return dto;
     }
 }

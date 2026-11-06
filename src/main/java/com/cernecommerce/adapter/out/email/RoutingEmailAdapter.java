@@ -88,6 +88,16 @@ public class RoutingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendTwoFactorRequired(String to, String username) {
+        route(p -> p.sendTwoFactorRequired(to, username));
+    }
+
+    @Override
+    public void sendEmailChangedByAdmin(String to, String username, SecurityEventContext context) {
+        route(p -> p.sendEmailChangedByAdmin(to, username, context));
+    }
+
+    @Override
     public void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context) {
         route(p -> p.sendGoogleLinkedAlert(to, username, context));
     }

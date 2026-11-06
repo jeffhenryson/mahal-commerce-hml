@@ -14,6 +14,38 @@ import java.util.List;
 import java.util.Optional;
 
 public interface UserJpaRepository extends JpaRepository<UserEntity, Long> {
+
+    // Query nativa de propósito: o @SQLRestriction da entidade esconde as contas excluídas do JPQL.
+    @Query(value = "select * from users where id = :id and deleted_at is not null", nativeQuery = true)
+    java.util.Optional<UserEntity> findDeletedById(@Param("id") Long id);
+
+    @Query(value = """
+            select u.* from users u
+            where u.deleted_at is not null and u.user_type = 'OPERATOR'
+              and (:excludeDev = false or not exists (
+                    select 1 from user_roles ur join roles r on r.id = ur.role_id
+                    where ur.user_id = u.id and r.name = 'ROLE_DEV'))
+            order by u.deleted_at desc, u.id desc
+            """, countQuery = """
+            select count(*) from users u
+            where u.deleted_at is not null and u.user_type = 'OPERATOR'
+              and (:excludeDev = false or not exists (
+                    select 1 from user_roles ur join roles r on r.id = ur.role_id
+                    where ur.user_id = u.id and r.name = 'ROLE_DEV'))
+            """, nativeQuery = true)
+    org.springframework.data.domain.Page<UserEntity> findDeleted(@Param("excludeDev") boolean excludeDev,
+            org.springframework.data.domain.Pageable pageable);
+
+    @Modifying
+    @Query(value = "update users set deleted_at = null, enabled = false where id = :id and deleted_at is not null",
+            nativeQuery = true)
+    void restoreDeleted(@Param("id") Long id);
+
+    @Modifying
+    @Query("update UserEntity u set u.lastLoginAt = :at, u.lastLoginIp = :ip where u.username = :username")
+    void recordLogin(@Param("username") String username,
+            @Param("at") java.time.Instant at,
+            @Param("ip") String ip);
     Optional<UserEntity> findByUsername(String username);
 
     @Query("select u from UserEntity u left join fetch u.roles r left join fetch r.permissions where u.username = :username")

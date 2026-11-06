@@ -91,7 +91,13 @@ import com.cernecommerce.core.service.ProductImageService;
 import com.cernecommerce.core.service.BugReportService;
 import com.cernecommerce.core.service.NotificationPreferenceService;
 import com.cernecommerce.core.service.NotificationService;
+import com.cernecommerce.core.auth.LoginStepResolver;
+import com.cernecommerce.core.ports.in.PendingLoginUseCase;
+import com.cernecommerce.core.ports.in.UserSecurityUseCase;
+import com.cernecommerce.core.service.UserSecurityService;
+import com.cernecommerce.core.ports.out.token.PendingLoginTokenRepository;
 import com.cernecommerce.core.service.OAuthLoginService;
+import com.cernecommerce.core.service.PendingLoginService;
 import com.cernecommerce.core.service.PermissionService;
 import com.cernecommerce.core.service.RoleService;
 import com.cernecommerce.core.service.StatsService;
@@ -279,9 +285,34 @@ class CoreBeanConfig {
             TokenBlocklistPort tokenBlocklist,
             LoginAttemptPort loginAttempt,
             TotpService totpService,
-            SystemConfigPort systemConfigPort) {
+            LoginStepResolver loginStepResolver) {
         return new AuthService(credentialVerifier, accessToken, refreshToken,
-                userAuthorities, tokenBlocklist, loginAttempt, totpService, systemConfigPort);
+                userAuthorities, tokenBlocklist, loginAttempt, totpService, loginStepResolver);
+    }
+
+    @Bean
+    LoginStepResolver loginStepResolver(UserRepository userRepository, AccessTokenPort accessToken,
+            RefreshTokenPort refreshToken, TotpService totpService, SystemConfigPort systemConfigPort,
+            PendingLoginTokenRepository pendingLoginTokenRepository) {
+        return new LoginStepResolver(userRepository, accessToken, refreshToken, totpService, systemConfigPort,
+                pendingLoginTokenRepository);
+    }
+
+    @Bean
+    UserSecurityUseCase userSecurityUseCase(UserRepository userRepository, UserUseCase userUseCase,
+            AuthUseCase authUseCase, PasswordHashPort passwordHashPort, RefreshTokenPort refreshToken,
+            TokenBlocklistPort tokenBlocklist, TotpConfigRepository totpConfigRepository,
+            TotpBackupCodeRepository totpBackupCodeRepository, UserCachePort userCachePort, EmailPort emailPort) {
+        return new UserSecurityService(userRepository, userUseCase, authUseCase, passwordHashPort, refreshToken,
+                tokenBlocklist, totpConfigRepository, totpBackupCodeRepository, userCachePort, emailPort);
+    }
+
+    @Bean
+    PendingLoginUseCase pendingLoginUseCase(PendingLoginTokenRepository pendingLoginTokenRepository,
+            UserRepository userRepository, UserAuthoritiesPort userAuthorities, UserCachePort userCachePort,
+            PasswordHashPort passwordHashPort, TotpService totpService, LoginStepResolver loginStepResolver) {
+        return new PendingLoginService(pendingLoginTokenRepository, userRepository, userAuthorities, userCachePort,
+                passwordHashPort, totpService, loginStepResolver);
     }
 
     @Bean
@@ -701,12 +732,12 @@ class CoreBeanConfig {
     @Bean
     OAuthLoginUseCase oAuthLoginUseCase(GoogleTokenVerifierPort tokenVerifier,
             UserRepository userRepository,
-            AccessTokenPort accessToken,
-            RefreshTokenPort refreshToken,
             UserAuthoritiesPort userAuthorities,
-            UserCachePort userCachePort) {
+            UserCachePort userCachePort,
+            TotpService totpService,
+            LoginStepResolver loginStepResolver) {
         return new OAuthLoginService(tokenVerifier, userRepository,
-                accessToken, refreshToken, userAuthorities, userCachePort);
+                userAuthorities, userCachePort, totpService, loginStepResolver);
     }
 
     @Bean

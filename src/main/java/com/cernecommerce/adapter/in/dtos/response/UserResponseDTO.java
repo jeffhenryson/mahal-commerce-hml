@@ -19,4 +19,11 @@ public class UserResponseDTO {
     /** PLAT-F005 — o cadastro de cliente do CRM ligado à conta; nulo sem vínculo. */
     private Long customerId;
     private String customerName;
+    private String fullName;
+    private String phone;
+    private boolean totpEnabled;
+    private boolean twoFactorRequired;
+    private Instant lastLoginAt;
+    /** Só nas contas excluídas ({@code GET /users?deleted=true}). */
+    private Instant deletedAt;
 }

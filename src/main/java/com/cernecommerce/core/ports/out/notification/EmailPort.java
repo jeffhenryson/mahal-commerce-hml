@@ -58,6 +58,12 @@ public interface EmailPort {
     /** Primeiro login com Google — conta criada ou vinculada ao Google. */
     void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context);
 
+    /** Um admin exigiu 2FA: o próximo login vai pedir a ativação. */
+    void sendTwoFactorRequired(String to, String username);
+
+    /** Vai para o endereço antigo, depois que um admin trocou o e-mail da conta. */
+    void sendEmailChangedByAdmin(String to, String username, SecurityEventContext context);
+
     /** Confirmação de pedido criado, disparada no checkout (marketplace). */
     void sendOrderConfirmation(String to, OrderEmailView order, String checkoutUrl);
 

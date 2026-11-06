@@ -77,6 +77,30 @@ public class UserRepositoryImpl implements UserRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public Optional<User> findDeletedById(Long id) {
+        return userRepo.findDeletedById(id).map(converter::toDomain);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<User> findDeleted(boolean excludeDevAccounts, int page, int size) {
+        Page<UserEntity> result = userRepo.findDeleted(excludeDevAccounts, PageRequest.of(page, size));
+        return new PageResult<>(result.getContent().stream().map(converter::toDomain).toList(), page, size,
+                result.getTotalElements(), result.getTotalPages());
+    }
+
+    @Override
+    public void restoreDeleted(Long id) {
+        userRepo.restoreDeleted(id);
+    }
+
+    @Override
+    public void recordLogin(String username, java.time.Instant at, String ip) {
+        userRepo.recordLogin(username, at, ip);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Optional<User> findByUsername(String username) {
         return userRepo.findByUsernameWithRoles(username).map(converter::toDomain);
     }

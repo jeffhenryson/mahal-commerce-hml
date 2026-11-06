@@ -44,6 +44,8 @@ final class EmailSamples {
             case TOKEN_THEFT -> port.sendTokenTheftAlert(to, user, context);
             case PASSWORD_RESET_ALERT -> port.sendPasswordResetAlert(to, user, context);
             case GOOGLE_LINKED -> port.sendGoogleLinkedAlert(to, user, context);
+            case TWO_FACTOR_REQUIRED -> port.sendTwoFactorRequired(to, user);
+            case EMAIL_CHANGED_BY_ADMIN -> port.sendEmailChangedByAdmin(to, user, context);
             case ORDER_CONFIRMATION -> port.sendOrderConfirmation(to, order(false), null);
             case ORDER_CONFIRMATION_DELIVERY -> port.sendOrderConfirmation(to, order(true), null);
             case ORDER_STATUS_UPDATE -> port.sendOrderStatusUpdate(to, order(true), OrderStageEmail

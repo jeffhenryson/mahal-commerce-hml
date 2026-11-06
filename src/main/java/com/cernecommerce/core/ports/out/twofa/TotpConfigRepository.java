@@ -10,6 +10,9 @@ public interface TotpConfigRepository {
 
     Optional<TotpConfig> findByUsername(String username);
 
+    /** Quem tem 2FA ativo entre os informados, numa consulta só. */
+    java.util.Set<String> findEnabledUsernames(java.util.Collection<String> usernames);
+
     void enable(String username, Instant confirmedAt);
 
     void deleteByUsername(String username);

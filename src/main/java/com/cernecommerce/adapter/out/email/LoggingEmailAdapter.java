@@ -74,6 +74,17 @@ public class LoggingEmailAdapter implements EmailPort {
     }
 
     @Override
+    public void sendTwoFactorRequired(String to, String username) {
+        log.info("DEV EMAIL >> to={} username={} [two-factor-required]", to, username);
+    }
+
+    @Override
+    public void sendEmailChangedByAdmin(String to, String username, SecurityEventContext context) {
+        log.info("DEV EMAIL >> to={} username={} context={} [security-alert:email-changed-by-admin]", to, username,
+                context);
+    }
+
+    @Override
     public void sendGoogleLinkedAlert(String to, String username, SecurityEventContext context) {
         log.info("DEV EMAIL >> to={} username={} context={} [security-alert:google-linked]", to, username, context);
     }

@@ -295,6 +295,40 @@ public class UserService implements UserUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public java.util.Set<String> getTotpEnabledUsernames(java.util.Collection<String> usernames) {
+        return totpConfigRepository.findEnabledUsernames(usernames);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<User> findDeleted(boolean excludeDevAccounts, int page, int size) {
+        return userRepository.findDeleted(excludeDevAccounts, page, size);
+    }
+
+    @Override
+    @Transactional
+    public User updateContact(Long id, boolean changeFullName, String fullName, boolean changePhone, String phone) {
+        User user = getUserById(id);
+        user.updateContact(changeFullName ? fullName : user.getFullName(), changePhone ? phone : user.getPhone());
+        return userRepository.save(user);
+    }
+
+    @Override
+    public boolean isDevAccount(Long id) {
+        return userRepository.findById(id).map(UserService::hasDevRole).orElse(false);
+    }
+
+    @Override
+    public boolean isDevAccount(String username) {
+        return userRepository.findByUsername(username).map(UserService::hasDevRole).orElse(false);
+    }
+
+    private static boolean hasDevRole(User user) {
+        return user.getRoles().stream().anyMatch(role -> "ROLE_DEV".equals(role.getName()));
+    }
+
+    @Override
     @Transactional
     public User linkCustomer(Long userId, Long customerId) {
         User user = getUserById(userId);

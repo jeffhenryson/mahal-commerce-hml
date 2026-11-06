@@ -2,8 +2,7 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.auth.AccountLockedException;
 import com.cernecommerce.core.domain.exception.auth.RefreshTokenAlreadyUsedException;
-import com.cernecommerce.core.domain.exception.auth.TotpSetupRequiredException;
-import com.cernecommerce.core.ports.out.SystemConfigPort;
+import com.cernecommerce.core.auth.LoginStepResolver;
 import com.cernecommerce.core.domain.model.auth.DevElevationResult;
 import com.cernecommerce.core.domain.model.auth.LoginResponse;
 import com.cernecommerce.core.domain.model.auth.SessionInfo;
@@ -33,7 +32,7 @@ public class AuthService implements AuthUseCase {
     private final TokenBlocklistPort tokenBlocklist;
     private final LoginAttemptPort loginAttempt;
     private final TwoFactorAuthPort twoFactorAuth;
-    private final SystemConfigPort systemConfig;
+    private final LoginStepResolver loginStep;
 
     public AuthService(CredentialVerifierPort credentialVerifier,
                        AccessTokenPort accessToken,
@@ -42,7 +41,7 @@ public class AuthService implements AuthUseCase {
                        TokenBlocklistPort tokenBlocklist,
                        LoginAttemptPort loginAttempt,
                        TwoFactorAuthPort twoFactorAuth,
-                       SystemConfigPort systemConfig) {
+                       LoginStepResolver loginStep) {
         this.credentialVerifier = credentialVerifier;
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
@@ -50,7 +49,7 @@ public class AuthService implements AuthUseCase {
         this.tokenBlocklist = tokenBlocklist;
         this.loginAttempt = loginAttempt;
         this.twoFactorAuth = twoFactorAuth;
-        this.systemConfig = systemConfig;
+        this.loginStep = loginStep;
     }
 
     @Override
@@ -58,37 +57,31 @@ public class AuthService implements AuthUseCase {
         if (loginAttempt.isLocked(username)) {
             throw new AccountLockedException(username);
         }
+        CredentialVerifierPort.VerifiedUser verified;
         try {
-            CredentialVerifierPort.VerifiedUser verified = credentialVerifier.verify(username, password);
+            verified = credentialVerifier.verify(username, password);
             loginAttempt.recordSuccess(username);
-
-            // Bloqueia login se 2FA obrigatório globalmente e o usuário ainda não o configurou.
-            if (systemConfig.getBoolean("security.2fa.required", false)
-                    && !twoFactorAuth.isEnabled(verified.username())) {
-                throw new TotpSetupRequiredException();
-            }
-
-            if (twoFactorAuth.isEnabled(verified.username())) {
-                String challengeToken = twoFactorAuth.issueChallengeToken(verified.username());
-                return LoginResponse.twoFactorChallenge(challengeToken);
-            }
-
-            String access = accessToken.generateFor(verified.username(), verified.authorities());
-            String refresh = refreshToken.issue(verified.username());
-            return LoginResponse.success(new TokenPair(access, refresh));
         } catch (RuntimeException ex) {
             loginAttempt.recordFailure(username);
             throw ex;
         }
+
+        // A senha estava certa: o que falhar daqui em diante não conta como tentativa errada.
+        if (twoFactorAuth.isEnabled(verified.username())) {
+            return LoginResponse.twoFactorChallenge(twoFactorAuth.issueChallengeToken(verified.username()));
+        }
+        return loginStep.next(verified.username(), verified.authorities(), true);
     }
 
     @Override
-    public TokenPair completeTwoFactorLogin(String challengeToken, String totpCode) {
+    public LoginResponse completeTwoFactorLogin(String challengeToken, String totpCode) {
         String username = twoFactorAuth.completeChallengeLogin(challengeToken, totpCode);
-        Set<String> authorities = userAuthorities.loadAuthoritiesByUsername(username);
-        String access = accessToken.generateFor(username, authorities);
-        String refresh = refreshToken.issue(username);
-        return new TokenPair(access, refresh, username);
+        return loginStep.next(username, userAuthorities.loadAuthoritiesByUsername(username), true);
+    }
+
+    @Override
+    public void recordLogin(String username, String ip) {
+        loginStep.recordLogin(username, ip);
     }
 
     @Override

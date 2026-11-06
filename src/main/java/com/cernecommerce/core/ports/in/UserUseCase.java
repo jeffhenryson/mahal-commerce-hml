@@ -38,6 +38,21 @@ public interface UserUseCase {
 
     User getUserById(Long id);
 
+    /** Quem tem 2FA ativo entre os informados, numa consulta só. */
+    java.util.Set<String> getTotpEnabledUsernames(Collection<String> usernames);
+
+    /** Contas excluídas, das mais recentes para as mais antigas. */
+    PageResult<User> findDeleted(boolean excludeDevAccounts, int page, int size);
+
+    /** Nome e telefone. Cada campo só muda se o respectivo {@code change} vier ligado; nulo limpa. */
+    User updateContact(Long id, boolean changeFullName, String fullName, boolean changePhone, String phone);
+
+    /** A conta tem ROLE_DEV? Conta inexistente responde {@code false}: o 404 fica com a ação pedida. */
+    boolean isDevAccount(Long id);
+
+    /** @see #isDevAccount(Long) */
+    boolean isDevAccount(String username);
+
     /**
      * PLAT-F005 — liga a conta de operador a um cadastro de cliente do CRM.
      *

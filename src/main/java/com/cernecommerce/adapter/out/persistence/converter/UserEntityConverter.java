@@ -20,7 +20,10 @@ public class UserEntityConverter {
                 entity.getPendingEmail(), entity.getAvatarFilename(),
                 entity.getCreatedAt(), toDomainRoles(entity.getRoles()),
                 entity.getGoogleId(), entity.getAuthProvider(),
-                entity.getUserType(), entity.getCustomerId());
+                entity.getUserType(), entity.getCustomerId())
+                .withSecurityState(entity.getFullName(), entity.getPhone(), entity.isTwoFactorRequired(),
+                        entity.isMustChangePassword(), entity.getLastLoginAt(), entity.getLastLoginIp(),
+                        entity.getDeletedAt());
     }
 
     public UserEntity toEntityBase(User domain) {
@@ -38,6 +41,13 @@ public class UserEntityConverter {
         entity.setAuthProvider(domain.getAuthProvider());
         entity.setUserType(domain.getUserType());
         entity.setCustomerId(domain.getCustomerId());
+        // A entidade é recriada a cada save: campo que não passar por aqui é apagado no banco.
+        entity.setFullName(domain.getFullName());
+        entity.setPhone(domain.getPhone());
+        entity.setTwoFactorRequired(domain.isTwoFactorRequired());
+        entity.setMustChangePassword(domain.isMustChangePassword());
+        entity.setLastLoginAt(domain.getLastLoginAt());
+        entity.setLastLoginIp(domain.getLastLoginIp());
         return entity;
     }
 

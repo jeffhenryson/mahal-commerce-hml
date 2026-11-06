@@ -4,12 +4,12 @@ import com.cernecommerce.core.domain.exception.auth.GoogleAccountNotRegisteredEx
 import com.cernecommerce.core.domain.exception.auth.OAuthTokenInvalidException;
 import com.cernecommerce.core.domain.model.auth.GoogleUserInfo;
 import com.cernecommerce.core.domain.model.auth.OAuthLoginResult;
-import com.cernecommerce.core.domain.model.auth.TokenPair;
+import com.cernecommerce.core.domain.model.auth.LoginResponse;
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.ports.in.OAuthLoginUseCase;
 import com.cernecommerce.core.ports.out.oauth.GoogleTokenVerifierPort;
-import com.cernecommerce.core.ports.out.token.AccessTokenPort;
-import com.cernecommerce.core.ports.out.token.RefreshTokenPort;
+import com.cernecommerce.core.auth.LoginStepResolver;
+import com.cernecommerce.core.ports.out.twofa.TwoFactorAuthPort;
 import com.cernecommerce.core.ports.out.user.UserAuthoritiesPort;
 import com.cernecommerce.core.domain.exception.auth.AccountDisabledException;
 import com.cernecommerce.core.ports.out.user.UserCachePort;
@@ -23,23 +23,23 @@ public class OAuthLoginService implements OAuthLoginUseCase {
 
     private final GoogleTokenVerifierPort tokenVerifier;
     private final UserRepository userRepository;
-    private final AccessTokenPort accessToken;
-    private final RefreshTokenPort refreshToken;
     private final UserAuthoritiesPort userAuthorities;
     private final UserCachePort userCachePort;
+    private final TwoFactorAuthPort twoFactorAuth;
+    private final LoginStepResolver loginStep;
 
     public OAuthLoginService(GoogleTokenVerifierPort tokenVerifier,
                              UserRepository userRepository,
-                             AccessTokenPort accessToken,
-                             RefreshTokenPort refreshToken,
                              UserAuthoritiesPort userAuthorities,
-                             UserCachePort userCachePort) {
+                             UserCachePort userCachePort,
+                             TwoFactorAuthPort twoFactorAuth,
+                             LoginStepResolver loginStep) {
         this.tokenVerifier = tokenVerifier;
         this.userRepository = userRepository;
-        this.accessToken = accessToken;
-        this.refreshToken = refreshToken;
         this.userAuthorities = userAuthorities;
         this.userCachePort = userCachePort;
+        this.twoFactorAuth = twoFactorAuth;
+        this.loginStep = loginStep;
     }
 
     @Override
@@ -63,11 +63,17 @@ public class OAuthLoginService implements OAuthLoginUseCase {
             throw new AccountDisabledException(user.getUsername());
         }
 
-        Set<String> authorities = userAuthorities.loadAuthoritiesByUsername(user.getUsername());
-        String access = accessToken.generateFor(user.getUsername(), authorities);
-        String refresh = refreshToken.issue(user.getUsername());
+        // Mesmas exigências do login por senha, menos a troca de senha, que aqui não se aplica.
+        LoginResponse login = twoFactorAuth.isEnabled(user.getUsername())
+                ? LoginResponse.twoFactorChallenge(twoFactorAuth.issueChallengeToken(user.getUsername()))
+                : loginStep.next(user, userAuthorities.loadAuthoritiesByUsername(user.getUsername()), false);
 
-        return new OAuthLoginResult(new TokenPair(access, refresh), user.getUsername(), firstGoogleLogin);
+        return new OAuthLoginResult(login, user.getUsername(), firstGoogleLogin);
+    }
+
+    @Override
+    public void recordLogin(String username, String ip) {
+        loginStep.recordLogin(username, ip);
     }
 
     /** Google ID ainda sem conta vinculada (o caso "já vinculada" é resolvido por quem chama). */

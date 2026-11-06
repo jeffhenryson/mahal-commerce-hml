@@ -10,7 +10,6 @@ import com.cernecommerce.adapter.in.dtos.request.TotpVerifyRequest;
 import com.cernecommerce.adapter.in.dtos.request.VerifyEmailRequest;
 import com.cernecommerce.adapter.in.dtos.response.SessionInfoDTO;
 import com.cernecommerce.adapter.in.dtos.response.TokenPairResponseDTO;
-import com.cernecommerce.adapter.in.dtos.response.TwoFactorChallengeResponseDTO;
 import com.cernecommerce.core.domain.exception.auth.AccountLockedException;
 import com.cernecommerce.core.domain.exception.auth.RefreshTokenAlreadyUsedException;
 import com.cernecommerce.core.domain.model.auth.LoginResponse;
@@ -27,6 +26,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 
@@ -76,13 +76,16 @@ public class AuthController {
             @ApiResponse(responseCode = "401", description = "Credenciais inválidas", content = @Content(schema = @Schema(implementation = com.cernecommerce.infra.handler.ApiError.class)))
     })
     @PostMapping("/login")
-    ResponseEntity<?> login(@Valid @RequestBody LoginRequest request, HttpServletResponse response) {
+    ResponseEntity<?> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest,
+            HttpServletResponse response) {
         try {
             LoginResponse loginResponse = authUseCase.login(request.getUsername(), request.getPassword());
-            if (loginResponse.twoFactorRequired()) {
-                return ResponseEntity.ok(new TwoFactorChallengeResponseDTO("PENDING_2FA", loginResponse.challengeToken(), 300));
+            Object pending = AuthUtils.pendingLoginBody(loginResponse);
+            if (pending != null) {
+                return ResponseEntity.ok(pending);
             }
             TokenPair pair = loginResponse.tokenPair();
+            authUseCase.recordLogin(request.getUsername(), httpRequest.getRemoteAddr());
             publisher.publishEvent(AuditEvent.of(EventType.USER_LOGGED_IN, request.getUsername()));
             setRefreshCookie(response, pair.getRefreshToken());
             // refreshToken também no body para retrocompatibilidade com clientes que ainda lêem o JSON
@@ -100,9 +103,15 @@ public class AuthController {
             @ApiResponse(responseCode = "400", description = "Código inválido ou challenge expirado", content = @Content)
     })
     @PostMapping("/2fa/verify")
-    ResponseEntity<TokenPairResponseDTO> verifyTwoFactor(@Valid @RequestBody TotpVerifyRequest request,
-            HttpServletResponse response) {
-        TokenPair pair = authUseCase.completeTwoFactorLogin(request.getChallengeToken(), request.getCode());
+    ResponseEntity<?> verifyTwoFactor(@Valid @RequestBody TotpVerifyRequest request,
+            HttpServletRequest httpRequest, HttpServletResponse response) {
+        LoginResponse login = authUseCase.completeTwoFactorLogin(request.getChallengeToken(), request.getCode());
+        Object pending = AuthUtils.pendingLoginBody(login);
+        if (pending != null) {
+            return ResponseEntity.ok(pending);
+        }
+        TokenPair pair = login.tokenPair();
+        authUseCase.recordLogin(pair.getUsername(), httpRequest.getRemoteAddr());
         publisher.publishEvent(AuditEvent.of(EventType.USER_LOGGED_IN, pair.getUsername()));
         setRefreshCookie(response, pair.getRefreshToken());
         return ResponseEntity.ok(new TokenPairResponseDTO(pair.getAccessToken(), pair.getRefreshToken(), accessTtlSeconds));

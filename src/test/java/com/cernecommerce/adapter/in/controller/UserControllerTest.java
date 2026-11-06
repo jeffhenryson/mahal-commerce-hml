@@ -281,4 +281,51 @@ public class UserControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").doesNotExist());
     }
+
+    private static org.springframework.security.core.Authentication autenticado(String... authorities) {
+        return new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("admin", "n/a",
+                org.springframework.security.core.authority.AuthorityUtils.createAuthorityList(authorities));
+    }
+
+    @Test
+    void excluir_conta_de_dev_sem_token_elevado_responde_target_protected() throws Exception {
+        when(useCase.isDevAccount(7L)).thenReturn(true);
+
+        mockMvc.perform(delete("/users/7").principal(autenticado("USER_DELETE")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("TARGET_PROTECTED"));
+
+        verify(useCase, never()).deleteUser(anyLong());
+    }
+
+    @Test
+    void excluir_conta_de_dev_com_token_elevado_passa() throws Exception {
+        when(useCase.isDevAccount(7L)).thenReturn(true);
+        when(useCase.deleteUser(7L)).thenReturn("dev");
+
+        mockMvc.perform(delete("/users/7").principal(autenticado("USER_DELETE", "DEV_ELEVATED")))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void desativar_e_remover_papel_de_dev_sem_token_elevado_sao_recusados() throws Exception {
+        when(useCase.isDevAccount(7L)).thenReturn(true);
+        when(useCase.isDevAccount("dev")).thenReturn(true);
+
+        mockMvc.perform(put("/users/7/disable").principal(autenticado("USER_STATUS")))
+                .andExpect(jsonPath("$.errorCode").value("TARGET_PROTECTED"));
+        mockMvc.perform(delete("/users/dev/roles/ROLE_DEV").principal(autenticado("USER_ROLE_ASSIGN")))
+                .andExpect(jsonPath("$.errorCode").value("TARGET_PROTECTED"));
+
+        verify(useCase, never()).setUserEnabled(anyLong(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(useCase, never()).removeRole(anyString(), anyString());
+    }
+
+    @Test
+    void ver_conta_de_dev_exige_acesso_de_dev_como_a_listagem() throws Exception {
+        when(useCase.isDevAccount(7L)).thenReturn(true);
+
+        mockMvc.perform(get("/users/7").principal(autenticado("USER_READ")))
+                .andExpect(jsonPath("$.errorCode").value("TARGET_PROTECTED"));
+    }
 }

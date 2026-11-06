@@ -259,6 +259,28 @@ abstract class TemplatedEmailAdapter implements EmailPort {
                 "email.security-alert.google-linked");
     }
 
+    @Async("emailTaskExecutor")
+    @Override
+    public void sendTwoFactorRequired(String to, String username) {
+        sendSecurityAlert(to, username, null, new SecurityAlert(
+                "Sua conta vai pedir o código de verificação", "Falta só um passo para proteger sua conta.",
+                "Verificação em duas etapas exigida",
+                "No próximo login, você vai ativar a verificação em duas etapas. Antes, instale no celular o "
+                        + "Google Authenticator ou o Microsoft Authenticator, pela App Store ou pela Google Play.",
+                "Precisa de ajuda?", "Fale com quem cuida dos acessos da loja.", EmailTheme.DEFAULT.warning(),
+                supportUrl(), TALK_TO_STORE), "email.security-alert.two-factor-required");
+    }
+
+    @Async("emailTaskExecutor")
+    @Override
+    public void sendEmailChangedByAdmin(String to, String username, SecurityEventContext context) {
+        sendSecurityAlert(to, username, context, new SecurityAlert(
+                "O e-mail da sua conta foi trocado", "Este endereço não recebe mais os avisos da conta.",
+                "E-mail da conta trocado", "Um administrador da loja trocou o e-mail de acesso da sua conta.",
+                NOT_YOU, "Fale com a loja agora.", EmailTheme.DEFAULT.warning(), supportUrl(), TALK_TO_STORE),
+                "email.security-alert.email-changed-by-admin");
+    }
+
     /** A recuperação encerra todas as sessões, então também serve de "desconectar tudo". */
     private String recoveryUrl(SecurityEventContext context) {
         return context != null && context.customer()

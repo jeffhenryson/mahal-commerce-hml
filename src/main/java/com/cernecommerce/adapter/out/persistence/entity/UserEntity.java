@@ -75,6 +75,24 @@ public class UserEntity {
     @Column(name = "customer_id")
     private Long customerId;
 
+    @Column(name = "full_name", length = 160)
+    private String fullName;
+
+    @Column(length = 32)
+    private String phone;
+
+    @Column(name = "two_factor_required", nullable = false)
+    private boolean twoFactorRequired = false;
+
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword = false;
+
+    @Column(name = "last_login_at")
+    private Instant lastLoginAt;
+
+    @Column(name = "last_login_ip", length = 64)
+    private String lastLoginIp;
+
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(name = "user_roles",
             joinColumns = @JoinColumn(name = "user_id", foreignKey = @ForeignKey(name = "fk_user_roles_user")),

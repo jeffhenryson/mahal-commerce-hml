@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -54,24 +55,31 @@ public class OAuthController {
 
     @Operation(summary = "Login com Google — valida o ID token do Google e retorna tokens JWT")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Login realizado",
+            @ApiResponse(responseCode = "200", description = "Tokens, ou a pendência: desafio de 2FA ou cadastro de 2FA",
                     content = @Content(schema = @Schema(implementation = TokenPairResponseDTO.class))),
             @ApiResponse(responseCode = "401", description = "Token Google inválido ou expirado", content = @Content)
     })
     @PostMapping("/google")
-    ResponseEntity<TokenPairResponseDTO> loginWithGoogle(
+    ResponseEntity<?> loginWithGoogle(
             @Valid @RequestBody GoogleLoginRequest request,
+            HttpServletRequest httpRequest,
             HttpServletResponse response) {
         if (!systemConfig.getBoolean("auth.google.enabled", true)) {
             publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_DISABLED_ATTEMPT, "anonymous"));
             return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE).build();
         }
         OAuthLoginResult result = oAuthLoginUseCase.loginWithGoogle(request.idToken());
-        TokenPair pair = result.tokenPair();
-        publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_LOGIN, result.username()));
+        // O vínculo aconteceu mesmo com o login pendente: o aviso ao dono da conta sai de qualquer forma.
         if (result.firstGoogleLogin()) {
             publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_LINKED, result.username()));
         }
+        Object pending = AuthUtils.pendingLoginBody(result.login());
+        if (pending != null) {
+            return ResponseEntity.ok(pending);
+        }
+        TokenPair pair = result.tokenPair();
+        oAuthLoginUseCase.recordLogin(result.username(), httpRequest.getRemoteAddr());
+        publisher.publishEvent(AuditEvent.of(EventType.OAUTH_GOOGLE_LOGIN, result.username()));
         response.addHeader("Set-Cookie", buildCookie(pair.getRefreshToken(), refreshTtlSeconds).toString());
         return ResponseEntity.ok(new TokenPairResponseDTO(pair.getAccessToken(), pair.getRefreshToken(), accessTtlSeconds));
     }
