@@ -171,7 +171,7 @@ public record Comanda(
         }
         List<ComandaItem> newItems = new ArrayList<>(items.stream()
                 .filter(i -> !itemId.equals(i.id()))
-                .filter(i -> !(itemId.equals(i.linkedItemId()) && i.mode() == ConsumptionMode.TROCA))
+                .filter(i -> !(itemId.equals(i.linkedItemId()) && dragsAlong(i)))
                 .toList());
         return new Comanda(id, sessionId, warehouseCode, tableOrCustomerLabel, customerId, status, newItems, orderId,
                 openedBy, openedAt, closedAt);
@@ -185,9 +185,16 @@ public record Comanda(
      */
     public List<ComandaItem> itemsRemovedWith(Long itemId) {
         return items.stream()
-                .filter(i -> itemId.equals(i.id())
-                        || (itemId.equals(i.linkedItemId()) && i.mode() == ConsumptionMode.TROCA))
+                .filter(i -> itemId.equals(i.id()) || (itemId.equals(i.linkedItemId()) && dragsAlong(i)))
                 .toList();
+    }
+
+    /**
+     * Linha pendurada que sai junto com a sua: a {@code TROCA} (cortesia, não existe sem a sessão) e,
+     * PDV-F061, o pacote ainda em aberto da sessão {@code COMPRA_ESSENCIA}, que só existe por ela.
+     */
+    private static boolean dragsAlong(ComandaItem child) {
+        return child.mode() == ConsumptionMode.TROCA || (child.isPackageLine() && child.isOpen());
     }
 
     /**
@@ -196,7 +203,7 @@ public record Comanda(
      */
     public List<ComandaItem> chargedChildrenOf(Long itemId) {
         return items.stream()
-                .filter(i -> itemId.equals(i.linkedItemId()) && i.mode() != ConsumptionMode.TROCA)
+                .filter(i -> itemId.equals(i.linkedItemId()) && !dragsAlong(i))
                 .toList();
     }
 

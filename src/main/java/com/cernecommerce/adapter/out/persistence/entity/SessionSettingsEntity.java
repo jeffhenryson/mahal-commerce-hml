@@ -33,4 +33,11 @@ public class SessionSettingsEntity {
 
     @Column(name = "upgrade_carvao_jumbo_preco", nullable = false, precision = 12, scale = 2)
     private BigDecimal upgradeCarvaoJumboPreco;
+
+    // PDV-F061 (V191) — preço da sessão com itens pessoais e desconto da compra de essência.
+    @Column(name = "itens_pessoais_preco", nullable = false, precision = 12, scale = 2)
+    private BigDecimal itensPessoaisPreco;
+
+    @Column(name = "compra_essencia_desconto", nullable = false, precision = 12, scale = 2)
+    private BigDecimal compraEssenciaDesconto;
 }

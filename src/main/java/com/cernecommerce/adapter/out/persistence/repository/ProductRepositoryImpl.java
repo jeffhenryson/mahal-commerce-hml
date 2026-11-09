@@ -15,6 +15,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductAttribute;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
+import com.cernecommerce.core.domain.model.estoque.SessionModalityFlags;
 import com.cernecommerce.core.ports.out.estoque.ProductRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -107,6 +108,8 @@ public class ProductRepositoryImpl implements ProductRepository {
         entity.setLotTracked(product.lotTracked());
         entity.setParentSellable(product.parentSellable());
         entity.setSessionTierId(product.sessionTierId());
+        entity.setSessionCompraEssencia(product.sessionFlags().compraEssencia());
+        entity.setSessionItensPessoais(product.sessionFlags().itensPessoais());
         entity.setBarcode(product.barcode());
         entity.setUnit(product.unit().name());
         entity.setSampleProduct(product.sampleProduct());
@@ -139,6 +142,8 @@ public class ProductRepositoryImpl implements ProductRepository {
                 variantEntity.setCauseAmount(variantPricing.causeAmount());
             }
             variantEntity.setBarcode(variant.barcode());
+            variantEntity.setSessionCompraEssencia(variant.sessionCompraEssencia());
+            variantEntity.setSessionItensPessoais(variant.sessionItensPessoais());
             variantEntity.getAttributes().addAll(variant.attributes().stream()
                     .map(a -> new ProductAttributeEmbeddable(a.type(), a.value()))
                     .toList());
@@ -439,14 +444,16 @@ public class ProductRepositoryImpl implements ProductRepository {
                 e.getVideoUrl(), List.copyOf(e.getImages()), attributes, e.getCategoryId(), e.getBarcode(), unit,
                 e.isSampleProduct(), e.isKitComponentEligible(), e.isVisibleInPos(), e.isVisibleInMarketplace(),
                 status, e.getBrandId(), e.isAvailableForTable(), e.isSessionProduct(), e.getSessionsPerUnit(),
-                e.getOpenRoshPrice(), e.isParentSellable(), e.getSessionTierId());
+                e.getOpenRoshPrice(), e.isParentSellable(), e.getSessionTierId(),
+                new SessionModalityFlags(e.isSessionCompraEssencia(), e.isSessionItensPessoais()));
     }
 
     private ProductVariant toDomain(ProductVariantEntity e) {
         List<ProductAttribute> attributes = e.getAttributes().stream()
                 .map(a -> new ProductAttribute(a.getType(), a.getValue()))
                 .toList();
-        return ProductVariant.of(e.getId(), e.getSku(), attributes, e.isActive(), toVariantPricing(e), e.getBarcode());
+        return ProductVariant.of(e.getId(), e.getSku(), attributes, e.isActive(), toVariantPricing(e), e.getBarcode())
+                .withSessionFlags(e.getSessionCompraEssencia(), e.getSessionItensPessoais());
     }
 
     /**

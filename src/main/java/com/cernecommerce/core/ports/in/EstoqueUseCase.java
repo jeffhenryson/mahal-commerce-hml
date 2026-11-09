@@ -773,7 +773,21 @@ public interface EstoqueUseCase {
      */
     record CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
             boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
-            boolean parentWithVariants, Long sessionTierId, String category) {
+            boolean parentWithVariants, Long sessionTierId, String category,
+            com.cernecommerce.core.domain.model.estoque.SessionModalityFlags sessionFlags) {
+
+        public CatalogSaleInfo {
+            sessionFlags = sessionFlags == null
+                    ? com.cernecommerce.core.domain.model.estoque.SessionModalityFlags.DEFAULT : sessionFlags;
+        }
+
+        /** Forma sem as flags de modalidade (PDV-F061) — compatibilidade: o padrão de produto novo (V192). */
+        public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
+                boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
+                boolean parentWithVariants, Long sessionTierId, String category) {
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, sessionsPerUnit, kit,
+                    parentWithVariants, sessionTierId, category, null);
+        }
 
         /**
          * Forma sem {@code category} (PDV-C052) — compatibilidade. Sem a categoria, quem resolve a taxa
@@ -869,6 +883,27 @@ public interface EstoqueUseCase {
      * <p>Mesma resolução de depósito de {@link #consumeSession}: com Salão ativo, a lata é a dele.</p>
      */
     void releaseSession(String sku, String warehouseCode, BigDecimal quantity);
+
+    /**
+     * PDV-F061 — as essências de sessão ativas que se podem vender, uma linha por SKU vendável (o
+     * mesmo critério do catálogo de sessão do PDV), com as modalidades em que cada uma vale.
+     */
+    List<SessionEssence> listSessionEssences();
+
+    /**
+     * PDV-F061 — marca as modalidades de uma essência. SKU de variação grava na variação; o SKU do
+     * próprio produto grava no produto (e vale para as variações que não marcaram nada). Nulo mantém.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException SKU desconhecido
+     * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException se o
+     *         produto não é vendido por sessão
+     */
+    SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais);
+
+    /** PDV-F061 — uma essência do cardápio de sessão e as modalidades em que ela vale. */
+    record SessionEssence(String sku, String nome, String marca, Long faixaId, boolean compraEssencia,
+            boolean itensPessoais) {
+    }
 
     /**
      * "Repor essência" (EST-F027): descarta a lata em uso e abre outra, baixando <b>uma</b>

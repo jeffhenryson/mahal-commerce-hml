@@ -89,7 +89,13 @@ public class ProductDTOConverter {
         dto.setImages(product.images());
         dto.setAttributes(product.attributes().stream().map(this::toResponse).toList());
         dto.setActive(product.active());
-        dto.setVariants(product.variants().stream().map(this::toResponse).toList());
+        dto.setVariants(product.variants().stream().map(variant -> {
+            ProductVariantResponseDTO variantDto = toResponse(variant);
+            var flags = product.sessionFlagsFor(variant.sku());
+            variantDto.setSessionCompraEssencia(flags.compraEssencia());
+            variantDto.setSessionItensPessoais(flags.itensPessoais());
+            return variantDto;
+        }).toList());
         dto.setPricing(toResponse(product.pricing()));
         dto.setType(product.type().name());
         dto.setLotTracked(product.lotTracked());
@@ -105,6 +111,8 @@ public class ProductDTOConverter {
         dto.setSessionsPerUnit(product.sessionsPerUnit());
         dto.setOpenRoshPrice(product.openRoshPrice());
         dto.setSessionTierId(product.sessionTierId());
+        dto.setSessionCompraEssencia(product.sessionFlags().compraEssencia());
+        dto.setSessionItensPessoais(product.sessionFlags().itensPessoais());
         dto.setStatus(product.status().name());
         return dto;
     }

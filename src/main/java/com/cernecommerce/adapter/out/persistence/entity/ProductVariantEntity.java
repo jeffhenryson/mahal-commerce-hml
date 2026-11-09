@@ -64,4 +64,11 @@ public class ProductVariantEntity {
     // informado (índice parcial em V91).
     @Column(name = "barcode", length = 14)
     private String barcode;
+
+    // PDV-F061 — marcação própria das modalidades da sessão (V191). Nulo herda do produto pai.
+    @Column(name = "session_compra_essencia")
+    private Boolean sessionCompraEssencia;
+
+    @Column(name = "session_itens_pessoais")
+    private Boolean sessionItensPessoais;
 }

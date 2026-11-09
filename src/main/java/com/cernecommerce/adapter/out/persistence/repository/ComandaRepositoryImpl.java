@@ -16,6 +16,8 @@ import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaItemAddonEntity;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
+import com.cernecommerce.core.domain.model.pdv.SessionLink;
+import com.cernecommerce.core.domain.model.pdv.SessionModality;
 import com.cernecommerce.core.domain.model.pdv.SessionProgress;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
@@ -353,6 +355,8 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setPromotionId(item.promotionId());
             itemEntity.setPromotionName(item.promotionName());
             itemEntity.setPromotionDiscountAmount(item.promotionDiscount());
+            itemEntity.setSessionModality(item.modality() == null ? null : item.modality().name());
+            itemEntity.setSessionLink(item.sessionLink() == null ? null : item.sessionLink().name());
             SessionProgress session = item.session();
             itemEntity.setSessionStatus(session == null ? null : session.status().name());
             itemEntity.setStartedAt(session == null ? null : session.startedAt());
@@ -408,7 +412,9 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package(),
                 e.getEssenceRatio() == null ? null : ProporcaoMistura.valueOf(e.getEssenceRatio()),
                 e.isCompraNaLoja(), e.getStoreDiscountAmount(), e.getPromotionId(), e.getPromotionName(),
-                e.getPromotionDiscountAmount());
+                e.getPromotionDiscountAmount(),
+                e.getSessionModality() == null ? null : SessionModality.valueOf(e.getSessionModality()),
+                e.getSessionLink() == null ? null : SessionLink.valueOf(e.getSessionLink()));
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {

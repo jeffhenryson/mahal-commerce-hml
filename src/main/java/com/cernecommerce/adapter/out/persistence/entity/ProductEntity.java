@@ -93,6 +93,13 @@ public class ProductEntity {
     @Column(name = "session_tier_id")
     private Long sessionTierId;
 
+    // PDV-F061 — modalidades novas da sessão em que a essência pode ser vendida (V191).
+    @Column(name = "session_compra_essencia", nullable = false)
+    private boolean sessionCompraEssencia;
+
+    @Column(name = "session_itens_pessoais", nullable = false)
+    private boolean sessionItensPessoais;
+
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude
     private List<ProductVariantEntity> variants = new ArrayList<>();

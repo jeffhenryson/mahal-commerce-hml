@@ -95,6 +95,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductSortField;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
+import com.cernecommerce.core.domain.model.estoque.SessionModalityFlags;
 import com.cernecommerce.core.domain.model.estoque.ReorderAlert;
 import com.cernecommerce.core.domain.model.estoque.ReorderAlertCounts;
 import com.cernecommerce.core.domain.model.estoque.ReorderPoint;
@@ -1084,7 +1085,8 @@ public class EstoqueService implements EstoqueUseCase {
         boolean parentWithVariants = product.sku().equals(sku) && !product.variants().isEmpty();
         return new CatalogSaleInfo(product.name(), pricing, product.availableForTable(),
                 product.sessionProduct(), product.openRoshPrice(), product.sessionsPerUnit(),
-                product.isKit(), parentWithVariants, product.sessionTierId(), product.category());
+                product.isKit(), parentWithVariants, product.sessionTierId(), product.category(),
+                product.sessionFlagsFor(sku));
     }
 
 
@@ -1537,6 +1539,63 @@ public class EstoqueService implements EstoqueUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<SessionEssence> listSessionEssences() {
+        // EST-F054 — só publicado e ativo, vendido por sessão: o mesmo filtro do cardápio do Salão.
+        ProductFilter filtro = new ProductFilter(null, null, null, true, null, null, ProductStatus.ATIVO, true);
+        List<SessionEssence> lista = new ArrayList<>();
+        for (int page = 0; ; page++) {
+            PageResult<Product> pagina = listProducts(page, SESSION_ESSENCE_PAGE, filtro, ProductSortField.ID,
+                    SortDirection.ASC);
+            for (Product p : pagina.content()) {
+                SalaoAutoatendimentoService.skusVendaveis(p).forEach((sku, sabor) ->
+                        lista.add(sessionEssence(p, sku, sabor)));
+            }
+            if (page + 1 >= pagina.totalPages() || pagina.content().isEmpty()) {
+                break;
+            }
+        }
+        lista.sort(java.util.Comparator.comparing((SessionEssence e) -> Objects.toString(e.marca(), ""),
+                        String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(SessionEssence::nome, String.CASE_INSENSITIVE_ORDER));
+        return lista;
+    }
+
+    @Override
+    @Transactional
+    public SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais) {
+        Product product = productRepository.findByAnySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (!product.sessionProduct()) {
+            throw new NotAPackagedSessionProductException(sku);
+        }
+        SessionModalityFlags atuais = product.sessionFlagsFor(sku);
+        boolean compra = compraEssencia != null ? compraEssencia : atuais.compraEssencia();
+        boolean pessoais = itensPessoais != null ? itensPessoais : atuais.itensPessoais();
+        Product atualizado;
+        if (product.sku().equals(sku)) {
+            atualizado = product.withSessionFlags(new SessionModalityFlags(compra, pessoais));
+        } else {
+            atualizado = product.withVariants(product.variants().stream()
+                    .map(v -> v.sku().equals(sku) ? v.withSessionFlags(compra, pessoais) : v)
+                    .toList());
+        }
+        Product salvo = productRepository.save(atualizado);
+        String sabor = SalaoAutoatendimentoService.skusVendaveis(salvo).getOrDefault(sku, salvo.name());
+        return sessionEssence(salvo, sku, sabor);
+    }
+
+    private static SessionEssence sessionEssence(Product p, String sku, String sabor) {
+        String nome = sku.equals(p.sku()) || sabor.equals(p.name()) ? p.name() : p.name() + " " + sabor;
+        SessionModalityFlags flags = p.sessionFlagsFor(sku);
+        return new SessionEssence(sku, nome, p.brand(), p.sessionTierId(), flags.compraEssencia(),
+                flags.itensPessoais());
+    }
+
+    /** Página da leitura do catálogo de sessão (PDV-F061): dezenas de produtos, não o catálogo inteiro. */
+    private static final int SESSION_ESSENCE_PAGE = 100;
+
+    @Override
     @Transactional
     public OpenPackage replaceOpenPackage(String sku, String warehouseCode, String username) {
         Product product = productRepository.findByAnySku(sku)
@@ -1590,14 +1649,19 @@ public class EstoqueService implements EstoqueUseCase {
      * quebra de embalagem: o Salão só tem o que a loja transferiu.
      */
     private OpenPackage openSalaoPackage(String sku, Warehouse salao, int sessionsPerUnit, String username) {
+        requireSalaoUnit(sku, salao);
+        applyMovement(sku, salao.code(), MovementType.SAIDA, BigDecimal.ONE,
+                "Abertura de lata (" + sessionsPerUnit + " sessões)", username, null, null, null, null, false, null);
+        return OpenPackage.open(sku, salao.id(), sessionsPerUnit, username, Instant.now());
+    }
+
+    /** Uma unidade fechada livre do sabor no Salão, ou {@code SALAO_SEM_ESTOQUE} (EST-F038). */
+    private void requireSalaoUnit(String sku, Warehouse salao) {
         BigDecimal closed = stockBalanceRepository.findBySkuAndWarehouseId(sku, salao.id())
                 .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
         if (closed.compareTo(BigDecimal.ONE) < 0) {
             throw new SalaoSemEstoqueException(sku);
         }
-        applyMovement(sku, salao.code(), MovementType.SAIDA, BigDecimal.ONE,
-                "Abertura de lata (" + sessionsPerUnit + " sessões)", username, null, null, null, null, false, null);
-        return OpenPackage.open(sku, salao.id(), sessionsPerUnit, username, Instant.now());
     }
 
     /** Teto do período aberto no rendimento — o Postgres aceita, e evita parâmetro nulo (EST-C024). */

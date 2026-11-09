@@ -12,10 +12,16 @@ import java.util.stream.Collectors;
 /**
  * Configuração do cardápio de sessão (PDV-F021): qual utensílio é o vaso padrão e qual é o grande,
  * quanto custa o upgrade, em quais dias da semana o 2º rosh sai de graça ("duplo rosh") e quanto o
- * carvão jumbo soma à sessão (V168).
+ * carvão jumbo soma à sessão (V168). PDV-F061 (V191): o preço da sessão com itens pessoais e o
+ * desconto da sessão com compra de essência.
  */
 public record SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, BigDecimal upgradeVasoGrandePreco,
-        Set<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco) {
+        Set<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco, BigDecimal itensPessoaisPreco,
+        BigDecimal compraEssenciaDesconto) {
+
+    /** Padrões da V191: R$ 60 com itens pessoais e R$ 5 de desconto na compra de essência. */
+    public static final BigDecimal ITENS_PESSOAIS_PRECO_PADRAO = new BigDecimal("60.00");
+    public static final BigDecimal COMPRA_ESSENCIA_DESCONTO_PADRAO = new BigDecimal("5.00");
 
     public SessionSettings {
         vasoPadraoCodigo = normalizeCode(vasoPadraoCodigo);
@@ -32,6 +38,25 @@ public record SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, 
         if (upgradeCarvaoJumboPreco.signum() < 0) {
             throw new IllegalArgumentException("preço do carvão jumbo não pode ser negativo");
         }
+        if (itensPessoaisPreco == null) {
+            itensPessoaisPreco = ITENS_PESSOAIS_PRECO_PADRAO;
+        }
+        if (itensPessoaisPreco.signum() < 0) {
+            throw new IllegalArgumentException("preço da sessão com itens pessoais não pode ser negativo");
+        }
+        if (compraEssenciaDesconto == null) {
+            compraEssenciaDesconto = COMPRA_ESSENCIA_DESCONTO_PADRAO;
+        }
+        if (compraEssenciaDesconto.signum() < 0) {
+            throw new IllegalArgumentException("desconto da compra de essência não pode ser negativo");
+        }
+    }
+
+    /** Sem os preços das modalidades (PDV-F061): valem os padrões da V191. */
+    public SessionSettings(String vasoPadraoCodigo, String vasoGrandeCodigo, BigDecimal upgradeVasoGrandePreco,
+            Set<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco) {
+        this(vasoPadraoCodigo, vasoGrandeCodigo, upgradeVasoGrandePreco, diasDuploRosh, upgradeCarvaoJumboPreco,
+                null, null);
     }
 
     /** Sem o preço do carvão jumbo: jumbo sai de graça, como antes de V168. */

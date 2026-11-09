@@ -101,17 +101,19 @@ public class SessionMenuService implements SessionMenuUseCase {
 
     @Override
     @Transactional
-    public SessionAddon createAddon(String nome, BigDecimal preco, int ordem) {
-        SessionAddon addon = SessionAddon.create(nome, preco, ordem);
+    public SessionAddon createAddon(String nome, BigDecimal preco, int ordem, boolean permitePosEntrega) {
+        SessionAddon addon = SessionAddon.create(nome, preco, ordem, permitePosEntrega);
         ensureAddonNameFree(addon.nome(), null);
         return repository.saveAddon(addon);
     }
 
     @Override
     @Transactional
-    public SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo) {
+    public SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo,
+            Boolean permitePosEntrega) {
         SessionAddon current = repository.findAddonById(id).orElseThrow(() -> new SessionAddonNotFoundException(id));
-        SessionAddon updated = current.withData(nome, preco, ordem == null ? current.ordem() : ordem, ativo);
+        SessionAddon updated = current.withData(nome, preco, ordem == null ? current.ordem() : ordem, ativo,
+                permitePosEntrega == null ? current.permitePosEntrega() : permitePosEntrega);
         ensureAddonNameFree(updated.nome(), id);
         return repository.saveAddon(updated);
     }
@@ -129,6 +131,11 @@ public class SessionMenuService implements SessionMenuUseCase {
                         .filter(SessionAddon::ativo)
                         .orElseThrow(() -> new SessionAddonNotFoundException(id)))
                 .toList();
+    }
+
+    /** PDV-F061 — o adicional pedido depois da entrega: existente e ativo, ou 404. */
+    SessionAddon requireActiveAddon(Long id) {
+        return requireActiveAddons(java.util.List.of(id)).get(0);
     }
 
     private void ensureAddonNameFree(String nome, Long selfId) {

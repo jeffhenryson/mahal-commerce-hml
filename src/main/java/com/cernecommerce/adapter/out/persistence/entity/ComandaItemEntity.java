@@ -189,6 +189,13 @@ public class ComandaItemEntity {
     @Column(name = "carvao_cortesia", nullable = false)
     private boolean carvaoCortesia;
 
+    // PDV-F061 (V191) — modalidade da sessão e vínculo das linhas que nascem dela (pacote, adicional).
+    @Column(name = "session_modality", length = 20)
+    private String sessionModality;
+
+    @Column(name = "session_link", length = 20)
+    private String sessionLink;
+
     @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
     @BatchSize(size = 100)
     @OrderBy("id")

@@ -31,4 +31,8 @@ public class SessionAddonEntity {
 
     @Column(nullable = false)
     private boolean ativo;
+
+    // PDV-F061 — pode ser incluído com a sessão já na mesa (V191).
+    @Column(name = "permite_pos_entrega", nullable = false)
+    private boolean permitePosEntrega;
 }

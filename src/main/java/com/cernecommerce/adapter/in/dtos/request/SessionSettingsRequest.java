@@ -40,4 +40,16 @@ public class SessionSettingsRequest {
     @Digits(integer = 10, fraction = 2)
     @Schema(description = "Acréscimo do carvão jumbo na sessão. Omitido = mantém o atual.", example = "2.00")
     private BigDecimal upgradeCarvaoJumboPreco;
+
+    @DecimalMin("0.00")
+    @Digits(integer = 10, fraction = 2)
+    @Schema(description = "PDV-F061 — preço total da sessão com itens pessoais (o narguilé é do cliente). "
+            + "Omitido = mantém o atual.", example = "60.00")
+    private BigDecimal itensPessoaisPreco;
+
+    @DecimalMin("0.00")
+    @Digits(integer = 10, fraction = 2)
+    @Schema(description = "PDV-F061 — quanto a sessão com compra de essência sai mais barata que a faixa. "
+            + "Omitido = mantém o atual.", example = "5.00")
+    private BigDecimal compraEssenciaDesconto;
 }

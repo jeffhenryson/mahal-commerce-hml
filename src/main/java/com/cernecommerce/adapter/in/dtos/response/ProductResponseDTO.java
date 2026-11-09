@@ -102,6 +102,12 @@ public class ProductResponseDTO {
     /** PDV-F048 — faixa da sessão sugerida no PDV para esta essência. Nulo = sem faixa. */
     private Long sessionTierId;
 
+    /** PDV-F061 — a essência vale na sessão com compra do pacote. */
+    private boolean sessionCompraEssencia;
+
+    /** PDV-F061 — a essência vale na sessão com itens pessoais do cliente. */
+    private boolean sessionItensPessoais;
+
     /** {@code RASCUNHO}, {@code ATIVO} ou {@code ARQUIVADO} (EST-F023, EST-F054). */
     private String status;
 }

@@ -48,6 +48,13 @@ public record SessionSetup(Charcoal charcoal, List<Addon> addons, boolean vasoGr
         return addons.stream().map(Addon::preco).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /** PDV-F061 — o adicional incluído depois da entrega, somado ao que a sessão já tinha. */
+    public SessionSetup withAddon(SessionAddon addon) {
+        List<Addon> novos = new java.util.ArrayList<>(addons);
+        novos.add(new Addon(addon.id(), addon.nome(), addon.preco()));
+        return new SessionSetup(charcoal, novos, vasoGrande, charcoalCourtesy);
+    }
+
     public boolean isEmpty() {
         return charcoal == null && addons.isEmpty() && !vasoGrande;
     }

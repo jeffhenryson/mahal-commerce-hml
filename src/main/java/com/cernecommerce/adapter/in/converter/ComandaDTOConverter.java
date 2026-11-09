@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.converter;
 
+import com.cernecommerce.core.domain.model.pdv.SessionLink;
 import com.cernecommerce.adapter.in.dtos.response.ComandaItemAddonResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ComandaItemResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ComandaResponseDTO;
@@ -61,6 +62,11 @@ public class ComandaDTOConverter {
         dto.setPromotionDiscountAmount(item.promotionDiscount());
         dto.setCompraNaLoja(item.storePurchase());
         dto.setStoreDiscountAmount(item.storeDiscountAmount());
+        dto.setModalidade(item.modality() == null ? null : item.modality().name());
+        // PDV-F061 — o incluso é um pacote como os outros para a tela; o que o distingue é `incluso`.
+        dto.setVinculoSessao(item.sessionLink() == null ? null
+                : item.isIncludedPackage() ? SessionLink.PACOTE_ESSENCIA.name() : item.sessionLink().name());
+        dto.setIncluso(item.isIncludedPackage());
         if (item.session() != null) {
             dto.setSessionStatus(item.session().status());
             dto.setStartedAt(item.session().startedAt());

@@ -207,6 +207,14 @@ import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
 import com.cernecommerce.core.domain.exception.pdv.SessionTierNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
+import com.cernecommerce.core.domain.exception.pdv.SessionModalityDuploException;
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionCollectedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionAddonNotAfterDeliveryException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPackagePaidException;
+import com.cernecommerce.core.domain.exception.pdv.SessionLinkedLineException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPackagesRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionFlavorNotInPackagesException;
 import com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException;
@@ -1831,6 +1839,49 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleSessionAssetUnavailable(SessionAssetUnavailableException ex,
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ASSET_UNAVAILABLE", req);
+    }
+
+    // PDV-F061 — modalidades da sessão e adicional após a entrega.
+    @ExceptionHandler(SessionModalityDuploException.class)
+    public ResponseEntity<ApiError> handleSessionModalityDuplo(SessionModalityDuploException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_MODALITY_DUPLO", req);
+    }
+
+    @ExceptionHandler(SessionEssenceNotAllowedException.class)
+    public ResponseEntity<ApiError> handleSessionEssenceNotAllowed(SessionEssenceNotAllowedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ESSENCE_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(SessionCollectedException.class)
+    public ResponseEntity<ApiError> handleSessionCollected(SessionCollectedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_COLLECTED", req);
+    }
+
+    @ExceptionHandler(SessionAddonNotAfterDeliveryException.class)
+    public ResponseEntity<ApiError> handleSessionAddonNotAfterDelivery(SessionAddonNotAfterDeliveryException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ADDON_NOT_AFTER_DELIVERY", req);
+    }
+
+    @ExceptionHandler(SessionPackagePaidException.class)
+    public ResponseEntity<ApiError> handleSessionPackagePaid(SessionPackagePaidException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_PACKAGE_PAID", req);
+    }
+
+    @ExceptionHandler(SessionPackagesRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionPackagesRequired(SessionPackagesRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_PACKAGES_REQUIRED", req);
+    }
+
+    @ExceptionHandler(SessionFlavorNotInPackagesException.class)
+    public ResponseEntity<ApiError> handleSessionFlavorNotInPackages(SessionFlavorNotInPackagesException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_FLAVOR_NOT_IN_PACKAGES", req);
+    }
+
+    @ExceptionHandler(SessionLinkedLineException.class)
+    public ResponseEntity<ApiError> handleSessionLinkedLine(SessionLinkedLineException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_LINKED_LINE", req);
     }
 
     @ExceptionHandler(SessionMenuConflictException.class)
