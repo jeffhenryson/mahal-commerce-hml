@@ -25,8 +25,13 @@ public class AuditPersistenceService {
 
     @Async
     public void saveAsync(AuditEvent event, String ipAddress) {
+        saveAsync(event, ipAddress, null);
+    }
+
+    @Async
+    public void saveAsync(AuditEvent event, String ipAddress, String userAgent) {
         try {
-            auditLogRepository.save(event, ipAddress);
+            auditLogRepository.save(event, ipAddress, userAgent);
         } catch (Exception e) {
             log.error("audit.persist.failed type={} username={}", event.type(), event.username(), e);
         }

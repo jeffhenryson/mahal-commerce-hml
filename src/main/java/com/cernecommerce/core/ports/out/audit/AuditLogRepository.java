@@ -8,7 +8,10 @@ import java.time.Instant;
 import java.util.Set;
 
 public interface AuditLogRepository {
-    void save(AuditEvent event, String ipAddress);
+    default void save(AuditEvent event, String ipAddress) {
+        save(event, ipAddress, null);
+    }
+    void save(AuditEvent event, String ipAddress, String userAgent);
     PageResult<AuditLogEntry> findFiltered(String username, String action, Instant from, Instant to, int page, int size, Set<String> excludeActions);
     /** Remove entradas mais antigas que {@code cutoff}. Chamado pelo scheduler de retenção. */
     long deleteOlderThan(Instant cutoff);

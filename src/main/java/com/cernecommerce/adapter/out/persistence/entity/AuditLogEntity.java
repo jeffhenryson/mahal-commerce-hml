@@ -29,6 +29,10 @@ public class AuditLogEntity {
     @Column(nullable = false)
     private Instant timestamp;
 
+    // Perfil > métricas — navegador do evento (V190); nulo nos eventos anteriores e fora de request.
+    @Column(name = "user_agent", length = 512)
+    private String userAgent;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -49,4 +53,7 @@ public class AuditLogEntity {
 
     public Instant getTimestamp() { return timestamp; }
     public void setTimestamp(Instant timestamp) { this.timestamp = timestamp; }
+
+    public String getUserAgent() { return userAgent; }
+    public void setUserAgent(String userAgent) { this.userAgent = userAgent; }
 }

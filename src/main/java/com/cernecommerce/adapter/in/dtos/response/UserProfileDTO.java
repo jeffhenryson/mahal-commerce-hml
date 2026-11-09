@@ -17,4 +17,7 @@ public class UserProfileDTO {
     private Instant createdAt;
     private List<String> roles;
     private List<String> permissions;
+    // Cliente vinculado (PLAT-F005) — é o que mostra a aba Compras no perfil. Nulos sem vínculo.
+    private Long customerId;
+    private String customerName;
 }

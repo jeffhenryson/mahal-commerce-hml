@@ -321,6 +321,12 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "USER_NOT_FOUND", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.user.UserCustomerNotLinkedException.class)
+    public ResponseEntity<ApiError> handleUserCustomerNotLinked(
+            com.cernecommerce.core.domain.exception.user.UserCustomerNotLinkedException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "USER_CUSTOMER_NOT_LINKED", req);
+    }
+
     @ExceptionHandler(RoleNotFoundException.class)
     public ResponseEntity<ApiError> handleRoleNotFound(RoleNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "ROLE_NOT_FOUND", req);

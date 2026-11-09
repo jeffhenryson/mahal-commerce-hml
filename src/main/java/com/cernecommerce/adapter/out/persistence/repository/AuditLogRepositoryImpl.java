@@ -45,7 +45,7 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void save(AuditEvent event, String ipAddress) {
+    public void save(AuditEvent event, String ipAddress, String userAgent) {
         AuditLogEntity entity = new AuditLogEntity();
         entity.setUsername(event.username());
         entity.setAction(event.type().name());
@@ -53,6 +53,7 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
         entity.setDetails(serializeDetails(event));
         entity.setIpAddress(ipAddress);
         entity.setTimestamp(event.timestamp());
+        entity.setUserAgent(userAgent);
         jpaRepo.save(entity);
     }
 
@@ -77,7 +78,8 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
                 PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "timestamp")));
         List<AuditLogEntry> content = p.getContent().stream()
                 .map(e -> new AuditLogEntry(e.getId(), e.getUsername(), e.getAction(),
-                        e.getTarget(), e.getDetails(), e.getIpAddress(), e.getTimestamp()))
+                        e.getTarget(), e.getDetails(), e.getIpAddress(), e.getTimestamp(),
+                        e.getUserAgent()))
                 .collect(Collectors.toList());
         return new PageResult<>(content, page, size, p.getTotalElements(), p.getTotalPages());
     }

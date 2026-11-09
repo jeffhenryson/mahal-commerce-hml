@@ -10,9 +10,10 @@ public record AuditLogResponseDTO(
     String target,
     String details,
     String ipAddress,
-    Instant timestamp
+    Instant timestamp,
+    String userAgent
 ) {
     public static AuditLogResponseDTO from(AuditLogEntry e) {
-        return new AuditLogResponseDTO(e.id(), e.username(), e.action(), e.target(), e.details(), e.ipAddress(), e.timestamp());
+        return new AuditLogResponseDTO(e.id(), e.username(), e.action(), e.target(), e.details(), e.ipAddress(), e.timestamp(), e.userAgent());
     }
 }

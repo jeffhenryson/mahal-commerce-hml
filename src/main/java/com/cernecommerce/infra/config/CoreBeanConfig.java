@@ -642,6 +642,15 @@ class CoreBeanConfig {
         return new com.cernecommerce.core.service.SalesAnalyticsService(salesAnalyticsRepository, customerRepository);
     }
 
+    /** Perfil > métricas do próprio usuário e da ficha do admin. */
+    @Bean
+    com.cernecommerce.core.ports.in.UserMetricsUseCase userMetricsUseCase(
+            com.cernecommerce.core.ports.out.user.UserMetricsRepository userMetricsRepository,
+            CashRegisterRepository cashRegisterRepository, PdvUseCase pdvUseCase) {
+        return new com.cernecommerce.core.service.UserMetricsService(userMetricsRepository, cashRegisterRepository,
+                pdvUseCase);
+    }
+
     @Bean
     EcommerceUseCase ecommerceUseCase(CartRepository cartRepository) {
         return new EcommerceService(cartRepository);

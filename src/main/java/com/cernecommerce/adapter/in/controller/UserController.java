@@ -143,7 +143,7 @@ public class UserController {
     public ResponseEntity<UserProfileDTO> me(Authentication authentication) {
         User user = useCase.findByUsername(authentication.getName())
                 .orElseThrow(() -> new UserNotFoundException(authentication.getName()));
-        return ResponseEntity.ok(converter.toProfile(user));
+        return ResponseEntity.ok(profileWithCustomerName(user));
     }
 
     @Operation(summary = "Troca a senha do usuário autenticado")
@@ -178,7 +178,7 @@ public class UserController {
         } else {
             publisher.publishEvent(AuditEvent.of(EventType.USER_UPDATED, result.user().getUsername()));
         }
-        return ResponseEntity.ok(converter.toProfile(result.user()));
+        return ResponseEntity.ok(profileWithCustomerName(result.user()));
     }
 
     @Operation(summary = "Busca usuário por id")
@@ -381,6 +381,15 @@ public class UserController {
 
     private static String actor(Authentication auth) {
         return auth == null ? "system" : auth.getName();
+    }
+
+    private UserProfileDTO profileWithCustomerName(User user) {
+        UserProfileDTO dto = converter.toProfile(user);
+        if (user.getCustomerId() != null) {
+            dto.setCustomerName(useCase.getCustomerNames(java.util.List.of(user.getCustomerId()))
+                    .get(user.getCustomerId()));
+        }
+        return dto;
     }
 
     private UserResponseDTO withCustomerName(User user) {

@@ -97,6 +97,10 @@ Authorities que **não** existem na tabela `permissions`:
 | `POST`/`DELETE` | `/users/{username}/roles/{roleName}` | `USER_ROLE_ASSIGN` | `UserController:78` |
 | `PUT` | `/users/{id}/disable`, `/users/{id}/enable` | `USER_STATUS` | `UserController:216` |
 | `PUT`/`DELETE` | `/users/{id}/customer` | `USER_UPDATE` | `UserController` — PLAT-F005, vínculo do operador com o cliente do CRM |
+| `GET` | `/users/{id}/performance` | `USER_READ` **e** (`ORDER_READ` ou `PDV_READ`) | `UserMetricsController` — Perfil > métricas |
+| `GET` | `/users/{id}/cash-sessions` | `USER_READ` **e** `PDV_SESSION_READ_ANY` | `UserMetricsController` — caixa de outro operador, como a V163 |
+| `GET` | `/users/{id}/access-log`, `/users/{id}/attendance` | `USER_READ` **e** `AUDIT_READ` | `UserMetricsController` |
+| `GET` | `/users/{id}/customer-orders` | `USER_READ` **e** `ORDER_READ` | `UserMetricsController` — 404 `USER_CUSTOMER_NOT_LINKED` sem cliente vinculado |
 | `GET` | `/roles`, `/roles/{name}` | `ROLE_READ` | `RoleController:61,89` |
 | `POST`/`DELETE` | `/roles`, `/roles/{name}` | `DEV_ROLE_MANAGE` | `RoleController:102,120` |
 | `POST`/`DELETE` | `/roles/{r}/permissions/{p}` | `ROLE_MANAGE_PERMISSIONS` | `RoleController:136,161` |
@@ -112,6 +116,10 @@ Authorities que **não** existem na tabela `permissions`:
 decisão consciente (o recurso é sempre do próprio usuário autenticado):
 `NotificationController`, `NotificationPreferenceController`, `TotpController`,
 `AvatarController` (upload/remoção do próprio avatar) e `/users/me/**` no `UserController`.
+As cinco `/users/me/{performance,cash-sessions,access-log,attendance,customer-orders}` do
+`UserMetricsController` são do mesmo tipo (só dados do próprio token), mas declaram
+`@PreAuthorize("isAuthenticated()")` explícito em vez de entrar na lista de exceções do
+`SecurityArchitectureTest`.
 `AuthController`, `OAuthController` e `RegistrationController` são públicos por natureza.
 
 ### Rotas públicas

@@ -52,6 +52,11 @@ public class ComandaItemEntity {
     @Column(name = "added_at", nullable = false)
     private Instant addedAt;
 
+    // Perfil > métricas — quem lançou a linha (V190). Gravado só na criação, a partir do usuário
+    // autenticado; nulo nas linhas anteriores à V190 e nas lançadas sem usuário no contexto.
+    @Column(name = "added_by", length = 80)
+    private String addedBy;
+
     // PDV-F010 — por que a linha existe. Sem @Enumerated: mesma convenção enum-como-string de
     // product.type/product.unit.
     @Column(nullable = false, length = 20)

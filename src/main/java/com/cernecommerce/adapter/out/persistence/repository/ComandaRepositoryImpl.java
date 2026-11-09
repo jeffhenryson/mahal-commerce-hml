@@ -24,6 +24,8 @@ import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.ports.out.pdv.ComandaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -322,6 +324,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             if (itemEntity == null) {
                 itemEntity = new ComandaItemEntity();
                 itemEntity.setComanda(entity);
+                itemEntity.setAddedBy(currentUsername());
                 entity.getItems().add(itemEntity);
             }
             itemEntity.setSku(item.sku());
@@ -417,5 +420,19 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                         .map(a -> new SessionSetup.Addon(a.getAddonId(), a.getNome(), a.getPreco()))
                         .toList(),
                 e.isVasoGrande(), e.isCarvaoCortesia());
+    }
+
+    /**
+     * Perfil > métricas — autor da linha nova, lido do contexto de segurança como faria um
+     * {@code @CreatedBy}. Evita carregar o username pelo record {@code ComandaItem} e pelas
+     * dezenas de fábricas dele. Sem usuário autenticado (job, chamada interna), fica nulo.
+     */
+    private static String currentUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            return null;
+        }
+        String name = auth.getName();
+        return name != null && name.length() > 80 ? name.substring(0, 80) : name;
     }
 }
