@@ -24,11 +24,22 @@ public class SaleRequest {
 
     @DecimalMin("0.0")
     @Schema(description = "V186 — quanto do saldo de cashback do cliente usar nesta venda. Abate do total a pagar "
-            + "(os pagamentos somam o total já abatido). Exige customerId com CPF; respeita o saldo disponível, "
-            + "o saldo mínimo e o teto (% da mercadoria) de GET /cashback/settings — use "
-            + "GET /cashback/customers/{id}/redemption-quote para saber o máximo. Fora das regras: 422 CASHBACK_*. "
-            + "Omitido/0: sem resgate.", example = "20.00")
+            + "(os pagamentos somam o total já abatido). Exige customerId com CPF. Sem teto percentual e sem "
+            + "saldo mínimo: o limite é o saldo disponível (fora da carência) e o líquido dos itens elegíveis "
+            + "(categorias sem `cashbackExcluded`), calculado pelo servidor — acima disso, 422 CASHBACK_ABOVE_CAP. "
+            + "Qualquer operador do PDV aplica (não exige PDV_SALE_DISCOUNT). Com `bossDiscountPercent`: 409 "
+            + "BENEFIT_CONFLICT. Omitido/0: sem resgate.", example = "20.00")
     private BigDecimal cashbackToRedeem;
+
+    @jakarta.validation.constraints.Min(1)
+    @jakarta.validation.constraints.Max(5)
+    @Schema(description = "Desconto do chefe: percentual inteiro de 1 a 5 (fora disso, 400). O valor continua "
+            + "rateado em `items[].discountAmount` e tem que bater com percent × base elegível (líquido das linhas "
+            + "de categoria sem `cashbackExcluded`, depois de kit e promoção), ±R$ 0,01 por linha — senão 409 "
+            + "DISCOUNT_LIMIT_EXCEEDED. Exige PDV_SALE_DISCOUNT. Não combina com `cashbackToRedeem` (409 "
+            + "BENEFIT_CONFLICT), e a venda com ele não gera cashback. Omitido: sem desconto do chefe — e aí "
+            + "nenhuma linha pode ter desconto concedido.", example = "5", minimum = "1", maximum = "5")
+    private Integer bossDiscountPercent;
 
     @Valid
     @Schema(description = "Itens avulsos. Pode ser vazio quando a venda tem `kits`; sem itens e sem kits, "

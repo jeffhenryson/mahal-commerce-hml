@@ -287,7 +287,7 @@ public class PdvControllerTest {
     @Test
     void registerSale_somenteKit_semPermissaoDeDesconto_passaOsKitsAoUseCase() throws Exception {
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(),
-                any(), any(), any(), any())).thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
+                any(), any(), any(), any(), any())).thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
         mockMvc.perform(post("/pdv/sessions/1/sales")
@@ -301,7 +301,7 @@ public class PdvControllerTest {
         verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), argThat(List::isEmpty),
                 argThat(kits -> kits.size() == 1 && kits.get(0).templateId().equals(5L)
                         && kits.get(0).picks().size() == 2),
-                any(), anyString(), eq(false), isNull(), any(), any(), any(), any());
+                any(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -314,7 +314,7 @@ public class PdvControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("SALE_EMPTY"));
 
-        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any(), any());
     }
 
     /** PDV-C034 — método que não existe responde 400 com código próprio, não o 400 genérico. */
@@ -329,7 +329,7 @@ public class PdvControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_PAYMENT_METHOD"));
 
-        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any(), any());
     }
 
     /** PDV-C034 — GATEWAY_PIX existe no enum, mas não é forma que o operador lança. */
@@ -344,7 +344,7 @@ public class PdvControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_PAYMENT_METHOD"));
 
-        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(), anyBoolean(), any(), any(), any(), any(), any(), any());
     }
 
     /**
@@ -354,7 +354,7 @@ public class PdvControllerTest {
      */
     @Test
     void registerSale_amountWithFloatingPointNoise_reachesTheUseCaseRoundedToTwoPlaces() throws Exception {
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
@@ -369,12 +369,12 @@ public class PdvControllerTest {
         verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(),
                 argThat(payments -> payments.size() == 1
                         && payments.get(0).amount().equals(new BigDecimal("76.29"))),
-                anyString(), eq(false), isNull(), any(), any(), any(), any());
+                anyString(), eq(false), isNull(), any(), any(), any(), any(), any());
     }
 
     @Test
     void registerSale_reserveForPickupTrue_repassaAoUseCaseEDevolveReservado() throws Exception {
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(true), isNull(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(true), isNull(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
@@ -389,7 +389,7 @@ public class PdvControllerTest {
                 .andExpect(jsonPath("$.status").value("RESERVADO"))
                 .andExpect(jsonPath("$.reservedAt").exists());
 
-        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(true), isNull(), any(), any(), any(), any());
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(true), isNull(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -400,7 +400,7 @@ public class PdvControllerTest {
                                 com.cernecommerce.core.domain.model.estoque.Pricing.of(
                                         new BigDecimal("18.00"), null, new BigDecimal("22.00")), null)))
                 .concluded("000001000", null, Instant.now());
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(concluido, false));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
@@ -413,7 +413,7 @@ public class PdvControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("CONCLUIDO"));
 
-        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any());
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any());
     }
 
     // PDV-F043 — chave da venda
@@ -431,7 +431,7 @@ public class PdvControllerTest {
                                         new BigDecimal("18.00"), null, new BigDecimal("22.00")), null)))
                 .concluded("000001000", null, Instant.now());
         when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(),
-                eq("3f1c9a2e-7b4d-4c1e-9a8f-2d6b5e0c1a7b"), isNull(), any(), any()))
+                eq("3f1c9a2e-7b4d-4c1e-9a8f-2d6b5e0c1a7b"), isNull(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(existente, true));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
@@ -460,7 +460,7 @@ public class PdvControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
-                any(), any(), any(), any());
+                any(), any(), any(), any(), any());
     }
 
     // PDV-F022 — entrega, observação por item e caixa por dia
@@ -478,7 +478,7 @@ public class PdvControllerTest {
                                 new DeliveryAddress("Rua A", "10", null, null, null, "João Pessoa", "PB", null, null),
                                 DeliveryMethod.APP_99, null, null, null, null, null, new BigDecimal("8.00")))
                 .reserved("000001000", null, Instant.now());
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), any(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(entrega, false));
         when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
 
@@ -502,7 +502,7 @@ public class PdvControllerTest {
         ArgumentCaptor<List<PdvUseCase.SaleItemCommand>> items = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<OrderDelivery> delivery = ArgumentCaptor.forClass(OrderDelivery.class);
         verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), items.capture(), any(), any(), anyString(), eq(false),
-                delivery.capture(), any(), any(), any(), any());
+                delivery.capture(), any(), any(), any(), any(), any());
         assertThat(items.getValue().get(0).note()).isEqualTo("Sem gelo");
         assertThat(delivery.getValue().fee()).isEqualByComparingTo("8.00");
         assertThat(delivery.getValue().address().street()).isEqualTo("Rua A");
@@ -510,7 +510,7 @@ public class PdvControllerTest {
 
     @Test
     void registerSale_retiradaComReserveForPickupFalse_eAceita() throws Exception {
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), any(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(Order.openBalcao(1L, "LOJA-01", null, List.of(
                                 com.cernecommerce.core.domain.model.pedido.OrderItem.fromCatalog("CARV-001",
                                         new BigDecimal("2.000"),
@@ -547,7 +547,7 @@ public class PdvControllerTest {
 
     @Test
     void registerSale_marcadoComPermissao_repassaODueDate() throws Exception {
-        when(pdvUseCase.registerSaleIdempotent(eq(1L), eq(123L), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any()))
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), eq(123L), any(), any(), any(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any()))
                 .thenReturn(new PdvUseCase.SaleRegistration(Order.openBalcao(1L, "LOJA-01", 123L, List.of(
                                 com.cernecommerce.core.domain.model.pedido.OrderItem.fromCatalog("CARV-001",
                                         new BigDecimal("2.000"),
@@ -568,7 +568,7 @@ public class PdvControllerTest {
                 .andExpect(status().isCreated());
 
         ArgumentCaptor<List<PdvUseCase.PaymentCommand>> payments = ArgumentCaptor.forClass(List.class);
-        verify(pdvUseCase).registerSaleIdempotent(eq(1L), eq(123L), any(), any(), payments.capture(), anyString(), eq(false), isNull(), any(), any(), any(), any());
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), eq(123L), any(), any(), payments.capture(), anyString(), eq(false), isNull(), any(), any(), any(), any(), any());
         assertThat(payments.getValue().get(0).dueDate()).isNull();
         assertThat(payments.getValue().get(1).dueDate()).isEqualTo(java.time.LocalDate.of(2099, 10, 15));
     }
@@ -604,5 +604,96 @@ public class PdvControllerTest {
                         .content("{\"warehouseCode\":\"W1\"}"))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(pdvUseCase);
+    }
+
+    // ── Cashback × desconto do chefe ─────────────────────────────────────────────────────────
+
+    /** Operador sem PDV_SALE_DISCOUNT resgata cashback: o resgate não é desconto concedido. */
+    @Test
+    void registerSale_cashbackRedemptionWithoutDiscountPermission_isCreated() throws Exception {
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(),
+                any(), any(), any(), any(), any())).thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
+        when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
+
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerId":42,"cashbackToRedeem":20.00,
+                                 "items":[{"sku":"CARV-001","quantity":2}],
+                                 "payments":[{"method":"PIX","amount":56.29}]}"""))
+                .andExpect(status().isCreated());
+
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), eq(42L), any(), any(), any(), anyString(), eq(false),
+                isNull(), any(), any(), any(), argThat(c -> c.compareTo(new BigDecimal("20.00")) == 0),
+                argThat(b -> b.percent() == null && b.percentRequired()));
+    }
+
+    @Test
+    void registerSale_bossDiscountPercentAboveFive_isBadRequest() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(new UsernamePasswordAuthenticationToken("operador", null,
+                                List.of(new SimpleGrantedAuthority("PDV_SALE_DISCOUNT"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"bossDiscountPercent":6,
+                                 "items":[{"sku":"CARV-001","quantity":1,"discountAmount":6.00}],
+                                 "payments":[{"method":"PIX","amount":94.00}]}"""))
+                .andExpect(status().isBadRequest());
+
+        verify(pdvUseCase, never()).registerSaleIdempotent(any(), any(), any(), any(), any(), anyString(),
+                anyBoolean(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void registerSale_bossDiscountWithoutPermission_isForbidden() throws Exception {
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"bossDiscountPercent":5,
+                                 "items":[{"sku":"CARV-001","quantity":1}],
+                                 "payments":[{"method":"PIX","amount":100.00}]}"""))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void registerSale_bossDiscountPercentReachesTheUseCaseAsOnline() throws Exception {
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(),
+                any(), any(), any(), any(), any())).thenReturn(new PdvUseCase.SaleRegistration(reservedOrder(), false));
+        when(pdvUseCase.getOrderPayments(any())).thenReturn(List.of());
+
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(new UsernamePasswordAuthenticationToken("operador", null,
+                                List.of(new SimpleGrantedAuthority("PDV_SALE_DISCOUNT"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"bossDiscountPercent":5,
+                                 "items":[{"sku":"CARV-001","quantity":1,"discountAmount":5.00}],
+                                 "payments":[{"method":"PIX","amount":95.00}]}"""))
+                .andExpect(status().isCreated());
+
+        verify(pdvUseCase).registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false),
+                isNull(), any(), any(), any(), any(),
+                argThat(b -> Integer.valueOf(5).equals(b.percent()) && b.percentRequired()));
+    }
+
+    /** O 409 BENEFIT_CONFLICT que o front já trata. */
+    @Test
+    void registerSale_benefitConflict_is409WithItsCode() throws Exception {
+        when(pdvUseCase.registerSaleIdempotent(eq(1L), any(), any(), any(), any(), anyString(), eq(false), isNull(),
+                any(), any(), any(), any(), any()))
+                .thenThrow(new com.cernecommerce.core.domain.exception.pedido.BenefitConflictException());
+
+        mockMvc.perform(post("/pdv/sessions/1/sales")
+                        .principal(new UsernamePasswordAuthenticationToken("operador", null,
+                                List.of(new SimpleGrantedAuthority("PDV_SALE_DISCOUNT"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerId":42,"bossDiscountPercent":5,"cashbackToRedeem":10.00,
+                                 "items":[{"sku":"CARV-001","quantity":1,"discountAmount":5.00}],
+                                 "payments":[{"method":"PIX","amount":85.00}]}"""))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("BENEFIT_CONFLICT"));
     }
 }

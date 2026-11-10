@@ -26,6 +26,8 @@ import com.cernecommerce.adapter.in.dtos.request.ProductVisibilityRequest;
 import com.cernecommerce.adapter.in.dtos.request.ProductRequest;
 import com.cernecommerce.adapter.in.dtos.request.ProductVariantPatchRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReorderPointRequest;
+import com.cernecommerce.adapter.in.dtos.response.KitItemResponseDTO;
+import com.cernecommerce.adapter.in.dtos.request.KitItemsRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockCountItemRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockCountRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockMovementRequest;
@@ -453,7 +455,8 @@ public class EstoqueController {
     public ResponseEntity<CategoryResponseDTO> createCategory(@Valid @RequestBody CategoryRequest request,
             Authentication authentication) {
         Category created = estoqueUseCase.createCategory(request.getName(), request.isFeatured(),
-                request.getDisplayOrder(), Boolean.TRUE.equals(request.getCigarette()));
+                request.getDisplayOrder(), Boolean.TRUE.equals(request.getCigarette()),
+                Boolean.TRUE.equals(request.getCashbackExcluded()));
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_CREATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(created.id()),
                         "name", created.name())));
@@ -475,7 +478,7 @@ public class EstoqueController {
     public ResponseEntity<CategoryResponseDTO> updateCategory(@PathVariable Long id,
             @Valid @RequestBody CategoryPatchRequest request, Authentication authentication) {
         Category updated = estoqueUseCase.updateCategory(id, request.getName(), request.getFeatured(),
-                request.getDisplayOrder(), request.getCigarette());
+                request.getDisplayOrder(), request.getCigarette(), request.getCashbackExcluded());
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_UPDATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(id))));
         return ResponseEntity.ok(categoryConverter.toResponse(updated));
@@ -536,6 +539,9 @@ public class EstoqueController {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Criado", content = @Content(schema = @Schema(implementation = ProductResponseDTO.class))),
             @ApiResponse(responseCode = "409", description = "SKU já cadastrado", content = @Content),
+            @ApiResponse(responseCode = "422", description = "KIT_MODE_INVALID (kitMode sem type=KIT), "
+                    + "KIT_PRE_MONTADO_SEM_RECEITA (pré-montado com components) ou KIT_ITEMS_EMPTY "
+                    + "(pré-montado sem kitItems)", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PostMapping("/products")
@@ -563,7 +569,8 @@ public class EstoqueController {
                 request.getStatus(), request.getBrandId(),
                 new EstoqueUseCase.TableSessionCommand(request.getAvailableForTable(),
                         request.getSessionProduct(), request.getSessionsPerUnit(), request.getOpenRoshPrice(),
-                        request.getSessionTierId(), false));
+                        request.getSessionTierId(), false),
+                request.getKitMode(), converter.toKitItemCommands(request.getKitItems()));
         publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_CREATED,
                 authentication.getName(), Map.of("sku", created.sku())));
         return ResponseEntity.created(URI.create("/estoque/products/" + created.sku()))
@@ -1636,9 +1643,16 @@ public class EstoqueController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "Define o ponto de reposição (quantidade mínima) de um SKU em um depósito")
+    @Operation(summary = "Define o ponto de reposição (quantidade mínima) de um SKU em um depósito",
+            description = "O SKU entra no alerta ao **atingir** o mínimo (saldo <= minQuantity). "
+                    + "`criticalQuantity` (0 <= c < minQuantity) é o corte do nível crítico: **ausente** "
+                    + "mantém o salvo enquanto continuar menor que o mínimo (senão volta ao padrão); "
+                    + "**null** explícito volta ao padrão (floor(min/2) para mínimo inteiro, min/2 para "
+                    + "fracionário). minQuantity = 0 desliga o alerta.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Definido"),
+            @ApiResponse(responseCode = "422", description = "REORDER_CRITICAL_INVALID — criticalQuantity "
+                    + "fora de 0 <= c < minQuantity", content = @Content),
             @ApiResponse(responseCode = "404", description = "Depósito não encontrado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
@@ -1647,10 +1661,15 @@ public class EstoqueController {
     public ResponseEntity<Void> setReorderPoint(
             @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
             @Valid @RequestBody ReorderPointRequest request, Authentication authentication) {
-        estoqueUseCase.setReorderPoint(sku, request.getWarehouseCode(), request.getMinQuantity());
-        publisher.publishEvent(AuditEvent.of(EventType.REORDER_POINT_SET, authentication.getName(),
-                Map.of("sku", sku, "warehouseCode", request.getWarehouseCode(),
-                        "minQuantity", request.getMinQuantity())));
+        estoqueUseCase.setReorderPoint(sku, request.getWarehouseCode(), request.getMinQuantity(),
+                request.isCriticalQuantityPresent(), request.getCriticalQuantity());
+        Map<String, Object> details = new HashMap<>(Map.of("sku", sku,
+                "warehouseCode", request.getWarehouseCode(), "minQuantity", request.getMinQuantity()));
+        if (request.isCriticalQuantityPresent()) {
+            // Map.copyOf do AuditEvent não aceita valor nulo — null explícito = "voltou ao padrão".
+            details.put("criticalQuantity", request.getCriticalQuantity() == null ? "PADRAO" : request.getCriticalQuantity());
+        }
+        publisher.publishEvent(AuditEvent.of(EventType.REORDER_POINT_SET, authentication.getName(), details));
         return ResponseEntity.noContent().build();
     }
 
@@ -1726,7 +1745,7 @@ public class EstoqueController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Definida", content = @Content(schema = @Schema(implementation = ProductResponseDTO.class))),
             @ApiResponse(responseCode = "404", description = "SKU do kit ou de algum componente não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Receita vazia, autorreferência, componente duplicado, componente não SIMPLES, kit com variações, ou SKU já é componente de outro kit", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Receita vazia, autorreferência, componente duplicado, componente não SIMPLES, kit com variações, SKU já é componente de outro kit, ou KIT_PRE_MONTADO_SEM_RECEITA", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
     @PutMapping("/products/{sku}/kit")
@@ -1774,6 +1793,48 @@ public class EstoqueController {
         publisher.publishEvent(AuditEvent.of(EventType.KIT_RECIPE_CHANGED, authentication.getName(),
                 Map.of("sku", sku, "componentCount", 0)));
         return ResponseEntity.ok(converter.toResponse(updated));
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Kit pré-montado — itens descritivos
+    // ------------------------------------------------------------------------------------
+
+    @Operation(summary = "Lista os itens de um kit pré-montado",
+            description = "Ordenados por posição, com custo unitário e nomes de categoria/marca resolvidos.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "SKU não encontrado", content = @Content),
+            @ApiResponse(responseCode = "409", description = "KIT_NOT_PRE_MONTADO", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/products/{sku}/kit-items")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_READ')")
+    public ResponseEntity<List<KitItemResponseDTO>> listKitItems(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku) {
+        return ResponseEntity.ok(estoqueUseCase.listKitItems(sku).stream().map(converter::toKitItemResponse).toList());
+    }
+
+    @Operation(summary = "Substitui a lista inteira de itens de um kit pré-montado",
+            description = "Item com `id` atualiza, sem `id` cria, `id` ausente é apagado; a posição é o "
+                    + "índice no array. Recalcula `pricing.costPrice` do kit como Σ unitCost × quantity "
+                    + "(nulo se algum item não tiver custo).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Lista salva, com ids"),
+            @ApiResponse(responseCode = "404", description = "SKU, categoria ou marca não encontrados", content = @Content),
+            @ApiResponse(responseCode = "409", description = "KIT_NOT_PRE_MONTADO", content = @Content),
+            @ApiResponse(responseCode = "422", description = "KIT_ITEMS_EMPTY", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PutMapping("/products/{sku}/kit-items")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<List<KitItemResponseDTO>> replaceKitItems(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody KitItemsRequest request, Authentication authentication) {
+        List<KitItemResponseDTO> saved = estoqueUseCase.replaceKitItems(sku,
+                converter.toKitItemCommands(request.getItems())).stream().map(converter::toKitItemResponse).toList();
+        publisher.publishEvent(AuditEvent.of(EventType.PRODUCT_UPDATED, authentication.getName(),
+                Map.of("sku", sku, "kitItemCount", saved.size())));
+        return ResponseEntity.ok(saved);
     }
 
     @Operation(summary = "Disponibilidade de montagem de todos os kits de um depósito",

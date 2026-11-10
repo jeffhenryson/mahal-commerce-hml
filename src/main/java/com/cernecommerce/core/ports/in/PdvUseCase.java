@@ -273,10 +273,49 @@ public interface PdvUseCase {
      * do cliente na mesma transação. Nulo ou zero: sem resgate. Fora das regras do programa é
      * {@code 422 CASHBACK_*} ({@code CashbackRedemptionNotAllowedException}).
      */
+    default SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
+            List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck, BigDecimal cashbackToRedeem) {
+        return registerSaleIdempotent(sessionId, customerId, items, kits, payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck, cashbackToRedeem, BossDiscountRequest.legacy());
+    }
+
+    /**
+     * Igual à anterior, com o desconto do chefe. O valor continua rateado em
+     * {@code SaleItemCommand.discountAmount}; {@code bossDiscount.percent()} é o percentual (1–5) que ele
+     * tem que bater sobre a base elegível (linhas fora dos benefícios ficam de fora). Com percentual, o
+     * resgate de cashback é recusado ({@code 409 BENEFIT_CONFLICT}) e a venda não gera cashback.
+     */
     SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<com.cernecommerce.core.domain.model.estoque.KitSelection> kits,
             List<PaymentCommand> payments, String username, boolean reserveForPickup, OrderDelivery delivery,
-            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck, BigDecimal cashbackToRedeem);
+            String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck, BigDecimal cashbackToRedeem,
+            BossDiscountRequest bossDiscount);
+
+    /**
+     * Desconto do chefe pedido na venda.
+     *
+     * @param percent percentual inteiro (1–5) ou nulo, sem desconto do chefe
+     * @param percentRequired {@code true} na venda online: desconto concedido sem percentual é recusado
+     *        ({@code 409 DISCOUNT_LIMIT_EXCEEDED}). {@code false} no legado (venda offline já cobrada e
+     *        chamadas internas): sem percentual, vale o teto de {@code pdv.sale.max-discount-percent} sobre
+     *        a base elegível.
+     */
+    record BossDiscountRequest(Integer percent, boolean percentRequired) {
+
+        public static BossDiscountRequest online(Integer percent) {
+            return new BossDiscountRequest(percent, true);
+        }
+
+        public static BossDiscountRequest legacy(Integer percent) {
+            return new BossDiscountRequest(percent, false);
+        }
+
+        public static BossDiscountRequest legacy() {
+            return legacy(null);
+        }
+    }
 
     /**
      * O que o cliente mostrou de promoção por quantidade. {@code expectedDiscount} nulo vale zero.

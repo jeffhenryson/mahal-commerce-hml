@@ -25,4 +25,7 @@ public class CategoryPatchRequest {
 
     /** PDV-F045 — categoria de cigarros. Omitido não muda. */
     private Boolean cigarette;
+
+    /** V197 — categoria fora dos benefícios (sem cashback, sem resgate, sem desconto do chefe). Omitido não muda. */
+    private Boolean cashbackExcluded;
 }

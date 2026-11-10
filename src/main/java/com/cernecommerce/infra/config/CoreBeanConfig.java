@@ -393,7 +393,7 @@ class CoreBeanConfig {
             // Teto de desconto por pedido (PDV-F004). Acima dele, 409 em vez de um segundo nível de
             // permissão — dois níveis só criariam a tentação de distribuir o maior. Migra para
             // system_config junto com o painel de configuração.
-            @Value("${pdv.sale.max-discount-percent:10}") BigDecimal maxDiscountPercent,
+            @Value("${pdv.sale.max-discount-percent:5}") BigDecimal maxDiscountPercent,
             // CRM-F010 — o marcar na venda e a quitação no caixa de quem recebe.
             ReceivableUseCase receivableUseCase,
             // PDV-F043 — o fechamento recusa caixa com venda offline recusada esperando revisão.

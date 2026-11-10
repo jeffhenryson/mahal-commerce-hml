@@ -69,6 +69,8 @@ import com.cernecommerce.core.domain.exception.pdv.ComandaPartiallyClosedExcepti
 import com.cernecommerce.core.domain.exception.pdv.ComandaNotOpenException;
 import com.cernecommerce.core.domain.exception.pdv.ComandaOnlyCourtesyException;
 import com.cernecommerce.core.domain.exception.pdv.DiscountExceedsBillException;
+import com.cernecommerce.core.domain.exception.pedido.BenefitConflictException;
+import com.cernecommerce.core.domain.exception.pedido.DiscountLimitExceededException;
 import com.cernecommerce.core.domain.exception.pdv.KitItemRemovalNotAllowedException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedItemIsChargedException;
 import com.cernecommerce.core.domain.exception.pdv.LinkedSessionStillActiveException;
@@ -399,6 +401,8 @@ public class ComandaService implements ComandaUseCase {
                         resolveUnitPrice(sku, resolvedMode, resolvedCourtesy, surchargeAmount, saleInfo),
                         saleInfo.pricing(), saleInfo.productName(), resolvedMode, resolvedCourtesy,
                         resolvedLink, notes, surchargeAmount);
+        // V198 — carimbada no lançamento, como o preço: o fechamento tira a linha da base dos benefícios.
+        item = item.withBenefitsExcluded(saleInfo.benefitsExcluded());
 
         // Debita agora, não no fechamento — ver a nota de classe sobre não-atomicidade. Cortesia
         // baixa estoque igual: o cliente não paga, mas a essência saiu.
@@ -444,7 +448,8 @@ public class ComandaService implements ComandaUseCase {
             // aqui?"), e o kit é oferta montada pelo admin, que já escolheu o que entra nele.
             ComandaItem item = ComandaItem.fromCatalog(line.sku(), BigDecimal.ONE, saleInfo.pricing(),
                             saleInfo.productName())
-                    .withKit(bundleId, quote.template().id(), line.discountAmount());
+                    .withKit(bundleId, quote.template().id(), line.discountAmount())
+                    .withBenefitsExcluded(saleInfo.benefitsExcluded());
             try (var origem = StockMovementOriginContext.open(StockMovementOrigin.comanda(comandaId))) {
                 estoqueUseCase.adjustStock(line.sku(), comanda.warehouseCode(), MovementType.SAIDA, BigDecimal.ONE,
                         "Comanda #" + comandaId + " (kit " + quote.template().name() + ")", username);
@@ -859,12 +864,13 @@ public class ComandaService implements ComandaUseCase {
             int cobrados = pacote.getValue();
             if (modality.includesMainPackage() && pacote.getKey().equals(principal)) {
                 linhas.add(ComandaItem.forIncludedPackage(pacote.getKey(), info.pricing(),
-                        "Pacote " + info.productName() + " (incluso)", sessionItemId));
+                        "Pacote " + info.productName() + " (incluso)", sessionItemId)
+                        .withBenefitsExcluded(info.benefitsExcluded()));
                 cobrados--;
             }
             if (cobrados > 0) {
                 linhas.add(ComandaItem.forEssencePackage(pacote.getKey(), info.pricing(), nome, sessionItemId,
-                        cobrados));
+                        cobrados).withBenefitsExcluded(info.benefitsExcluded()));
             }
         }
         return linhas;
@@ -1304,7 +1310,7 @@ public class ComandaService implements ComandaUseCase {
                     : ComandaItem.forSession(command.sku(), command.quantity(), saleInfo.pricing().effectivePrice(),
                             saleInfo.pricing(), saleInfo.productName(), ConsumptionMode.NORMAL, false, null,
                             command.note(), null);
-            linhas.add(linha.asStorePurchase(discount));
+            linhas.add(linha.asStorePurchase(discount).withBenefitsExcluded(saleInfo.benefitsExcluded()));
         }
         // Promoção por quantidade: é compra de balcão, então vale o canal PDV, com a mesma conferência
         // (409 PROMOTION_CHANGED) da venda do caixa. O desconto vai na linha e fica fora do recálculo da mesa.
@@ -1778,10 +1784,31 @@ public class ComandaService implements ComandaUseCase {
         return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, BigDecimal.ZERO, username);
     }
 
+    /** Sobrescrita só para levar o {@code @Transactional} — o default da interface chamaria por {@code this}. */
     @Override
     @Transactional
     public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
             boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username) {
+        return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, cashbackToRedeem,
+                PdvUseCase.BossDiscountRequest.legacy(), username);
+    }
+
+    @Override
+    @Transactional
+    public Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem,
+            PdvUseCase.BossDiscountRequest bossDiscount, String username) {
+        PdvUseCase.BossDiscountRequest boss = bossDiscount == null ? PdvUseCase.BossDiscountRequest.legacy()
+                : bossDiscount;
+        // Exclusividade: na mesma conta é OU o desconto do chefe OU o resgate de cashback.
+        if (boss.percent() != null && cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
+            throw new BenefitConflictException();
+        }
+        // O desconto do chefe é do fechamento da conta inteira: a conta dividida não leva.
+        if (boss.percent() != null && itemIds != null && !itemIds.isEmpty()) {
+            throw new DiscountLimitExceededException(
+                    "Desconto do chefe só no fechamento da conta inteira da mesa, não na conta dividida.");
+        }
         // 2 casas antes do rateio: DiscountProration fecha no centavo e não sabe distribuir 0,005.
         discountAmount = Money.of(discountAmount);
         // PDV-C008 — ver getComandaForUpdate. É aqui que a trava mais importa: sem ela, dois
@@ -1828,7 +1855,12 @@ public class ComandaService implements ComandaUseCase {
         //
         // PDV-F019 — a base do rateio é o LÍQUIDO do desconto de kit: a linha de kit já vem abatida,
         // e ratear sobre o bruto poderia dar a ela mais desconto total que o valor dela.
-        List<BigDecimal> lineAmounts = escopo.stream().map(ComandaItem::netSubtotal).toList();
+        //
+        // Cashback × desconto do chefe — a base é só a das linhas ELEGÍVEIS: a linha de categoria fora dos
+        // benefícios (cigarros, palheiros…) entra com zero, e por isso recebe zero do rateio por construção.
+        List<BigDecimal> lineAmounts = escopo.stream()
+                .map(i -> i.benefitsExcluded() ? BigDecimal.ZERO : i.netSubtotal())
+                .toList();
         // PDV-C016 — desconto maior que a conta é recusado AQUI, com código próprio. distribute()
         // já recusava (não há como ratear um abatimento maior que a soma das linhas sem violar a
         // invariante de OrderItem), mas com IllegalArgumentException, que o handler global achata
@@ -1838,12 +1870,21 @@ public class ComandaService implements ComandaUseCase {
         // pedir o dobro da conta dava "Requisição inválida". A checagem fica no service e não
         // dentro de distribute: aquela é função pura de aritmética, e o vocabulário de erro do PDV
         // não é dela.
+        BigDecimal eligibleBill = lineAmounts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
         if (discountAmount != null && discountAmount.signum() > 0) {
-            BigDecimal billAmount = lineAmounts.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (discountAmount.compareTo(billAmount) > 0) {
-                throw new DiscountExceedsBillException(comandaId, discountAmount, billAmount);
+            if (eligibleBill.signum() == 0) {
+                throw new DiscountLimitExceededException(
+                        "Desconto do chefe não incide sobre itens fora dos benefícios (cigarros, palheiros…).");
+            }
+            if (discountAmount.compareTo(eligibleBill) > 0) {
+                throw new DiscountExceedsBillException(comandaId, discountAmount, eligibleBill);
             }
         }
+        // O percentual sobre a base elegível (ou, no legado sem percentual, o teto). Antes do rateio, que só
+        // distribui o que já passou pela regra.
+        int eligibleLines = (int) lineAmounts.stream().filter(a -> a.signum() > 0).count();
+        pdvService.requireBossDiscount(boss,
+                discountAmount == null ? BigDecimal.ZERO : discountAmount, eligibleBill, eligibleLines);
         List<BigDecimal> lineDiscounts = DiscountProration.distribute(lineAmounts, discountAmount);
 
         // Cada ComandaItem já tem preço e custo congelados no lançamento — vira OrderItem por
@@ -1874,33 +1915,27 @@ public class ComandaService implements ComandaUseCase {
             // "qual pinça saiu com aquela mesa" é pergunta feita DEPOIS do fechamento; o acréscimo
             // porque não dá para reconstruí-lo do unitPrice, que já é a soma.
             // Promoção por quantidade: já está em lineDiscount(); aqui só atravessa o detalhamento.
+            // V198 — linha fora dos benefícios: taxa zero, qualquer que seja a resolvida.
+            BigDecimal percent = item.benefitsExcluded() ? BigDecimal.ZERO : rate == null ? null : rate.percent();
             orderItems.add(OrderItem.of(null, item.sku(), item.quantity(), item.unitPrice(), item.costPrice(),
-                    lineDiscounts.get(i).add(item.lineDiscount()), rate == null ? null : rate.percent(),
+                    lineDiscounts.get(i).add(item.lineDiscount()), percent,
                     item.productName(), item.mode(),
                     item.courtesy(), item.notes(), item.surchargeAmount(),
                     // PDV-F024 — o carvão atravessa como o notes: só registro.
                     item.setup() == null || item.setup().charcoal() == null ? null
                             : item.setup().charcoal().name(),
-                    item.promotionId(), item.promotionName(), item.promotionDiscount()));
+                    item.promotionId(), item.promotionName(), item.promotionDiscount(), item.benefitsExcluded()));
         }
 
         // O canal é imutável: o pedido da mesa precisa NASCER MESA, não virar depois. O depósito
         // continua sendo o da comanda (é de lá que o estoque saiu, item a item), mesmo quando quem
         // fecha é de outra gaveta.
         Order order = Order.openMesa(receivingSession.id(), comanda.warehouseCode(), comanda.customerId(),
-                comandaId, comanda.tableOrCustomerLabel(), orderItems);
-        // Mesmo teto do balcão, e de propósito: o limite é política comercial da casa, não
-        // característica do canal. Checado DEPOIS de montar o pedido porque a regra é percentual
-        // sobre o bruto, e é o pedido que sabe o bruto.
-        // PDV-F019 — desconto de kit montável não conta para o teto (ver PdvService). PDV-F060 — nem o
-        // da compra na loja, que já passou pelo teto no lançamento.
-        BigDecimal kitDiscountTotal = escopo.stream().map(ComandaItem::lineDiscount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (kitDiscountTotal.signum() > 0) {
-            pdvService.requireDiscountWithinLimit(order, kitDiscountTotal);
-        } else {
-            pdvService.requireDiscountWithinLimit(order);
-        }
+                comandaId, comanda.tableOrCustomerLabel(), orderItems)
+                .withBossDiscountPercent(boss.percent());
+        // O teto do desconto de conta já foi conferido acima (requireBossDiscount, sobre a base elegível).
+        // O desconto de kit, de promoção e o da compra na loja (lineDiscount) não são concedidos aqui e
+        // ficam fora dele, como sempre ficaram (PDV-F019, PDV-F060).
 
         // PDV-F015 — a taxa entra por último, sobre o LÍQUIDO: os 10% incidem sobre o que o cliente
         // de fato vai pagar pela mercadoria, não sobre o valor antes do abatimento. Cobrar serviço
@@ -1920,7 +1955,7 @@ public class ComandaService implements ComandaUseCase {
         // V186 — resgate de cashback do cliente da comanda, depois da taxa (que é sobre as linhas e
         // não encolhe) e antes de validar o pagamento. Conta dividida: o teto é sobre este escopo.
         if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
-            cashbackUseCase.validateRedemption(comanda.customerId(), order.merchandiseNet(), cashbackToRedeem);
+            cashbackUseCase.validateRedemption(comanda.customerId(), order.eligibleMerchandiseNet(), cashbackToRedeem);
             order = order.withCashbackRedeemed(cashbackToRedeem);
         }
 

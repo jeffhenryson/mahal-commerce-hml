@@ -354,34 +354,34 @@ class ComandaCashCycleIT {
         comandaUseCase.addItem(comanda.id(), sku, new BigDecimal("4"), operator);
         flushAndClear();
 
-        // Desconto de 10,00 (dentro do teto de 10%) e taxa de serviço aplicada.
-        // 100,00 − 10,00 = 90,00 de líquido; 10% disso = 9,00; total a pagar 99,00.
+        // Desconto de 5,00 (dentro do teto de 5%) e taxa de serviço aplicada.
+        // 100,00 − 5,00 = 95,00 de líquido; 10% disso = 9,50; total a pagar 104,50.
         Order order = comandaUseCase.closeComanda(comanda.id(),
-                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("100.00"), null)),
-                new BigDecimal("10.00"), true, null, operator);
+                List.of(new PaymentCommand(PaymentMethod.DINHEIRO, new BigDecimal("105.00"), null)),
+                new BigDecimal("5.00"), true, null, operator);
         flushAndClear();
 
         assertThat(order.status()).isEqualTo(OrderStatus.CONCLUIDO);
         assertThat(order.channel()).isEqualTo(SalesChannel.MESA);
         assertThat(order.grossAmount()).isEqualByComparingTo("100.00");
-        assertThat(order.discountAmount()).isEqualByComparingTo("10.00");
+        assertThat(order.discountAmount()).isEqualByComparingTo("5.00");
         // A RECEITA não enxerga a gorjeta.
-        assertThat(order.netAmount()).isEqualByComparingTo("90.00");
+        assertThat(order.netAmount()).isEqualByComparingTo("95.00");
         // A taxa fica em coluna própria, conferível.
-        assertThat(order.serviceFeeAmount()).isEqualByComparingTo("9.00");
-        assertThat(order.totalPayable()).isEqualByComparingTo("99.00");
-        // Troco de 100,00 sobre 99,00 — calculado sobre o total COM taxa, não sobre o líquido.
-        assertThat(order.changeAmount()).isEqualByComparingTo("1.00");
+        assertThat(order.serviceFeeAmount()).isEqualByComparingTo("9.50");
+        assertThat(order.totalPayable()).isEqualByComparingTo("104.50");
+        // Troco de 105,00 sobre 104,50 — calculado sobre o total COM taxa, não sobre o líquido.
+        assertThat(order.changeAmount()).isEqualByComparingTo("0.50");
 
-        // O desconto foi rateado: uma linha só, absorve os 10,00 inteiros.
+        // O desconto foi rateado: uma linha só, absorve os 5,00 inteiros.
         assertThat(order.items()).hasSize(1);
-        assertThat(order.items().get(0).discountAmount()).isEqualByComparingTo("10.00");
+        assertThat(order.items().get(0).discountAmount()).isEqualByComparingTo("5.00");
 
         // Round-trip: a taxa sobrevive à persistência, não só ao objeto em memória.
         Order relido = orderRepository.findById(order.id()).orElseThrow();
-        assertThat(relido.serviceFeeAmount()).isEqualByComparingTo("9.00");
-        assertThat(relido.netAmount()).isEqualByComparingTo("90.00");
-        assertThat(relido.totalPayable()).isEqualByComparingTo("99.00");
+        assertThat(relido.serviceFeeAmount()).isEqualByComparingTo("9.50");
+        assertThat(relido.netAmount()).isEqualByComparingTo("95.00");
+        assertThat(relido.totalPayable()).isEqualByComparingTo("104.50");
     }
 
     /**

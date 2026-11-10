@@ -81,6 +81,10 @@ public class OrderEntity {
     @Column(name = "service_fee_amount", nullable = false, precision = 14, scale = 2)
     private BigDecimal serviceFeeAmount = BigDecimal.ZERO;
 
+    // V198 — percentual do desconto do chefe (1–5); nulo quando não houve. Pedido com ele não gera cashback.
+    @Column(name = "boss_discount_percent")
+    private Integer bossDiscountPercent;
+
     // PDV-F010 — origem de mesa. Só preenchidos em channel = MESA (CHECK ck_sales_order_mesa_origin).
     // comanda_id é redundante com comanda.order_id, que aponta de volta: a redundância evita join
     // reverso em toda página de Vendas > Pedidos.

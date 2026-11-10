@@ -357,6 +357,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setPromotionDiscountAmount(item.promotionDiscount());
             itemEntity.setSessionModality(item.modality() == null ? null : item.modality().name());
             itemEntity.setSessionLink(item.sessionLink() == null ? null : item.sessionLink().name());
+            itemEntity.setBenefitsExcluded(item.benefitsExcluded());
             SessionProgress session = item.session();
             itemEntity.setSessionStatus(session == null ? null : session.status().name());
             itemEntity.setStartedAt(session == null ? null : session.startedAt());
@@ -414,7 +415,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 e.isCompraNaLoja(), e.getStoreDiscountAmount(), e.getPromotionId(), e.getPromotionName(),
                 e.getPromotionDiscountAmount(),
                 e.getSessionModality() == null ? null : SessionModality.valueOf(e.getSessionModality()),
-                e.getSessionLink() == null ? null : SessionLink.valueOf(e.getSessionLink()));
+                e.getSessionLink() == null ? null : SessionLink.valueOf(e.getSessionLink()), e.isBenefitsExcluded());
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {

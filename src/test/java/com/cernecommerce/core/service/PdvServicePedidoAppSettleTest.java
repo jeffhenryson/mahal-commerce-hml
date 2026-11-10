@@ -94,7 +94,7 @@ class PdvServicePedidoAppSettleTest {
                 o.warehouseCode(), o.items(), o.grossAmount(), o.discountAmount(), o.cashbackRedeemed(),
                 o.netAmount(), o.changeAmount(), o.cancelReason(), o.createdAt(), o.paidAt(), o.concludedAt(),
                 o.cancelledAt(), o.refundedAt(), o.reservedAt(), o.separatedAt(), o.shippedAt(), o.deliveredAt(),
-                o.version(), o.comandaId(), o.tableLabel(), o.serviceFeeAmount(), o.delivery());
+                o.version(), o.comandaId(), o.tableLabel(), o.serviceFeeAmount(), o.delivery(), o.bossDiscountPercent());
     }
 
     private static OrderDelivery retirada() {

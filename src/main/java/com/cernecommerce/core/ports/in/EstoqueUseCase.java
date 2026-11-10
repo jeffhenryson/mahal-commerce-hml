@@ -577,7 +577,13 @@ public interface EstoqueUseCase {
      * diferenciar maiúsculas, para "Narguilé" e "narguilé" não virarem duas. {@code cigarette}
      * (PDV-F045) marca a categoria de cigarros, vendida pela Central de cigarros do PDV.
      */
-    Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette);
+    default Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette) {
+        return createCategory(name, featured, displayOrder, cigarette, false);
+    }
+
+    /** V197 — {@link #createCategory(String, boolean, int, boolean)} marcando se a categoria sai dos benefícios. */
+    Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette,
+            boolean cashbackExcluded);
 
     /**
      * Alteração parcial: campo nulo é mantido. Renomear <b>propaga</b> o novo nome para a coluna
@@ -587,7 +593,13 @@ public interface EstoqueUseCase {
      * @throws com.cernecommerce.core.domain.exception.estoque.CategoryNotFoundException se o id
      *         não existir.
      */
-    Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette);
+    default Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette) {
+        return updateCategory(id, name, featured, displayOrder, cigarette, null);
+    }
+
+    /** V197 — {@link #updateCategory(Long, String, Boolean, Integer, Boolean)} com a marcação de fora dos benefícios; nulo não muda. */
+    Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette,
+            Boolean cashbackExcluded);
 
     /**
      * Ativa ou desativa uma categoria. Desativada, ela some da vitrine
@@ -774,11 +786,24 @@ public interface EstoqueUseCase {
     record CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
             boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
             boolean parentWithVariants, Long sessionTierId, String category,
-            com.cernecommerce.core.domain.model.estoque.SessionModalityFlags sessionFlags) {
+            com.cernecommerce.core.domain.model.estoque.SessionModalityFlags sessionFlags,
+            boolean benefitsExcluded) {
 
         public CatalogSaleInfo {
             sessionFlags = sessionFlags == null
                     ? com.cernecommerce.core.domain.model.estoque.SessionModalityFlags.DEFAULT : sessionFlags;
+        }
+
+        /**
+         * Forma sem a marcação de fora dos benefícios (V197) — compatibilidade: produto de categoria
+         * comum, elegível a cashback, resgate e desconto do chefe.
+         */
+        public CatalogSaleInfo(String productName, Pricing pricing, boolean availableForTable,
+                boolean sessionProduct, BigDecimal openRoshPrice, Integer sessionsPerUnit, boolean kit,
+                boolean parentWithVariants, Long sessionTierId, String category,
+                com.cernecommerce.core.domain.model.estoque.SessionModalityFlags sessionFlags) {
+            this(productName, pricing, availableForTable, sessionProduct, openRoshPrice, sessionsPerUnit, kit,
+                    parentWithVariants, sessionTierId, category, sessionFlags, false);
         }
 
         /** Forma sem as flags de modalidade (PDV-F061) — compatibilidade: o padrão de produto novo (V192). */
@@ -1429,14 +1454,28 @@ public interface EstoqueUseCase {
 
     /**
      * Define (cria ou atualiza) o ponto de reposição de um SKU em um depósito. A partir dessa
-     * chamada, toda movimentação que deixe o saldo abaixo de {@code minQuantity} dispara uma
+     * chamada, toda movimentação que deixe o saldo em {@code minQuantity} ou abaixo dispara uma
      * notificação para os usuários com permissão {@code ESTOQUE_STOCK_MANAGE}. Lança
      * {@link com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException} se o SKU
      * não existir no catálogo, ou
      * {@link com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException} se o
      * código do depósito não existir.
      */
-    void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity);
+    default void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity) {
+        setReorderPoint(sku, warehouseCode, minQuantity, false, null);
+    }
+
+    /**
+     * Igual a {@link #setReorderPoint(String, String, BigDecimal)}, com o corte do nível crítico.
+     *
+     * @param criticalQuantityPresent {@code false}: o cliente não mandou o crítico — mantém o salvo
+     *        se ainda for {@code < minQuantity}, senão volta ao padrão (null). {@code true}: grava
+     *        {@code criticalQuantity} como veio, e {@code null} volta ao padrão.
+     * @throws com.cernecommerce.core.domain.exception.estoque.InvalidReorderCriticalQuantityException
+     *         se o crítico informado estiver fora de {@code 0 ≤ c < minQuantity}.
+     */
+    void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity,
+            boolean criticalQuantityPresent, BigDecimal criticalQuantity);
 
     /**
      * Remove o ponto de reposição de um SKU num depósito, se existir. Idempotente: não é erro

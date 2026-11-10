@@ -117,6 +117,7 @@ public class OrderDTOConverter {
         // PDV-F015 — os dois lado a lado de propósito: netAmount é o que a loja vendeu,
         // totalPayable é o que o cliente pagou. Fora da mesa coincidem.
         dto.setServiceFeeAmount(order.serviceFeeAmount());
+        dto.setBossDiscountPercent(order.bossDiscountPercent());
         dto.setTotalPayable(order.totalPayable());
         dto.setChangeAmount(order.changeAmount());
         dto.setCancelReason(order.cancelReason());
@@ -277,6 +278,7 @@ public class OrderDTOConverter {
         // PDV-F015 — os dois lado a lado de propósito: netAmount é o que a loja vendeu,
         // totalPayable é o que o cliente pagou. Fora da mesa coincidem.
         dto.setServiceFeeAmount(order.serviceFeeAmount());
+        dto.setBossDiscountPercent(order.bossDiscountPercent());
         dto.setTotalPayable(order.totalPayable());
         dto.setChangeAmount(order.changeAmount());
         dto.setMarginAmount(totalMargin(order));

@@ -2298,6 +2298,15 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "DISCOUNT_LIMIT_EXCEEDED", req);
     }
 
+    /**
+     * Desconto do chefe e resgate de cashback na mesma venda/fechamento: é um ou outro, nunca os dois.
+     * 409 como {@code DISCOUNT_LIMIT_EXCEEDED} — o corpo é válido, o que conflita é a regra comercial.
+     */
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pedido.BenefitConflictException.class)
+    public ResponseEntity<ApiError> handleBenefitConflict(
+            com.cernecommerce.core.domain.exception.pedido.BenefitConflictException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "BENEFIT_CONFLICT", req);
+    }
 
     /**
      * PDV-C016: mesma família de DISCOUNT_LIMIT_EXCEEDED — o valor é sintaticamente válido e

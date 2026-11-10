@@ -52,7 +52,8 @@ public record ComandaItem(
         String promotionName,
         BigDecimal promotionDiscountAmount,
         SessionModality modality,
-        SessionLink sessionLink) {
+        SessionLink sessionLink,
+        boolean benefitsExcluded) {
 
     /** Sufixo que a sessão de vaso grande leva na {@link #notes}, depois da essência (PDV-F021). */
     public static final String VASO_GRANDE_NOTE_SUFFIX = " · Vaso grande";
@@ -209,7 +210,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, false, null, false, null, null, null, null, null, null);
+                null, null, null, null, null, false, null, false, null, null, null, null, null, null, false);
     }
 
     /**
@@ -242,7 +243,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, quantity, unitPrice, pricing.costPrice(), productName,
                 Instant.now(), mode, courtesy, linkedItemId, notes, surchargeAmount, null, null, null, null, null, null, null, null, null,
-                null, false, null, false, null, null, null, null, null, null);
+                null, false, null, false, null, null, null, null, null, null, false);
     }
 
     /**
@@ -264,7 +265,7 @@ public record ComandaItem(
         }
         return new ComandaItem(null, sku, BigDecimal.ONE, unitPrice, null, productName, Instant.now(), mode,
                 courtesy, linkedItemId, notes, null, null, null, null, null, null, null, session,
-                setup == null || setup.isEmpty() ? null : setup, null, null, false, null, false, null, null, null, null, null, null);
+                setup == null || setup.isEmpty() ? null : setup, null, null, false, null, false, null, null, null, null, null, null, false);
     }
 
     /** Reconstitui um item a partir de persistência. */
@@ -441,7 +442,36 @@ public record ComandaItem(
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
                 essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName,
-                promotionDiscountAmount, modality, sessionLink);
+                promotionDiscountAmount, modality, sessionLink, false);
+    }
+
+    /**
+     * Reconstitui um item com a marcação de fora dos benefícios (V198) — carimbada no lançamento, como o
+     * preço: a linha de categoria fora dos benefícios sai da base do desconto do chefe e do resgate no
+     * fechamento da mesa.
+     */
+    public static ComandaItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, String productName, Instant addedAt, ConsumptionMode mode, boolean courtesy,
+            Long linkedItemId, String notes, BigDecimal surchargeAmount, Long closedInOrderId,
+            Integer packageUses, Integer packageSessionsPerUnit, String kitBundleId, Long kitTemplateId,
+            BigDecimal kitDiscountAmount, SessionProgress session, SessionSetup setup, String essenceSku,
+            String essenceSku2, boolean essence2Package, ProporcaoMistura essenceRatio, boolean storePurchase,
+            BigDecimal storeDiscountAmount, Long promotionId, String promotionName, BigDecimal promotionDiscountAmount,
+            SessionModality modality, SessionLink sessionLink, boolean benefitsExcluded) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName,
+                promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
+    }
+
+    /** V198 — carimba se a linha é de categoria fora dos benefícios. Cópia — o item permanece imutável. */
+    public ComandaItem withBenefitsExcluded(boolean excluded) {
+        return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
+                linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
+                essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName,
+                promotionDiscountAmount, modality, sessionLink, excluded);
     }
 
     /**
@@ -456,7 +486,7 @@ public record ComandaItem(
         return new ComandaItem(null, sku, BigDecimal.valueOf(quantity), pricing.effectivePrice(), pricing.costPrice(),
                 productName, Instant.now(), ConsumptionMode.NORMAL, false, sessionItemId, null, null, null, null,
                 null, null, null, null, null, null, null, null, false, null, false, null, null, null, null, null,
-                SessionLink.PACOTE_ESSENCIA);
+                SessionLink.PACOTE_ESSENCIA, false);
     }
 
     /**
@@ -468,7 +498,7 @@ public record ComandaItem(
         return new ComandaItem(null, sku, BigDecimal.ONE, BigDecimal.ZERO,
                 pricing == null ? null : pricing.costPrice(), productName, Instant.now(), ConsumptionMode.NORMAL,
                 false, sessionItemId, null, null, null, null, null, null, null, null, null, null, null, null, false,
-                null, false, null, null, null, null, null, SessionLink.PACOTE_INCLUSO);
+                null, false, null, null, null, null, null, SessionLink.PACOTE_INCLUSO, false);
     }
 
     /**
@@ -479,7 +509,7 @@ public record ComandaItem(
         return new ComandaItem(null, SessionAddon.SKU_PREFIX + addon.id(), BigDecimal.ONE, addon.preco(), null,
                 addon.nome(), Instant.now(), ConsumptionMode.ADICIONAL_SESSAO, false, sessionItemId, null, null, null,
                 null, null, null, null, null, null, null, null, null, false, null, false, null, null, null, null,
-                null, SessionLink.ADICIONAL);
+                null, SessionLink.ADICIONAL, false);
     }
 
     /** PDV-F061 — grava a modalidade na linha de sessão recém-montada. */
@@ -488,7 +518,7 @@ public record ComandaItem(
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
                 essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName,
-                promotionDiscountAmount, newModality, sessionLink);
+                promotionDiscountAmount, newModality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -505,7 +535,7 @@ public record ComandaItem(
                 closedInOrderId, packageUses, packageSessionsPerUnit, kitBundleId, kitTemplateId, kitDiscountAmount,
                 session, current.withAddon(addon), essenceSku, essenceSku2, essence2Package, essenceRatio,
                 storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality,
-                sessionLink);
+                sessionLink, benefitsExcluded);
     }
 
     /** PDV-F061 — a modalidade da sessão; linha antiga (sem coluna) é a padrão. */
@@ -553,7 +583,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, tierSku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -577,7 +607,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, orderId, packageUses, packageSessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -592,7 +622,7 @@ public record ComandaItem(
     public ComandaItem withPackageCounter(int uses, int sessionsPerUnit) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, uses, sessionsPerUnit, kitBundleId,
-                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -603,7 +633,7 @@ public record ComandaItem(
     public ComandaItem withEssence(String essenceSku) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -614,7 +644,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                fromPackage, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                fromPackage, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -625,7 +655,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                essence2Package, essenceSku2 == null ? null : ratio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                essence2Package, essenceSku2 == null ? null : ratio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /** PDV-F051 — a sessão tem dois sabores mesclados. */
@@ -671,7 +701,7 @@ public record ComandaItem(
     public ComandaItem withKit(String bundleId, Long templateId, BigDecimal discountAmount) {
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                bundleId, templateId, discountAmount, session, setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -684,7 +714,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
-                essence2Package, essenceRatio, true, discount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                essence2Package, essenceRatio, true, discount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -700,7 +730,7 @@ public record ComandaItem(
         return new ComandaItem(id, tierSku, quantity, newUnitPrice, costPrice, newProductName, addedAt, mode,
                 courtesy, linkedItemId, newNotes, surchargeAmount, closedInOrderId, null, null, kitBundleId,
                 kitTemplateId, kitDiscountAmount, session, newSetup == null || newSetup.isEmpty() ? null : newSetup,
-                null, null, false, null, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                null, null, false, null, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -712,7 +742,7 @@ public record ComandaItem(
                 linkedItemId, notes, surchargeAmount, closedInOrderId, before.packageUses,
                 before.packageSessionsPerUnit, kitBundleId, kitTemplateId, kitDiscountAmount, session, setup,
                 before.essenceSku, before.essenceSku2, before.essence2Package, essenceRatio, storePurchase,
-                storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -726,7 +756,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session.convertedToPayLater(at), setup, essenceSku,
-                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /** PDV-F059 — o 2º rosh herda a marca de pagar no final; o status dele não muda. */
@@ -737,7 +767,7 @@ public record ComandaItem(
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session.withPayLater(), setup, essenceSku,
-                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -751,7 +781,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.advanceTo(next, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -806,7 +836,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, BigDecimal.ZERO, costPrice, productName, addedAt, mode, true,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.withdrawn(reason, by, at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     public ComandaItem withSessionPaid(Instant at) {
@@ -815,7 +845,7 @@ public record ComandaItem(
         }
         return new ComandaItem(id, sku, quantity, unitPrice, costPrice, productName, addedAt, mode, courtesy,
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
-                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink);
+                kitBundleId, kitTemplateId, kitDiscountAmount, session.paid(at), setup, essenceSku, essenceSku2, essence2Package, essenceRatio, storePurchase, storeDiscountAmount, promotionId, promotionName, promotionDiscountAmount, modality, sessionLink, benefitsExcluded);
     }
 
     /**
@@ -848,7 +878,7 @@ public record ComandaItem(
                 linkedItemId, notes, surchargeAmount, closedInOrderId, packageUses, packageSessionsPerUnit,
                 kitBundleId, kitTemplateId, kitDiscountAmount, session, setup, essenceSku, essenceSku2,
                 essence2Package, essenceRatio, storePurchase, storeDiscountAmount, newPromotionId, newPromotionName,
-                promo, modality, sessionLink);
+                promo, modality, sessionLink, benefitsExcluded);
     }
 
     public ComandaItem withoutPromotion() {

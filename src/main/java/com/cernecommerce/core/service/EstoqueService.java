@@ -36,6 +36,10 @@ import com.cernecommerce.core.domain.exception.estoque.KitCostNotEditableExcepti
 import com.cernecommerce.core.domain.exception.estoque.KitDirectAdjustmentException;
 import com.cernecommerce.core.domain.exception.estoque.KitHasVariantsException;
 import com.cernecommerce.core.domain.exception.estoque.KitInitialStockNotAllowedException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidKitModeException;
+import com.cernecommerce.core.domain.exception.estoque.KitItemsEmptyException;
+import com.cernecommerce.core.domain.exception.estoque.KitNotPreAssembledException;
+import com.cernecommerce.core.domain.exception.estoque.KitPreAssembledNoRecipeException;
 import com.cernecommerce.core.domain.exception.estoque.KitSelfReferenceException;
 import com.cernecommerce.core.domain.exception.estoque.LotExpiryDateMismatchException;
 import com.cernecommerce.core.domain.exception.estoque.MissingLotInfoException;
@@ -75,6 +79,8 @@ import com.cernecommerce.core.domain.model.estoque.EstoqueSummary;
 import com.cernecommerce.core.domain.model.estoque.KitAvailability;
 import com.cernecommerce.core.domain.model.estoque.KitBlockedAlert;
 import com.cernecommerce.core.domain.model.estoque.KitComponent;
+import com.cernecommerce.core.domain.model.estoque.KitItem;
+import com.cernecommerce.core.domain.model.estoque.KitMode;
 import com.cernecommerce.core.domain.model.estoque.KitComponentAvailability;
 import com.cernecommerce.core.domain.model.estoque.KitComponentDetail;
 import com.cernecommerce.core.domain.model.estoque.LotIntegrityMismatch;
@@ -121,6 +127,7 @@ import com.cernecommerce.core.ports.out.estoque.AttributeTypeRepository;
 import com.cernecommerce.core.ports.out.estoque.BrandRepository;
 import com.cernecommerce.core.ports.out.estoque.CategoryRepository;
 import com.cernecommerce.core.ports.out.estoque.KitComponentRepository;
+import com.cernecommerce.core.ports.out.estoque.KitItemRepository;
 import com.cernecommerce.core.ports.out.estoque.ProductRepository;
 import com.cernecommerce.core.ports.out.estoque.ReorderPointRepository;
 import com.cernecommerce.core.ports.out.estoque.ReplenishmentListRepository;
@@ -184,6 +191,7 @@ public class EstoqueService implements EstoqueUseCase {
     private final ReplenishmentListRepository replenishmentListRepository;
     private final OpenPackageRepository openPackageRepository;
     private final SessionMenuRepository sessionMenuRepository;
+    private final KitItemRepository kitItemRepository;
     /**
      * PDV-F052 — {@code estoque.produto.faixa-sessao-obrigatoria}: essência de sessão sem faixa é
      * recusada na ficha. Desligada até os produtos antigos ganharem faixa (a faixa dá o preço, PDV-F050).
@@ -253,6 +261,30 @@ public class EstoqueService implements EstoqueUseCase {
             OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
             AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository,
             SessionMenuRepository sessionMenuRepository, boolean sessionTierRequired) {
+        this(productRepository, warehouseRepository, stockBalanceRepository, stockMovementRepository,
+                reorderPointRepository, stockIntegrityRepository, stockCountRepository, stockReservationRepository,
+                notificationUseCase, userRepository, afterCommitExecutor, defaultReservationTtl,
+                kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository, brandRepository,
+                attributeTypeRepository, replenishmentListRepository, openPackageRepository, managerNotifications,
+                auditEvents, skuPackagingRepository, sessionMenuRepository, sessionTierRequired, null);
+    }
+
+    /** Com os itens do kit pré-montado. Nulo nos testes que não tocam neles. */
+    public EstoqueService(ProductRepository productRepository, WarehouseRepository warehouseRepository,
+            StockBalanceRepository stockBalanceRepository, StockMovementRepository stockMovementRepository,
+            ReorderPointRepository reorderPointRepository, StockIntegrityRepository stockIntegrityRepository,
+            StockCountRepository stockCountRepository, StockReservationRepository stockReservationRepository,
+            NotificationUseCase notificationUseCase, UserRepository userRepository,
+            AfterCommitExecutor afterCommitExecutor, Duration defaultReservationTtl,
+            KitComponentRepository kitComponentRepository, StockLotRepository stockLotRepository,
+            SystemConfigPort systemConfigPort, CategoryRepository categoryRepository,
+            BrandRepository brandRepository, AttributeTypeRepository attributeTypeRepository,
+            ReplenishmentListRepository replenishmentListRepository,
+            OpenPackageRepository openPackageRepository, ManagerNotificationPort managerNotifications,
+            AuditEventPublisherPort auditEvents, SkuPackagingRepository skuPackagingRepository,
+            SessionMenuRepository sessionMenuRepository, boolean sessionTierRequired,
+            KitItemRepository kitItemRepository) {
+        this.kitItemRepository = kitItemRepository;
         this.sessionMenuRepository = sessionMenuRepository;
         this.sessionTierRequired = sessionTierRequired;
         this.stockReservationRepository = stockReservationRepository;
@@ -288,7 +320,7 @@ public class EstoqueService implements EstoqueUseCase {
             String barcode, MeasurementUnit unit, boolean sampleProduct, boolean kitComponentEligible,
             Boolean visibleInPos, Boolean visibleInMarketplace, ProductType type, InitialStockCommand initialStock,
             String actorUsername, List<KitComponentCommand> kitComponents, ProductStatus status, Long brandId,
-            TableSessionCommand tableSession) {
+            TableSessionCommand tableSession, KitMode kitMode, List<KitItemCommand> kitItems) {
         TableSessionCommand mesa = TableSessionCommand.orEmpty(tableSession);
         List<ProductVariant> safeVariants = variants == null ? List.of() : variants;
         ProductType resolvedType = type == null ? ProductType.SIMPLES : type;
@@ -308,7 +340,21 @@ public class EstoqueService implements EstoqueUseCase {
         if (resolvedType == ProductType.KIT && !safeVariants.isEmpty()) {
             throw new KitHasVariantsException(sku);
         }
-        if (resolvedType == ProductType.KIT && initialStock != null) {
+        // Kit pré-montado: kitMode só existe em KIT; o pré-montado não tem receita (o estoque é do
+        // kit inteiro) e nasce com os itens na mesma transação, então exige ao menos um.
+        if (kitMode != null && resolvedType != ProductType.KIT) {
+            throw new InvalidKitModeException("kitMode só é aceito com type = KIT: " + sku);
+        }
+        boolean preAssembled = resolvedType == ProductType.KIT && kitMode == KitMode.PRE_MONTADO;
+        if (preAssembled && kitComponents != null && !kitComponents.isEmpty()) {
+            throw KitPreAssembledNoRecipeException.onCreate(sku);
+        }
+        if (preAssembled && (kitItems == null || kitItems.isEmpty())) {
+            throw new KitItemsEmptyException(sku);
+        }
+        List<KitItem> preparedItems = preAssembled ? prepareKitItems(kitItems) : null;
+        // Estoque inicial só é barrado no kit de receita, que não tem saldo próprio.
+        if (resolvedType == ProductType.KIT && !preAssembled && initialStock != null) {
             throw new KitInitialStockNotAllowedException(sku);
         }
         // Criação atômica de kit (Bloco 3.1): valida a receita ANTES de qualquer escrita, com as
@@ -318,7 +364,7 @@ public class EstoqueService implements EstoqueUseCase {
         // SKU não existia até agora), então só o laço por componente se aplica aqui — as
         // invariantes do próprio kit (KitHasVariantsException/KitComponentAlreadyInUseException)
         // já são cobertas acima e não fazem sentido nesse contexto.
-        List<KitComponent> recipe = resolvedType == ProductType.KIT && kitComponents != null
+        List<KitComponent> recipe = resolvedType == ProductType.KIT && !preAssembled && kitComponents != null
                 && !kitComponents.isEmpty() ? validateAndBuildComponents(sku, kitComponents) : null;
         // O SKU pai e os das variações compartilham o mesmo espaço de nomes: uk_product_sku e
         // uk_product_variant_sku. Checar os dois aqui evita que a violação de constraint escape
@@ -370,9 +416,17 @@ public class EstoqueService implements EstoqueUseCase {
                 .withSessionsPerUnit(mesa.sessionsPerUnit())
                 .withOpenRoshPrice(mesa.openRoshPrice())
                 .withSessionTierId(requireSessionTier(mesa.sessionTierId()))
-                .withStatus(resolvedStatus);
+                .withStatus(resolvedStatus)
+                .withKitMode(resolvedType == ProductType.KIT ? (preAssembled ? KitMode.PRE_MONTADO : KitMode.LOJA) : null);
+        if (preAssembled) {
+            // Custo do kit pré-montado = soma dos itens, mesmo que o cliente tenha mandado um costPrice.
+            product = product.withPricing(product.pricing().withCostPrice(sumKitItemsCost(preparedItems)));
+        }
         requireTierWhenSessionProduct(product);
         Product saved = productRepository.save(product);
+        if (preAssembled) {
+            kitItemRepository.replaceAll(saved.id(), preparedItems);
+        }
         // Mesma transação da criação — se a receita falhar validação em algum item, o rollback
         // desfaz o produto também, fechando a janela de "kit órfão sem receita" do fluxo antigo
         // (POST seguido de PUT .../kit em duas chamadas separadas).
@@ -713,17 +767,18 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional
-    public Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette) {
+    public Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette,
+            boolean cashbackExcluded) {
         categoryRepository.findByName(name).ifPresent(existing -> {
             throw new DuplicateCategoryNameException(name);
         });
-        return categoryRepository.save(Category.create(name, featured, displayOrder, cigarette));
+        return categoryRepository.save(Category.create(name, featured, displayOrder, cigarette, cashbackExcluded));
     }
 
     @Override
     @Transactional
     public Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder,
-            Boolean cigarette) {
+            Boolean cigarette, Boolean cashbackExcluded) {
         Category current = categoryRepository.findById(id)
                 .orElseThrow(() -> new CategoryNotFoundException(id));
         if (name != null) {
@@ -735,7 +790,8 @@ public class EstoqueService implements EstoqueUseCase {
                         throw new DuplicateCategoryNameException(name);
                     });
         }
-        Category updated = categoryRepository.save(current.withDetails(name, featured, displayOrder, cigarette));
+        Category updated = categoryRepository.save(current.withDetails(name, featured, displayOrder, cigarette,
+                cashbackExcluded));
         if (name != null && !name.equals(current.name())) {
             // Propaga para a coluna denormalizada dos produtos vinculados. Sem isso a vitrine
             // passaria a exibir o nome antigo e a ordenar pelo novo.
@@ -1057,7 +1113,7 @@ public class EstoqueService implements EstoqueUseCase {
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
         // Kit nunca tem variação (KitHasVariantsException), então a precedência não se aplica.
-        return product.isKit() ? derivedKitPricing(product) : product.effectivePricingFor(sku);
+        return product.isRecipeKit() ? derivedKitPricing(product) : product.effectivePricingFor(sku);
     }
 
     @Override
@@ -1077,7 +1133,7 @@ public class EstoqueService implements EstoqueUseCase {
         if (!product.isSellable(sku)) {
             throw new ParentNotSellableException(sku);
         }
-        Pricing pricing = product.isKit() ? derivedKitPricing(product) : product.effectivePricingFor(sku);
+        Pricing pricing = product.isRecipeKit() ? derivedKitPricing(product) : product.effectivePricingFor(sku);
         // availableForTable/sessionProduct/openRoshPrice vêm do PAI, mesmo quando o SKU pedido é o
         // de uma variação: disponibilidade na mesa e preço de open rosh não têm versão por sabor.
         // PDV-F042 — o SKU pedido é a BASE de um produto com variações: o estoque real está nos
@@ -1086,7 +1142,20 @@ public class EstoqueService implements EstoqueUseCase {
         return new CatalogSaleInfo(product.name(), pricing, product.availableForTable(),
                 product.sessionProduct(), product.openRoshPrice(), product.sessionsPerUnit(),
                 product.isKit(), parentWithVariants, product.sessionTierId(), product.category(),
-                product.sessionFlagsFor(sku));
+                product.sessionFlagsFor(sku), isBenefitsExcluded(product));
+    }
+
+    /**
+     * V197 — a categoria do produto está fora dos benefícios (sem cashback, sem resgate, sem desconto do
+     * chefe)? Pelo vínculo {@code categoryId}; produto legado só com o texto da categoria cai no nome.
+     */
+    private boolean isBenefitsExcluded(Product product) {
+        Optional<Category> category = product.categoryId() != null
+                ? categoryRepository.findById(product.categoryId())
+                : product.category() == null || product.category().isBlank()
+                        ? Optional.empty()
+                        : categoryRepository.findByName(product.category());
+        return category.map(Category::cashbackExcluded).orElse(false);
     }
 
 
@@ -1303,7 +1372,7 @@ public class EstoqueService implements EstoqueUseCase {
     public StockBalance getStockBalance(String sku, String warehouseCode) {
         Warehouse warehouse = requireWarehouse(warehouseCode);
         Optional<Product> product = productRepository.findByAnySku(sku);
-        if (product.isPresent() && product.get().isKit()) {
+        if (product.isPresent() && product.get().isRecipeKit()) {
             return derivedKitBalance(product.get(), warehouse.id());
         }
         return stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
@@ -1349,6 +1418,12 @@ public class EstoqueService implements EstoqueUseCase {
      * "kit ficou bloqueado" (Bloco 1.2). Extraído para não duplicar a regra em dois lugares.
      */
     private KitAvailability computeKitAvailability(Product kit, Long warehouseId) {
+        // Kit pré-montado: o "montável" é o saldo disponível do próprio kit, sem receita.
+        if (kit.isPreAssembledKit()) {
+            BigDecimal available = stockBalanceRepository.findBySkuAndWarehouseId(kit.sku(), warehouseId)
+                    .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+            return new KitAvailability(kit.sku(), kit.name(), available, false, List.of());
+        }
         List<KitComponent> recipe = kitComponentRepository.findByKitSku(kit.sku());
         if (recipe.isEmpty()) {
             return new KitAvailability(kit.sku(), kit.name(), BigDecimal.ZERO, true, List.of());
@@ -1456,7 +1531,7 @@ public class EstoqueService implements EstoqueUseCase {
         }
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
-        if (product.isKit()) {
+        if (product.isRecipeKit()) {
             throw new KitDirectAdjustmentException(sku);
         }
         if (!product.isSellable(sku)) {
@@ -1796,8 +1871,8 @@ public class EstoqueService implements EstoqueUseCase {
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
         Optional<Product> product = productRepository.findByAnySku(sku);
-        if (product.isPresent() && product.get().isKit()) {
-            // Kit não tem lote próprio (EST-F015: sem saldo físico próprio, e Product já barra
+        if (product.isPresent() && product.get().isRecipeKit()) {
+            // Kit de receita não tem lote próprio (EST-F015: sem saldo físico próprio, e Product já barra
             // lotTracked num kit) — recusar explicitamente em vez de explodeKitMovement descartar
             // lotCode/expiryDate em silêncio na recursão para os componentes.
             if ((lotCode != null && !lotCode.isBlank()) || expiryDate != null) {
@@ -2292,7 +2367,8 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional
-    public void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity) {
+    public void setReorderPoint(String sku, String warehouseCode, BigDecimal minQuantity,
+            boolean criticalQuantityPresent, BigDecimal criticalQuantity) {
         requireKnownSku(sku);
         // EST-F053 — o mínimo de produto com variações vai em cada variação: a base não tem saldo.
         if (productRepository.findByAnySku(sku).filter(p -> !p.isSellable(sku)).isPresent()) {
@@ -2300,10 +2376,17 @@ public class EstoqueService implements EstoqueUseCase {
         }
         Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
                 .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
-        Long existingId = reorderPointRepository.findBySkuAndWarehouseId(sku, warehouse.id())
-                .map(ReorderPoint::id)
-                .orElse(null);
-        reorderPointRepository.save(new ReorderPoint(existingId, sku, warehouse.id(), minQuantity));
+        Optional<ReorderPoint> existing = reorderPointRepository.findBySkuAndWarehouseId(sku, warehouse.id());
+        Long existingId = existing.map(ReorderPoint::id).orElse(null);
+        // Ausente: o formulário de produto só mexe no limite — preserva o crítico salvo enquanto
+        // ele continuar válido para o mínimo novo; se deixou de ser, volta ao padrão em silêncio.
+        // Presente (inclusive null): o modal do alerta decidiu — grava como veio, e o construtor
+        // de ReorderPoint recusa crítico inválido com 422.
+        BigDecimal critical = criticalQuantityPresent ? criticalQuantity
+                : existing.map(ReorderPoint::criticalQuantity)
+                        .filter(saved -> minQuantity != null && ReorderPoint.isValidCritical(saved, minQuantity))
+                        .orElse(null);
+        reorderPointRepository.save(new ReorderPoint(existingId, sku, warehouse.id(), minQuantity, critical));
     }
 
     @Override
@@ -2699,6 +2782,85 @@ public class EstoqueService implements EstoqueUseCase {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Kit pré-montado — itens descritivos, estoque do kit inteiro
+    // ---------------------------------------------------------------------------------------
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<KitItem> listKitItems(String kitSku) {
+        Product kit = requirePreAssembledKit(kitSku);
+        return withCatalogNames(kitItemRepository.findByKitProductId(kit.id()));
+    }
+
+    @Override
+    @Transactional
+    public List<KitItem> replaceKitItems(String kitSku, List<KitItemCommand> items) {
+        Product kit = requirePreAssembledKit(kitSku);
+        if (items == null || items.isEmpty()) {
+            throw new KitItemsEmptyException(kitSku);
+        }
+        List<KitItem> prepared = prepareKitItems(items);
+        List<KitItem> saved = kitItemRepository.replaceAll(kit.id(), prepared);
+        productRepository.save(kit.withPricing(kit.pricing().withCostPrice(sumKitItemsCost(saved))));
+        return withCatalogNames(saved);
+    }
+
+    private Product requirePreAssembledKit(String kitSku) {
+        Product kit = productRepository.findBySku(kitSku).orElseThrow(() -> new ProductNotFoundException(kitSku));
+        if (!kit.isPreAssembledKit()) {
+            throw new KitNotPreAssembledException(kitSku);
+        }
+        return kit;
+    }
+
+    /**
+     * Valida e converte os itens: posição = índice na lista; categoria e marca, quando informadas,
+     * precisam existir (404 como no produto). As regras de nome/quantidade/custo moram em {@link KitItem}.
+     */
+    private List<KitItem> prepareKitItems(List<KitItemCommand> items) {
+        List<KitItem> prepared = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            KitItemCommand c = items.get(i);
+            if (c.categoryId() != null) {
+                categoryRepository.findById(c.categoryId())
+                        .orElseThrow(() -> new CategoryNotFoundException(c.categoryId()));
+            }
+            if (c.brandId() != null) {
+                brandRepository.findById(c.brandId()).orElseThrow(() -> new BrandNotFoundException(c.brandId()));
+            }
+            prepared.add(new KitItem(c.id(), null, c.name(), c.quantity(), c.unitCost(), c.categoryId(), null,
+                    c.brandId(), null, blankToNull(c.description()), blankToNull(c.imageUrl()), i));
+        }
+        return prepared;
+    }
+
+    /** {@code Σ unitCost × quantity}; nulo se algum item não tiver custo (custo desconhecido, nunca zero). */
+    private static BigDecimal sumKitItemsCost(List<KitItem> items) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (KitItem item : items) {
+            BigDecimal line = item.lineCost();
+            if (line == null) {
+                return null;
+            }
+            total = total.add(line);
+        }
+        return total;
+    }
+
+    private List<KitItem> withCatalogNames(List<KitItem> items) {
+        return items.stream().map(item -> item.withNames(
+                item.categoryId() == null ? null
+                        : categoryRepository.findById(item.categoryId()).map(Category::name).orElse(null),
+                item.brandId() == null ? null
+                        : brandRepository.findById(item.brandId()).map(Brand::name).orElse(null)))
+                .toList();
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Kits (EST-F015) — virtuais, de um nível só (§2.10 do plano)
     // ---------------------------------------------------------------------------------------
 
@@ -2708,6 +2870,9 @@ public class EstoqueService implements EstoqueUseCase {
         // findBySku, não findByAnySku: kit é sempre SKU pai, nunca uma variação.
         Product kit = productRepository.findBySku(kitSku)
                 .orElseThrow(() -> new ProductNotFoundException(kitSku));
+        if (kit.isPreAssembledKit()) {
+            throw KitPreAssembledNoRecipeException.onExisting(kitSku);
+        }
         if (components == null || components.isEmpty()) {
             throw new EmptyKitRecipeException(kitSku);
         }
@@ -2803,6 +2968,9 @@ public class EstoqueService implements EstoqueUseCase {
         if (!kit.isKit()) {
             return kit;
         }
+        if (kit.isPreAssembledKit()) {
+            throw KitPreAssembledNoRecipeException.onExisting(kitSku);
+        }
         kitComponentRepository.replaceRecipe(kitSku, List.of());
         return productRepository.save(kit.withType(ProductType.SIMPLES));
     }
@@ -2897,7 +3065,7 @@ public class EstoqueService implements EstoqueUseCase {
         // EST-F054 — baixa do que sobrou de um produto arquivado não pede reposição. O isArchived
         // só roda quando o saldo de fato caiu abaixo do ponto, não em toda movimentação.
         reorderPointRepository.findBySkuAndWarehouseId(balance.sku(), balance.warehouseId())
-                .filter(reorderPoint -> reorderPoint.isBelow(available))
+                .filter(reorderPoint -> reorderPoint.isAtOrBelow(available))
                 .filter(reorderPoint -> !productRepository.isArchived(balance.sku()))
                 .ifPresent(reorderPoint -> afterCommitExecutor.accumulate(REORDER_ALERT_BATCH,
                         new ReorderAlert(balance.sku(), available, reorderPoint.minQuantity()),

@@ -134,7 +134,7 @@ public class OfflineSaleService implements OfflineSaleUseCase {
         }
         try {
             SaleRegistration registration = register(session.id(), sale.customerId(), sale.items(), sale.payments(),
-                    username, sale.clientSaleId(), sale.soldAt());
+                    username, sale.clientSaleId(), sale.soldAt(), sale.bossDiscountPercent());
             return SyncResult.synced(sale.clientSaleId(), registration.order().id(), registration.replayed());
         } catch (RuntimeException e) {
             // Dois envios simultâneos da mesma venda: o índice único barrou este, o outro gravou.
@@ -196,6 +196,17 @@ public class OfflineSaleService implements OfflineSaleUseCase {
 
     private SaleRegistration register(Long sessionId, Long customerId, List<OfflineSaleItem> items,
             List<OfflineSalePayment> payments, String operator, String clientSaleId, Instant soldAt) {
+        return register(sessionId, customerId, items, payments, operator, clientSaleId, soldAt, null);
+    }
+
+    /**
+     * Desconto do chefe no offline: com percentual, a mesma conferência exata da venda online; sem ele, o
+     * legado (teto sobre a base elegível) — a venda já foi cobrada, e o caixa antigo não manda o percentual.
+     * O reenvio de uma recusa vai sem percentual (a recusa não o guarda): cai no legado.
+     */
+    private SaleRegistration register(Long sessionId, Long customerId, List<OfflineSaleItem> items,
+            List<OfflineSalePayment> payments, String operator, String clientSaleId, Instant soldAt,
+            Integer bossDiscountPercent) {
         List<SaleItemCommand> itemCommands = items.stream()
                 .map(i -> new SaleItemCommand(i.sku(), i.quantity(), i.discountAmount(), i.note(),
                         i.kitQuantity(), i.promotionDiscountAmount()))
@@ -207,8 +218,14 @@ public class OfflineSaleService implements OfflineSaleUseCase {
         // foi cobrada, recusar não devolve o dinheiro (o servidor registra um aviso).
         BigDecimal applied = items.stream().map(OfflineSaleItem::promotionDiscountAmount)
                 .filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
-        return pdvUseCase.registerSaleIdempotent(sessionId, customerId, itemCommands, paymentCommands, operator,
-                false, null, clientSaleId, soldAt, PdvUseCase.PromotionCheck.lenient(applied));
+        if (bossDiscountPercent == null) {
+            // Sem percentual: a sobrecarga de sempre, que já é o legado (teto sobre a base elegível).
+            return pdvUseCase.registerSaleIdempotent(sessionId, customerId, itemCommands, paymentCommands, operator,
+                    false, null, clientSaleId, soldAt, PdvUseCase.PromotionCheck.lenient(applied));
+        }
+        return pdvUseCase.registerSaleIdempotent(sessionId, customerId, itemCommands, List.of(), paymentCommands,
+                operator, false, null, clientSaleId, soldAt, PdvUseCase.PromotionCheck.lenient(applied), BigDecimal.ZERO,
+                PdvUseCase.BossDiscountRequest.legacy(bossDiscountPercent));
     }
 
     private OfflineSaleRejection requireRejection(Long rejectionId) {

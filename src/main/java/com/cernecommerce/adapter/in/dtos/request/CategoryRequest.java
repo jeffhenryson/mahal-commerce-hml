@@ -26,4 +26,9 @@ public class CategoryRequest {
     @Schema(description = "PDV-F045 — categoria de cigarros: os produtos saem da grade do PDV e são "
             + "vendidos pela Central de cigarros. Omitido, nasce false.")
     private Boolean cigarette;
+
+    @Schema(description = "V197 — categoria fora dos benefícios (cigarros, palheiros…): os produtos não geram "
+            + "cashback, o saldo de cashback não abate o valor deles e o desconto do chefe não incide sobre "
+            + "eles. Omitido, nasce false.")
+    private Boolean cashbackExcluded;
 }

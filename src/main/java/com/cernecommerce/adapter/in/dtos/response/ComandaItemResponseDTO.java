@@ -156,4 +156,9 @@ public class ComandaItemResponseDTO {
     @Schema(description = "Adicionais pagos cobrados nesta sessão, com o preço da época (PDV-F024). "
             + "Vazio fora de sessão do cardápio.")
     private List<ComandaItemAddonResponseDTO> adicionais = List.of();
+
+    @Schema(description = "Linha de categoria fora dos benefícios "
+            + "(cigarros, palheiros…), carimbada no lançamento: não gera cashback e sai da base do desconto do "
+            + "chefe e do resgate no fechamento da mesa.")
+    private boolean cashbackExcluded;
 }

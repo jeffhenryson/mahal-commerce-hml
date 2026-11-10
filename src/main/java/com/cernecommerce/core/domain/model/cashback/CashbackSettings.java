@@ -50,7 +50,10 @@ public record CashbackSettings(int carenciaDias, int expiracaoDias, BigDecimal r
                 DEFAULT_RESGATE_TETO_PERCENT, DEFAULT_RESGATE_MINIMO_SALDO);
     }
 
-    /** Teto 0 desliga o resgate em todos os canais. */
+    /**
+     * Teto 0 desligava o resgate em todos os canais. Desde o fim do teto percentual o resgate não
+     * consulta mais isto (o cliente usa o saldo quando quiser); fica por compatibilidade.
+     */
     public boolean redemptionEnabled() {
         return resgateTetoPercent.signum() > 0;
     }

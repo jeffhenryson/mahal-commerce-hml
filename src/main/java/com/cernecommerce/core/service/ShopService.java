@@ -383,6 +383,8 @@ public class ShopService implements ShopUseCase {
             if (resolvedRate != null) {
                 item = item.withCashbackPercent(resolvedRate.percent());
             }
+            // V198 — categoria fora dos benefícios: não gera cashback e o saldo não abate o valor dela.
+            item = item.withBenefitsExcluded(saleInfo.benefitsExcluded());
             orderItems.add(item);
         }
 
@@ -401,7 +403,7 @@ public class ShopService implements ShopUseCase {
         // Depois do pedido mínimo, que é sobre a mercadoria.
         BigDecimal cashbackToRedeem = escolha.cashbackToRedeem();
         if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
-            cashbackUseCase.validateRedemption(customerId, order.merchandiseNet(), cashbackToRedeem);
+            cashbackUseCase.validateRedemption(customerId, order.eligibleMerchandiseNet(), cashbackToRedeem);
             order = order.withCashbackRedeemed(cashbackToRedeem);
         }
         Order saved = orderRepository.save(order);

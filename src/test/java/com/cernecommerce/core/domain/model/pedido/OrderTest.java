@@ -599,4 +599,49 @@ class OrderTest {
         assertThat(order.serviceFeeAmount()).isEqualByComparingTo("4.40");
         assertThat(order.totalPayable()).isEqualByComparingTo("44.40");
     }
+
+    // ── Cashback × desconto do chefe ─────────────────────────────────────────────────────────
+
+    private static Order balcaoComCigarro() {
+        OrderItem comum = OrderItem.of(null, "CARV", BigDecimal.ONE, new BigDecimal("100.00"), null,
+                new BigDecimal("5.00"), new BigDecimal("10"));
+        OrderItem cigarro = OrderItem.of(null, "CIG", BigDecimal.ONE, new BigDecimal("50.00"), null, null,
+                new BigDecimal("10")).withBenefitsExcluded(true);
+        return Order.openBalcao(1L, "LOJA-01", 42L, List.of(comum, cigarro));
+    }
+
+    @Test
+    void eligibleMerchandiseNet_soOsItensDentroDosBeneficios() {
+        Order order = balcaoComCigarro();
+
+        assertThat(order.merchandiseNet()).isEqualByComparingTo("145.00");
+        assertThat(order.eligibleMerchandiseNet()).isEqualByComparingTo("95.00");
+    }
+
+    @Test
+    void withCashbackRedeemed_naoPassaDaBaseElegivel() {
+        Order order = balcaoComCigarro();
+
+        assertThat(order.withCashbackRedeemed(new BigDecimal("95.00")).netAmount()).isEqualByComparingTo("50.00");
+        assertThatThrownBy(() -> order.withCashbackRedeemed(new BigDecimal("95.01")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void totalCashbackEarned_ignoraCigarroEZeraComDescontoDoChefe() {
+        Order order = balcaoComCigarro();
+
+        assertThat(order.totalCashbackEarned()).isEqualByComparingTo("9.50");
+        assertThat(order.withBossDiscountPercent(5).totalCashbackEarned()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void bossDiscountPercent_soDe1a5_eAtravessaATransicao() {
+        Order order = balcaoComCigarro();
+
+        assertThatThrownBy(() -> order.withBossDiscountPercent(6)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> order.withBossDiscountPercent(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(order.withBossDiscountPercent(5).concluded("000000001", null, Instant.now()).bossDiscountPercent())
+                .isEqualTo(5);
+    }
 }

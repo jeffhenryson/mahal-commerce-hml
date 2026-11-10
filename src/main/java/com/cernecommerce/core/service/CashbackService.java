@@ -173,6 +173,10 @@ public class CashbackService implements CashbackUseCase {
             // Cliente "leve" (sem CPF) não acumula cashback — regra de elegibilidade da Fatia 4.
             return;
         }
+        if (order.hasBossDiscount()) {
+            // Venda com desconto do chefe não gera cashback: é um benefício OU o outro.
+            return;
+        }
 
         // Idempotência por pedido sob chamada concorrente (achado de CashbackLedgerConcurrencyIT):
         // nenhum caminho de produção hoje chama isto duas vezes para o mesmo pedido de propósito
@@ -199,6 +203,9 @@ public class CashbackService implements CashbackUseCase {
             BigDecimal paidFraction = paidFraction(order).multiply(order.cashbackEarningFraction());
 
             for (OrderItem item : order.items()) {
+                if (item.benefitsExcluded()) {
+                    continue; // categoria fora dos benefícios — nem taxa por SKU nem a global valem
+                }
                 BigDecimal amount = item.cashbackAmount();
                 if (amount != null && paidFraction.compareTo(BigDecimal.ONE) < 0) {
                     amount = amount.multiply(paidFraction).setScale(Money.MONEY_SCALE, Money.ROUNDING);
@@ -223,7 +230,7 @@ public class CashbackService implements CashbackUseCase {
     @Transactional
     public void recordEarnedForReceivablePayment(Order order, BigDecimal settledAmount) {
         if (order.customerId() == null || settledAmount == null || settledAmount.signum() <= 0
-                || order.totalPayable().signum() <= 0) {
+                || order.totalPayable().signum() <= 0 || order.hasBossDiscount()) {
             return;
         }
         Customer customer = customerRepository.findById(order.customerId())
@@ -245,6 +252,7 @@ public class CashbackService implements CashbackUseCase {
     /** A fração do cashback do pedido proporcional a {@code settledAmount / totalPayable}. */
     private static BigDecimal receivablePaymentCashback(Order order, BigDecimal settledAmount) {
         BigDecimal orderCashback = order.items().stream()
+                .filter(i -> !i.benefitsExcluded())
                 .map(OrderItem::cashbackAmount)
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -419,14 +427,15 @@ public class CashbackService implements CashbackUseCase {
     @Override
     @Transactional(readOnly = true)
     public CashbackRedemptionQuote quoteRedemption(Long customerId, BigDecimal merchandiseNet) {
-        CashbackSettings settings = getSettings();
-        BigDecimal base = merchandiseNet == null ? BigDecimal.ZERO : merchandiseNet.max(BigDecimal.ZERO);
-        BigDecimal capAmount = base.multiply(settings.resgateTetoPercent())
-                .divide(Money.HUNDRED, Money.MONEY_SCALE, RoundingMode.DOWN);
+        // Sem teto percentual e sem saldo mínimo: o cliente usa quando quiser, até o saldo disponível e o
+        // líquido dos itens ELEGÍVEIS (a base que o chamador passa). resgateTetoPercent e
+        // resgateMinimoSaldo continuam em CashbackSettings só por compatibilidade, e não valem mais aqui.
+        BigDecimal base = merchandiseNet == null ? BigDecimal.ZERO
+                : merchandiseNet.max(BigDecimal.ZERO).setScale(Money.MONEY_SCALE, RoundingMode.DOWN);
+        BigDecimal capAmount = base;
         if (customerId == null) {
-            return new CashbackRedemptionQuote(BigDecimal.ZERO, settings.resgateMinimoSaldo(),
-                    settings.resgateTetoPercent(), capAmount, BigDecimal.ZERO,
-                    CashbackRedemptionNotAllowedException.CUSTOMER_REQUIRED);
+            return new CashbackRedemptionQuote(BigDecimal.ZERO, BigDecimal.ZERO, Money.HUNDRED, capAmount,
+                    BigDecimal.ZERO, CashbackRedemptionNotAllowedException.CUSTOMER_REQUIRED);
         }
         Customer customer = customerRepository.findById(customerId)
                 .orElseThrow(() -> new CustomerNotFoundException(customerId));
@@ -435,16 +444,11 @@ public class CashbackService implements CashbackUseCase {
         String reason = null;
         if (!customer.isOfficiallyRegistered()) {
             reason = CashbackRedemptionNotAllowedException.CUSTOMER_NOT_ELIGIBLE;
-        } else if (!settings.redemptionEnabled()) {
-            reason = CashbackRedemptionNotAllowedException.REDEMPTION_DISABLED;
         } else if (available.signum() <= 0) {
             reason = CashbackRedemptionNotAllowedException.INSUFFICIENT_BALANCE;
-        } else if (available.compareTo(settings.resgateMinimoSaldo()) < 0) {
-            reason = CashbackRedemptionNotAllowedException.BELOW_MINIMUM_BALANCE;
         }
         BigDecimal max = reason == null ? available.min(capAmount) : BigDecimal.ZERO;
-        return new CashbackRedemptionQuote(available, settings.resgateMinimoSaldo(), settings.resgateTetoPercent(),
-                capAmount, max, reason);
+        return new CashbackRedemptionQuote(available, BigDecimal.ZERO, Money.HUNDRED, capAmount, max, reason);
     }
 
     @Override
@@ -463,8 +467,8 @@ public class CashbackService implements CashbackUseCase {
         }
         if (requested.compareTo(quote.capAmount()) > 0) {
             throw new CashbackRedemptionNotAllowedException(CashbackRedemptionNotAllowedException.ABOVE_CAP,
-                    "O resgate pode cobrir no máximo " + quote.capPercent().stripTrailingZeros().toPlainString()
-                            + "% da compra (R$ " + quote.capAmount() + "); pedido R$ " + requested);
+                    "O resgate pode cobrir no máximo o valor dos itens elegíveis (R$ " + quote.capAmount()
+                            + "); pedido R$ " + requested);
         }
     }
 
@@ -514,7 +518,7 @@ public class CashbackService implements CashbackUseCase {
         }
         // De novo, agora sob a trava: entre a validação do canal e aqui outro resgate pode ter
         // consumido o saldo.
-        validateRedemption(customerId, savedOrder.merchandiseNet(), amount);
+        validateRedemption(customerId, savedOrder.eligibleMerchandiseNet(), amount);
 
         Instant now = Instant.now();
         Map<Long, BigDecimal> pending = new java.util.LinkedHashMap<>();

@@ -299,8 +299,21 @@ public interface ComandaUseCase {
      * @throws com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException
      *         fora das regras do programa (422 CASHBACK_*)
      */
+    default Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username) {
+        return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, cashbackToRedeem,
+                PdvUseCase.BossDiscountRequest.legacy(), username);
+    }
+
+    /**
+     * Igual à anterior, com o desconto do chefe: {@code discountAmount} tem que bater com
+     * {@code bossDiscount.percent() × base elegível} das linhas em aberto (linhas fora dos benefícios
+     * ficam de fora, e o rateio é só entre as elegíveis). Só no fechamento da conta inteira (sem
+     * {@code itemIds}); com resgate de cashback é {@code 409 BENEFIT_CONFLICT}.
+     */
     Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
-            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username);
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem,
+            PdvUseCase.BossDiscountRequest bossDiscount, String username);
 
     /**
      * Percentual da taxa de serviço vigente (PDV-F015), para a tela mostrar ao operador quanto será

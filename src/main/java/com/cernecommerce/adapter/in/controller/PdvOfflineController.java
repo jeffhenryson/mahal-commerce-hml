@@ -128,12 +128,14 @@ public class PdvOfflineController {
         return new OfflineSaleCommand(r.getClientSaleId(), r.getSoldAt(), r.getCustomerId(),
                 items.stream().map(i -> new OfflineSaleItem(i.sku(), i.quantity(), i.discountAmount(), i.note(),
                         i.kitQuantity(), i.promotionDiscountAmount())).toList(),
-                payments.stream().map(p -> new OfflineSalePayment(p.method(), p.amount(), p.installments())).toList());
+                payments.stream().map(p -> new OfflineSalePayment(p.method(), p.amount(), p.installments())).toList(),
+                r.getBossDiscountPercent());
     }
 
     /** Mesma regra da venda online: desconto exige PDV_SALE_DISCOUNT. Checada no lote inteiro, antes de tudo. */
     private static void requireDiscountAuthority(List<OfflineSaleCommand> sales, Authentication authentication) {
-        boolean hasDiscount = sales.stream().flatMap(s -> s.items().stream())
+        boolean hasDiscount = sales.stream().anyMatch(s -> s.bossDiscountPercent() != null)
+                || sales.stream().flatMap(s -> s.items().stream())
                 .anyMatch(i -> i.discountAmount() != null && i.discountAmount().compareTo(BigDecimal.ZERO) > 0);
         if (!hasDiscount) {
             return;

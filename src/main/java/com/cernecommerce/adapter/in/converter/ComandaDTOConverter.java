@@ -48,6 +48,7 @@ public class ComandaDTOConverter {
         dto.setLinkedItemId(item.linkedItemId());
         dto.setNotes(item.notes());
         dto.setSurchargeAmount(item.surchargeAmount());
+        dto.setCashbackExcluded(item.benefitsExcluded());
         dto.setClosedInOrderId(item.closedInOrderId());
         dto.setPackageUses(item.packageUses());
         dto.setPackageSessionsPerUnit(item.packageSessionsPerUnit());

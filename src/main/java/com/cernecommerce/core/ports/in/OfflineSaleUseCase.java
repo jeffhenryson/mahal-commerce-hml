@@ -42,7 +42,13 @@ public interface OfflineSaleUseCase {
 
     /** Uma venda da fila offline, como o caixa a registrou. */
     record OfflineSaleCommand(String clientSaleId, Instant soldAt, Long customerId, List<OfflineSaleItem> items,
-            List<OfflineSalePayment> payments) {
+            List<OfflineSalePayment> payments, Integer bossDiscountPercent) {
+
+        /** Sem desconto do chefe informado: vale o legado (teto sobre a base elegível). */
+        public OfflineSaleCommand(String clientSaleId, Instant soldAt, Long customerId, List<OfflineSaleItem> items,
+                List<OfflineSalePayment> payments) {
+            this(clientSaleId, soldAt, customerId, items, payments, null);
+        }
     }
 
     enum SyncStatus { SYNCED, DUPLICATE, REJECTED }

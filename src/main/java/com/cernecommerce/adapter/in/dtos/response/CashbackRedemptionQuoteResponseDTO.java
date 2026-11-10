@@ -9,11 +9,11 @@ import java.math.BigDecimal;
 public class CashbackRedemptionQuoteResponseDTO {
     @Schema(description = "Saldo de cashback disponível agora")
     private BigDecimal available;
-    @Schema(description = "Saldo mínimo configurado para resgatar")
+    @Schema(description = "Sempre 0: o resgate não tem mais saldo mínimo (mantido por compatibilidade)")
     private BigDecimal minimumBalance;
-    @Schema(description = "Teto configurado, em % da mercadoria")
+    @Schema(description = "Sempre 100: o resgate não tem mais teto percentual (mantido por compatibilidade)")
     private BigDecimal capPercent;
-    @Schema(description = "Teto em reais para esta compra")
+    @Schema(description = "Base elegível desta compra (o amount pedido): o resgate não passa dela")
     private BigDecimal capAmount;
     @Schema(description = "Máximo que pode ser resgatado nesta compra (0 se não pode)")
     private BigDecimal maxRedeemable;

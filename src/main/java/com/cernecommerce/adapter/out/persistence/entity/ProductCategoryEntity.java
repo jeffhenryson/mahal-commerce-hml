@@ -35,4 +35,8 @@ public class ProductCategoryEntity {
     // PDV-F045 — V151. Produtos desta categoria são vendidos pela Central de cigarros, não pela grade.
     @Column(nullable = false)
     private boolean cigarette;
+
+    // V197 — fora dos benefícios: sem cashback, sem resgate e sem desconto do chefe.
+    @Column(name = "cashback_excluded", nullable = false)
+    private boolean cashbackExcluded;
 }

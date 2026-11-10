@@ -23,7 +23,9 @@ import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundEx
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException;
 import com.cernecommerce.core.domain.exception.pdv.NoOpenCashRegisterSessionException;
+import com.cernecommerce.core.domain.exception.pedido.BenefitConflictException;
 import com.cernecommerce.core.domain.exception.pedido.DiscountLimitExceededException;
+import com.cernecommerce.core.domain.model.pedido.BossDiscount;
 import com.cernecommerce.core.domain.exception.pedido.OrderNotFoundException;
 import com.cernecommerce.core.domain.model.Money;
 import com.cernecommerce.core.domain.model.PageResult;
@@ -517,12 +519,29 @@ public class PdvService implements PdvUseCase {
                 delivery, clientSaleId, clientSoldAt, promotionCheck, BigDecimal.ZERO);
     }
 
+    /** Mesmo motivo da sobrescrita acima: o default da interface perderia o {@code @Transactional}. */
     @Override
     @Transactional
     public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
             List<KitSelection> kits, List<PaymentCommand> payments, String username, boolean reserveForPickup,
             OrderDelivery delivery, String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck,
             BigDecimal cashbackToRedeem) {
+        return registerSaleIdempotent(sessionId, customerId, items, kits, payments, username, reserveForPickup,
+                delivery, clientSaleId, clientSoldAt, promotionCheck, cashbackToRedeem, BossDiscountRequest.legacy());
+    }
+
+    @Override
+    @Transactional
+    public SaleRegistration registerSaleIdempotent(Long sessionId, Long customerId, List<SaleItemCommand> items,
+            List<KitSelection> kits, List<PaymentCommand> payments, String username, boolean reserveForPickup,
+            OrderDelivery delivery, String clientSaleId, Instant clientSoldAt, PromotionCheck promotionCheck,
+            BigDecimal cashbackToRedeem, BossDiscountRequest bossDiscount) {
+        BossDiscountRequest boss = bossDiscount == null ? BossDiscountRequest.legacy() : bossDiscount;
+        // Exclusividade: na mesma venda é OU o desconto do chefe OU o resgate de cashback. Antes de tudo,
+        // inclusive do estoque — é um conflito do pedido, não de estado.
+        if (boss.percent() != null && cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
+            throw new BenefitConflictException();
+        }
         items = items == null ? List.of() : items;
         kits = kits == null ? List.of() : kits;
         if (items.isEmpty() && kits.isEmpty()) {
@@ -543,6 +562,8 @@ public class PdvService implements PdvUseCase {
         // ProductNotFoundException para SKU inexistente, e fromCatalog recusa produto sem preço —
         // as duas checagens acontecem ANTES de qualquer escrita de estoque.
         List<OrderItem> orderItems = new ArrayList<>(items.size());
+        // Desconto concedido em linha de categoria fora dos benefícios: o desconto do chefe não incide nela.
+        BigDecimal grantedOnExcluded = BigDecimal.ZERO;
         for (SaleItemCommand command : items) {
             EstoqueUseCase.CatalogSaleInfo saleInfo = estoqueUseCase.resolveSaleInfo(command.sku());
             OrderItem item = OrderItem.fromCatalog(command.sku(), command.quantity(),
@@ -556,6 +577,11 @@ public class PdvService implements PdvUseCase {
                     : cashbackUseCase.resolveApplicableRate(command.sku());
             if (resolvedRate != null) {
                 item = item.withCashbackPercent(resolvedRate.percent());
+            }
+            // V198 — categoria fora dos benefícios: taxa zero e fora da base do resgate e do desconto do chefe.
+            item = item.withBenefitsExcluded(saleInfo.benefitsExcluded());
+            if (item.benefitsExcluded() && command.discountAmount() != null) {
+                grantedOnExcluded = grantedOnExcluded.add(command.discountAmount());
             }
             orderItems.add(item);
         }
@@ -589,6 +615,10 @@ public class PdvService implements PdvUseCase {
                     if (resolvedRate != null) {
                         item = item.withCashbackPercent(resolvedRate.percent());
                     }
+                    item = item.withBenefitsExcluded(saleInfo.benefitsExcluded());
+                    if (item.benefitsExcluded()) {
+                        grantedOnExcluded = grantedOnExcluded.add(grantedDiscount);
+                    }
                     orderItems.add(item);
                     // Só o desconto da cotação fica fora do teto. O concedido na linha conta, como o do item avulso.
                     kitDiscountTotal = kitDiscountTotal.add(line.discountAmount());
@@ -610,11 +640,12 @@ public class PdvService implements PdvUseCase {
                         promotionCommands, check, clientSaleId);
         orderItems = promoted.items();
         Order order = Order.openBalcao(sessionId, warehouseCode, customerId, orderItems, delivery);
-        requireDiscountWithinLimit(order, promoted.total().add(kitDiscountTotal));
-        // V186 — resgate de cashback: depois do desconto e da promoção (o teto é sobre a mercadoria),
-        // antes de validar o pagamento (que passa a ser contra o total já abatido).
+        requireBossDiscount(order, boss, promoted.total().add(kitDiscountTotal), grantedOnExcluded);
+        order = order.withBossDiscountPercent(boss.percent());
+        // V186 — resgate de cashback: depois do desconto e da promoção, antes de validar o pagamento (que
+        // passa a ser contra o total já abatido). A base é só a dos itens elegíveis.
         if (cashbackToRedeem != null && cashbackToRedeem.signum() > 0) {
-            cashbackUseCase.validateRedemption(customerId, order.merchandiseNet(), cashbackToRedeem);
+            cashbackUseCase.validateRedemption(customerId, order.eligibleMerchandiseNet(), cashbackToRedeem);
             order = order.withCashbackRedeemed(cashbackToRedeem);
         }
 
@@ -927,6 +958,77 @@ public class PdvService implements PdvUseCase {
         }
         BigDecimal percent = granted
                 .divide(order.grossAmount(), Money.INTERMEDIATE_SCALE, Money.ROUNDING)
+                .multiply(Money.HUNDRED)
+                .setScale(Money.PERCENT_SCALE, Money.ROUNDING);
+        if (percent.compareTo(maxDiscountPercent) > 0) {
+            throw new DiscountLimitExceededException(percent, maxDiscountPercent);
+        }
+    }
+
+    /**
+     * Desconto do chefe na venda do balcão: percentual inteiro sobre a <b>base elegível</b> (o líquido das
+     * linhas de categoria dentro dos benefícios, depois de kit e promoção), rateado nas linhas.
+     *
+     * <ul>
+     *   <li>desconto concedido em linha fora dos benefícios → 409;</li>
+     *   <li>com percentual: acima do teto ({@code pdv.sale.max-discount-percent}) → 409; valor que não
+     *       bate com {@code percent × base} (±1 centavo por linha) → 409;</li>
+     *   <li>sem percentual: na venda online ({@code percentRequired}) qualquer desconto concedido → 409;
+     *       no legado (offline), o teto sobre a base elegível.</li>
+     * </ul>
+     *
+     * @param exemptDiscount desconto que não é concedido pelo operador (kit e promoção)
+     * @param grantedOnExcluded desconto concedido em linhas fora dos benefícios
+     */
+    void requireBossDiscount(Order order, BossDiscountRequest boss, BigDecimal exemptDiscount,
+            BigDecimal grantedOnExcluded) {
+        if (grantedOnExcluded != null && grantedOnExcluded.signum() > 0) {
+            throw new DiscountLimitExceededException(
+                    "Desconto do chefe não incide sobre itens fora dos benefícios (cigarros, palheiros…).");
+        }
+        BigDecimal granted = order.discountAmount()
+                .subtract(exemptDiscount == null ? BigDecimal.ZERO : exemptDiscount).max(BigDecimal.ZERO);
+        // Base elegível ANTES do desconto do chefe: o líquido elegível já está abatido dele.
+        BigDecimal eligibleBase = order.eligibleMerchandiseNet().add(granted);
+        requireBossDiscount(boss, granted, eligibleBase, BossDiscount.eligibleLines(order.items()).size());
+    }
+
+    /**
+     * O núcleo da regra, sem o pedido: também o fechamento de mesa usa (lá o desconto é sobre a conta e
+     * o servidor rateia depois).
+     *
+     * @param granted desconto concedido pelo operador
+     * @param eligibleBase líquido das linhas elegíveis antes do desconto do chefe
+     * @param eligibleLines quantas linhas elegíveis dividem o rateio
+     */
+    void requireBossDiscount(BossDiscountRequest boss, BigDecimal granted, BigDecimal eligibleBase,
+            int eligibleLines) {
+        Integer percent = boss.percent();
+        if (percent == null) {
+            if (granted.signum() <= 0) {
+                return;
+            }
+            if (boss.percentRequired()) {
+                throw new DiscountLimitExceededException(
+                        "Desconto só como desconto do chefe: informe bossDiscountPercent (1 a 5%).");
+            }
+            requireWithinCap(granted, eligibleBase);
+            return;
+        }
+        if (percent < BossDiscount.MIN_PERCENT || BigDecimal.valueOf(percent).compareTo(maxDiscountPercent) > 0) {
+            throw new DiscountLimitExceededException(BigDecimal.valueOf(percent), maxDiscountPercent);
+        }
+        BossDiscount.requireMatches(percent, granted, eligibleBase, eligibleLines);
+    }
+
+    /** Teto percentual do desconto concedido sobre a base elegível — o legado sem percentual. */
+    private void requireWithinCap(BigDecimal granted, BigDecimal eligibleBase) {
+        if (eligibleBase.signum() <= 0) {
+            throw new DiscountLimitExceededException(
+                    "Desconto do chefe não incide sobre itens fora dos benefícios (cigarros, palheiros…).");
+        }
+        BigDecimal percent = granted
+                .divide(eligibleBase, Money.INTERMEDIATE_SCALE, Money.ROUNDING)
                 .multiply(Money.HUNDRED)
                 .setScale(Money.PERCENT_SCALE, Money.ROUNDING);
         if (percent.compareTo(maxDiscountPercent) > 0) {

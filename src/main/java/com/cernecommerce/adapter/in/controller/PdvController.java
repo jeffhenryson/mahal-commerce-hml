@@ -290,14 +290,21 @@ public class PdvController {
                     + "A linha fica ON_ACCOUNT, fora do caixa; o pedido conclui normalmente. "
                     + "PDV-F043: `clientSaleId` (UUID gerado no caixa, opcional) torna o reenvio seguro — a "
                     + "mesma chave devolve 200 com a venda já registrada; dois envios simultâneos, 409 "
-                    + "DUPLICATE_CLIENT_SALE.")
+                    + "DUPLICATE_CLIENT_SALE. "
+                    + "Desconto do chefe: `bossDiscountPercent` (1–5, fora disso 400) com o valor rateado em "
+                    + "`items[].discountAmount`; o concedido (Σ discountAmount − kit) tem que bater com "
+                    + "percent × base elegível (líquido das linhas de categoria fora de `cashbackExcluded`, "
+                    + "depois de kit e promoção), ±R$ 0,01 por linha — senão 409 DISCOUNT_LIMIT_EXCEEDED. "
+                    + "Desconto concedido sem `bossDiscountPercent`, ou numa linha fora dos benefícios, também "
+                    + "é 409 DISCOUNT_LIMIT_EXCEEDED. `bossDiscountPercent` com `cashbackToRedeem > 0`: 409 "
+                    + "BENEFIT_CONFLICT. Venda com desconto do chefe não gera cashback.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Criada", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
             @ApiResponse(responseCode = "200", description = "PDV-F043 — reenvio com o mesmo clientSaleId: devolve a venda já registrada, sem registrar outra", content = @Content(schema = @Schema(implementation = OrderResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Saldo ou pagamento insuficiente para a venda", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sessão de outro operador, ou desconto sem PDV_SALE_DISCOUNT", content = @Content),
             @ApiResponse(responseCode = "404", description = "Sessão de caixa ou SKU não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Sessão encerrada, produto sem preço, desconto acima do teto ou pagamento não-dinheiro acima do total", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Sessão encerrada, produto sem preço, desconto do chefe fora da regra (DISCOUNT_LIMIT_EXCEEDED), desconto do chefe junto com resgate de cashback (BENEFIT_CONFLICT) ou pagamento não-dinheiro acima do total", content = @Content)
     })
     @PostMapping("/sessions/{id}/sales")
     @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
@@ -314,6 +321,11 @@ public class PdvController {
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         requireDiscountAuthority(items, authentication);
         requireDiscountAuthorityForKits(kits, authentication);
+        // Desconto do chefe exige a permissão mesmo sem valor nas linhas. O resgate de cashback, não:
+        // qualquer operador do PDV aplica.
+        if (request.getBossDiscountPercent() != null) {
+            requireDiscountPermission(authentication);
+        }
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
 
         OrderDelivery delivery = orderConverter.toDelivery(request.getDelivery());
@@ -321,7 +333,8 @@ public class PdvController {
                 request.getCustomerId(), items, kits, payments, authentication.getName(),
                 Boolean.TRUE.equals(request.getReserveForPickup()), delivery, request.getClientSaleId(), null,
                 PdvUseCase.PromotionCheck.strict(request.getExpectedPromotionDiscount()),
-                request.getCashbackToRedeem());
+                request.getCashbackToRedeem(),
+                PdvUseCase.BossDiscountRequest.online(request.getBossDiscountPercent()));
         Order order = registration.order();
         // PDV-F043 — reenvio da mesma venda: nada aconteceu agora, então nenhum evento é publicado de
         // novo (estoque, cashback, automação de pós-venda). 200 com o pedido que já existia.

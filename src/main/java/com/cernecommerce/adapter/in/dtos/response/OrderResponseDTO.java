@@ -43,6 +43,10 @@ public class OrderResponseDTO {
     @Schema(description = "Saldo de cashback do cliente usado como abatimento neste pedido (V186). Zero sem resgate.")
     private BigDecimal cashbackRedeemed;
 
+    @Schema(description = "Percentual do desconto do chefe (1–5) concedido neste pedido; nulo sem desconto do chefe. "
+            + "O valor está rateado nos itens (discountAmount). Pedido com ele não gera cashback.")
+    private Integer bossDiscountPercent;
+
     @Schema(description = "Líquido a pagar: bruto - desconto - cashback resgatado.")
     private BigDecimal netAmount;
 

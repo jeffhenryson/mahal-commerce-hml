@@ -23,6 +23,7 @@ public class CategoryDTOConverter {
         dto.setDisplayOrder(category.displayOrder());
         dto.setActive(category.active());
         dto.setCigarette(category.cigarette());
+        dto.setCashbackExcluded(category.cashbackExcluded());
         dto.setProductCount(productCount);
         dto.setAverageMarginPercent(averageMarginPercent);
         return dto;

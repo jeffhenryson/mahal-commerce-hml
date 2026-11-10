@@ -22,14 +22,22 @@ public class CloseComandaRequest {
     private List<SalePaymentRequest> payments;
 
     @DecimalMin(value = "0.0")
-    @Schema(description = "PDV-F014 — abatimento em valor absoluto sobre a CONTA INTEIRA (o "
-            + "desconto de fim de noite), não sobre um item. O servidor rateia entre as linhas "
-            + "proporcionalmente ao valor de cada uma, para o cashback e a margem continuarem "
-            + "certos. Exige PDV_COMANDA_DISCOUNT e respeita o mesmo teto do balcão "
-            + "(pdv.sale.max-discount-percent): acima dele, 409 DISCOUNT_LIMIT_EXCEEDED. "
+    @Schema(description = "PDV-F014 — valor em R$ do desconto do chefe sobre a CONTA INTEIRA. Tem que "
+            + "bater com bossDiscountPercent × base elegível (líquido das linhas em aberto com "
+            + "cashbackExcluded=false), ±R$ 0,01 por linha — senão 409 DISCOUNT_LIMIT_EXCEEDED; sem "
+            + "bossDiscountPercent, também 409. O servidor rateia só entre as linhas elegíveis, "
+            + "proporcionalmente ao valor de cada uma. Exige PDV_COMANDA_DISCOUNT. "
             + "Não confundir com surchargeAmount, que é acréscimo por linha no open rosh.",
             example = "20.00")
     private BigDecimal discountAmount;
+
+    @jakarta.validation.constraints.Min(1)
+    @jakarta.validation.constraints.Max(5)
+    @Schema(description = "Desconto do chefe: percentual inteiro de 1 a 5 (fora disso, 400), com o valor em "
+            + "discountAmount. Só no fechamento da conta inteira (com itemIds: 409 DISCOUNT_LIMIT_EXCEEDED). "
+            + "Exige PDV_COMANDA_DISCOUNT. Não combina com cashbackToRedeem (409 BENEFIT_CONFLICT), e o "
+            + "fechamento com ele não gera cashback.", example = "5", minimum = "1", maximum = "5")
+    private Integer bossDiscountPercent;
 
     @Schema(description = "PDV-F015 — taxa de serviço (os 10% do garçom). Vem APLICADA POR PADRÃO, "
             + "porque é o padrão do salão: mandar false é o cliente recusando. O valor é calculado "
@@ -51,9 +59,12 @@ public class CloseComandaRequest {
 
     @jakarta.validation.constraints.DecimalMin("0.0")
     @Schema(description = "V186 — quanto do saldo de cashback do cliente da comanda usar neste fechamento. Abate "
-            + "do total a pagar, depois do desconto e da taxa de serviço (a taxa não encolhe). O teto é sobre a "
-            + "mercadoria deste fechamento (conta dividida: cada fechamento tem o seu). Exige comanda com cliente "
-            + "com CPF. Fora das regras: 422 CASHBACK_*. Omitido/0: sem resgate.", example = "15.00")
+            + "do total a pagar, depois da taxa de serviço (a taxa não encolhe). Sem teto percentual e sem saldo "
+            + "mínimo: o limite é o saldo disponível e o líquido das linhas elegíveis deste fechamento "
+            + "(cashbackExcluded=false; conta dividida: cada fechamento tem o seu) — acima, 422 "
+            + "CASHBACK_ABOVE_CAP. Exige comanda com cliente com CPF; qualquer operador aplica, sem permissão "
+            + "de desconto. Com bossDiscountPercent: 409 BENEFIT_CONFLICT. Omitido/0: sem resgate.",
+            example = "15.00")
     private BigDecimal cashbackToRedeem;
 
     /** Ausente é "sim": a taxa é o padrão do salão, e omitir não pode significar deixar de cobrar. */

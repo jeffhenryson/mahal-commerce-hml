@@ -196,6 +196,10 @@ public class ComandaItemEntity {
     @Column(name = "session_link", length = 20)
     private String sessionLink;
 
+    // V198 — categoria fora dos benefícios, carimbada no lançamento.
+    @Column(name = "benefits_excluded", nullable = false)
+    private boolean benefitsExcluded;
+
     @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
     @BatchSize(size = 100)
     @OrderBy("id")
