@@ -10,6 +10,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @Component
 public class AuditEventListener {
 
@@ -34,7 +37,25 @@ public class AuditEventListener {
         // Mesmo motivo para o User-Agent.
         HttpServletRequest request = currentRequest();
         String ip = request == null ? null : request.getRemoteAddr();
-        persistenceService.saveAsync(event, ip, userAgent(request));
+        String userAgent = userAgent(request);
+        AuditOrigemContext.Origem origem = AuditOrigemContext.atual();
+        if (origem != null) {
+            // Ação feita pelo assistente de IA: marca a origem e, fora do request, usa o IP/UA dele.
+            event = comOrigem(event, origem.nome());
+            if (ip == null) {
+                ip = origem.ip();
+            }
+            if (userAgent == null) {
+                userAgent = origem.userAgent();
+            }
+        }
+        persistenceService.saveAsync(event, ip, userAgent);
+    }
+
+    static AuditEvent comOrigem(AuditEvent event, String origem) {
+        Map<String, Object> details = new HashMap<>(event.details());
+        details.put("origem", origem);
+        return new AuditEvent(event.type(), event.username(), event.timestamp(), Map.copyOf(details));
     }
 
     private static HttpServletRequest currentRequest() {

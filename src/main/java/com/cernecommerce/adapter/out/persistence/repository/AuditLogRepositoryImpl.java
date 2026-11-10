@@ -102,6 +102,16 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public List<AuditLogEntry> findRecent(String action, String target, int limit) {
+        return jpaRepo.findByActionAndTargetOrderByTimestampDesc(action, target, PageRequest.of(0, limit)).stream()
+                .map(e -> new AuditLogEntry(e.getId(), e.getUsername(), e.getAction(),
+                        e.getTarget(), e.getDetails(), e.getIpAddress(), e.getTimestamp(),
+                        e.getUserAgent()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public long countSince(String action, String target, Instant since) {
         return jpaRepo.countByActionAndTargetAndTimestampGreaterThanEqual(action, target, since);
     }
@@ -116,6 +126,9 @@ public class AuditLogRepositoryImpl implements AuditLogRepository {
         // Salão — a recusa da confirmação conta por cliente (trava de 5 erros).
         Object customer = event.details().get("customerId");
         if (customer != null) return "customer:" + customer;
+        // Integrações da loja — base do histórico de /store/integrations/{tipo}/history.
+        Object integration = event.details().get("integration");
+        if (integration != null) return "integration:" + integration;
         return null;
     }
 }

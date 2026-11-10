@@ -36,7 +36,10 @@ public class InMemoryResourceRateLimiterAdapter implements ResourceRateLimiterPo
             "salao-publico-leitura", new BucketPolicy(60, 120),
             "salao-publico-escrita", new BucketPolicy(60, 30),
             // Código de 4 dígitos da mesa: 10 tentativas a cada 10 min por IP.
-            "salao-publico-acesso", new BucketPolicy(600, 10));
+            "salao-publico-acesso", new BucketPolicy(600, 10),
+            // Assistente de IA, por usuário: 20 mensagens a cada 5 min. Cada uma é uma chamada paga
+            // ao provedor e segura uma thread do executor do assistente.
+            "assistente-mensagens", new BucketPolicy(300, 20));
 
     private final Map<String, Deque<Long>> hits = new ConcurrentHashMap<>();
 

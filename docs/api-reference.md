@@ -105,6 +105,7 @@ Todos os erros retornam `ApiError`:
 | `QR_PAUSADO` | 409 | Nova solicitação pelo QR da mesa com o QR pausado na Central de Pedidos (ECM-F013) |
 | `INVALID_TRACKING_URL` | 400 | Link da viagem que não é http(s) ou passa de 500 caracteres (ECM-F013) |
 | `SSE_CONNECTION_LIMIT` | 429 | `GET /notifications/stream` com o usuário já no limite de streams abertos; vem com `Retry-After` (ECM-F013) |
+| `BENEFIT_CONFLICT` | 409 | Desconto do chefe (`bossDiscountPercent`) e resgate de cashback (`cashbackToRedeem > 0`) na mesma venda ou fechamento de mesa — é um ou outro |
 | `INTERNAL_ERROR` | 500 | Erro interno inesperado |
 
 ---
@@ -1654,20 +1655,58 @@ ledger expõe **qual usuário** realizou cada movimentação.
 ```json
 {
   "warehouseCode": "LOJA-01",  // obrigatório
-  "minQuantity": 10.000         // obrigatório, >= 0
+  "minQuantity": 10.000,        // obrigatório, >= 0 (0 desliga o alerta)
+  "criticalQuantity": 3         // opcional, 0 <= c < minQuantity
 }
 // Response 204 No Content (cria ou atualiza — upsert por (sku, warehouseCode))
 // 404 PRODUCT_NOT_FOUND / 404 WAREHOUSE_NOT_FOUND / 400 VALIDATION_ERROR
+// 422 REORDER_CRITICAL_INVALID — criticalQuantity fora de 0 <= c < minQuantity
 ```
 
-Define o ponto de reposição do par SKU/depósito. A partir daí, **toda** movimentação que reduza
-o saldo abaixo de `minQuantity` — manual, recebimento de compras ou venda de PDV — notifica
+`criticalQuantity` (2026-11-10): **ausente** mantém o crítico salvo enquanto ele continuar menor
+que o mínimo novo (senão volta ao padrão); **`null` explícito** volta ao padrão. Padrão =
+`floor(min/2)` para mínimo inteiro, `min/2` para fracionário. `GET` devolve `criticalQuantity` cru
+(`null` = padrão). Níveis: `q <= crítico` CRÍTICO, `q < min` ABAIXO, `q == min` NO_LIMITE,
+`q > min` OK; `min = 0` nunca alerta. No `GET /estoque/summary`, `alertasAtencao` = ABAIXO + NO_LIMITE.
+
+Define o ponto de reposição do par SKU/depósito. A partir daí, **toda** movimentação que deixe
+o saldo **no** `minQuantity` ou abaixo — manual, recebimento de compras ou venda de PDV — notifica
 todos os usuários com `ESTOQUE_STOCK_MANAGE`. Sem ponto de reposição cadastrado, nenhuma
 notificação é disparada. Não há endpoint para ler ou remover um ponto de reposição.
 
 A notificação é enviada **depois** do commit da operação e **agregada por operação**: uma venda
 que derruba vários SKUs abaixo do mínimo gera um único aviso listando todos eles, não um por SKU.
 Operação revertida não notifica ninguém.
+
+---
+
+### Kit pré-montado (2026-11-10)
+
+Kit com estoque próprio: `POST /estoque/products` com `"type": "KIT", "kitMode": "PRE_MONTADO"` e
+`kitItems` (≥ 1). Movimentação, contagem, lote/validade, transferência, ponto de reposição, estoque
+inicial e reserva/venda no app funcionam como num SIMPLES; a venda baixa o saldo **do kit**.
+`kitMode` só com `type=KIT` (`422 KIT_MODE_INVALID`) e imutável; omitido em KIT vale `LOJA`
+(receita). Pré-montado com `components` → `422 KIT_PRE_MONTADO_SEM_RECEITA`; sem `kitItems` →
+`422 KIT_ITEMS_EMPTY`. `PUT/DELETE .../kit` num pré-montado → `409 KIT_PRE_MONTADO_SEM_RECEITA`.
+`GET /estoque/kits/availability` devolve `buildableQuantity` = saldo disponível do kit,
+`blocked=false`, `components=[]`. `pricing.costPrice` do kit = Σ `unitCost × quantity` (nulo se
+algum item não tiver custo); `ProductResponse.kitMode` exposto.
+
+```json
+// KitItemRequest (kitItems[] no POST, items[] no PUT)
+{ "id": 1, "name": "Essência Menta 50g", "quantity": 2, "unitCost": 10.00,
+  "categoryId": 3, "brandId": 7, "description": null, "imageUrl": null }
+```
+
+- `GET /estoque/products/{sku}/kit-items` — `ESTOQUE_PRODUCT_READ`. Lista por posição, com
+  `unitCost`, `categoryName`, `brandName`. `409 KIT_NOT_PRE_MONTADO` se não for pré-montado.
+- `PUT /estoque/products/{sku}/kit-items` — `ESTOQUE_PRODUCT_MANAGE`. Corpo `{ "items": [...] }`,
+  substitui a lista: com `id` atualiza, sem `id` cria, `id` ausente apaga; posição = índice.
+  `422 KIT_ITEMS_EMPTY`, `409 KIT_NOT_PRE_MONTADO`, `404` categoria/marca inexistente.
+- `GET /shop/catalog/{sku}/kit-items` — público, mesma visibilidade do detalhe do catálogo; sem custo.
+- `GET /pdv/products/{sku}/kit-items` — `PDV_READ`; sem custo.
+
+Imagem do item: `POST /estoque/products/images`, grava a URL em `imageUrl`.
 
 ---
 
@@ -2364,6 +2403,27 @@ pagamento.
 > `409 PEDIDO_APP_OUTRO_CAIXA`. Na retirada, a liquidação fecha o atendimento (`RETIRADO`); na
 > entrega, ele continua `ACEITO` até `POST /pdv/app-orders/{id}/saiu`.
 
+### Cashback × desconto do chefe (V197/V198) — regras comuns ao balcão, à mesa e ao offline
+
+- **Categorias fora dos benefícios** (`cashbackExcluded=true` em `/estoque/categories`; cigarros e palheiros
+  marcados no backfill da V197): a linha não gera cashback (taxa 0 mesmo com taxa por SKU ou global), o saldo
+  de cashback não abate o valor dela e o desconto do chefe não incide sobre ela. A marcação é carimbada na linha
+  no lançamento (`order_item`/`comanda_item.benefits_excluded`) e devolvida como `items[].cashbackExcluded`
+  na comanda.
+- **Base elegível:** líquido das linhas fora de `cashbackExcluded`, depois de kit e promoção.
+- **Desconto do chefe:** `bossDiscountPercent` inteiro de 1 a 5 (fora disso, 400). O valor em R$ continua
+  rateado nas linhas e tem que bater com `percent × base elegível`, ±R$ 0,01 por linha elegível — senão
+  409 `DISCOUNT_LIMIT_EXCEEDED`. Também 409 `DISCOUNT_LIMIT_EXCEEDED`: desconto concedido sem
+  `bossDiscountPercent` (online), desconto numa linha fora dos benefícios, percentual acima de
+  `pdv.sale.max-discount-percent` (default agora **5**). O pedido grava `bossDiscountPercent` e **não gera
+  cashback** (nem na quitação de marcado, nem no retroativo).
+- **Exclusividade:** `bossDiscountPercent` com `cashbackToRedeem > 0` → 409 `BENEFIT_CONFLICT`.
+- **Resgate de cashback:** qualquer operador do PDV aplica (não exige permissão de desconto). Sem teto
+  percentual e sem saldo mínimo: o máximo é `min(saldo disponível, base elegível)`; acima, 422
+  `CASHBACK_ABOVE_CAP`. `GET /cashback/customers/{id}/redemption-quote?amount=` recebe a base elegível e
+  devolve `capPercent=100`, `minimumBalance=0`; na venda o servidor recalcula a base sozinho.
+  `resgateTetoPercent`/`resgateMinimoSaldo` de `/cashback/settings` ficam só por compatibilidade.
+
 ### POST /pdv/sessions/{id}/sales — Permissão: PDV_SALE_MANAGE (+ PDV_SALE_DISCOUNT se houver desconto)
 
 > **Contrato alterado em PDV-F004 e PDV-C004.** `unitPrice` e `warehouseCode` **saíram** do request — o depósito vem da sessão de caixa. Além disso, a venda passa a exigir que a sessão pertença ao operador autenticado (`403 SESSION_NOT_OWNED`). Sobre o preço: o preço e o custo são
@@ -2375,7 +2435,8 @@ pagamento.
   "customerId": 42,                // opcional — sem cliente, sem cashback
   "items": [                       // obrigatório, não vazio
     { "sku": "NARG-001", "quantity": 2.000, "discountAmount": 4.00 }
-  ]
+  ],
+  "bossDiscountPercent": 5         // opcional, 1–5: desconto do chefe (exige PDV_SALE_DISCOUNT)
 }
 // Response 201 → OrderResponseDTO
 // 400 INSUFFICIENT_STOCK (saldo insuficiente para algum item) / 400 VALIDATION_ERROR
@@ -2383,6 +2444,7 @@ pagamento.
 // 403 desconto > 0 sem PDV_SALE_DISCOUNT
 // 404 CASH_REGISTER_SESSION_NOT_FOUND / 404 PRODUCT_NOT_FOUND
 // 409 CASH_REGISTER_SESSION_CLOSED / 409 PRODUCT_NOT_PRICED / 409 DISCOUNT_LIMIT_EXCEEDED
+// 409 BENEFIT_CONFLICT (desconto do chefe + resgate de cashback)
 // 409 ITEM_DISCOUNT_EXCEEDS_GROSS (desconto da linha acima do bruto dela — PDV-C016; antes era um 400 genérico)
 ```
 
@@ -2391,8 +2453,10 @@ Registra a venda e **dá baixa automática no estoque na mesma transação**: ca
 venda nasce e termina na mesma transação (`CRIADO → CONCLUIDO`), e é na conclusão que o
 `orderNumber` é emitido, de sequência própria.
 
-`quantity` > 0; `discountAmount` ≥ 0 e não pode passar do bruto do item. O teto de desconto por
-pedido é `pdv.sale.max-discount-percent` (default **10%**).
+`quantity` > 0; `discountAmount` ≥ 0 e não pode passar do bruto do item. Desconto concedido só como
+desconto do chefe (`bossDiscountPercent`, ver a seção acima); o teto é `pdv.sale.max-discount-percent`
+(default **5%**, era 10%). A venda offline (`/sales/sync`) aceita `bossDiscountPercent` opcional; sem ele,
+o desconto é aceito até o teto sobre a base elegível.
 
 Produto sem preço no catálogo **recusa a venda** com `409 PRODUCT_NOT_PRICED` — preço zero e preço
 desconhecido não são a mesma coisa.
@@ -2827,11 +2891,13 @@ a conta. Zero significa que a casa não cobra.
 
 ### POST /pdv/comandas/{id}/close — Permissão: PDV_COMANDA_MANAGE (+ PDV_COMANDA_DISCOUNT se discountAmount > 0)
 
-Três campos opcionais além dos pagamentos:
+Campos opcionais além dos pagamentos:
 
 | Campo | Default | Descrição |
 |---|---|---|
-| `discountAmount` | `0` | PDV-F014 — abatimento sobre a **conta inteira**, rateado pelo servidor entre as linhas proporcionalmente ao valor de cada uma. Exige `PDV_COMANDA_DISCOUNT` (403 `COMANDA_DISCOUNT_NOT_ALLOWED`) e respeita o mesmo teto do balcão (409 `DISCOUNT_LIMIT_EXCEEDED`). Maior que o total da conta é 409 `DISCOUNT_EXCEEDS_BILL` (PDV-C016; antes caía no 400 genérico, **sem** chegar ao 409 do teto). Não confundir com `surchargeAmount`, que é acréscimo **por linha** no open rosh |
+| `bossDiscountPercent` | — | Desconto do chefe, 1–5 (400 fora disso), com o valor em `discountAmount`. Só no fechamento da **conta inteira**: com `itemIds`, 409 `DISCOUNT_LIMIT_EXCEEDED`. Com `cashbackToRedeem > 0`, 409 `BENEFIT_CONFLICT`. Sem ele, `discountAmount > 0` é 409 `DISCOUNT_LIMIT_EXCEEDED`. Ver "Cashback × desconto do chefe" |
+| `cashbackToRedeem` | `0` | Resgate de cashback do cliente da comanda, até `min(saldo disponível, base elegível do escopo)`. Qualquer operador aplica |
+| `discountAmount` | `0` | PDV-F014 — valor do desconto do chefe sobre a **conta inteira**, rateado pelo servidor só entre as linhas **elegíveis** (as `cashbackExcluded` recebem zero), proporcionalmente ao valor de cada uma. Exige `PDV_COMANDA_DISCOUNT` (403 `COMANDA_DISCOUNT_NOT_ALLOWED`) e tem que bater com `bossDiscountPercent × base elegível` (409 `DISCOUNT_LIMIT_EXCEEDED`). Maior que o total da conta é 409 `DISCOUNT_EXCEEDS_BILL` (PDV-C016; antes caía no 400 genérico, **sem** chegar ao 409 do teto). Não confundir com `surchargeAmount`, que é acréscimo **por linha** no open rosh |
 | `applyServiceFee` | `true` | PDV-F015 — taxa de serviço. Vem **aplicada por omissão**, porque é o padrão do salão; `false` é o cliente recusando |
 | `itemIds` | todas as abertas | PDV-F017 — **conta dividida**: as linhas que ESTE fechamento cobra. Com a lista, o pedido sai só com elas, são marcadas como cobradas e a comanda **continua ABERTA** com o resto; repita até zerar, e o último fechamento encerra a mesa. Desconto, taxa e troco incidem **só sobre o escopo**. Um `OPEN_ROSH` e as `TROCA`/`SABOR_EXTRA` ligados a ele têm que sair juntos: 409 `LINKED_ITEM_MUST_CLOSE_TOGETHER`. Linha inexistente ou já cobrada é 400 `ITEM_NOT_OPEN_IN_COMANDA` |
 
@@ -4870,6 +4936,158 @@ Envia exemplos com dados fictícios, **de forma síncrona**. Sem `sample`, envia
 `sample` ∈ `VERIFICATION_CODE`, `PASSWORD_RESET`, `USER_INVITE`, `EMAIL_CHANGE_REQUEST`, `EMAIL_CHANGE`, `EMAIL_CHANGE_CONFIRMED`, `WELCOME`, `CUSTOMER_WELCOME`, `ACCOUNT_CHANGE`, `PASSWORD_CHANGED`, `ACCOUNT_LOCKED`, `TOTP_STATUS`, `TOKEN_THEFT`, `PASSWORD_RESET_ALERT`, `GOOGLE_LINKED`, `ORDER_CONFIRMATION`, `ORDER_CONFIRMATION_DELIVERY`, `ORDER_STATUS_UPDATE`, `ORDER_CANCELLATION`, `ORDER_REFUND`, `PURCHASE_RECEIPT`, `RECEIVABLE_CREATED`, `RECEIVABLE_REMINDER`, `RECEIVABLE_PAID`, `CASH_SESSION_OPENED`, `CASH_MOVEMENT`, `CASH_SESSION_CLOSED`, `CASH_SESSION_STALE`, `ORDER_CANCELLED_ALERT`, `PAYMENT_CORRECTED_ALERT`, `PRICE_CHANGED_ALERT`, `DAILY_DIGEST`, `STOCK_REORDER_ALERT`, `DEV_ALERT`.
 
 **Erros:** `400` destinatário inválido; `422 INVALID_EMAIL_INTEGRATION` sem chave/remetente salvos (só com `target=STORE`).
+
+### GET /store/integrations/assistant — Permissão: INTEGRATION_MANAGE
+
+Chaves de IA usadas pelo assistente do admin: **uma por provedor** — `ANTHROPIC` (Claude), `OPENAI` (ChatGPT) e `GEMINI` (Google) —, todas podendo ficar salvas. `provider` é o que responde; `fallbackProvider` (opcional) entra quando o ativo falha **antes** de mostrar qualquer coisa ao usuário (nenhum texto, nenhuma ferramenta). Em `system_config` (`integration.assistant.<provedor>.*`), cifradas como as demais e **nunca devolvidas**. Sem fallback para variável de ambiente: `source` é sempre `STORE`.
+
+```json
+// Response 200
+{
+  "enabled": true,
+  "provider": "OPENAI",
+  "fallbackProvider": "ANTHROPIC",
+  "apiKeyConfigured": true,
+  "apiKeyLast4": "x9Qa",
+  "model": "gpt-5.5",
+  "source": "STORE",
+  "statusDetail": "OK — gpt-5.5",
+  "providers": [
+    { "provider": "ANTHROPIC", "label": "Claude (Anthropic)", "apiKeyConfigured": true,  "apiKeyLast4": "W1yz", "model": "claude-sonnet-5-5", "statusDetail": null },
+    { "provider": "OPENAI",    "label": "ChatGPT (OpenAI)",   "apiKeyConfigured": true,  "apiKeyLast4": "x9Qa", "model": "gpt-5.5",           "statusDetail": "OK — gpt-5.5" },
+    { "provider": "GEMINI",    "label": "Gemini (Google)",    "apiKeyConfigured": false, "apiKeyLast4": null,   "model": "gemini-3.5-flash",  "statusDetail": null }
+  ],
+  "updatedAt": "2026-11-09T12:00:00Z",
+  "updatedBy": "admin"
+}
+```
+
+`apiKeyConfigured`, `apiKeyLast4`, `model` e `statusDetail` no topo são **do provedor ativo** (compatibilidade com o card antigo). `model` de cada provedor vem da integração ou, sem escolha, de `assistente.<provedor>.model` (`claude-sonnet-5-5`, `gpt-5.5`, `gemini-3.5-flash`). `statusDetail` é o resultado do último teste daquele provedor (zera quando a chave dele muda).
+
+### GET /store/integrations/assistant/providers — Permissão: INTEGRATION_MANAGE
+
+`[{ "provider": "ANTHROPIC", "label": "Claude (Anthropic)", "defaultModel": "claude-sonnet-5-5" }, { "provider": "OPENAI", ... }, { "provider": "GEMINI", ... }]` — para o seletor do card.
+
+### PUT /store/integrations/assistant — Permissão: INTEGRATION_MANAGE
+
+```json
+// Formato novo
+{ "enabled": true, "provider": "OPENAI", "fallbackProvider": "ANTHROPIC",
+  "providers": { "OPENAI": { "apiKey": "sk-proj-...", "model": "gpt-5.5" },
+                 "GEMINI": { "apiKey": "AIza..." } } }
+
+// Formato antigo (continua aceito): vale para o provedor ativo
+{ "enabled": true, "apiKey": "sk-ant-...", "model": "claude-sonnet-5-5" }
+```
+
+- `apiKey` ausente mantém a chave salva; `""` remove. `model` ausente mantém; precisa ser do provedor (`claude-*`, `gpt-*`/`o<n>*`, `gemini-*`).
+- `provider` ausente mantém o ativo. `fallbackProvider` ausente mantém a reserva; `null` remove.
+- Publica `INTEGRATION_UPDATED` (`integration=assistant`, `provider`, `historyAction`, `fields` como `providers.OPENAI.apiKey`, `provider`, `fallbackProvider`), sem as chaves.
+
+**Erros:** `400 INVALID_INTEGRATION` — ativar sem a chave do provedor ativo, reserva sem chave ou igual ao ativo, provedor desconhecido, modelo que não é do provedor.
+
+### POST /store/integrations/assistant/test?provider=OPENAI — Permissão: INTEGRATION_MANAGE
+
+Chamada mínima ao provedor com a chave salva dele, mesmo desativado; sem `provider`, testa o ativo. `{ "success": true, "error": null, "detail": "gpt-5.5" }`. Recusa do provedor volta **200** com `success=false` e o motivo em `error`. Sem chave salva: `400 INVALID_INTEGRATION`.
+
+### GET /store/integrations/assistant/history?limit=10 — Permissão: INTEGRATION_MANAGE
+
+Lido do audit log (`INTEGRATION_UPDATED`, alvo `integration:assistant`), mais recente primeiro, `limit` de 1 a 50.
+
+```json
+[ { "at": "2026-11-09T12:00:00Z", "user": "admin", "action": "SECRET_SET", "fields": ["apiKey", "enabled"] } ]
+```
+
+`action`: `UPDATED`, `SECRET_SET`, `SECRET_REMOVED`, `ENABLED`, `DISABLED`.
+
+---
+
+## Assistente de IA — `/assistente`
+
+Chat do admin com Claude, ChatGPT ou Gemini (o provedor ativo da integração, com reserva opcional). Permissão `ASSISTENTE_USE` (V194: ROLE_ADMIN e ROLE_DEV). Com `module.assistente.enabled=false` o controller não existe e tudo responde 404 — o front esconde o bubble. Conversa ou ação de outro usuário: **404**.
+
+**Regras do servidor:**
+- As ferramentas chamam os **controllers** (não os use cases), com o `SecurityContext` do usuário: o `@PreAuthorize` e a auditoria de sempre valem. Leitura: produtos, estoque, resumo do estoque, pedidos, resumo de vendas, clientes (id + nome + agregados), tags, indicadores do CRM e ajuda de uso.
+- Escritas só como **ação pendente**, guardada com parâmetros imutáveis, validade `assistente.acao.validade` (10 min) e uso único: produto como rascunho, dados cadastrais de produto (nunca preço), categoria, marca, tag, tag de cliente (adicionar/remover) e observação de cliente (append-only — não há edição de observação).
+- Dados pessoais: CPF, CNPJ, telefone, e-mail, CEP e endereço são removidos do texto do usuário antes de gravar e de enviar ao modelo; as ferramentas nem copiam esses campos. O contexto da tela vai só com o path (sem query string).
+- Auditoria: ações feitas por ferramenta ou confirmação levam `"origem":"ASSISTENTE"` em `details`.
+- Turno em executor próprio (`assistente.executor.*`), sem transação aberta durante o stream. Rate limit: 20 mensagens a cada 5 min por usuário.
+- Retenção: `AssistenteRetencaoJob` (04:30) apaga conversas sem atividade há mais de `assistente.retencao-dias` (90).
+
+### GET /assistente/status — Permissão: ASSISTENTE_USE
+
+`{ "habilitado": true, "configurado": true }` — `configurado` = integração ativa com chave legível.
+
+### GET /assistente/conversas — Permissão: ASSISTENTE_USE
+
+As 50 mais recentes do usuário: `[{ "id": "uuid", "titulo": "Vendas da semana", "atualizadaEm": "..." }]`.
+
+### POST /assistente/conversas — Permissão: ASSISTENTE_USE
+
+Cria vazia. **201** `{ id, titulo: null, atualizadaEm }`. O título vem da primeira mensagem.
+
+### GET /assistente/conversas/{id} — Permissão: ASSISTENTE_USE
+
+```json
+{ "id": "uuid", "titulo": "...", "mensagens": [
+  { "id": "uuid", "papel": "usuario", "texto": "...", "blocos": [], "links": [], "acoes": [], "criadaEm": "..." },
+  { "id": "uuid", "papel": "assistente", "texto": "...",
+    "blocos": [{ "tipo": "tabela", "titulo": "Pedidos", "colunas": [{ "rotulo": "Total", "sensivel": true }], "linhas": [["R$ 1.234,56"]] }],
+    "links": [{ "rotulo": "Ver pedido", "rota": "/app/vendas/pedidos?pedido=42" }],
+    "acoes": [{ "acaoId": "uuid", "titulo": "Criar tag VIP", "campos": [{ "rotulo": "Tag", "valor": "VIP", "sensivel": false }],
+                "estado": "EXECUTADA", "expiraEm": "...", "resultado": "Tag VIP criada.", "links": [] }],
+    "provedor": "OPENAI", "modelo": "gpt-5.5",
+    "criadaEm": "...",
+    "feedback": { "nota": "NEGATIVO", "motivo": "..." } } ] }
+```
+
+Pendente vencida aparece como `EXPIRADA`. `provedor`/`modelo` dizem quem respondeu cada mensagem do assistente (a reserva pode ter entrado no lugar do ativo); `null` nas do usuário. `feedback` é `null` quando a resposta não foi avaliada e sempre `null` nas mensagens do usuário.
+
+### PATCH /assistente/conversas/{id} — Permissão: ASSISTENTE_USE
+
+Renomeia. Request `{ "titulo": "..." }` (1 a 80 caracteres). Os espaços são normalizados (`strip` e espaços repetidos viram um só) e dado pessoal é removido. **200** `{ id, titulo, atualizadaEm }`. `atualizadaEm` **não muda**, então a conversa não sobe no histórico.
+
+**Erros:** `400 VALIDATION_ERROR` (vazio ou acima de 80), `404` conversa de outro usuário.
+
+### PUT /assistente/mensagens/{id}/feedback — Permissão: ASSISTENTE_USE
+
+Avalia uma resposta do assistente. Request `{ "nota": "POSITIVO" | "NEGATIVO" | null, "motivo": "..." }`. `motivo` é opcional, tem até 500 caracteres e passa pela remoção de dado pessoal. `nota: null` limpa a nota, o motivo e a data. **204**. Não muda `atualizadaEm` da conversa. O servidor loga `assistente.feedback nota provedor modelo`, sem o motivo.
+
+**Erros:** `400 UNREADABLE_BODY` (nota inválida), `400 VALIDATION_ERROR` (motivo longo), `404 MENSAGEM_NAO_ENCONTRADA` (mensagem do usuário, inexistente ou de outro usuário).
+
+### DELETE /assistente/conversas/{id} — Permissão: ASSISTENTE_USE
+
+**204**, com mensagens e ações.
+
+### POST /assistente/conversas/{id}/mensagens — Permissão: ASSISTENTE_USE (conferida no método)
+
+Request `{ "texto": "...", "contexto": { "rota": "/app/vendas/pedidos", "titulo": "Pedidos" }, "substituirDesde": "uuid?" }` (texto até 4000; `contexto` pode ser `null`). Responde `text/event-stream`; cada evento é `event: <nome>` + `data: <json>`:
+
+| Evento | Dados |
+|---|---|
+| `titulo` | `{ titulo }`: só no 1º turno, quando a conversa ganha título, e antes de qualquer `texto` |
+| `texto` | `{ delta }` |
+| `ferramenta` | `{ rotulo, estado: "inicio" \| "fim" }` |
+| `bloco` | `{ tipo: "tabela", titulo, colunas: [{ rotulo, sensivel }], linhas: string[][] }` |
+| `link` | `{ rotulo, rota }` — só `/app/...` |
+| `acao` | `{ acaoId, titulo, campos: [{ rotulo, valor, sensivel }], estado: "PENDENTE", expiraEm }` |
+| `fim` | `{ mensagemId, perguntaId, provedor, modelo }`: `perguntaId` é a pergunta deste turno, usada em `substituirDesde` |
+| `erro` | `{ codigo, mensagem, perguntaId? }`: `PROVEDOR` (falha do provedor de IA, depois de tentada a reserva) ou `ERRO_INTERNO`. `perguntaId` vem quando a pergunta chegou a ser gravada |
+
+**Gerar de novo / editar e reenviar:** com `substituirDesde` = `perguntaId` da **última** pergunta, essa pergunta e tudo depois dela são apagados antes do turno, e o modelo não as recebe no histórico. As ações `PENDENTE` dessas mensagens viram `EXPIRADA` (confirmar um cartão antigo responde `409 ACAO_EXPIRADA`). As linhas de ação ficam para auditoria. Refazer conta no rate limit.
+
+**Erros antes do stream** (JSON `{ errorCode, message }`, escritos pelo próprio controller porque o `Accept` é `text/event-stream`): `403 ACCESS_DENIED`, `404 CONVERSA_NAO_ENCONTRADA`, `409 ASSISTENTE_NAO_CONFIGURADO`, `409 ASSISTENTE_OCUPADO` (já há resposta em andamento na conversa, ou executor cheio), `409 SUBSTITUICAO_INVALIDA` (`substituirDesde` não é a última pergunta), `409 ACAO_JA_EXECUTADA` (uma resposta a substituir já executou uma alteração; nada é apagado), `429 RATE_LIMIT_EXCEEDED` com `Retry-After`. Falha do provedor só é conhecida depois de aberto o stream: vira evento `erro` com `codigo=PROVEDOR`, não 502.
+
+### POST /assistente/acoes/{acaoId}/confirmar — Permissão: ASSISTENTE_USE (+ a do recurso)
+
+Executa exatamente o que foi guardado, como o usuário logado, pelo controller do recurso (o `@PreAuthorize` dele decide). `{ "estado": "EXECUTADA", "resultado": "Tag VIP criada.", "links": [...] }`. Sem a permissão do recurso ou erro de negócio: `estado: "FALHOU"` com o motivo. Repetir devolve o mesmo resultado sem executar de novo.
+
+**Erros:** `409 ACAO_EXPIRADA`, `409 ACAO_EM_EXECUCAO`, `404` ação de outro usuário.
+
+### POST /assistente/acoes/{acaoId}/recusar — Permissão: ASSISTENTE_USE
+
+`{ "estado": "RECUSADA" }`. Idempotente; ação já decidida devolve o estado dela.
+
 
 ## Configuração CORS (dev)
 

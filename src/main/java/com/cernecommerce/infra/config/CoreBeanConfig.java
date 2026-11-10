@@ -17,11 +17,20 @@ import com.cernecommerce.core.service.ReceivableService;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
+import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
+import com.cernecommerce.core.domain.model.config.ProvedorIa;
+import com.cernecommerce.core.ports.in.AssistenteConversaUseCase;
+import com.cernecommerce.core.ports.in.IntegrationHistoryUseCase;
+import com.cernecommerce.core.ports.out.assistente.AssistenteRepositoryPort;
+import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort;
 import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.WhatsappPort;
 import com.cernecommerce.core.service.AutomationDispatchService;
 import com.cernecommerce.core.service.AutomationPlatformIntegrationService;
+import com.cernecommerce.core.service.AssistantIntegrationService;
+import com.cernecommerce.core.service.AssistenteConversaService;
+import com.cernecommerce.core.service.IntegrationHistoryService;
 import com.cernecommerce.core.service.WhatsappIntegrationService;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
@@ -826,6 +835,29 @@ class CoreBeanConfig {
         boolean allowInsecureHttp = !environment.acceptsProfiles(Profiles.of("prod"));
         return new AutomationPlatformIntegrationService(configPort, secretCipherPort, campaignWebhookPort,
                 allowInsecureHttp);
+    }
+
+    @Bean
+    AssistantIntegrationUseCase assistantIntegrationUseCase(SystemConfigPort configPort,
+            SecretCipherPort secretCipherPort, AssistenteLlmPort assistenteLlmPort,
+            @Value("${assistente.anthropic.model:${assistente.model:claude-sonnet-5-5}}") String anthropicModel,
+            @Value("${assistente.openai.model:gpt-5.5}") String openaiModel,
+            @Value("${assistente.gemini.model:gemini-3.5-flash}") String geminiModel) {
+        return new AssistantIntegrationService(configPort, secretCipherPort, assistenteLlmPort, java.util.Map.of(
+                ProvedorIa.ANTHROPIC, anthropicModel,
+                ProvedorIa.OPENAI, openaiModel,
+                ProvedorIa.GEMINI, geminiModel));
+    }
+
+    @Bean
+    AssistenteConversaUseCase assistenteConversaUseCase(AssistenteRepositoryPort assistenteRepositoryPort,
+            @Value("${assistente.acao.validade:PT10M}") java.time.Duration validadeAcao) {
+        return new AssistenteConversaService(assistenteRepositoryPort, validadeAcao, java.time.Clock.systemUTC());
+    }
+
+    @Bean
+    IntegrationHistoryUseCase integrationHistoryUseCase(AuditLogRepository auditLogRepository) {
+        return new IntegrationHistoryService(auditLogRepository);
     }
 
     @Bean

@@ -71,7 +71,9 @@ public class DevRoleBootstrapConfig {
         // Tokens de integração da loja — e-mail/Resend (V140), WhatsApp e n8n/Make (V143).
         "INTEGRATION_MANAGE",
         // Automações (Configurações › Automações): destino, segredo e disparo (V143).
-        "AUTOMATION_MANAGE"
+        "AUTOMATION_MANAGE",
+        // Assistente de IA do admin (V194). O atendente não recebe.
+        "ASSISTENTE_USE"
     };
 
     private static final String[] DEV_ONLY_PERMISSIONS = {

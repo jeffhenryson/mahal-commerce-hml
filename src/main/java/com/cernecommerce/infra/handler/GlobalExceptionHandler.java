@@ -68,6 +68,14 @@ import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
 import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateSkuException;
 import com.cernecommerce.core.domain.exception.estoque.DraftLimitReachedException;
+import com.cernecommerce.core.domain.exception.assistente.AcaoEmExecucaoException;
+import com.cernecommerce.core.domain.exception.assistente.AcaoExpiradaException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteNaoConfiguradoException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteOcupadoException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteProvedorException;
+import com.cernecommerce.core.domain.exception.assistente.ConversaNaoEncontradaException;
+import com.cernecommerce.core.domain.exception.assistente.MensagemNaoEncontradaException;
+import com.cernecommerce.core.domain.exception.assistente.TituloInvalidoException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateWarehouseCodeException;
 import com.cernecommerce.core.domain.exception.estoque.LotTrackedTransferUnsupportedException;
 import com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException;
@@ -697,6 +705,51 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "KIT_INITIAL_STOCK_NOT_ALLOWED", req);
     }
 
+    // ── Assistente de IA ──────────────────────────────────────────────────────
+
+    @ExceptionHandler(ConversaNaoEncontradaException.class)
+    public ResponseEntity<ApiError> handleConversaNaoEncontrada(ConversaNaoEncontradaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CONVERSA_NAO_ENCONTRADA", req);
+    }
+
+    @ExceptionHandler(MensagemNaoEncontradaException.class)
+    public ResponseEntity<ApiError> handleMensagemNaoEncontrada(MensagemNaoEncontradaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "MENSAGEM_NAO_ENCONTRADA", req);
+    }
+
+    @ExceptionHandler(TituloInvalidoException.class)
+    public ResponseEntity<ApiError> handleTituloInvalido(TituloInvalidoException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "VALIDATION_ERROR", req);
+    }
+
+    @ExceptionHandler(AcaoExpiradaException.class)
+    public ResponseEntity<ApiError> handleAcaoExpirada(AcaoExpiradaException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ACAO_EXPIRADA", req);
+    }
+
+    @ExceptionHandler(AcaoEmExecucaoException.class)
+    public ResponseEntity<ApiError> handleAcaoEmExecucao(AcaoEmExecucaoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ACAO_EM_EXECUCAO", req);
+    }
+
+    @ExceptionHandler(AssistenteNaoConfiguradoException.class)
+    public ResponseEntity<ApiError> handleAssistenteNaoConfigurado(AssistenteNaoConfiguradoException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ASSISTENTE_NAO_CONFIGURADO", req);
+    }
+
+    @ExceptionHandler(AssistenteOcupadoException.class)
+    public ResponseEntity<ApiError> handleAssistenteOcupado(AssistenteOcupadoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ASSISTENTE_OCUPADO", req);
+    }
+
+    @ExceptionHandler(AssistenteProvedorException.class)
+    public ResponseEntity<ApiError> handleAssistenteProvedor(AssistenteProvedorException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_GATEWAY, ex.getMessage(), "ASSISTENTE_PROVEDOR", req);
+    }
+
     @ExceptionHandler(DraftLimitReachedException.class)
     public ResponseEntity<ApiError> handleDraftLimitReached(DraftLimitReachedException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "DRAFT_LIMIT_REACHED", req);
@@ -707,6 +760,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "KIT_DIRECT_ADJUSTMENT", req);
     }
+
 
     @ExceptionHandler(KitCostNotEditableException.class)
     public ResponseEntity<ApiError> handleKitCostNotEditable(KitCostNotEditableException ex, HttpServletRequest req) {
@@ -2243,6 +2297,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleDiscountLimit(DiscountLimitExceededException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "DISCOUNT_LIMIT_EXCEEDED", req);
     }
+
 
     /**
      * PDV-C016: mesma família de DISCOUNT_LIMIT_EXCEEDED — o valor é sintaticamente válido e
