@@ -70,6 +70,14 @@ public record Pricing(BigDecimal costPrice, BigDecimal markupPercent, BigDecimal
         }
     }
 
+    /**
+     * Troca só o custo, inclusive para nulo — diferente de {@code withPatch}, em que nulo mantém.
+     * Usado pelo custo derivado do kit pré-montado (soma dos itens), que pode virar "desconhecido".
+     */
+    public Pricing withCostPrice(BigDecimal newCostPrice) {
+        return new Pricing(newCostPrice, markupPercent, salePrice, originalPrice, causeAmount);
+    }
+
     /** Produto sem precificação — nenhum dos campos definido. */
     public static Pricing empty() {
         return EMPTY;

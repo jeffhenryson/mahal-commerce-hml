@@ -16,6 +16,7 @@ import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
 import com.cernecommerce.core.domain.model.estoque.ProductVariant;
 import com.cernecommerce.core.domain.model.estoque.SessionModalityFlags;
+import com.cernecommerce.core.domain.model.estoque.KitMode;
 import com.cernecommerce.core.ports.out.estoque.ProductRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -104,6 +105,7 @@ public class ProductRepositoryImpl implements ProductRepository {
         entity.setSalePrice(product.pricing().salePrice());
         entity.setOriginalPrice(product.pricing().originalPrice());
         entity.setType(product.type().name());
+        entity.setKitMode(product.kitMode() == null ? null : product.kitMode().name());
         entity.setStatus(product.status().name());
         entity.setLotTracked(product.lotTracked());
         entity.setParentSellable(product.parentSellable());
@@ -445,7 +447,8 @@ public class ProductRepositoryImpl implements ProductRepository {
                 e.isSampleProduct(), e.isKitComponentEligible(), e.isVisibleInPos(), e.isVisibleInMarketplace(),
                 status, e.getBrandId(), e.isAvailableForTable(), e.isSessionProduct(), e.getSessionsPerUnit(),
                 e.getOpenRoshPrice(), e.isParentSellable(), e.getSessionTierId(),
-                new SessionModalityFlags(e.isSessionCompraEssencia(), e.isSessionItensPessoais()));
+                new SessionModalityFlags(e.isSessionCompraEssencia(), e.isSessionItensPessoais()),
+                e.getKitMode() == null ? null : KitMode.valueOf(e.getKitMode()));
     }
 
     private ProductVariant toDomain(ProductVariantEntity e) {

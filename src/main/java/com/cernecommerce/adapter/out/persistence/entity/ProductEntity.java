@@ -89,6 +89,10 @@ public class ProductEntity {
     @Column(name = "parent_sellable", nullable = false)
     private boolean parentSellable;
 
+    // Kit pré-montado (V200) — LOJA ou PRE_MONTADO, só em type = KIT. Enum-como-string, como "type".
+    @Column(name = "kit_mode", length = 20)
+    private String kitMode;
+
     // PDV-F048 — faixa da sessão sugerida no PDV para esta essência (V159). FK só no banco, como brand_id.
     @Column(name = "session_tier_id")
     private Long sessionTierId;

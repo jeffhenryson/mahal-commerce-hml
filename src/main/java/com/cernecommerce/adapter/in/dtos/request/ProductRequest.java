@@ -3,6 +3,7 @@ package com.cernecommerce.adapter.in.dtos.request;
 import com.cernecommerce.core.domain.model.estoque.MeasurementUnit;
 import com.cernecommerce.core.domain.model.estoque.ProductStatus;
 import com.cernecommerce.core.domain.model.estoque.ProductType;
+import com.cernecommerce.core.domain.model.estoque.KitMode;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Digits;
@@ -176,6 +177,19 @@ public class ProductRequest {
     @Valid
     @Size(max = 100)
     private List<KitComponentRequest> components;
+
+    /**
+     * Modo do kit, só com {@code type = KIT} (senão 422 {@code KIT_MODE_INVALID}). Omitido em KIT:
+     * {@code LOJA} (receita). {@code PRE_MONTADO}: estoque do kit inteiro, sem {@code components}
+     * (422 {@code KIT_PRE_MONTADO_SEM_RECEITA}) e com ao menos um item em {@code kitItems}
+     * (422 {@code KIT_ITEMS_EMPTY}). Imutável depois da criação.
+     */
+    private KitMode kitMode;
+
+    /** Itens do kit pré-montado, gravados na mesma transação. Ignorados fora de {@code PRE_MONTADO}. */
+    @Valid
+    @Size(max = 100)
+    private List<KitItemRequest> kitItems;
 
     /**
      * Status de publicação (EST-F023). Omitido, nasce {@code ATIVO} — comportamento anterior a

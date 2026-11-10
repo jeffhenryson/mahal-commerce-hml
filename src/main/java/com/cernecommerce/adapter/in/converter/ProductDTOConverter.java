@@ -1,5 +1,10 @@
 package com.cernecommerce.adapter.in.converter;
 
+import com.cernecommerce.core.ports.in.EstoqueUseCase;
+import com.cernecommerce.adapter.in.dtos.request.KitItemRequest;
+import com.cernecommerce.adapter.in.dtos.response.KitItemPublicResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.KitItemResponseDTO;
+import com.cernecommerce.core.domain.model.estoque.KitItem;
 import com.cernecommerce.adapter.in.dtos.request.KitComponentRequest;
 import com.cernecommerce.adapter.in.dtos.request.KitRecipeRequest;
 import com.cernecommerce.adapter.in.dtos.request.PricingRequest;
@@ -98,6 +103,7 @@ public class ProductDTOConverter {
         }).toList());
         dto.setPricing(toResponse(product.pricing()));
         dto.setType(product.type().name());
+        dto.setKitMode(product.kitMode() == null ? null : product.kitMode().name());
         dto.setLotTracked(product.lotTracked());
         dto.setParentSellable(product.parentSellable());
         dto.setBarcode(product.barcode());
@@ -118,6 +124,43 @@ public class ProductDTOConverter {
     }
 
     /** Converte a receita do request (EST-F015) no comando que o use case espera. */
+    /** {@code null} propaga como {@code null}; posição = índice na lista. */
+    public List<EstoqueUseCase.KitItemCommand> toKitItemCommands(List<KitItemRequest> items) {
+        if (items == null) {
+            return null;
+        }
+        return items.stream()
+                .map(i -> new EstoqueUseCase.KitItemCommand(i.getId(), i.getName(), i.getQuantity(), i.getUnitCost(),
+                        i.getCategoryId(), i.getBrandId(), i.getDescription(), i.getImageUrl()))
+                .toList();
+    }
+
+    public KitItemResponseDTO toKitItemResponse(KitItem item) {
+        KitItemResponseDTO dto = new KitItemResponseDTO();
+        dto.setId(item.id());
+        dto.setName(item.name());
+        dto.setQuantity(item.quantity());
+        dto.setUnitCost(item.unitCost());
+        dto.setCategoryId(item.categoryId());
+        dto.setCategoryName(item.categoryName());
+        dto.setBrandId(item.brandId());
+        dto.setBrandName(item.brandName());
+        dto.setDescription(item.description());
+        dto.setImageUrl(item.imageUrl());
+        return dto;
+    }
+
+    public KitItemPublicResponseDTO toKitItemPublicResponse(KitItem item) {
+        KitItemPublicResponseDTO dto = new KitItemPublicResponseDTO();
+        dto.setName(item.name());
+        dto.setQuantity(item.quantity());
+        dto.setCategoryName(item.categoryName());
+        dto.setBrandName(item.brandName());
+        dto.setDescription(item.description());
+        dto.setImageUrl(item.imageUrl());
+        return dto;
+    }
+
     public List<KitComponentCommand> toKitComponentCommands(KitRecipeRequest request) {
         return toKitComponentCommands(request.getComponents());
     }

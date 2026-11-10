@@ -190,6 +190,28 @@ class ProductTest {
     }
 
     @Test
+    void kitMode_kitSemModoViraLoja_eSimplesNuncaTemModo() {
+        Product kit = Product.create("KIT-001", "Kit", "cat", List.of(), null, ProductType.KIT, false);
+
+        assertThat(kit.kitMode()).isEqualTo(KitMode.LOJA);
+        assertThat(kit.isRecipeKit()).isTrue();
+        assertThat(product().withKitMode(KitMode.PRE_MONTADO).kitMode()).isNull();
+        assertThat(kit.withKitMode(KitMode.PRE_MONTADO).withType(ProductType.SIMPLES).kitMode()).isNull();
+    }
+
+    @Test
+    void kitPreMontado_podeSerLoteRastreado() {
+        Product kit = Product.create("KIT-001", "Kit", "cat", List.of(), null, ProductType.KIT, false)
+                .withKitMode(KitMode.PRE_MONTADO)
+                .withLotTracked(true);
+
+        assertThat(kit.lotTracked()).isTrue();
+        assertThat(kit.isPreAssembledKit()).isTrue();
+        assertThat(kit.isRecipeKit()).isFalse();
+        assertThat(kit.isKit()).isTrue();
+    }
+
+    @Test
     void withType_promovendoParaKitQuandoJaLoteRastreado_lancaIllegalArgument() {
         Product loteRastreado = product().withLotTracked(true);
 

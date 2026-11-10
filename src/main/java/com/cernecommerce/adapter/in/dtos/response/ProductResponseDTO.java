@@ -59,6 +59,9 @@ public class ProductResponseDTO {
     /** {@code SIMPLES} ou {@code KIT} (EST-F015). */
     private String type;
 
+    /** Só em KIT: {@code LOJA} (receita) ou {@code PRE_MONTADO} (estoque do kit inteiro). Nulo em SIMPLES. */
+    private String kitMode;
+
     /** EST-F008 — opt-in: ENTRADA deste SKU passa a exigir lote e validade. */
     private boolean lotTracked;
 
