@@ -9,6 +9,8 @@ import com.cernecommerce.core.domain.model.estoque.EstoqueSummary;
 import com.cernecommerce.core.domain.model.estoque.KitAvailability;
 import com.cernecommerce.core.domain.model.estoque.KitComponent;
 import com.cernecommerce.core.domain.model.estoque.KitComponentDetail;
+import com.cernecommerce.core.domain.model.estoque.KitItem;
+import com.cernecommerce.core.domain.model.estoque.KitMode;
 import com.cernecommerce.core.domain.model.estoque.LotIntegrityMismatch;
 import com.cernecommerce.core.domain.model.estoque.MeasurementUnit;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
@@ -204,9 +206,9 @@ public interface EstoqueUseCase {
     }
 
     /**
-     * Cria um produto (forma canônica completa, EST-F023), incluindo o {@code status} de
-     * publicação e o vínculo com a entidade {@link com.cernecommerce.core.domain.model.estoque.Brand}.
-     * Único método abstrato de criação — todas as sobrecargas acima delegam até aqui.
+     * Cria um produto (forma canônica EST-F023), incluindo o {@code status} de publicação e o
+     * vínculo com a entidade {@link com.cernecommerce.core.domain.model.estoque.Brand}. Delega
+     * com {@code kitMode = null} e {@code kitItems = null}: kit nasce no modo de receita (LOJA).
      *
      * @param status {@code null} resolve para {@link ProductStatus#ATIVO}. {@code RASCUNHO} é
      *        validado contra o teto de 5 rascunhos por {@code EstoqueService}, sem exigir nenhum
@@ -215,13 +217,37 @@ public interface EstoqueUseCase {
      * @param brandId vínculo direto com uma marca existente (mesmo par de {@code categoryId}).
      *        Quando informado, vence sobre {@code brand} e o nome é resolvido a partir dele.
      */
+    default Product createProduct(String sku, String name, String category, List<ProductVariant> variants,
+            Pricing pricing, String brand, String imageUrl, boolean onSale, boolean superPromo, String description,
+            String videoUrl, List<String> images, List<ProductAttribute> attributes, Long categoryId, String barcode,
+            MeasurementUnit unit, boolean sampleProduct, boolean kitComponentEligible, Boolean visibleInPos,
+            Boolean visibleInMarketplace, ProductType type, InitialStockCommand initialStock, String actorUsername,
+            List<KitComponentCommand> kitComponents, ProductStatus status, Long brandId,
+            TableSessionCommand tableSession) {
+        return createProduct(sku, name, category, variants, pricing, brand, imageUrl, onSale, superPromo, description,
+                videoUrl, images, attributes, categoryId, barcode, unit, sampleProduct, kitComponentEligible,
+                visibleInPos, visibleInMarketplace, type, initialStock, actorUsername, kitComponents, status, brandId,
+                tableSession, null, null);
+    }
+
+    /**
+     * Cria um produto (forma canônica completa, com kit pré-montado — V200). Único método
+     * abstrato de criação — todas as sobrecargas acima delegam até aqui.
+     *
+     * @param kitMode só aceito com {@code type == KIT} (senão
+     *        {@link com.cernecommerce.core.domain.exception.estoque.InvalidKitModeException});
+     *        {@code null} em kit resolve para {@link KitMode#LOJA} (receita de componentes).
+     * @param kitItems itens descritivos do kit {@link KitMode#PRE_MONTADO}, que exige ao menos um
+     *        ({@link com.cernecommerce.core.domain.exception.estoque.KitItemsEmptyException}). O
+     *        custo do kit vira Σ {@code unitCost × quantity}, ou nulo se algum item não tiver custo.
+     */
     Product createProduct(String sku, String name, String category, List<ProductVariant> variants, Pricing pricing,
             String brand, String imageUrl, boolean onSale, boolean superPromo, String description, String videoUrl,
             List<String> images, List<ProductAttribute> attributes, Long categoryId, String barcode,
             MeasurementUnit unit, boolean sampleProduct, boolean kitComponentEligible, Boolean visibleInPos,
             Boolean visibleInMarketplace, ProductType type, InitialStockCommand initialStock, String actorUsername,
             List<KitComponentCommand> kitComponents, ProductStatus status, Long brandId,
-            TableSessionCommand tableSession);
+            TableSessionCommand tableSession, KitMode kitMode, List<KitItemCommand> kitItems);
 
     /**
      * Estoque inicial informado na criação do produto (EST-F023). {@code quantity} estritamente
@@ -1722,6 +1748,34 @@ public interface EstoqueUseCase {
     /** O que o chamador informa por linha de receita: SKU do componente e quantidade consumida. */
     record KitComponentCommand(String componentSku, BigDecimal quantity) {
     }
+
+    /**
+     * Item descritivo de um kit pré-montado (V200): não baixa estoque próprio, só descreve o que
+     * vem no kit e compõe o custo. {@code id} nulo cria; posição = índice na lista.
+     * {@code categoryId}/{@code brandId}, quando informados, precisam existir.
+     */
+    record KitItemCommand(Long id, String name, int quantity, BigDecimal unitCost, Long categoryId, Long brandId,
+            String description, String imageUrl) {
+    }
+
+    /**
+     * Itens descritivos de um kit pré-montado, em ordem, com nomes de categoria e marca.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException SKU inexistente (404).
+     * @throws com.cernecommerce.core.domain.exception.estoque.KitNotPreAssembledException se o
+     *         produto não for kit {@link KitMode#PRE_MONTADO} (409 {@code KIT_NOT_PRE_MONTADO}).
+     */
+    List<KitItem> listKitItems(String kitSku);
+
+    /**
+     * Substitui integralmente os itens de um kit pré-montado e recalcula o custo do kit
+     * (Σ {@code unitCost × quantity}, nulo se algum item não tiver custo).
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.KitItemsEmptyException lista vazia (422).
+     * @throws com.cernecommerce.core.domain.exception.estoque.KitNotPreAssembledException kit de
+     *         receita (409 {@code KIT_NOT_PRE_MONTADO}); SKU, categoria ou marca inexistentes dão 404.
+     */
+    List<KitItem> replaceKitItems(String kitSku, List<KitItemCommand> items);
 
     /**
      * Define (substitui integralmente) a receita de um kit e promove o produto a {@code KIT}
