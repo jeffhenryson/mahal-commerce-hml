@@ -15,4 +15,6 @@ public class ReorderPointResponseDTO {
     private String sku;
     private String warehouseCode;
     private BigDecimal minQuantity;
+    /** Crítico configurado, cru: nulo = padrão (metade do mínimo), calculado pelo cliente. */
+    private BigDecimal criticalQuantity;
 }

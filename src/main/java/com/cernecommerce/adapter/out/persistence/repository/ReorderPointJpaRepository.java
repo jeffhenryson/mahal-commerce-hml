@@ -36,8 +36,10 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
     void deleteBySkuAndWarehouseId(String sku, Long warehouseId);
 
     // EST-F022 — GET /estoque/summary. Replica em SQL a mesma regra de
-    // ReorderPoint.severityFor: CRÍTICO é saldo <= 0 OU <= minQuantity * ReorderPoint
-    // .CRITICAL_THRESHOLD_FACTOR (0.5); ATENÇÃO é abaixo do mínimo mas acima do limiar crítico.
+    // ReorderPoint.severityFor: com min > 0, CRÍTICO é saldo <= crítico efetivo (criticalQuantity,
+    // ou floor(min/2) para mínimo inteiro e min/2 para fracionário); "atenção" (ABAIXO + NO_LIMITE)
+    // é saldo <= min e acima do crítico. min = 0 desliga o alerta. O crítico efetivo é sempre >= 0,
+    // então saldo <= 0 cai em CRÍTICO sem cláusula própria.
     // List<Object[]> (mesmo idioma de findCategoryWithMostProductsRaw) e não uma constructor
     // expression: SUM sem linha nenhuma devolve NULL, e o adapter converte para 0 — uma
     // constructor expression para (long, long) quebraria nesse caso.
@@ -53,14 +55,21 @@ public interface ReorderPointJpaRepository extends JpaRepository<ReorderPointEnt
     //
     // EST-F054 — produto rascunho ou arquivado também fica fora (ver findPublishedByWarehouseId).
     //
-    // O 0.5 literal duplica ReorderPoint.CRITICAL_THRESHOLD_FACTOR de propósito — JPQL não lê
-    // constante de domínio. Mudar o fator lá exige mudar aqui; o teste de EST-C019 cobre os dois.
+    // O cálculo do crítico padrão duplica ReorderPoint.effectiveCriticalQuantity de propósito —
+    // JPQL não chama método de domínio. Mudar a regra lá exige mudar aqui; o teste de EST-C019 cobre os dois.
     @Query("""
             SELECT
-              SUM(CASE WHEN COALESCE(sb.quantity, 0) <= 0
-                         OR COALESCE(sb.quantity, 0) <= (rp.minQuantity * 0.5) THEN 1L ELSE 0L END),
-              SUM(CASE WHEN COALESCE(sb.quantity, 0) > 0 AND COALESCE(sb.quantity, 0) < rp.minQuantity
-                            AND COALESCE(sb.quantity, 0) > (rp.minQuantity * 0.5) THEN 1L ELSE 0L END)
+              SUM(CASE WHEN rp.minQuantity > 0
+                         AND COALESCE(sb.quantity, 0) <= COALESCE(rp.criticalQuantity,
+                           CASE WHEN rp.minQuantity = FLOOR(rp.minQuantity) THEN FLOOR(rp.minQuantity / 2)
+                                ELSE rp.minQuantity / 2 END)
+                       THEN 1L ELSE 0L END),
+              SUM(CASE WHEN rp.minQuantity > 0
+                         AND COALESCE(sb.quantity, 0) <= rp.minQuantity
+                         AND COALESCE(sb.quantity, 0) > COALESCE(rp.criticalQuantity,
+                           CASE WHEN rp.minQuantity = FLOOR(rp.minQuantity) THEN FLOOR(rp.minQuantity / 2)
+                                ELSE rp.minQuantity / 2 END)
+                       THEN 1L ELSE 0L END)
             FROM ReorderPointEntity rp
             LEFT JOIN StockBalanceEntity sb ON sb.sku = rp.sku AND sb.warehouseId = rp.warehouseId
             WHERE NOT EXISTS (

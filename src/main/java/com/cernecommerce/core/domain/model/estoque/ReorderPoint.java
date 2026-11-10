@@ -1,21 +1,25 @@
 package com.cernecommerce.core.domain.model.estoque;
 
+import com.cernecommerce.core.domain.exception.estoque.InvalidReorderCriticalQuantityException;
+
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * Ponto de reposição (quantidade mínima) de um SKU em um depósito. Quando o
- * {@link StockBalance} correspondente cai abaixo de {@code minQuantity}, uma notificação de
- * reposição deve ser disparada.
+ * {@link StockBalance} correspondente atinge {@code minQuantity} (saldo igual ou menor), o SKU
+ * entra no alerta e uma notificação de reposição é disparada.
+ *
+ * <p>{@code criticalQuantity} é o corte do nível {@link AlertSeverity#CRITICO}. Nulo significa
+ * "padrão": metade do mínimo — {@code floor(min/2)} quando o mínimo é inteiro, {@code min/2}
+ * quando é fracionário (KG, L). Quando informado, precisa ficar em {@code 0 ≤ c < min}.</p>
+ *
+ * <p>{@code minQuantity = 0} desliga o alerta: nenhum saldo, nem zero ou negativo, gera alerta.</p>
  */
-public record ReorderPoint(Long id, String sku, Long warehouseId, BigDecimal minQuantity) {
+public record ReorderPoint(Long id, String sku, Long warehouseId, BigDecimal minQuantity,
+                           BigDecimal criticalQuantity) {
 
-    /**
-     * Fração de {@link #minQuantity} abaixo da qual o alerta vira {@link AlertSeverity#CRITICO}
-     * em vez de {@link AlertSeverity#ATENCAO}. Vive aqui, visível em Java, porque
-     * {@code EstoqueService.getSummary} replica a mesma regra em SQL por performance — duplicar a
-     * aritmética é aceitável, duplicar o valor do limiar sem um lugar canônico para retunar não é.
-     */
-    public static final BigDecimal CRITICAL_THRESHOLD_FACTOR = new BigDecimal("0.5");
+    private static final BigDecimal TWO = BigDecimal.valueOf(2);
 
     public ReorderPoint {
         if (sku == null || sku.isBlank()) {
@@ -27,16 +31,56 @@ public record ReorderPoint(Long id, String sku, Long warehouseId, BigDecimal min
         if (minQuantity == null || minQuantity.signum() < 0) {
             throw new IllegalArgumentException("minQuantity deve ser maior ou igual a zero");
         }
+        if (criticalQuantity != null && !isValidCritical(criticalQuantity, minQuantity)) {
+            throw new InvalidReorderCriticalQuantityException(criticalQuantity, minQuantity);
+        }
     }
 
-    /** Cria um novo ponto de reposição (sem id). */
+    /** Ponto sem crítico próprio (padrão de 50%). */
+    public ReorderPoint(Long id, String sku, Long warehouseId, BigDecimal minQuantity) {
+        this(id, sku, warehouseId, minQuantity, null);
+    }
+
+    /** Cria um novo ponto de reposição (sem id), com crítico padrão. */
     public static ReorderPoint create(String sku, Long warehouseId, BigDecimal minQuantity) {
-        return new ReorderPoint(null, sku, warehouseId, minQuantity);
+        return new ReorderPoint(null, sku, warehouseId, minQuantity, null);
+    }
+
+    /** Cria um novo ponto de reposição (sem id). {@code criticalQuantity} nulo = padrão. */
+    public static ReorderPoint create(String sku, Long warehouseId, BigDecimal minQuantity,
+            BigDecimal criticalQuantity) {
+        return new ReorderPoint(null, sku, warehouseId, minQuantity, criticalQuantity);
+    }
+
+    /** Reconstitui um ponto de reposição a partir de persistência, com crítico padrão. */
+    public static ReorderPoint of(Long id, String sku, Long warehouseId, BigDecimal minQuantity) {
+        return new ReorderPoint(id, sku, warehouseId, minQuantity, null);
     }
 
     /** Reconstitui um ponto de reposição a partir de persistência. */
-    public static ReorderPoint of(Long id, String sku, Long warehouseId, BigDecimal minQuantity) {
-        return new ReorderPoint(id, sku, warehouseId, minQuantity);
+    public static ReorderPoint of(Long id, String sku, Long warehouseId, BigDecimal minQuantity,
+            BigDecimal criticalQuantity) {
+        return new ReorderPoint(id, sku, warehouseId, minQuantity, criticalQuantity);
+    }
+
+    /** {@code true} se {@code critical} é um crítico aceitável para {@code min}: {@code 0 ≤ c < min}. */
+    public static boolean isValidCritical(BigDecimal critical, BigDecimal min) {
+        return critical.signum() >= 0 && critical.compareTo(min) < 0;
+    }
+
+    /**
+     * Crítico efetivo: o configurado ou, se nulo, metade do mínimo — {@code floor(min/2)} para
+     * mínimo inteiro (com saldo inteiro dá o mesmo corte do antigo {@code q <= min × 0,5}) e
+     * {@code min/2} para mínimo fracionário.
+     */
+    public BigDecimal effectiveCriticalQuantity() {
+        if (criticalQuantity != null) {
+            return criticalQuantity;
+        }
+        if (minQuantity.stripTrailingZeros().scale() <= 0) {
+            return minQuantity.divide(TWO, 0, RoundingMode.FLOOR);
+        }
+        return minQuantity.divide(TWO);
     }
 
     /** {@code true} se {@code quantity} está estritamente abaixo do ponto de reposição. */
@@ -45,23 +89,37 @@ public record ReorderPoint(Long id, String sku, Long warehouseId, BigDecimal min
     }
 
     /**
-     * Classifica a severidade do alerta para {@code quantity} neste ponto de reposição — usada
-     * pelo painel de KPIs ({@code GET /estoque/summary}).
+     * {@code true} se {@code quantity} atingiu o ponto (igual ou abaixo) e o alerta está ligado
+     * ({@code minQuantity > 0}). É o gatilho da notificação: avisa no mesmo momento em que o
+     * produto aparece no alerta da tela.
+     */
+    public boolean isAtOrBelow(BigDecimal quantity) {
+        return minQuantity.signum() > 0 && quantity.compareTo(minQuantity) <= 0;
+    }
+
+    /**
+     * Classifica a severidade do alerta para {@code quantity} — usada pelo painel de KPIs
+     * ({@code GET /estoque/summary}, replicada em SQL em {@code ReorderPointJpaRepository.countAlertsRaw}).
      *
-     * <p>{@link AlertSeverity#CRITICO}: saldo zerado/negativo, ou igual ou abaixo de
-     * {@link #CRITICAL_THRESHOLD_FACTOR} do mínimo configurado. {@link AlertSeverity#ATENCAO}:
-     * abaixo do mínimo, mas acima do limiar crítico. {@link AlertSeverity#OK}: no mínimo ou acima.</p>
+     * <pre>
+     * min ≤ 0          → OK (alerta desligado)
+     * q ≤ crítico      → CRITICO (saldo ≤ 0 sempre cai aqui, porque crítico ≥ 0)
+     * q &lt; min          → ABAIXO
+     * q == min         → NO_LIMITE
+     * q &gt; min          → OK
+     * </pre>
      */
     public AlertSeverity severityFor(BigDecimal quantity) {
-        if (quantity.signum() <= 0) {
+        if (minQuantity.signum() <= 0) {
+            return AlertSeverity.OK;
+        }
+        if (quantity.compareTo(effectiveCriticalQuantity()) <= 0) {
             return AlertSeverity.CRITICO;
         }
-        if (quantity.compareTo(minQuantity.multiply(CRITICAL_THRESHOLD_FACTOR)) <= 0) {
-            return AlertSeverity.CRITICO;
+        int cmp = quantity.compareTo(minQuantity);
+        if (cmp < 0) {
+            return AlertSeverity.ABAIXO;
         }
-        if (isBelow(quantity)) {
-            return AlertSeverity.ATENCAO;
-        }
-        return AlertSeverity.OK;
+        return cmp == 0 ? AlertSeverity.NO_LIMITE : AlertSeverity.OK;
     }
 }

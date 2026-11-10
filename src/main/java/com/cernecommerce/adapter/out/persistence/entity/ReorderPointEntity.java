@@ -27,4 +27,8 @@ public class ReorderPointEntity {
 
     @Column(name = "min_quantity", nullable = false, precision = 14, scale = 3)
     private BigDecimal minQuantity;
+
+    /** Corte do nível crítico; nulo = padrão (metade do mínimo). */
+    @Column(name = "critical_quantity", precision = 14, scale = 3)
+    private BigDecimal criticalQuantity;
 }
