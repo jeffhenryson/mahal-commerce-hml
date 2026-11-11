@@ -12,6 +12,7 @@ import com.cernecommerce.adapter.in.dtos.response.AssistenteConversaDTO;
 import com.cernecommerce.adapter.in.dtos.response.AssistenteConversaResumoDTO;
 import com.cernecommerce.adapter.in.dtos.response.AssistenteStatusDTO;
 import com.cernecommerce.core.domain.exception.assistente.AcaoJaExecutadaException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteLimiteMensalException;
 import com.cernecommerce.core.domain.exception.assistente.AssistenteNaoConfiguradoException;
 import com.cernecommerce.core.domain.exception.assistente.AssistenteOcupadoException;
 import com.cernecommerce.core.domain.exception.assistente.ConversaNaoEncontradaException;
@@ -20,6 +21,11 @@ import com.cernecommerce.core.domain.model.assistente.Mensagem;
 import com.cernecommerce.core.domain.exception.ratelimit.RateLimitExceededException;
 import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
 import com.cernecommerce.core.ports.in.AssistenteConversaUseCase;
+import com.cernecommerce.core.ports.in.AssistenteUsoUseCase;
+import com.cernecommerce.core.domain.model.assistente.NotaFeedback;
+import com.cernecommerce.core.domain.model.assistente.UsoMensal;
+import com.cernecommerce.adapter.in.dtos.response.AssistenteFeedbackRegistroDTO;
+import com.cernecommerce.adapter.in.dtos.response.AssistenteUsoDTO;
 import com.cernecommerce.core.ports.out.ratelimit.ResourceRateLimiterPort;
 import com.cernecommerce.infra.handler.ApiError;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,6 +53,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -77,9 +84,12 @@ public class AssistenteController {
     private final AssistenteOrquestrador orquestrador;
     private final AssistenteAcoes acoes;
     private final ResourceRateLimiterPort rateLimiter;
+    private final AssistenteUsoUseCase uso;
 
     public AssistenteController(AssistenteConversaUseCase conversas, AssistantIntegrationUseCase integracao,
-            AssistenteOrquestrador orquestrador, AssistenteAcoes acoes, ResourceRateLimiterPort rateLimiter) {
+            AssistenteOrquestrador orquestrador, AssistenteAcoes acoes, ResourceRateLimiterPort rateLimiter,
+            AssistenteUsoUseCase uso) {
+        this.uso = uso;
         this.conversas = conversas;
         this.integracao = integracao;
         this.orquestrador = orquestrador;
@@ -180,7 +190,8 @@ public class AssistenteController {
                     + "resposta; para parar, POST /conversas/{id}/cancelar. "
                     + "substituirDesde (id da última pergunta) refaz o turno: apaga essa pergunta e o que veio "
                     + "depois, e as ações PENDENTE delas expiram. Antes de abrir o stream: 403 sem ASSISTENTE_USE, "
-                    + "404 conversa inexistente ou de outro usuário, 409 ASSISTENTE_NAO_CONFIGURADO, "
+                    + "404 conversa inexistente ou de outro usuário, 409 ASSISTENTE_NAO_CONFIGURADO, ASSISTENTE_LIMITE_MENSAL "
+                    + "(passou do teto mensal de tokens da loja), "
                     + "ASSISTENTE_OCUPADO, SUBSTITUICAO_INVALIDA (não é a última pergunta) ou ACAO_JA_EXECUTADA "
                     + "(a resposta já executou uma alteração), 429 com Retry-After (20 mensagens a cada 5 min; "
                     + "refazer conta). Falha do provedor depois de aberto vira evento erro com codigo=PROVEDOR.")
@@ -220,6 +231,8 @@ public class AssistenteController {
             return erro(response, request, HttpStatus.CONFLICT, "ASSISTENTE_NAO_CONFIGURADO", ex.getMessage(), null);
         } catch (AssistenteOcupadoException ex) {
             return erro(response, request, HttpStatus.CONFLICT, "ASSISTENTE_OCUPADO", ex.getMessage(), null);
+        } catch (AssistenteLimiteMensalException ex) {
+            return erro(response, request, HttpStatus.CONFLICT, "ASSISTENTE_LIMITE_MENSAL", ex.getMessage(), null);
         } catch (SubstituicaoInvalidaException ex) {
             return erro(response, request, HttpStatus.CONFLICT, "SUBSTITUICAO_INVALIDA", ex.getMessage(), null);
         } catch (AcaoJaExecutadaException ex) {
@@ -245,6 +258,42 @@ public class AssistenteController {
     @PreAuthorize("hasAuthority('ASSISTENTE_USE')")
     public ResponseEntity<AssistenteAcaoResultadoDTO> recusar(@PathVariable String acaoId, Authentication auth) {
         return ResponseEntity.ok(acoes.recusar(acaoId, auth.getName()));
+    }
+
+    @Operation(summary = "Uso do assistente no mês, por usuário",
+            description = "mes=AAAA-MM (padrão: o mês atual, no fuso da loja). Tokens de entrada, saída e cache por "
+                    + "usuário, o total que conta no limite mensal (entrada + saída) e o custo estimado pelas "
+                    + "propriedades assistente.preco.* (null se faltar o preço de algum provedor usado).")
+    @GetMapping("/uso")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<AssistenteUsoDTO> usoDoMes(@RequestParam(required = false) String mes) {
+        java.time.YearMonth ym;
+        try {
+            ym = mes == null || mes.isBlank()
+                    ? java.time.YearMonth.now(java.time.ZoneId.of("America/Sao_Paulo"))
+                    : java.time.YearMonth.parse(mes.strip());
+        } catch (java.time.format.DateTimeParseException ex) {
+            throw new IllegalArgumentException("mes deve estar no formato AAAA-MM");
+        }
+        UsoMensal u = uso.usoDoMes(ym);
+        return ResponseEntity.ok(new AssistenteUsoDTO(u.mes().toString(), u.limiteMensal(), u.tokensNoLimite(),
+                u.total().entrada(), u.total().saida(), u.total().cache(), u.custoEstimado(), u.moeda(),
+                u.usuarios().stream().map(p -> new AssistenteUsoDTO.Usuario(p.username(), p.respostas(),
+                        p.uso().entrada(), p.uso().saida(), p.uso().cache(), p.custoEstimado())).toList()));
+    }
+
+    @Operation(summary = "Respostas avaliadas, para ajustar o prompt",
+            description = "nota=NEGATIVO|POSITIVO (padrão: as duas), limite 1 a 200 (padrão 50), mais recentes "
+                    + "primeiro. Traz a pergunta, a resposta e o motivo, já sem dado pessoal, e não traz o usuário.")
+    @GetMapping("/feedbacks")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<List<AssistenteFeedbackRegistroDTO>> feedbacks(
+            @RequestParam(required = false) NotaFeedback nota,
+            @RequestParam(defaultValue = "50") int limite) {
+        return ResponseEntity.ok(uso.feedbacks(nota, limite).stream()
+                .map(f -> new AssistenteFeedbackRegistroDTO(f.mensagemId(), f.pergunta(), f.resposta(),
+                        f.nota().name(), f.motivo(), f.provedor(), f.modelo(), f.avaliadaEm()))
+                .toList());
     }
 
     private static SseEmitter erro(HttpServletResponse response, HttpServletRequest request, HttpStatus status,

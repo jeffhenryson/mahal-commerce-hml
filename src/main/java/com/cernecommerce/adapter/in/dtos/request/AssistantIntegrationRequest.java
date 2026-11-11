@@ -29,6 +29,13 @@ public class AssistantIntegrationRequest {
     @JsonIgnore
     private boolean fallbackProviderPresent;
 
+    /**
+     * Teto mensal de tokens do assistente (entrada + saída, sem cache). Ausente mantém; 0 remove o
+     * limite. Acima dele, POST /assistente/.../mensagens responde 409 ASSISTENTE_LIMITE_MENSAL.
+     */
+    @jakarta.validation.constraints.PositiveOrZero
+    private Long monthlyTokenLimit;
+
     @Valid
     @Schema(description = "Chave e modelo por provedor, ex.: {\"OPENAI\": {\"apiKey\": \"sk-...\", \"model\": \"gpt-5.5\"}}")
     private Map<String, ProviderRequest> providers;

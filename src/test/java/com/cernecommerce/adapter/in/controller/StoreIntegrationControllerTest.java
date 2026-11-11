@@ -297,7 +297,7 @@ class StoreIntegrationControllerTest {
     private static AssistantSettings assistant(boolean enabled, ProvedorIa ativo, ProvedorIa reserva,
             AssistantProviderSettings... providers) {
         return new AssistantSettings(enabled, ativo, reserva, List.of(providers),
-                Instant.parse("2026-11-09T12:00:00Z"), "admin");
+                Instant.parse("2026-11-09T12:00:00Z"), "admin", null);
     }
 
     private static final AssistantSettings ASSISTANT = assistant(true, ProvedorIa.OPENAI, ProvedorIa.ANTHROPIC,

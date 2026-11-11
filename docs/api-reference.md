@@ -4982,7 +4982,8 @@ Chaves de IA usadas pelo assistente do admin: **uma por provedor** — `ANTHROPI
 
 - `apiKey` ausente mantém a chave salva; `""` remove. `model` ausente mantém; precisa ser do provedor (`claude-*`, `gpt-*`/`o<n>*`, `gemini-*`).
 - `provider` ausente mantém o ativo. `fallbackProvider` ausente mantém a reserva; `null` remove.
-- Publica `INTEGRATION_UPDATED` (`integration=assistant`, `provider`, `historyAction`, `fields` como `providers.OPENAI.apiKey`, `provider`, `fallbackProvider`), sem as chaves.
+- `monthlyTokenLimit` (≥ 0): teto mensal de tokens do assistente (entrada + saída, sem cache). Ausente mantém; `0` remove. Volta no GET (`null` = sem limite).
+- Publica `INTEGRATION_UPDATED` (`integration=assistant`, `provider`, `historyAction`, `fields` como `providers.OPENAI.apiKey`, `provider`, `fallbackProvider`, `monthlyTokenLimit`), sem as chaves.
 
 **Erros:** `400 INVALID_INTEGRATION` — ativar sem a chave do provedor ativo, reserva sem chave ou igual ao ativo, provedor desconhecido, modelo que não é do provedor.
 
@@ -5007,7 +5008,10 @@ Lido do audit log (`INTEGRATION_UPDATED`, alvo `integration:assistant`), mais re
 Chat do admin com Claude, ChatGPT ou Gemini (o provedor ativo da integração, com reserva opcional). Permissão `ASSISTENTE_USE` (V194: ROLE_ADMIN e ROLE_DEV). Com `module.assistente.enabled=false` o controller não existe e tudo responde 404 — o front esconde o bubble. Conversa ou ação de outro usuário: **404**.
 
 **Regras do servidor:**
-- As ferramentas chamam os **controllers** (não os use cases), com o `SecurityContext` do usuário: o `@PreAuthorize` e a auditoria de sempre valem. Leitura: produtos, estoque, resumo do estoque, pedidos, resumo de vendas, clientes (id + nome + agregados), tags, indicadores do CRM e ajuda de uso.
+- As ferramentas chamam os **controllers** (não os use cases), com o `SecurityContext` do usuário: o `@PreAuthorize` e a auditoria de sempre valem. Leitura: produtos, estoque, resumo do estoque, pedidos, resumo de vendas, clientes (id + nome + agregados), tags, indicadores do CRM e ajuda de uso. Rodada 3: `comparar_periodos`, `top_produtos`, `top_categorias`, `ruptura_prevista`, `clientes_inativos` (só nome, última compra e pedidos) e `resumo_caixa` (sem o operador). As três agregações sem tela pronta (categorias, ruptura, inativos) leem por `AssistenteConsultasQuery` e exigem na ferramenta as autoridades da tela equivalente (`ORDER_READ`; `ESTOQUE_PRODUCT_READ` + `ESTOQUE_WAREHOUSE_READ`; `CRM_CUSTOMER_READ`).
+- **Queda de conexão não cancela o turno**: ele termina e grava a resposta (o front relê a conversa). Só o `POST .../cancelar` ou o prazo `assistente.turno.timeout` (PT4M) interrompem. `: ping` a cada `assistente.sse.heartbeat` (PT15S) mantém a conexão viva no proxy.
+- Limite mensal opcional (`monthlyTokenLimit` da integração): acima dele, 409 `ASSISTENTE_LIMITE_MENSAL` antes do stream. Tokens por resposta em `assistente_mensagem.tokens_*` (V201).
+- Métricas: `assistente.turno.duracao{provedor,resultado=ok|cancelado|prazo|provedor|erro}`, `assistente.ferramenta.duracao{nome}`, `assistente.sse.queda`.
 - Escritas só como **ação pendente**, guardada com parâmetros imutáveis, validade `assistente.acao.validade` (10 min) e uso único: produto como rascunho, dados cadastrais de produto (nunca preço), categoria, marca, tag, tag de cliente (adicionar/remover) e observação de cliente (append-only — não há edição de observação).
 - Dados pessoais: CPF, CNPJ, telefone, e-mail, CEP e endereço são removidos do texto do usuário antes de gravar e de enviar ao modelo; as ferramentas nem copiam esses campos. O contexto da tela vai só com o path (sem query string).
 - Auditoria: ações feitas por ferramenta ou confirmação levam `"origem":"ASSISTENTE"` em `details`.
@@ -5029,7 +5033,7 @@ Cria vazia. **201** `{ id, titulo: null, atualizadaEm }`. O título vem da prime
 ### GET /assistente/conversas/{id} — Permissão: ASSISTENTE_USE
 
 ```json
-{ "id": "uuid", "titulo": "...", "mensagens": [
+{ "id": "uuid", "titulo": "...", "turnoEmAndamento": false, "mensagens": [
   { "id": "uuid", "papel": "usuario", "texto": "...", "blocos": [], "links": [], "acoes": [], "criadaEm": "..." },
   { "id": "uuid", "papel": "assistente", "texto": "...",
     "blocos": [{ "tipo": "tabela", "titulo": "Pedidos", "colunas": [{ "rotulo": "Total", "sensivel": true }], "linhas": [["R$ 1.234,56"]] }],
@@ -5040,6 +5044,10 @@ Cria vazia. **201** `{ id, titulo: null, atualizadaEm }`. O título vem da prime
     "criadaEm": "...",
     "feedback": { "nota": "NEGATIVO", "motivo": "..." } } ] }
 ```
+
+`turnoEmAndamento`: o servidor ainda está escrevendo uma resposta nesta conversa (o stream pode ter caído no front; releia em instantes). Passou a `false` sem resposta nova: ela não vai chegar.
+
+Blocos: `tabela` (`colunas` + `linhas`), `kpi` (`itens: [{ rotulo, valor, variacao?, tendencia?: "alta"|"baixa"|"estavel", sensivel }]`) e `grafico` (`forma: "linha"|"barra"`, `rotuloX`, `rotuloY`, `sensivel`, `pontos: [{ x, y }]`, até 31 pontos, `y` numérico). Campos de outro tipo não vêm. O front descarta tipos que não conhece.
 
 Pendente vencida aparece como `EXPIRADA`. `provedor`/`modelo` dizem quem respondeu cada mensagem do assistente (a reserva pode ter entrado no lugar do ativo); `null` nas do usuário. `feedback` é `null` quando a resposta não foi avaliada e sempre `null` nas mensagens do usuário.
 
@@ -5061,22 +5069,35 @@ Avalia uma resposta do assistente. Request `{ "nota": "POSITIVO" | "NEGATIVO" | 
 
 ### POST /assistente/conversas/{id}/mensagens — Permissão: ASSISTENTE_USE (conferida no método)
 
-Request `{ "texto": "...", "contexto": { "rota": "/app/vendas/pedidos", "titulo": "Pedidos" }, "substituirDesde": "uuid?" }` (texto até 4000; `contexto` pode ser `null`). Responde `text/event-stream`; cada evento é `event: <nome>` + `data: <json>`:
+Request `{ "texto": "...", "contexto": { "rota": "/app/vendas/pedidos", "titulo": "Pedidos" }, "substituirDesde": "uuid?" }` (texto até 4000; `contexto` pode ser `null`). Responde `text/event-stream` com `Cache-Control: no-cache, no-transform` e `X-Accel-Buffering: no`; cada evento é `event: <nome>` + `data: <json>`, e o comentário `: ping` chega a cada ~15 s enquanto o turno está aberto:
 
 | Evento | Dados |
 |---|---|
 | `titulo` | `{ titulo }`: só no 1º turno, quando a conversa ganha título, e antes de qualquer `texto` |
 | `texto` | `{ delta }` |
 | `ferramenta` | `{ rotulo, estado: "inicio" \| "fim" }` |
-| `bloco` | `{ tipo: "tabela", titulo, colunas: [{ rotulo, sensivel }], linhas: string[][] }` |
-| `link` | `{ rotulo, rota }` — só `/app/...` |
+| `etapa` | `{ id: "t1", rotulo, estado: "inicio" \| "fim" \| "falha" }`, junto com `ferramenta`, para a lista de passos |
+| `bloco` | `tabela`, `kpi` ou `grafico` (ver GET da conversa). Saem **depois do último `texto`**, antes do `fim` (ou do `erro`) |
+| `link` | `{ rotulo, rota }` — só `/app/...`; também depois do último `texto` |
 | `acao` | `{ acaoId, titulo, campos: [{ rotulo, valor, sensivel }], estado: "PENDENTE", expiraEm }` |
 | `fim` | `{ mensagemId, perguntaId, provedor, modelo }`: `perguntaId` é a pergunta deste turno, usada em `substituirDesde` |
 | `erro` | `{ codigo, mensagem, perguntaId? }`: `PROVEDOR` (falha do provedor de IA, depois de tentada a reserva) ou `ERRO_INTERNO`. `perguntaId` vem quando a pergunta chegou a ser gravada |
 
 **Gerar de novo / editar e reenviar:** com `substituirDesde` = `perguntaId` da **última** pergunta, essa pergunta e tudo depois dela são apagados antes do turno, e o modelo não as recebe no histórico. As ações `PENDENTE` dessas mensagens viram `EXPIRADA` (confirmar um cartão antigo responde `409 ACAO_EXPIRADA`). As linhas de ação ficam para auditoria. Refazer conta no rate limit.
 
-**Erros antes do stream** (JSON `{ errorCode, message }`, escritos pelo próprio controller porque o `Accept` é `text/event-stream`): `403 ACCESS_DENIED`, `404 CONVERSA_NAO_ENCONTRADA`, `409 ASSISTENTE_NAO_CONFIGURADO`, `409 ASSISTENTE_OCUPADO` (já há resposta em andamento na conversa, ou executor cheio), `409 SUBSTITUICAO_INVALIDA` (`substituirDesde` não é a última pergunta), `409 ACAO_JA_EXECUTADA` (uma resposta a substituir já executou uma alteração; nada é apagado), `429 RATE_LIMIT_EXCEEDED` com `Retry-After`. Falha do provedor só é conhecida depois de aberto o stream: vira evento `erro` com `codigo=PROVEDOR`, não 502.
+**Erros antes do stream** (JSON `{ errorCode, message }`, escritos pelo próprio controller porque o `Accept` é `text/event-stream`): `403 ACCESS_DENIED`, `404 CONVERSA_NAO_ENCONTRADA`, `409 ASSISTENTE_NAO_CONFIGURADO`, `409 ASSISTENTE_OCUPADO` (já há resposta em andamento na conversa, ou executor cheio), `409 ASSISTENTE_LIMITE_MENSAL` (a loja passou do `monthlyTokenLimit` no mês), `409 SUBSTITUICAO_INVALIDA` (`substituirDesde` não é a última pergunta), `409 ACAO_JA_EXECUTADA` (uma resposta a substituir já executou uma alteração; nada é apagado), `429 RATE_LIMIT_EXCEEDED` com `Retry-After`. Falha do provedor só é conhecida depois de aberto o stream: vira evento `erro` com `codigo=PROVEDOR`, não 502.
+
+### POST /assistente/conversas/{id}/cancelar — Permissão: ASSISTENTE_USE
+
+Botão "Parar": o turno em andamento para no próximo ponto seguro e grava o que já tinha (o stream termina com `fim`). **204**, idempotente (sem turno, 204 também). Conversa de outro usuário: 404. Fechar o `fetch` não cancela.
+
+### GET /assistente/uso?mes=AAAA-MM — Permissão: INTEGRATION_MANAGE
+
+Uso do mês (padrão: o atual, no fuso da loja): `{ mes, limiteMensal, tokensNoLimite, tokensEntrada, tokensSaida, tokensCache, custoEstimado, moeda, usuarios: [{ username, respostas, tokensEntrada, tokensSaida, tokensCache, custoEstimado }] }`. `tokensNoLimite` = entrada + saída (cache não conta). Custo pelas propriedades `assistente.preco.<anthropic|openai|gemini>.entrada|saida|cache` (por milhão de tokens, moeda `assistente.preco.moeda`); `null` se faltar o preço de algum provedor usado. `mes` inválido: 400.
+
+### GET /assistente/feedbacks?nota=NEGATIVO&limite=50 — Permissão: INTEGRATION_MANAGE
+
+Respostas avaliadas, mais recentes primeiro: `[{ mensagemId, pergunta, resposta, nota, motivo, provedor, modelo, avaliadaEm }]`. Sem `nota`, as duas. `limite` 1 a 200. Textos já sem dado pessoal; o usuário não vem.
 
 ### POST /assistente/acoes/{acaoId}/confirmar — Permissão: ASSISTENTE_USE (+ a do recurso)
 

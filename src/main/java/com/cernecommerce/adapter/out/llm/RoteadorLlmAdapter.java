@@ -100,5 +100,11 @@ public class RoteadorLlmAdapter implements AssistenteLlmPort {
         public boolean cancelado() {
             return destino.cancelado();
         }
+
+        @Override
+        public void uso(long entrada, long saida, long cache) {
+            // Não conta como "emitiu": a reserva ainda pode entrar se nada chegou ao usuário.
+            destino.uso(entrada, saida, cache);
+        }
     }
 }

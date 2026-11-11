@@ -40,6 +40,7 @@ public class AssistantIntegrationService implements AssistantIntegrationUseCase 
     static final String ENABLED = "integration.assistant.enabled";
     static final String PROVIDER = "integration.assistant.provider";
     static final String FALLBACK = "integration.assistant.fallback-provider";
+    static final String MONTHLY_LIMIT = "integration.assistant.monthly-token-limit";
 
     private final IntegrationConfigStore store;
     private final AssistenteLlmPort llmPort;
@@ -83,7 +84,8 @@ public class AssistantIntegrationService implements AssistantIntegrationUseCase 
                 reserva(),
                 providers,
                 enabled.map(SystemConfig::updatedAt).orElse(null),
-                enabled.map(SystemConfig::updatedBy).orElse(null));
+                enabled.map(SystemConfig::updatedBy).orElse(null),
+                monthlyTokenLimit().orElse(null));
     }
 
     @Override
@@ -175,6 +177,28 @@ public class AssistantIntegrationService implements AssistantIntegrationUseCase 
             credenciais(reserva).ifPresent(cadeia::add);
         }
         return Optional.of(List.copyOf(cadeia));
+    }
+
+    @Override
+    public Optional<Long> monthlyTokenLimit() {
+        String v = store.read(MONTHLY_LIMIT);
+        if (v == null || v.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            long n = Long.parseLong(v.strip());
+            return n > 0 ? Optional.of(n) : Optional.empty();
+        } catch (NumberFormatException ex) {
+            log.warn("assistant.integration.monthly-limit.invalido valor={}", v);
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    @Transactional
+    public AssistantSettings updateMonthlyTokenLimit(Long limit, String updatedBy) {
+        store.save(MONTHLY_LIMIT, limit == null || limit < 1 ? null : String.valueOf(limit), Instant.now(), updatedBy);
+        return get();
     }
 
     @Override

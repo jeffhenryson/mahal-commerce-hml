@@ -96,7 +96,10 @@ public class OpenAiLlmCliente implements ClienteLlm, DisposableBean {
                 ChatCompletionCreateParams.Builder params = ChatCompletionCreateParams.builder()
                         .model(credenciais.model())
                         .maxCompletionTokens(req.maxTokens())
-                        .messages(conversa);
+                        .messages(conversa)
+                        // O último pedaço do stream traz o uso (tokens) da chamada.
+                        .streamOptions(com.openai.models.chat.completions.ChatCompletionStreamOptions.builder()
+                                .includeUsage(true).build());
                 tools.forEach(params::addTool);
                 if (!reasoningEffort.isEmpty()) {
                     params.reasoningEffort(ReasoningEffort.of(reasoningEffort));
@@ -105,6 +108,10 @@ public class OpenAiLlmCliente implements ClienteLlm, DisposableBean {
                 if (resposta == null) {
                     return new RespostaTurno("CANCELADO");
                 }
+                resposta.usage().ifPresent(u -> {
+                    long cache = u.promptTokensDetails().flatMap(d -> d.cachedTokens()).orElse(0L);
+                    ouvinte.uso(Math.max(0, u.promptTokens() - cache), u.completionTokens(), cache);
+                });
                 if (resposta.choices().isEmpty()) {
                     return new RespostaTurno("CONCLUIDO");
                 }
@@ -162,7 +169,7 @@ public class OpenAiLlmCliente implements ClienteLlm, DisposableBean {
         }
     }
 
-    /** Stream de uma chamada. Devolve a resposta completa, ou {@code null} se o cliente desconectou. */
+    /** Stream de uma chamada. Devolve a resposta completa, ou {@code null} se o turno foi cancelado. */
     private static ChatCompletion stream(OpenAIClient client, ChatCompletionCreateParams params, Ouvinte ouvinte) {
         ChatCompletionAccumulator acumulador = ChatCompletionAccumulator.create();
         try (StreamResponse<ChatCompletionChunk> resposta = client.chat().completions().createStreaming(params)) {

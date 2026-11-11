@@ -28,6 +28,12 @@ public interface AssistantIntegrationUseCase {
      */
     Optional<List<AssistantCredentials>> activeCredentials();
 
+    /** Teto mensal de tokens (entrada + saída) do assistente; vazio = sem limite. */
+    Optional<Long> monthlyTokenLimit();
+
+    /** {@code limit} nulo ou menor que 1 remove o limite. */
+    AssistantSettings updateMonthlyTokenLimit(Long limit, String updatedBy);
+
     /** Modelo padrão de cada provedor (sem escolha da loja). */
     Map<ProvedorIa, String> defaultModels();
 

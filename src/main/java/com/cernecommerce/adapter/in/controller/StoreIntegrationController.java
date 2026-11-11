@@ -229,7 +229,8 @@ public class StoreIntegrationController {
     @Operation(summary = "Atualiza a integração da IA do assistente",
             description = "Uma chave por provedor (ANTHROPIC, OPENAI, GEMINI), um ativo e um reserva opcional. "
                     + "apiKey ausente mantém a chave salva; \"\" remove. Aceita também o formato antigo "
-                    + "{enabled, apiKey, model}, aplicado ao provedor ativo. 400 se ativar sem a chave do ativo, "
+                    + "{enabled, apiKey, model}, aplicado ao provedor ativo. monthlyTokenLimit: teto mensal de tokens (ausente "
+                    + "mantém, 0 remove). 400 se ativar sem a chave do ativo, "
                     + "reserva sem chave ou igual ao ativo, ou modelo que não é do provedor.")
     @PutMapping("/assistant")
     @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
@@ -247,6 +248,10 @@ public class StoreIntegrationController {
                 request.isEnabled(), provider, provedor(request.getFallbackProvider()),
                 request.isFallbackProviderPresent(), comandos, request.getApiKey(), request.getModel()),
                 authentication.getName());
+        if (request.getMonthlyTokenLimit() != null) {
+            saved = assistantIntegrationUseCase.updateMonthlyTokenLimit(request.getMonthlyTokenLimit(),
+                    authentication.getName());
+        }
 
         // Formato antigo: a chave e o modelo do topo foram para o provedor ativo.
         if ((request.getApiKey() != null || request.getModel() != null) && !comandos.containsKey(saved.provider())) {
@@ -264,6 +269,9 @@ public class StoreIntegrationController {
         }
         if (before.fallbackProvider() != saved.fallbackProvider()) {
             fields.add("fallbackProvider");
+        }
+        if (!java.util.Objects.equals(before.monthlyTokenLimit(), saved.monthlyTokenLimit())) {
+            fields.add("monthlyTokenLimit");
         }
         for (Map.Entry<ProvedorIa, AssistantIntegrationUseCase.ProviderCommand> e : comandos.entrySet()) {
             String apiKey = e.getValue().apiKey();
@@ -355,6 +363,7 @@ public class StoreIntegrationController {
         }).toList());
         dto.setUpdatedAt(s.updatedAt());
         dto.setUpdatedBy(s.updatedBy());
+        dto.setMonthlyTokenLimit(s.monthlyTokenLimit());
         return dto;
     }
 

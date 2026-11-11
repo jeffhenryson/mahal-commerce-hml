@@ -77,7 +77,16 @@ public interface AssistenteLlmPort {
 
         ResultadoFerramenta ferramenta(String nome, String inputJson);
 
-        /** O cliente desconectou: o adaptador para no próximo ponto seguro. */
+        /**
+         * O turno foi cancelado ("Parar" explícito ou prazo do turno): o adaptador para no próximo
+         * ponto seguro. Queda da conexão do navegador não cancela.
+         */
         boolean cancelado();
+
+        /**
+         * Tokens de uma chamada ao provedor (uma por iteração do laço). {@code entrada} sem o que veio
+         * do cache; {@code cache} é a entrada lida do cache; {@code saida} inclui o raciocínio.
+         */
+        default void uso(long entrada, long saida, long cache) { }
     }
 }

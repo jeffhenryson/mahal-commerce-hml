@@ -855,6 +855,34 @@ class CoreBeanConfig {
         return new AssistenteConversaService(assistenteRepositoryPort, validadeAcao, java.time.Clock.systemUTC());
     }
 
+    /**
+     * Preço por milhão de tokens de cada provedor ({@code assistente.preco.<anthropic|openai|gemini>.
+     * entrada|saida|cache}), só para o custo estimado de GET /assistente/uso. Provedor sem os três
+     * valores fica sem custo (o relatório devolve custoEstimado nulo).
+     */
+    @Bean
+    com.cernecommerce.core.ports.in.AssistenteUsoUseCase assistenteUsoUseCase(
+            com.cernecommerce.core.ports.out.assistente.AssistenteUsoPort assistenteUsoPort,
+            AssistantIntegrationUseCase assistantIntegrationUseCase,
+            org.springframework.core.env.Environment env,
+            @Value("${assistente.preco.moeda:USD}") String moeda) {
+        java.util.Map<String, com.cernecommerce.core.domain.model.assistente.PrecoTokens> precos = new java.util.HashMap<>();
+        for (ProvedorIa p : ProvedorIa.values()) {
+            String base = "assistente.preco." + p.chave() + ".";
+            String entrada = env.getProperty(base + "entrada");
+            String saida = env.getProperty(base + "saida");
+            String cache = env.getProperty(base + "cache");
+            if (entrada != null && !entrada.isBlank() && saida != null && !saida.isBlank()
+                    && cache != null && !cache.isBlank()) {
+                precos.put(p.name(), new com.cernecommerce.core.domain.model.assistente.PrecoTokens(
+                        new java.math.BigDecimal(entrada.strip()), new java.math.BigDecimal(saida.strip()),
+                        new java.math.BigDecimal(cache.strip())));
+            }
+        }
+        return new com.cernecommerce.core.service.AssistenteUsoService(assistenteUsoPort, assistantIntegrationUseCase,
+                precos, moeda, java.time.Clock.systemUTC(), java.time.ZoneId.of("America/Sao_Paulo"));
+    }
+
     @Bean
     IntegrationHistoryUseCase integrationHistoryUseCase(AuditLogRepository auditLogRepository) {
         return new IntegrationHistoryService(auditLogRepository);

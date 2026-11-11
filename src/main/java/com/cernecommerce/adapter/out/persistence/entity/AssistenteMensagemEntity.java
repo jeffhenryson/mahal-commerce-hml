@@ -59,4 +59,15 @@ public class AssistenteMensagemEntity {
 
     @Column(name = "feedback_em")
     private Instant feedbackEm;
+
+    // V201 — tokens do turno. Só o AssistenteUsoJdbc grava (depois da resposta salva); aqui ficam
+    // mapeadas para o ddl-auto do perfil dev criar as colunas, sem o JPA nunca sobrescrevê-las.
+    @Column(name = "tokens_entrada", insertable = false, updatable = false)
+    private Integer tokensEntrada;
+
+    @Column(name = "tokens_saida", insertable = false, updatable = false)
+    private Integer tokensSaida;
+
+    @Column(name = "tokens_cache", insertable = false, updatable = false)
+    private Integer tokensCache;
 }

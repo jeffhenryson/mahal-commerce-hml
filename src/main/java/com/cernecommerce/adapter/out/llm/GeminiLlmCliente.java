@@ -23,6 +23,7 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponse;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.HttpOptions;
 import com.google.genai.types.Part;
 import com.google.genai.types.ThinkingConfig;
@@ -158,14 +159,21 @@ public class GeminiLlmCliente implements ClienteLlm, DisposableBean {
     /** Partes da resposta do modelo (na ordem) e o motivo de parada. */
     private record Resposta(List<Part> partes, FinishReason.Known parada) { }
 
-    /** Stream de uma chamada. Devolve as partes acumuladas, ou {@code null} se o cliente desconectou. */
+    /**
+     * Stream de uma chamada. Devolve as partes acumuladas, ou {@code null} se o turno foi cancelado.
+     * O uso (tokens) vem acumulado nos pedaços; o último vale para a chamada inteira.
+     */
     private static Resposta stream(Client client, String modelo, List<Content> conversa, GenerateContentConfig config,
             Ouvinte ouvinte) {
         List<Part> partes = new ArrayList<>();
         FinishReason.Known parada = null;
+        GenerateContentResponseUsageMetadata uso = null;
         try (ResponseStream<GenerateContentResponse> resposta =
                      client.models.generateContentStream(modelo, conversa, config)) {
             for (GenerateContentResponse pedaco : resposta) {
+                if (pedaco.usageMetadata().isPresent()) {
+                    uso = pedaco.usageMetadata().get();
+                }
                 Candidate candidato = pedaco.candidates().filter(c -> !c.isEmpty()).map(c -> c.get(0)).orElse(null);
                 if (candidato == null) {
                     continue;
@@ -182,11 +190,23 @@ public class GeminiLlmCliente implements ClienteLlm, DisposableBean {
                     parada = candidato.finishReason().get().knownEnum();
                 }
                 if (ouvinte.cancelado()) {
+                    informarUso(uso, ouvinte);
                     return null;
                 }
             }
         }
+        informarUso(uso, ouvinte);
         return new Resposta(partes, parada);
+    }
+
+    private static void informarUso(GenerateContentResponseUsageMetadata uso, Ouvinte ouvinte) {
+        if (uso == null) {
+            return;
+        }
+        long cache = uso.cachedContentTokenCount().orElse(0);
+        long entrada = uso.promptTokenCount().orElse(0) + uso.toolUsePromptTokenCount().orElse(0);
+        long saida = uso.candidatesTokenCount().orElse(0) + uso.thoughtsTokenCount().orElse(0);
+        ouvinte.uso(Math.max(0, entrada - cache), saida, cache);
     }
 
     private static FunctionDeclaration declaracao(FerramentaDef def) {

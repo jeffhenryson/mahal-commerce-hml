@@ -101,6 +101,9 @@ public class ClaudeLlmCliente implements ClienteLlm, DisposableBean {
                 if (resposta == null) {
                     return new RespostaTurno("CANCELADO");
                 }
+                // A escrita no cache conta como entrada; a leitura, como cache.
+                ouvinte.uso(resposta.usage().inputTokens() + resposta.usage().cacheCreationInputTokens().orElse(0L),
+                        resposta.usage().outputTokens(), resposta.usage().cacheReadInputTokens().orElse(0L));
                 String parada = resposta.stopReason().map(StopReason::asString).orElse("end_turn");
                 if ("refusal".equals(parada)) {
                     return new RespostaTurno("RECUSA");
@@ -178,7 +181,7 @@ public class ClaudeLlmCliente implements ClienteLlm, DisposableBean {
         return b;
     }
 
-    /** Stream de uma chamada. Devolve a mensagem completa, ou {@code null} se o cliente desconectou. */
+    /** Stream de uma chamada. Devolve a mensagem completa, ou {@code null} se o turno foi cancelado. */
     private static Message stream(AnthropicClient client, MessageCreateParams params, Ouvinte ouvinte) {
         MessageAccumulator acumulador = MessageAccumulator.create();
         try (StreamResponse<RawMessageStreamEvent> resposta = client.messages().createStreaming(params)) {

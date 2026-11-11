@@ -11,9 +11,11 @@ import com.cernecommerce.core.domain.model.assistente.AcaoPendente;
 import com.cernecommerce.core.domain.model.assistente.Mensagem;
 import com.cernecommerce.core.domain.model.assistente.PapelMensagem;
 import com.cernecommerce.core.domain.model.assistente.PerguntaRegistrada;
+import com.cernecommerce.core.domain.model.assistente.UsoTokens;
 import com.cernecommerce.core.domain.model.config.AssistantCredentials;
 import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
 import com.cernecommerce.core.ports.in.AssistenteConversaUseCase;
+import com.cernecommerce.core.ports.in.AssistenteUsoUseCase;
 import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort;
 import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort.FerramentaDef;
 import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort.MensagemHistorico;
@@ -21,6 +23,9 @@ import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort.Requisicao;
 import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort.RespostaTurno;
 import com.cernecommerce.infra.audit.AuditOrigemContext;
 import com.fasterxml.jackson.databind.JsonNode;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -71,6 +76,9 @@ public class AssistenteOrquestrador {
     private final AssistenteConversaUseCase conversas;
     private final AssistantIntegrationUseCase integracao;
     private final AssistenteLlmPort llm;
+    private final AssistenteUsoUseCase uso;
+    private final MeterRegistry metricas;
+    private final Counter quedas;
     private final TaskExecutor executor;
     private final Map<String, Ferramenta> ferramentas = new LinkedHashMap<>();
     private final List<FerramentaDef> definicoes;
@@ -91,7 +99,8 @@ public class AssistenteOrquestrador {
     private final int historicoMax;
 
     public AssistenteOrquestrador(AssistenteConversaUseCase conversas, AssistantIntegrationUseCase integracao,
-            AssistenteLlmPort llm, @Qualifier("assistenteExecutor") TaskExecutor executor,
+            AssistenteLlmPort llm, AssistenteUsoUseCase uso, MeterRegistry metricas,
+            @Qualifier("assistenteExecutor") TaskExecutor executor,
             List<ProvedorFerramentas> provedores,
             @Value("${assistente.sse-timeout:PT5M}") Duration sseTimeout,
             @Value("${assistente.max-tokens:8000}") long maxTokens,
@@ -102,6 +111,11 @@ public class AssistenteOrquestrador {
         this.conversas = conversas;
         this.integracao = integracao;
         this.llm = llm;
+        this.uso = uso;
+        this.metricas = metricas;
+        this.quedas = Counter.builder("assistente.sse.queda")
+                .description("Streams do assistente que caíram antes do fim (o turno continua e grava)")
+                .register(metricas);
         this.executor = executor;
         this.clock = Clock.systemUTC();
         this.sseTimeout = sseTimeout;
@@ -159,6 +173,7 @@ public class AssistenteOrquestrador {
         List<AssistantCredentials> credenciais = integracao.activeCredentials()
                 .orElseThrow(AssistenteNaoConfiguradoException::new);
         conversas.exigir(conversaId, username);
+        uso.exigirDentroDoLimite();
         TurnoAtivo ativo = new TurnoAtivo(UUID.randomUUID().toString(), username,
                 clock.instant().plus(turnoTimeout));
         if (emAndamento.putIfAbsent(conversaId, ativo) != null) {
@@ -174,7 +189,7 @@ public class AssistenteOrquestrador {
             }
         }
         SseEmitter emitter = new SseEmitter(sseTimeout.toMillis());
-        SseAssistenteWriter writer = new SseAssistenteWriter(emitter, ativo.turnoId, agendador, heartbeat, () -> { });
+        SseAssistenteWriter writer = new SseAssistenteWriter(emitter, ativo.turnoId, agendador, heartbeat, quedas::increment);
         SecurityContext contexto = SecurityContextHolder.getContext();
         Authentication autenticacao = contexto.getAuthentication();
         AuditOrigemContext.Origem origem = new AuditOrigemContext.Origem(AuditOrigemContext.ASSISTENTE, ip, userAgent);
@@ -197,6 +212,8 @@ public class AssistenteOrquestrador {
         Turno turno = new Turno(conversaId, mensagemId, username, origem, ativo, writer);
         boolean respostaGravada = false;
         String perguntaId = null;
+        Timer.Sample duracao = Timer.start(metricas);
+        String resultado = "erro";
         try {
             List<MensagemHistorico> historico = conversas.historico(conversaId, historicoMax).stream()
                     .map(AssistenteOrquestrador::historico)
@@ -216,6 +233,7 @@ public class AssistenteOrquestrador {
                 case "LIMITE_ITERACOES", "LIMITE_TOKENS" -> turno.texto(separar(turno)
                         + "(Parei aqui: a resposta ficou longa demais. Peça o restante, se precisar.)");
                 case "CANCELADO" -> {
+                    resultado = ativo.cancelado.get() ? "cancelado" : "prazo";
                     if (!ativo.cancelado.get()) {
                         log.warn("assistente.turno.prazo turnoId={} conversa={} ms={}", ativo.turnoId, conversaId,
                                 writer.ms());
@@ -226,6 +244,9 @@ public class AssistenteOrquestrador {
             }
             Mensagem salva = gravarResposta(turno);
             respostaGravada = true;
+            if ("erro".equals(resultado)) {
+                resultado = "ok";
+            }
             // Tabelas e links depois do texto: a explicação vem primeiro na tela.
             turno.descarregar();
             // Libera antes do fim: quem recebe o evento pode mandar a próxima (ou refazer) na hora.
@@ -235,6 +256,7 @@ public class AssistenteOrquestrador {
                     resposta.motivo(), writer.ms(), !writer.fechado());
         } catch (AssistenteProvedorException ex) {
             log.warn("assistente.turno.provedor conversa={} erro={}", conversaId, ex.getMessage());
+            resultado = "provedor";
             respostaGravada = gravarParcial(turno, respostaGravada);
             turno.descarregar();
             emAndamento.remove(conversaId, ativo);
@@ -254,13 +276,25 @@ public class AssistenteOrquestrador {
         } finally {
             emAndamento.remove(conversaId, ativo);
             writer.concluir();
+            duracao.stop(Timer.builder("assistente.turno.duracao")
+                    .description("Duração de um turno do assistente, do início do laço até o fim do stream")
+                    .tag("provedor", turno.provedor == null ? "desconhecido" : turno.provedor)
+                    .tag("resultado", resultado)
+                    .register(metricas));
         }
     }
 
     private Mensagem gravarResposta(Turno turno) {
-        return conversas.registrarRespostaAssistente(turno.mensagemId, turno.conversaId,
+        Mensagem salva = conversas.registrarRespostaAssistente(turno.mensagemId, turno.conversaId,
                 PiiSanitizer.limpar(turno.texto.toString()), AssistenteMapper.json(turno.blocos),
                 AssistenteMapper.json(turno.links), turno.provedor, turno.modelo);
+        try {
+            uso.registrar(salva.id(), turno.uso);
+        } catch (RuntimeException ex) {
+            // O relatório de uso não pode derrubar a resposta já gravada.
+            log.warn("assistente.uso.falhou mensagem={} erro={}", salva.id(), ex.getMessage());
+        }
+        return salva;
     }
 
     /** O que já foi mostrado (texto parcial, tabelas, ações propostas) fica no histórico. */
@@ -353,6 +387,7 @@ public class AssistenteOrquestrador {
         private final List<AssistenteBlocoDTO> blocosPendentes = new ArrayList<>();
         private final List<AssistenteLinkDTO> linksPendentes = new ArrayList<>();
         private int etapas;
+        private UsoTokens uso = UsoTokens.ZERO;
         private boolean propos;
         /** Quem respondeu — só conhecido no fim do turno (a reserva pode ter entrado). */
         private String provedor;
@@ -382,6 +417,11 @@ public class AssistenteOrquestrador {
         }
 
         @Override
+        public void uso(long entrada, long saida, long cache) {
+            uso = uso.mais(new UsoTokens(entrada, saida, cache));
+        }
+
+        @Override
         public boolean cancelado() {
             // Não é writer.fechado(): queda de rede não para o turno (a resposta é gravada e relida).
             return ativo.cancelado.get() || clock.instant().isAfter(ativo.prazo);
@@ -397,11 +437,16 @@ public class AssistenteOrquestrador {
             writer.ferramenta(f.rotulo(), true);
             writer.etapa(etapa, f.rotulo(), "inicio");
             boolean falhou = true;
+            Timer.Sample duracao = Timer.start(metricas);
             try {
                 AssistenteLlmPort.ResultadoFerramenta r = publicar(executar(f, inputJson));
                 falhou = r.erro();
                 return r;
             } finally {
+                duracao.stop(Timer.builder("assistente.ferramenta.duracao")
+                        .description("Duração de uma ferramenta do assistente")
+                        .tag("nome", f.nome())
+                        .register(metricas));
                 writer.ferramenta(f.rotulo(), false);
                 writer.etapa(etapa, f.rotulo(), falhou ? "falha" : "fim");
             }

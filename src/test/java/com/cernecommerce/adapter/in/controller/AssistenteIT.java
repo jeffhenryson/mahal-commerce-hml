@@ -78,6 +78,7 @@ class AssistenteIT {
 
     @AfterEach
     void tearDown() {
+        integracao.updateMonthlyTokenLimit(null, "admin");
         integracao.update(new AssistantIntegrationUseCase.UpdateCommand(false, "", null), "admin");
     }
 
@@ -753,6 +754,69 @@ class AssistenteIT {
         // A gravação devolve os mesmos tipos.
         mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
                 .andExpect(jsonPath("$.mensagens[1].blocos[0].tipo").value("kpi"));
+    }
+
+    @Autowired private io.micrometer.core.instrument.MeterRegistry metricas;
+
+    @Test
+    void uso_soma_tokens_do_turno_limite_mensal_409_e_relatorio_de_feedback() throws Exception {
+        String usuario = "contador" + System.nanoTime();
+        RequestPostProcessor quem = como(usuario, "ASSISTENTE_USE");
+        RequestPostProcessor admin = como("dono", "INTEGRATION_MANAGE");
+        String id = novaConversa(quem);
+        roteiro((req, o) -> {
+            o.uso(100, 50, 30);
+            o.texto("Resposta com custo.");
+            o.uso(10, 5, 0);
+            return new RespostaTurno("CONCLUIDO", "ANTHROPIC", "claude");
+        });
+
+        JsonNode fim = fim(enviar(id, quem, "pergunta do relatório"));
+
+        String uso = mockMvc.perform(get("/assistente/uso").with(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mes").isNotEmpty())
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        JsonNode linha = null;
+        for (JsonNode u : JSON.readTree(uso).get("usuarios")) {
+            if (usuario.equals(u.get("username").asText())) {
+                linha = u;
+            }
+        }
+        assertThat(linha).as("linha do usuário no relatório").isNotNull();
+        assertThat(linha.get("respostas").asLong()).isEqualTo(1);
+        assertThat(linha.get("tokensEntrada").asLong()).isEqualTo(110);
+        assertThat(linha.get("tokensSaida").asLong()).isEqualTo(55);
+        assertThat(linha.get("tokensCache").asLong()).isEqualTo(30);
+        mockMvc.perform(get("/assistente/uso").with(quem)).andExpect(status().isForbidden());
+        mockMvc.perform(get("/assistente/uso?mes=2026-13").with(admin)).andExpect(status().isBadRequest());
+
+        // Limite já ultrapassado no mês: 409 em JSON, antes do stream, sem travar a conversa.
+        integracao.updateMonthlyTokenLimit(1L, "admin");
+        assertThat(integracao.get().monthlyTokenLimit()).isEqualTo(1L);
+        mockMvc.perform(post("/assistente/conversas/" + id + "/mensagens").with(quem)
+                        .accept(MediaType.TEXT_EVENT_STREAM).contentType(MediaType.APPLICATION_JSON)
+                        .content(corpoMensagem("mais uma", null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("ASSISTENTE_LIMITE_MENSAL"));
+        mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
+                .andExpect(jsonPath("$.turnoEmAndamento").value(false));
+        integracao.updateMonthlyTokenLimit(0L, "admin");
+        assertThat(integracao.monthlyTokenLimit()).isEmpty();
+
+        // 👎 aparece no relatório com a pergunta, a resposta e o motivo.
+        mockMvc.perform(put("/assistente/mensagens/" + fim.get("mensagemId").asText() + "/feedback").with(quem)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nota\":\"NEGATIVO\",\"motivo\":\"faltou o total\"}"))
+                .andExpect(status().isNoContent());
+        String feedbacks = mockMvc.perform(get("/assistente/feedbacks?nota=NEGATIVO").with(admin))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(feedbacks).contains("pergunta do relatório").contains("Resposta com custo.")
+                .contains("faltou o total").doesNotContain(usuario);
+
+        assertThat(metricas.find("assistente.turno.duracao").tag("resultado", "ok").tag("provedor", "ANTHROPIC")
+                .timer()).isNotNull();
     }
 
     @Autowired private com.cernecommerce.core.ports.in.RoleUseCase roleUseCase;

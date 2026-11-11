@@ -30,6 +30,8 @@ public class AssistantIntegrationResponseDTO {
     private List<Provider> providers;
     private Instant updatedAt;
     private String updatedBy;
+    /** Teto mensal de tokens (entrada + saída); null = sem limite. */
+    private Long monthlyTokenLimit;
 
     @Data
     @Schema(name = "AssistantIntegrationProvider")

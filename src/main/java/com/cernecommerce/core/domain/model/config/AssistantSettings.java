@@ -6,7 +6,8 @@ import java.util.List;
 /**
  * Integração do assistente de IA como a tela de Integrações enxerga. Cada provedor tem a sua chave
  * ({@link #providers}); {@code provider} é o que responde e {@code fallbackProvider} o que entra
- * quando ele falha antes de mostrar qualquer coisa ao usuário.
+ * quando ele falha antes de mostrar qualquer coisa ao usuário. {@code monthlyTokenLimit}: teto de
+ * tokens (entrada + saída, sem cache) por mês; {@code null} = sem limite.
  */
 public record AssistantSettings(
         boolean enabled,
@@ -14,7 +15,8 @@ public record AssistantSettings(
         ProvedorIa fallbackProvider,
         List<AssistantProviderSettings> providers,
         Instant updatedAt,
-        String updatedBy) {
+        String updatedBy,
+        Long monthlyTokenLimit) {
 
     /** Configuração do provedor ativo — os campos "de topo" que o front antigo lê. */
     public AssistantProviderSettings ativo() {
