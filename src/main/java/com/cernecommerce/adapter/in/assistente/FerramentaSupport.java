@@ -212,6 +212,34 @@ public final class FerramentaSupport {
         return false;
     }
 
+    /**
+     * Para ferramentas que leem por uma porta de consulta, sem passar por um controller: a
+     * autorização é aqui, com as mesmas autoridades da tela equivalente. Todas são exigidas.
+     */
+    public static void exigir(String... todas) {
+        Authentication auth = autenticacao();
+        for (String pedida : todas) {
+            boolean tem = auth != null && auth.getAuthorities().stream().anyMatch(a -> pedida.equals(a.getAuthority()));
+            if (!tem) {
+                throw new org.springframework.security.access.AccessDeniedException("Sem " + pedida);
+            }
+        }
+    }
+
+    /** Variação de {@code atual} sobre {@code anterior}: texto ("+12,3%") e tendência (alta|baixa|estavel). */
+    public record Variacao(String texto, String tendencia, BigDecimal percentual) { }
+
+    public static Variacao variacao(BigDecimal atual, BigDecimal anterior) {
+        BigDecimal a = atual == null ? BigDecimal.ZERO : atual;
+        BigDecimal b = anterior == null ? BigDecimal.ZERO : anterior;
+        if (b.signum() == 0) {
+            return a.signum() == 0 ? new Variacao("0%", "estavel", BigDecimal.ZERO) : new Variacao("novo", "alta", null);
+        }
+        BigDecimal pct = a.subtract(b).multiply(BigDecimal.valueOf(100)).divide(b.abs(), 1, RoundingMode.HALF_UP);
+        String tendencia = pct.signum() > 0 ? "alta" : pct.signum() < 0 ? "baixa" : "estavel";
+        return new Variacao((pct.signum() > 0 ? "+" : "") + percentual(pct), tendencia, pct);
+    }
+
     /** Lê o JSON dos parâmetros guardados de uma ação. */
     public static JsonNode ler(String json) {
         try {

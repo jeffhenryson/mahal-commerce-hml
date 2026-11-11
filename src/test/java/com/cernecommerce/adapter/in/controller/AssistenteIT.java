@@ -111,10 +111,10 @@ class AssistenteIT {
                 .andExpect(request().asyncStarted())
                 .andReturn();
         long limite = System.currentTimeMillis() + 5000;
-        String corpo = r.getResponse().getContentAsString();
+        String corpo = r.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         while (System.currentTimeMillis() < limite && !corpo.contains("event:fim") && !corpo.contains("event:erro")) {
             Thread.sleep(25);
-            corpo = r.getResponse().getContentAsString();
+            corpo = r.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         }
         assertThat(corpo).as("stream terminou").containsAnyOf("event:fim", "event:erro");
         return corpo;
@@ -693,13 +693,66 @@ class AssistenteIT {
         r.getAsyncResult(5000);
 
         assertThat(viuCancelado).isTrue();
-        assertThat(r.getResponse().getContentAsString()).contains("event:fim");
+        assertThat(r.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8)).contains("event:fim");
         mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
                 .andExpect(jsonPath("$.turnoEmAndamento").value(false))
                 .andExpect(jsonPath("$.mensagens[1].texto").value("Começando..."));
         // Idempotente, sem turno: 204.
         mockMvc.perform(post("/assistente/conversas/" + id + "/cancelar").with(quem))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void ferramentas_de_analise_devolvem_kpi_grafico_e_tabela_e_conferem_permissao() throws Exception {
+        String sufixo = String.valueOf(System.nanoTime());
+        String sku = "IT-RUP-" + sufixo.substring(sufixo.length() - 8);
+        jdbc.update("INSERT INTO warehouse (code, name, type, active) VALUES (?, 'Depósito IT', 'LOJA_FISICA', TRUE)", sku);
+        Long deposito = jdbc.queryForObject("SELECT id FROM warehouse WHERE code = ?", Long.class, sku);
+        jdbc.update("INSERT INTO stock_balance (sku, warehouse_id, quantity, reserved_quantity, version) VALUES (?, ?, 5, 0, 0)",
+                sku, deposito);
+        jdbc.update("INSERT INTO stock_movement (sku, warehouse_id, type, quantity, reason, username, created_at)"
+                + " VALUES (?, ?, 'SAIDA', 30, 'teste', 'it', ?)", sku, deposito,
+                java.sql.Timestamp.from(Instant.now().minusSeconds(86400)));
+
+        RequestPostProcessor quem = como("analista", "ASSISTENTE_USE", "ORDER_READ", "ESTOQUE_PRODUCT_READ",
+                "ESTOQUE_WAREHOUSE_READ");
+        String id = novaConversa(quem);
+        java.time.LocalDate hoje = java.time.LocalDate.now(java.time.ZoneId.of("America/Sao_Paulo"));
+        List<ResultadoFerramenta> resultados = new ArrayList<>();
+        roteiro((req, o) -> {
+            resultados.add(o.ferramenta("comparar_periodos", "{\"inicio\":\"" + hoje.minusDays(6) + "\",\"fim\":\"" + hoje + "\"}"));
+            resultados.add(o.ferramenta("top_produtos", "{\"de\":\"" + hoje.minusDays(6) + "\",\"ate\":\"" + hoje + "\",\"por\":\"quantidade\"}"));
+            resultados.add(o.ferramenta("top_categorias", "{\"de\":\"" + hoje.minusDays(6) + "\",\"ate\":\"" + hoje + "\"}"));
+            resultados.add(o.ferramenta("ruptura_prevista", "{\"dias\":7}"));
+            // Sem CRM_CUSTOMER_READ nem PDV_READ.
+            resultados.add(o.ferramenta("clientes_inativos", "{\"dias\":30}"));
+            resultados.add(o.ferramenta("resumo_caixa", "{}"));
+            o.texto("Pronto.");
+            return new RespostaTurno("CONCLUIDO", "ANTHROPIC", "claude");
+        });
+
+        String corpo = enviar(id, quem, "como estamos?");
+
+        assertThat(resultados.subList(0, 4)).allSatisfy(r -> assertThat(r.erro()).as(r.conteudo()).isFalse());
+        assertThat(resultados.get(4).erro()).isTrue();
+        assertThat(resultados.get(4).conteudo()).contains("permissão");
+        assertThat(resultados.get(5).erro()).isTrue();
+        assertThat(resultados.get(3).conteudo()).contains(sku).contains("em 5 dias");
+
+        List<JsonNode> blocos = eventos(corpo, "bloco");
+        JsonNode kpi = blocos.stream().filter(b -> "kpi".equals(b.get("tipo").asText())).findFirst().orElseThrow();
+        assertThat(kpi.get("itens")).hasSize(3);
+        assertThat(kpi.get("itens").get(0).get("rotulo").asText()).isEqualTo("Total vendido");
+        assertThat(kpi.get("itens").get(0).get("variacao").asText()).contains("vs. período anterior");
+        assertThat(kpi.get("itens").get(0).get("sensivel").asBoolean()).isTrue();
+        assertThat(kpi.has("colunas")).as("campos de outro tipo ficam de fora").isFalse();
+        assertThat(blocos).anySatisfy(b -> {
+            assertThat(b.get("tipo").asText()).isEqualTo("tabela");
+            assertThat(b.get("titulo").asText()).isEqualTo("Acaba em até 7 dias");
+        });
+        // A gravação devolve os mesmos tipos.
+        mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
+                .andExpect(jsonPath("$.mensagens[1].blocos[0].tipo").value("kpi"));
     }
 
     @Autowired private com.cernecommerce.core.ports.in.RoleUseCase roleUseCase;
@@ -748,7 +801,7 @@ class AssistenteIT {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Accel-Buffering", "no"))
                 .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-transform")));
-        assertThat(r.getResponse().getContentAsString()).contains("event:fim");
+        assertThat(r.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8)).contains("event:fim");
     }
 
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;

@@ -174,6 +174,10 @@ public class FerramentasVendas implements ProvedorFerramentas {
                         List.of(List.of("Pedidos", String.valueOf(s.getTotalOrders())),
                                 List.of("Faturamento líquido", dinheiro(s.getTotalRevenueNet())),
                                 List.of("Ticket médio", dinheiro(s.getAverageTicket())))));
+        AssistenteBlocoDTO grafico = FerramentasAnalise.graficoDiario(s);
+        if (grafico != null) {
+            r = r.comBloco(grafico);
+        }
         if (!linhas.isEmpty()) {
             r = r.comBloco(AssistenteBlocoDTO.tabela("Mais vendidos", List.of(AssistenteColunaDTO.de("Produto"),
                     AssistenteColunaDTO.sensivel("Quantidade"), AssistenteColunaDTO.sensivel("Receita")), linhas));
