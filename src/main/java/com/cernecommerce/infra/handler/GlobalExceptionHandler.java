@@ -43,6 +43,7 @@ import com.cernecommerce.core.domain.exception.ecommerce.CartEmptyException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartItemNotFoundException;
 import com.cernecommerce.core.domain.exception.financeiro.CashFlowEntryNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidReorderCriticalQuantityException;
 import com.cernecommerce.core.domain.exception.estoque.DefaultWarehouseNotConfiguredException;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
 import com.cernecommerce.core.domain.exception.estoque.BrandNotFoundException;
@@ -977,6 +978,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OrderNotExchangeableException.class)
     public ResponseEntity<ApiError> handleOrderNotExchangeable(OrderNotExchangeableException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_NOT_EXCHANGEABLE", req);
+    }
+
+    /** V199 — nível crítico fora de {@code 0 ≤ crítico < mínimo} no ponto de reposição. */
+    @ExceptionHandler(InvalidReorderCriticalQuantityException.class)
+    public ResponseEntity<ApiError> handleInvalidReorderCritical(InvalidReorderCriticalQuantityException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "REORDER_CRITICAL_INVALID", req);
     }
 
     @ExceptionHandler(ExchangeItemInvalidException.class)
