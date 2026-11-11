@@ -122,6 +122,11 @@ services:
         aliases:
           - backend
       traefik-public:
+    # SSE do assistente (POST /assistente/conversas/{id}/mensagens) e das notificações: no Traefik do
+    # host (traefik.yml, fora deste compose), confira que
+    #  - nenhum middleware `compress` global se aplica a este router (ou que exclui text/event-stream);
+    #  - entryPoints.websecure.transport.respondingTimeouts.readTimeout/writeTimeout/idleTimeout
+    #    são 0 ou >= assistente.sse-timeout (PT5M). A API manda ": ping" a cada 15 s.
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik-public"

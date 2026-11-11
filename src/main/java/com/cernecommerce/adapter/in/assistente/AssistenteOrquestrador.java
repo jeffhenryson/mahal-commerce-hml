@@ -23,6 +23,7 @@ import com.cernecommerce.infra.audit.AuditOrigemContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.task.TaskExecutor;
@@ -33,8 +34,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import jakarta.annotation.PreDestroy;
+
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -42,7 +46,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Conduz um turno do assistente: valida tudo o que pode falhar ainda no request (para responder
@@ -52,6 +59,9 @@ import java.util.concurrent.RejectedExecutionException;
  *
  * <p>Nenhuma transação fica aberta durante o stream: cada gravação e cada ferramenta é uma
  * transação curta.</p>
+ *
+ * <p>Queda da conexão não cancela o turno: ele termina e grava a resposta, que o front relê. Só o
+ * "Parar" ({@link #cancelar}) ou o prazo {@code assistente.turno.timeout} interrompem.</p>
  */
 @Component
 public class AssistenteOrquestrador {
@@ -64,10 +74,18 @@ public class AssistenteOrquestrador {
     private final TaskExecutor executor;
     private final Map<String, Ferramenta> ferramentas = new LinkedHashMap<>();
     private final List<FerramentaDef> definicoes;
-    private final Map<String, Boolean> emAndamento = new ConcurrentHashMap<>();
+    private final Map<String, TurnoAtivo> emAndamento = new ConcurrentHashMap<>();
     private final Clock clock;
+    /** Heartbeat de todos os streams abertos: uma thread só, que apenas escreve um comentário. */
+    private final ScheduledExecutorService agendador = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "assistente-heartbeat");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final Duration sseTimeout;
+    private final Duration turnoTimeout;
+    private final Duration heartbeat;
     private final long maxTokens;
     private final int maxIteracoes;
     private final int historicoMax;
@@ -78,7 +96,9 @@ public class AssistenteOrquestrador {
             @Value("${assistente.sse-timeout:PT5M}") Duration sseTimeout,
             @Value("${assistente.max-tokens:8000}") long maxTokens,
             @Value("${assistente.max-iteracoes:8}") int maxIteracoes,
-            @Value("${assistente.historico-max-mensagens:20}") int historicoMax) {
+            @Value("${assistente.historico-max-mensagens:20}") int historicoMax,
+            @Value("${assistente.turno.timeout:PT4M}") Duration turnoTimeout,
+            @Value("${assistente.sse.heartbeat:PT15S}") Duration heartbeat) {
         this.conversas = conversas;
         this.integracao = integracao;
         this.llm = llm;
@@ -88,6 +108,8 @@ public class AssistenteOrquestrador {
         this.maxTokens = maxTokens;
         this.maxIteracoes = maxIteracoes;
         this.historicoMax = historicoMax;
+        this.turnoTimeout = turnoTimeout;
+        this.heartbeat = heartbeat;
         for (ProvedorFerramentas p : provedores) {
             for (Ferramenta f : p.ferramentas()) {
                 if (ferramentas.putIfAbsent(f.nome(), f) != null) {
@@ -98,6 +120,28 @@ public class AssistenteOrquestrador {
         this.definicoes = ferramentas.values().stream()
                 .map(f -> new FerramentaDef(f.nome(), f.descricao(), f.schemaJson()))
                 .toList();
+    }
+
+    @PreDestroy
+    void encerrar() {
+        agendador.shutdownNow();
+    }
+
+    /** Há um turno rodando nesta conversa (o front decide se espera a resposta gravada). */
+    public boolean emAndamento(String conversaId) {
+        return emAndamento.containsKey(conversaId);
+    }
+
+    /**
+     * "Parar" explícito: o turno para no próximo ponto seguro e grava o que já tinha. Idempotente;
+     * sem turno em andamento, não faz nada. Conversa de outro usuário: 404.
+     */
+    public void cancelar(String conversaId, String username) {
+        conversas.exigir(conversaId, username);
+        TurnoAtivo ativo = emAndamento.get(conversaId);
+        if (ativo != null && ativo.username.equals(username) && ativo.cancelado.compareAndSet(false, true)) {
+            log.info("assistente.turno.cancelado turnoId={} conversa={}", ativo.turnoId, conversaId);
+        }
     }
 
     /** Nomes das ferramentas oferecidas ao modelo (diagnóstico e testes). */
@@ -115,7 +159,9 @@ public class AssistenteOrquestrador {
         List<AssistantCredentials> credenciais = integracao.activeCredentials()
                 .orElseThrow(AssistenteNaoConfiguradoException::new);
         conversas.exigir(conversaId, username);
-        if (emAndamento.putIfAbsent(conversaId, Boolean.TRUE) != null) {
+        TurnoAtivo ativo = new TurnoAtivo(UUID.randomUUID().toString(), username,
+                clock.instant().plus(turnoTimeout));
+        if (emAndamento.putIfAbsent(conversaId, ativo) != null) {
             throw new AssistenteOcupadoException("Já há uma resposta em andamento nesta conversa.");
         }
         if (substituirDesde != null && !substituirDesde.isBlank()) {
@@ -123,30 +169,32 @@ public class AssistenteOrquestrador {
             try {
                 conversas.substituirDesde(conversaId, username, substituirDesde.strip());
             } catch (RuntimeException ex) {
-                emAndamento.remove(conversaId);
+                emAndamento.remove(conversaId, ativo);
                 throw ex;
             }
         }
         SseEmitter emitter = new SseEmitter(sseTimeout.toMillis());
-        SseAssistenteWriter writer = new SseAssistenteWriter(emitter);
+        SseAssistenteWriter writer = new SseAssistenteWriter(emitter, ativo.turnoId, agendador, heartbeat, () -> { });
         SecurityContext contexto = SecurityContextHolder.getContext();
         Authentication autenticacao = contexto.getAuthentication();
         AuditOrigemContext.Origem origem = new AuditOrigemContext.Origem(AuditOrigemContext.ASSISTENTE, ip, userAgent);
         String texto = PiiSanitizer.limpar(textoBruto.strip());
         try {
-            executor.execute(() -> comUsuario(autenticacao, () -> executarTurno(conversaId, username, texto, rota,
-                    tituloTela, credenciais, origem, writer)));
+            executor.execute(() -> comUsuario(autenticacao, ativo.turnoId, () -> executarTurno(conversaId, username,
+                    texto, rota, tituloTela, credenciais, origem, ativo, writer)));
         } catch (RejectedExecutionException ex) {
-            emAndamento.remove(conversaId);
+            emAndamento.remove(conversaId, ativo);
+            writer.concluir();
             throw new AssistenteOcupadoException("O assistente está ocupado agora. Tente de novo em instantes.");
         }
         return emitter;
     }
 
     private void executarTurno(String conversaId, String username, String texto, String rota, String tituloTela,
-            List<AssistantCredentials> credenciais, AuditOrigemContext.Origem origem, SseAssistenteWriter writer) {
+            List<AssistantCredentials> credenciais, AuditOrigemContext.Origem origem, TurnoAtivo ativo,
+            SseAssistenteWriter writer) {
         String mensagemId = UUID.randomUUID().toString();
-        Turno turno = new Turno(conversaId, mensagemId, username, origem, writer);
+        Turno turno = new Turno(conversaId, mensagemId, username, origem, ativo, writer);
         boolean respostaGravada = false;
         String perguntaId = null;
         try {
@@ -167,25 +215,44 @@ public class AssistenteOrquestrador {
                 case "RECUSA" -> turno.texto(separar(turno) + "Não posso ajudar com esse pedido.");
                 case "LIMITE_ITERACOES", "LIMITE_TOKENS" -> turno.texto(separar(turno)
                         + "(Parei aqui: a resposta ficou longa demais. Peça o restante, se precisar.)");
+                case "CANCELADO" -> {
+                    if (!ativo.cancelado.get()) {
+                        log.warn("assistente.turno.prazo turnoId={} conversa={} ms={}", ativo.turnoId, conversaId,
+                                writer.ms());
+                        turno.texto(separar(turno) + "(Parei aqui: a resposta demorou demais. Tente de novo.)");
+                    }
+                }
                 default -> { }
             }
             Mensagem salva = gravarResposta(turno);
             respostaGravada = true;
+            // Tabelas e links depois do texto: a explicação vem primeiro na tela.
+            turno.descarregar();
             // Libera antes do fim: quem recebe o evento pode mandar a próxima (ou refazer) na hora.
-            emAndamento.remove(conversaId);
+            emAndamento.remove(conversaId, ativo);
             writer.fim(salva.id(), perguntaId, turno.provedor, turno.modelo);
+            log.info("assistente.turno.ok provedor={} motivo={} ms={} clienteConectado={}", turno.provedor,
+                    resposta.motivo(), writer.ms(), !writer.fechado());
         } catch (AssistenteProvedorException ex) {
             log.warn("assistente.turno.provedor conversa={} erro={}", conversaId, ex.getMessage());
             respostaGravada = gravarParcial(turno, respostaGravada);
-            emAndamento.remove(conversaId);
+            turno.descarregar();
+            emAndamento.remove(conversaId, ativo);
             writer.erro("PROVEDOR", ex.getMessage(), perguntaId);
         } catch (RuntimeException ex) {
             log.error("assistente.turno.falha conversa={}", conversaId, ex);
             respostaGravada = gravarParcial(turno, respostaGravada);
-            emAndamento.remove(conversaId);
+            turno.descarregar();
+            emAndamento.remove(conversaId, ativo);
             writer.erro("ERRO_INTERNO", "Não foi possível concluir a resposta. Tente de novo.", perguntaId);
+        } catch (Error ex) {
+            // OutOfMemory, StackOverflow…: o stream ainda precisa de um fim legível.
+            log.error("assistente.turno.falha.grave conversa={}", conversaId, ex);
+            emAndamento.remove(conversaId, ativo);
+            writer.erro("ERRO_INTERNO", "Não foi possível concluir a resposta. Tente de novo.", perguntaId);
+            throw ex;
         } finally {
-            emAndamento.remove(conversaId);
+            emAndamento.remove(conversaId, ativo);
             writer.concluir();
         }
     }
@@ -243,14 +310,30 @@ public class AssistenteOrquestrador {
         return new MensagemHistorico(m.papel() == PapelMensagem.USUARIO, m.texto().isBlank() ? "(sem texto)" : m.texto());
     }
 
-    private static void comUsuario(Authentication autenticacao, Runnable tarefa) {
+    private static void comUsuario(Authentication autenticacao, String turnoId, Runnable tarefa) {
         SecurityContext contexto = SecurityContextHolder.createEmptyContext();
         contexto.setAuthentication(autenticacao);
         SecurityContextHolder.setContext(contexto);
+        MDC.put("turnoId", turnoId);
         try {
             tarefa.run();
         } finally {
+            MDC.remove("turnoId");
             SecurityContextHolder.clearContext();
+        }
+    }
+
+    /** Turno registrado na conversa: quem o abriu, o "Parar" e o prazo para um turno órfão. */
+    private static final class TurnoAtivo {
+        private final String turnoId;
+        private final String username;
+        private final Instant prazo;
+        private final AtomicBoolean cancelado = new AtomicBoolean();
+
+        TurnoAtivo(String turnoId, String username, Instant prazo) {
+            this.turnoId = turnoId;
+            this.username = username;
+            this.prazo = prazo;
         }
     }
 
@@ -261,22 +344,35 @@ public class AssistenteOrquestrador {
         private final String mensagemId;
         private final String username;
         private final AuditOrigemContext.Origem origem;
+        private final TurnoAtivo ativo;
         private final SseAssistenteWriter writer;
         private final StringBuilder texto = new StringBuilder();
         private final List<AssistenteBlocoDTO> blocos = new ArrayList<>();
         private final List<AssistenteLinkDTO> links = new ArrayList<>();
+        /** Ainda não enviados: saem depois do último texto, antes do fim. */
+        private final List<AssistenteBlocoDTO> blocosPendentes = new ArrayList<>();
+        private final List<AssistenteLinkDTO> linksPendentes = new ArrayList<>();
+        private int etapas;
         private boolean propos;
         /** Quem respondeu — só conhecido no fim do turno (a reserva pode ter entrado). */
         private String provedor;
         private String modelo;
 
         Turno(String conversaId, String mensagemId, String username, AuditOrigemContext.Origem origem,
-                SseAssistenteWriter writer) {
+                TurnoAtivo ativo, SseAssistenteWriter writer) {
             this.conversaId = conversaId;
             this.mensagemId = mensagemId;
             this.username = username;
             this.origem = origem;
+            this.ativo = ativo;
             this.writer = writer;
+        }
+
+        void descarregar() {
+            blocosPendentes.forEach(writer::bloco);
+            blocosPendentes.clear();
+            linksPendentes.forEach(writer::link);
+            linksPendentes.clear();
         }
 
         @Override
@@ -287,7 +383,8 @@ public class AssistenteOrquestrador {
 
         @Override
         public boolean cancelado() {
-            return writer.fechado();
+            // Não é writer.fechado(): queda de rede não para o turno (a resposta é gravada e relida).
+            return ativo.cancelado.get() || clock.instant().isAfter(ativo.prazo);
         }
 
         @Override
@@ -296,12 +393,17 @@ public class AssistenteOrquestrador {
             if (f == null) {
                 return AssistenteLlmPort.ResultadoFerramenta.falha("Ferramenta desconhecida: " + nome);
             }
+            String etapa = "t" + (++etapas);
             writer.ferramenta(f.rotulo(), true);
+            writer.etapa(etapa, f.rotulo(), "inicio");
+            boolean falhou = true;
             try {
-                ResultadoFerramenta r = executar(f, inputJson);
-                return publicar(r);
+                AssistenteLlmPort.ResultadoFerramenta r = publicar(executar(f, inputJson));
+                falhou = r.erro();
+                return r;
             } finally {
                 writer.ferramenta(f.rotulo(), false);
+                writer.etapa(etapa, f.rotulo(), falhou ? "falha" : "fim");
             }
         }
 
@@ -346,12 +448,12 @@ public class AssistenteOrquestrador {
             }
             for (AssistenteBlocoDTO bloco : r.blocos()) {
                 blocos.add(bloco);
-                writer.bloco(bloco);
+                blocosPendentes.add(bloco);
             }
             for (AssistenteLinkDTO link : r.links()) {
                 if (AssistenteMapper.rotaSegura(link.rota())) {
                     links.add(link);
-                    writer.link(link);
+                    linksPendentes.add(link);
                 }
             }
             return r.erro()

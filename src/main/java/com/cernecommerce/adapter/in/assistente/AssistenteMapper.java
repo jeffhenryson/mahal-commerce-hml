@@ -39,13 +39,13 @@ public final class AssistenteMapper {
         return new AssistenteConversaResumoDTO(c.id(), c.titulo(), c.atualizadaEm());
     }
 
-    public static AssistenteConversaDTO detalhe(ConversaDetalhe d, Instant agora) {
+    public static AssistenteConversaDTO detalhe(ConversaDetalhe d, Instant agora, boolean turnoEmAndamento) {
         Map<String, List<AcaoPendente>> porMensagem = d.acoes().stream()
                 .collect(Collectors.groupingBy(AcaoPendente::mensagemId));
         List<AssistenteMensagemDTO> mensagens = d.mensagens().stream()
                 .map(m -> mensagem(m, porMensagem.getOrDefault(m.id(), List.of()), agora))
                 .toList();
-        return new AssistenteConversaDTO(d.conversa().id(), d.conversa().titulo(), mensagens);
+        return new AssistenteConversaDTO(d.conversa().id(), d.conversa().titulo(), mensagens, turnoEmAndamento);
     }
 
     static AssistenteMensagemDTO mensagem(Mensagem m, List<AcaoPendente> acoes, Instant agora) {

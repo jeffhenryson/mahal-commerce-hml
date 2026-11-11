@@ -626,6 +626,131 @@ class AssistenteIT {
                 Integer.class, velha)).isZero();
     }
 
+    @Test
+    void blocos_e_links_saem_depois_do_ultimo_texto_e_etapas_marcam_o_progresso() throws Exception {
+        RequestPostProcessor quem = como("ordenado", "ASSISTENTE_USE", "CRM_CUSTOMER_READ");
+        String id = novaConversa(quem);
+        roteiro((req, o) -> {
+            o.ferramenta("indicadores_crm", "{}");
+            o.ferramenta("ferramenta_desconhecida_sem_etapa", "{}");
+            o.ferramenta("ajuda_uso", "[]");
+            o.texto("Resumo: 2 tags.");
+            return new RespostaTurno("CONCLUIDO", "ANTHROPIC", "claude");
+        });
+
+        String corpo = enviar(id, quem, "quais tags?");
+
+        int ultimoTexto = corpo.lastIndexOf("event:texto");
+        int primeiroBloco = corpo.indexOf("event:bloco");
+        assertThat(primeiroBloco).as("tabela da ferramenta").isPositive();
+        assertThat(primeiroBloco).isGreaterThan(ultimoTexto);
+        assertThat(corpo.lastIndexOf("event:bloco")).isLessThan(corpo.indexOf("event:fim"));
+        List<JsonNode> etapas = eventos(corpo, "etapa");
+        assertThat(etapas).extracting(n -> n.get("id").asText() + ":" + n.get("estado").asText())
+                .containsExactly("t1:inicio", "t1:fim", "t2:inicio", "t2:falha");
+        assertThat(etapas.get(0).get("rotulo").asText()).isEqualTo("Consultando indicadores do CRM");
+        // A gravação não muda: o bloco continua na resposta salva.
+        mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
+                .andExpect(jsonPath("$.mensagens[1].blocos[0].tipo").value("tabela"))
+                .andExpect(jsonPath("$.turnoEmAndamento").value(false));
+    }
+
+    @Test
+    void cancelar_para_o_turno_que_aparece_em_andamento_e_grava_o_parcial() throws Exception {
+        RequestPostProcessor quem = como("paciente", "ASSISTENTE_USE");
+        String id = novaConversa(quem);
+        java.util.concurrent.CountDownLatch comecou = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean viuCancelado = new java.util.concurrent.atomic.AtomicBoolean();
+        roteiro((req, o) -> {
+            o.texto("Começando...");
+            comecou.countDown();
+            long limite = System.currentTimeMillis() + 5000;
+            while (!o.cancelado() && System.currentTimeMillis() < limite) {
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            viuCancelado.set(o.cancelado());
+            return new RespostaTurno("CANCELADO", "ANTHROPIC", "claude");
+        });
+
+        MvcResult r = mockMvc.perform(post("/assistente/conversas/" + id + "/mensagens").with(quem)
+                        .accept(MediaType.TEXT_EVENT_STREAM).contentType(MediaType.APPLICATION_JSON)
+                        .content(corpoMensagem("demora", null)))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        assertThat(comecou.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
+                .andExpect(jsonPath("$.turnoEmAndamento").value(true));
+        // De outro usuário: 404, e o turno segue.
+        mockMvc.perform(post("/assistente/conversas/" + id + "/cancelar").with(como("intruso", "ASSISTENTE_USE")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/assistente/conversas/" + id + "/cancelar").with(quem))
+                .andExpect(status().isNoContent());
+        r.getAsyncResult(5000);
+
+        assertThat(viuCancelado).isTrue();
+        assertThat(r.getResponse().getContentAsString()).contains("event:fim");
+        mockMvc.perform(get("/assistente/conversas/" + id).with(quem))
+                .andExpect(jsonPath("$.turnoEmAndamento").value(false))
+                .andExpect(jsonPath("$.mensagens[1].texto").value("Começando..."));
+        // Idempotente, sem turno: 204.
+        mockMvc.perform(post("/assistente/conversas/" + id + "/cancelar").with(quem))
+                .andExpect(status().isNoContent());
+    }
+
+    @Autowired private com.cernecommerce.core.ports.in.RoleUseCase roleUseCase;
+
+    /**
+     * Prod: o stream termina com {@code emitter.complete()}, que faz um re-dispatch ASYNC. Com JWT
+     * de verdade (sem o {@code user()} do teste, que guarda o contexto no request), o filtro de JWT
+     * não roda no ASYNC; se a segurança barrar esse dispatch, sai 401 com a resposta já comprometida
+     * e o navegador vê "erro de rede".
+     */
+    @Test
+    void stream_com_jwt_real_termina_sem_401_no_redispatch_assincrono() throws Exception {
+        String sufixo = String.valueOf(System.nanoTime());
+        String papel = "ROLE_ASSIST_IT_" + sufixo;
+        String usuario = "assist_it_" + sufixo;
+        roleUseCase.createRole(papel);
+        mockMvc.perform(post("/roles/{r}/permissions/{p}", papel, "ASSISTENTE_USE")
+                        .with(como("admin_setup", "ROLE_MANAGE_PERMISSIONS")))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/users").with(como("admin_setup", "USER_CREATE"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + usuario + "\",\"password\":\"Secure@123\",\"roles\":[]}"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/users/{u}/roles/{r}", usuario, papel).with(como("admin_setup", "USER_ROLE_ASSIGN")))
+                .andExpect(status().isNoContent());
+        String login = mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + usuario + "\",\"password\":\"Secure@123\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String bearer = "Bearer " + JSON.readTree(login).get("accessToken").asText();
+
+        String id = JSON.readTree(mockMvc.perform(post("/assistente/conversas").header("Authorization", bearer))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asText();
+        roteiro((req, o) -> {
+            o.texto("Vendas de hoje: R$ 10,00.");
+            return new RespostaTurno("CONCLUIDO", "ANTHROPIC", "claude");
+        });
+        MvcResult r = mockMvc.perform(post("/assistente/conversas/" + id + "/mensagens")
+                        .header("Authorization", bearer)
+                        .accept(MediaType.TEXT_EVENT_STREAM).contentType(MediaType.APPLICATION_JSON)
+                        .content(corpoMensagem("Como foram as vendas de hoje?", null)))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        r.getAsyncResult(5000);
+
+        mockMvc.perform(asyncDispatch(r))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Accel-Buffering", "no"))
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-transform")));
+        assertThat(r.getResponse().getContentAsString()).contains("event:fim");
+    }
+
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private void vencer(String acaoId) {

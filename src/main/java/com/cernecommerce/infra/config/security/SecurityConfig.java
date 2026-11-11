@@ -76,6 +76,12 @@ public class SecurityConfig {
                         "camera=(), microphone=(), geolocation=(), payment=(), usb=()"));
             })
             .authorizeHttpRequests(auth -> {
+                // Re-dispatch de SSE/async e páginas de erro: a requisição original já foi
+                // autorizada. Com a chain STATELESS, o filtro de JWT (OncePerRequestFilter) não
+                // roda no dispatch ASYNC; sem esta regra, emitter.complete() vira 401 com a
+                // resposta já comprometida e o navegador vê "erro de rede" (assistente em prod).
+                auth.dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC,
+                        jakarta.servlet.DispatcherType.ERROR).permitAll();
                 // Onde o Swagger está habilitado (dev e hml), UI e spec são públicos — a
                 // segurança real está em cada endpoint individual (@PreAuthorize); para fazer
                 // chamadas, o usuário precisa clicar em Authorize e inserir o Bearer token.

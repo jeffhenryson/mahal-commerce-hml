@@ -7,28 +7,70 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Escreve os eventos do contrato ({@code event: <nome>} + {@code data: <json>}) num
- * {@link SseEmitter}. O emitter não é thread-safe: tudo passa por aqui, sincronizado. Quando o
- * cliente desconecta, as escritas viram no-op e {@link #fechado()} avisa o turno para parar.
+ * {@link SseEmitter}. O emitter não é thread-safe: tudo passa por aqui, sincronizado — inclusive o
+ * heartbeat.
+ *
+ * <p>Quando o cliente desconecta, as escritas viram no-op e {@link #fechado()} passa a responder
+ * {@code true}. Isso <b>não</b> cancela o turno: o orquestrador continua, termina e grava a resposta,
+ * que o front relê depois. Só o "Parar" explícito (ou o prazo do turno) cancela.</p>
+ *
+ * <p>Heartbeat: um comentário SSE {@code : ping} a cada {@code heartbeat}, para o proxy (Traefik,
+ * Cloudflare) não derrubar a conexão ociosa enquanto o modelo pensa ou a ferramenta roda. O front
+ * ignora linhas que começam com {@code :}.</p>
  */
 final class SseAssistenteWriter {
 
     private static final Logger log = LoggerFactory.getLogger(SseAssistenteWriter.class);
 
     private final SseEmitter emitter;
+    private final String turnoId;
+    private final long inicio = System.nanoTime();
+    private final Runnable aoCair;
     private volatile boolean fechado;
+    /** O servidor chamou {@link #concluir()}: o onCompletion que vier depois não é "cliente saiu". */
+    private volatile boolean concluidoPeloServidor;
+    private volatile boolean quedaRegistrada;
+    private volatile ScheduledFuture<?> heartbeat;
 
-    SseAssistenteWriter(SseEmitter emitter) {
+    /**
+     * @param aoCair chamado uma vez quando a conexão cai antes do fim (métrica); pode ser no-op
+     */
+    SseAssistenteWriter(SseEmitter emitter, String turnoId, ScheduledExecutorService agendador, Duration intervalo,
+            Runnable aoCair) {
         this.emitter = emitter;
-        emitter.onCompletion(() -> fechado = true);
-        emitter.onTimeout(() -> fechado = true);
-        emitter.onError(e -> fechado = true);
+        this.turnoId = turnoId;
+        this.aoCair = aoCair;
+        emitter.onTimeout(() -> {
+            log.warn("assistente.sse.timeout turnoId={} ms={}", turnoId, ms());
+            fechar(true);
+        });
+        emitter.onError(e -> {
+            log.info("assistente.sse.erro turnoId={} classe={} erro={} ms={}", turnoId,
+                    e == null ? null : e.getClass().getSimpleName(), e == null ? null : e.getMessage(), ms());
+            fechar(true);
+        });
+        emitter.onCompletion(() -> {
+            if (!concluidoPeloServidor) {
+                log.info("assistente.sse.cliente.saiu turnoId={} ms={}", turnoId, ms());
+                fechar(true);
+            }
+        });
+        if (agendador != null && intervalo != null && !intervalo.isZero() && !intervalo.isNegative()) {
+            long passo = intervalo.toMillis();
+            this.heartbeat = agendador.scheduleAtFixedRate(this::ping, passo, passo, TimeUnit.MILLISECONDS);
+        }
     }
 
+    /** O cliente não recebe mais nada (desconectou, timeout ou o turno já concluiu). */
     boolean fechado() {
         return fechado;
     }
@@ -39,6 +81,15 @@ final class SseAssistenteWriter {
 
     void ferramenta(String rotulo, boolean inicio) {
         enviar("ferramenta", Map.of("rotulo", rotulo, "estado", inicio ? "inicio" : "fim"));
+    }
+
+    /** Passo do turno, para a lista de progresso do front: {@code estado} = inicio, fim ou falha. */
+    void etapa(String id, String rotulo, String estado) {
+        Map<String, Object> dados = new LinkedHashMap<>();
+        dados.put("id", id);
+        dados.put("rotulo", rotulo);
+        dados.put("estado", estado);
+        enviar("etapa", dados);
     }
 
     void bloco(AssistenteBlocoDTO bloco) {
@@ -86,6 +137,8 @@ final class SseAssistenteWriter {
     }
 
     synchronized void concluir() {
+        pararHeartbeat();
+        concluidoPeloServidor = true;
         if (fechado) {
             return;
         }
@@ -93,7 +146,44 @@ final class SseAssistenteWriter {
         try {
             emitter.complete();
         } catch (RuntimeException ex) {
-            log.debug("assistente.sse.complete.falhou erro={}", ex.getMessage());
+            log.debug("assistente.sse.complete.falhou turnoId={} erro={}", turnoId, ex.getMessage());
+        }
+    }
+
+    long ms() {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - inicio);
+    }
+
+    synchronized void ping() {
+        if (fechado) {
+            pararHeartbeat();
+            return;
+        }
+        try {
+            emitter.send(SseEmitter.event().comment("ping"));
+        } catch (Exception ex) {
+            log.info("assistente.sse.cliente.saiu turnoId={} em=ping ms={} erro={}", turnoId, ms(), ex.getMessage());
+            fechar(true);
+        }
+    }
+
+    private void fechar(boolean queda) {
+        fechado = true;
+        pararHeartbeat();
+        if (queda && !concluidoPeloServidor && !quedaRegistrada) {
+            quedaRegistrada = true;
+            try {
+                aoCair.run();
+            } catch (RuntimeException ignored) {
+                // métrica não derruba o turno
+            }
+        }
+    }
+
+    private void pararHeartbeat() {
+        ScheduledFuture<?> h = heartbeat;
+        if (h != null) {
+            h.cancel(false);
         }
     }
 
@@ -104,9 +194,10 @@ final class SseAssistenteWriter {
         try {
             emitter.send(SseEmitter.event().name(nome).data(FerramentaSupport.MAPPER.writeValueAsString(dados)));
         } catch (Exception ex) {
-            // Cliente fechou a aba ou abortou o fetch.
-            fechado = true;
-            log.debug("assistente.sse.envio.falhou evento={} erro={}", nome, ex.getMessage());
+            // Cliente fechou a aba, abortou o fetch ou a rede caiu. O turno segue e grava.
+            log.info("assistente.sse.cliente.saiu turnoId={} evento={} ms={} erro={}", turnoId, nome, ms(),
+                    ex.getMessage());
+            fechar(true);
         }
     }
 }

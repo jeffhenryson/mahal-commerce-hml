@@ -109,11 +109,25 @@ public class AssistenteController {
         return ResponseEntity.status(HttpStatus.CREATED).body(AssistenteMapper.resumo(conversas.criar(auth.getName())));
     }
 
-    @Operation(summary = "Conversa com as mensagens", description = "Conversa de outro usuário: 404.")
+    @Operation(summary = "Conversa com as mensagens",
+            description = "turnoEmAndamento = o servidor ainda está escrevendo uma resposta (o stream pode ter "
+                    + "caído; releia em instantes). Conversa de outro usuário: 404.")
     @GetMapping("/conversas/{id}")
     @PreAuthorize("hasAuthority('ASSISTENTE_USE')")
     public ResponseEntity<AssistenteConversaDTO> obter(@PathVariable String id, Authentication auth) {
-        return ResponseEntity.ok(AssistenteMapper.detalhe(conversas.obter(id, auth.getName()), Instant.now()));
+        return ResponseEntity.ok(AssistenteMapper.detalhe(conversas.obter(id, auth.getName()), Instant.now(),
+                orquestrador.emAndamento(id)));
+    }
+
+    @Operation(summary = "Para a resposta em andamento (botão Parar)",
+            description = "O turno para no próximo ponto seguro e grava o que já tinha. Fechar a conexão não "
+                    + "cancela: o servidor termina e grava a resposta. Idempotente: sem turno em andamento, 204 "
+                    + "do mesmo jeito. Conversa de outro usuário: 404.")
+    @PostMapping("/conversas/{id}/cancelar")
+    @PreAuthorize("hasAuthority('ASSISTENTE_USE')")
+    public ResponseEntity<Void> cancelar(@PathVariable String id, Authentication auth) {
+        orquestrador.cancelar(id, auth.getName());
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Renomeia uma conversa",
@@ -159,8 +173,11 @@ public class AssistenteController {
      * re-dispatch assíncrono (ver {@code SseEmitterRegistry}).
      */
     @Operation(summary = "Envia uma mensagem ao assistente (SSE)",
-            description = "Eventos: titulo (só no 1º turno, antes do texto), texto, ferramenta, bloco, link, acao, "
-                    + "fim {mensagemId, perguntaId, provedor, modelo} e erro {codigo, mensagem, perguntaId?}. "
+            description = "Eventos: titulo (só no 1º turno, antes do texto), texto, ferramenta, etapa {id, rotulo, "
+                    + "estado: inicio|fim|falha}, acao, bloco e link (depois do último texto), fim {mensagemId, "
+                    + "perguntaId, provedor, modelo} e erro {codigo, mensagem, perguntaId?}. Comentário ': ping' "
+                    + "a cada ~15 s mantém a conexão viva. Se a conexão cair, o turno continua e grava a "
+                    + "resposta; para parar, POST /conversas/{id}/cancelar. "
                     + "substituirDesde (id da última pergunta) refaz o turno: apaga essa pergunta e o que veio "
                     + "depois, e as ações PENDENTE delas expiram. Antes de abrir o stream: 403 sem ASSISTENTE_USE, "
                     + "404 conversa inexistente ou de outro usuário, 409 ASSISTENTE_NAO_CONFIGURADO, "
@@ -190,6 +207,10 @@ public class AssistenteController {
             conversas.exigir(id, auth.getName());
             rateLimiter.checkOrThrow(BUCKET, auth.getName());
             AssistenteMensagemRequest.Contexto ctx = body.getContexto();
+            // Nada de buffer nem compressão entre a API e o navegador (Traefik, Cloudflare, nginx).
+            response.setHeader("Cache-Control", "no-cache, no-transform");
+            response.setHeader("X-Accel-Buffering", "no");
+            response.setHeader("Connection", "keep-alive");
             return orquestrador.iniciarTurno(id, auth.getName(), texto,
                     ctx == null ? null : ctx.getRota(), ctx == null ? null : ctx.getTitulo(), substituirDesde,
                     request.getRemoteAddr(), userAgent(request));
