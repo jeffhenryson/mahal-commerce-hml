@@ -22,5 +22,13 @@ public enum OpenPackageCloseReason {
      * EST-F037 — o atendente marcou "Acabou": a lata fecha sem abrir outra e sem baixa. A próxima
      * sessão do sabor abre uma nova, com {@code SAIDA} de 1, como quando não há lata aberta.
      */
-    FINISHED
+    FINISHED,
+
+    /**
+     * "Repor sozinha" (V202) — a lata atingiu o limite configurado no produto
+     * ({@code autoReplaceLimit}, ou o {@code sessionsPerUnit} da lata) e o servidor a trocou na
+     * mesma transação da sessão, abrindo a próxima com {@code SAIDA} de 1. O front mostra
+     * "Automática".
+     */
+    AUTO_REPLACED
 }

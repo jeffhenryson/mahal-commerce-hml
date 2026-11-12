@@ -121,6 +121,8 @@ public class ProductRepositoryImpl implements ProductRepository {
         entity.setAvailableForTable(product.availableForTable());
         entity.setSessionProduct(product.sessionProduct());
         entity.setSessionsPerUnit(product.sessionsPerUnit());
+        entity.setAutoReplace(product.autoReplace());
+        entity.setAutoReplaceLimit(product.autoReplaceLimit() == null ? null : product.autoReplaceLimit().shortValue());
         entity.setOpenRoshPrice(product.openRoshPrice());
         entity.setCauseAmount(product.pricing().causeAmount());
         entity.getImages().addAll(product.images());
@@ -448,7 +450,9 @@ public class ProductRepositoryImpl implements ProductRepository {
                 status, e.getBrandId(), e.isAvailableForTable(), e.isSessionProduct(), e.getSessionsPerUnit(),
                 e.getOpenRoshPrice(), e.isParentSellable(), e.getSessionTierId(),
                 new SessionModalityFlags(e.isSessionCompraEssencia(), e.isSessionItensPessoais()),
-                e.getKitMode() == null ? null : KitMode.valueOf(e.getKitMode()));
+                e.getKitMode() == null ? null : KitMode.valueOf(e.getKitMode()))
+                .withAutoReplace(e.isAutoReplace(),
+                        e.getAutoReplaceLimit() == null ? null : e.getAutoReplaceLimit().intValue());
     }
 
     private ProductVariant toDomain(ProductVariantEntity e) {

@@ -67,7 +67,9 @@ public record Product(
     boolean parentSellable,
     Long sessionTierId,
     SessionModalityFlags sessionFlags,
-    KitMode kitMode
+    KitMode kitMode,
+    boolean autoReplace,
+    Integer autoReplaceLimit
 ) {
 
     public Product {
@@ -100,6 +102,20 @@ public record Product(
         if (openRoshPrice != null && openRoshPrice.signum() < 0) {
             throw new IllegalArgumentException("openRoshPrice não pode ser negativo: " + openRoshPrice);
         }
+        if (!isValidAutoReplaceLimit(autoReplaceLimit)) {
+            throw new IllegalArgumentException(
+                    "autoReplaceLimit deve estar entre " + AUTO_REPLACE_LIMIT_MIN + " e " + AUTO_REPLACE_LIMIT_MAX
+                            + " quando informado: " + autoReplaceLimit);
+        }
+    }
+
+    /** Faixa aceita para o limite da reposição automática da lata ("Repor sozinha"). */
+    public static final int AUTO_REPLACE_LIMIT_MIN = 1;
+    public static final int AUTO_REPLACE_LIMIT_MAX = 99;
+
+    /** {@code null} é válido: quer dizer "usar o {@code sessionsPerUnit} da lata". */
+    public static boolean isValidAutoReplaceLimit(Integer limit) {
+        return limit == null || (limit >= AUTO_REPLACE_LIMIT_MIN && limit <= AUTO_REPLACE_LIMIT_MAX);
     }
 
     /** Cria um novo produto sem precificação (sem id, ativo por padrão, {@code SIMPLES}). */
@@ -180,7 +196,7 @@ public record Product(
             List<ProductAttribute> attributes, Long categoryId, Long brandId) {
         return new Product(null, sku, name, category, true, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId,
-                null, null, false, false, true, true, ProductStatus.ATIVO, brandId, true, false, null, null, false, null, null, null);
+                null, null, false, false, true, true, ProductStatus.ATIVO, brandId, true, false, null, null, false, null, null, null, false, null);
     }
 
     /** Reconstitui um produto sem precificação a partir de persistência. */
@@ -258,7 +274,7 @@ public record Product(
             List<String> images, List<ProductAttribute> attributes, Long categoryId) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId,
-                null, null, false, false, true, true, null, null, true, false, null, null, false, null, null, null);
+                null, null, false, false, true, true, null, null, true, false, null, null, false, null, null, null, false, null);
     }
 
     /**
@@ -329,7 +345,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, null, null);
+                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, null, null, false, null);
     }
 
     /** Forma canônica completa com o modo do kit (kit pré-montado). */
@@ -345,7 +361,7 @@ public record Product(
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
                 availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId,
-                sessionFlags, kitMode);
+                sessionFlags, kitMode, false, null);
     }
 
     /** Forma canônica completa com as flags de modalidade da sessão (PDV-F061). */
@@ -361,7 +377,7 @@ public record Product(
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
                 availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId,
-                sessionFlags, null);
+                sessionFlags, null, false, null);
     }
 
     /**
@@ -408,14 +424,14 @@ public record Product(
                 newDescription == null ? description : newDescription,
                 newVideoUrl == null ? videoUrl : newVideoUrl,
                 images, attributes, categoryId, barcode, unit, sampleProduct, kitComponentEligible, visibleInPos,
-                visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Ativa ou desativa o produto, preservando o resto. */
     public Product withActive(boolean newActive) {
         return new Product(id, sku, name, category, newActive, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -426,14 +442,14 @@ public record Product(
     public Product withStatus(ProductStatus newStatus) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, newStatus, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, newStatus, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Substitui a precificação do produto, preservando o resto. */
     public Product withPricing(Pricing newPricing) {
         return new Product(id, sku, name, category, active, variants, newPricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -444,7 +460,7 @@ public record Product(
     public Product withType(ProductType newType) {
         return new Product(id, sku, name, category, active, variants, pricing, newType, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -455,21 +471,21 @@ public record Product(
     public Product withLotTracked(boolean newLotTracked) {
         return new Product(id, sku, name, category, active, variants, pricing, type, newLotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Marca ou desmarca o produto como em promoção (Estágio 01 do admin), preservando o resto. */
     public Product withOnSale(boolean newOnSale) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 newOnSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Marca ou desmarca o produto com o selo de super promoção, preservando o resto. */
     public Product withSuperPromo(boolean newSuperPromo) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, newSuperPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -479,7 +495,7 @@ public record Product(
     public Product withImages(List<String> newImages) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, newImages, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -489,7 +505,7 @@ public record Product(
     public Product withAttributes(List<ProductAttribute> newAttributes) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, newAttributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -504,7 +520,7 @@ public record Product(
                 newCategoryName == null ? category : newCategoryName,
                 active, variants, pricing, type, lotTracked, brand, imageUrl, onSale, superPromo, description,
                 videoUrl, images, attributes, newCategoryId, barcode, unit, sampleProduct, kitComponentEligible,
-                visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -515,21 +531,21 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked,
                 newBrandName == null ? brand : newBrandName,
                 imageUrl, onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, newBrandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, newBrandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Define o código de barras/EAN do produto, preservando o resto. {@code null} limpa o campo. */
     public Product withBarcode(String newBarcode) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, newBarcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Define a unidade de medida do produto, preservando o resto. */
     public Product withUnit(MeasurementUnit newUnit) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, newUnit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -539,7 +555,7 @@ public record Product(
     public Product withSampleProduct(boolean newSampleProduct) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                newSampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                newSampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -549,21 +565,21 @@ public record Product(
     public Product withKitComponentEligible(boolean newKitComponentEligible) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, newKitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, newKitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Controla se o produto aparece no PDV, preservando o resto. */
     public Product withVisibleInPos(boolean newVisibleInPos) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, newVisibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, newVisibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /** Controla se o produto aparece no marketplace/app, preservando o resto. */
     public Product withVisibleInMarketplace(boolean newVisibleInMarketplace) {
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, newVisibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, newVisibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -577,7 +593,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                newAvailableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                newAvailableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -592,7 +608,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, newSessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                availableForTable, newSessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -608,7 +624,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, sessionProduct, newSessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                availableForTable, sessionProduct, newSessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -619,7 +635,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, newSessionTierId, sessionFlags, kitMode);
+                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, newSessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -631,7 +647,7 @@ public record Product(
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
                 availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId,
-                newFlags, kitMode);
+                newFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -663,7 +679,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, sessionProduct, sessionsPerUnit, newOpenRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                availableForTable, sessionProduct, sessionsPerUnit, newOpenRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -681,7 +697,7 @@ public record Product(
     public Product withVariants(List<ProductVariant> newVariants) {
         return new Product(id, sku, name, category, active, newVariants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
-                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode);
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId, availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -721,7 +737,7 @@ public record Product(
         return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
-                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, newParentSellable, sessionTierId, sessionFlags, kitMode);
+                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, newParentSellable, sessionTierId, sessionFlags, kitMode, autoReplace, autoReplaceLimit);
     }
 
     /**
@@ -761,7 +777,31 @@ public record Product(
                 onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
                 sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
                 availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId,
-                sessionFlags, newKitMode);
+                sessionFlags, newKitMode, autoReplace, autoReplaceLimit);
+    }
+
+    /**
+     * "Repor sozinha" — liga/desliga a troca automática da lata aberta quando ela atinge o limite
+     * de sessões. Mora no produto base, como o {@code sessionsPerUnit}: as variações herdam.
+     * {@code newLimit == null} = usar o {@code sessionsPerUnit} gravado na lata.
+     */
+    public Product withAutoReplace(boolean newAutoReplace, Integer newLimit) {
+        return new Product(id, sku, name, category, active, variants, pricing, type, lotTracked, brand, imageUrl,
+                onSale, superPromo, description, videoUrl, images, attributes, categoryId, barcode, unit,
+                sampleProduct, kitComponentEligible, visibleInPos, visibleInMarketplace, status, brandId,
+                availableForTable, sessionProduct, sessionsPerUnit, openRoshPrice, parentSellable, sessionTierId,
+                sessionFlags, kitMode, newAutoReplace, newLimit);
+    }
+
+    /**
+     * Quantos usos fazem a lata trocar sozinha: o {@code autoReplaceLimit} do produto ou, sem ele,
+     * o {@code sessionsPerUnit} gravado na própria lata. {@code null} = reposição automática desligada.
+     */
+    public Integer autoReplaceThreshold(int packageSessionsPerUnit) {
+        if (!autoReplace) {
+            return null;
+        }
+        return autoReplaceLimit != null ? autoReplaceLimit : packageSessionsPerUnit;
     }
 
     /** Indica se este produto/kit ainda é rascunho — fora das vitrines que filtram por publicado (EST-F023). */

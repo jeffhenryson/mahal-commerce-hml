@@ -99,6 +99,8 @@ public class ProductDTOConverter {
             var flags = product.sessionFlagsFor(variant.sku());
             variantDto.setSessionCompraEssencia(flags.compraEssencia());
             variantDto.setSessionItensPessoais(flags.itensPessoais());
+            variantDto.setAutoReplace(product.autoReplace());
+            variantDto.setAutoReplaceLimit(product.autoReplaceLimit());
             return variantDto;
         }).toList());
         dto.setPricing(toResponse(product.pricing()));
@@ -115,6 +117,8 @@ public class ProductDTOConverter {
         dto.setAvailableForTable(product.availableForTable());
         dto.setSessionProduct(product.sessionProduct());
         dto.setSessionsPerUnit(product.sessionsPerUnit());
+        dto.setAutoReplace(product.autoReplace());
+        dto.setAutoReplaceLimit(product.autoReplaceLimit());
         dto.setOpenRoshPrice(product.openRoshPrice());
         dto.setSessionTierId(product.sessionTierId());
         dto.setSessionCompraEssencia(product.sessionFlags().compraEssencia());

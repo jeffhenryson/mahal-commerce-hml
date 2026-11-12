@@ -104,6 +104,14 @@ public class ProductEntity {
     @Column(name = "session_itens_pessoais", nullable = false)
     private boolean sessionItensPessoais;
 
+    // "Repor sozinha" (V202) — troca automática da lata aberta ao atingir o limite de sessões.
+    // Limite nulo = usar o sessions_per_unit gravado na lata.
+    @Column(name = "auto_replace", nullable = false)
+    private boolean autoReplace;
+
+    @Column(name = "auto_replace_limit")
+    private Short autoReplaceLimit;
+
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude
     private List<ProductVariantEntity> variants = new ArrayList<>();

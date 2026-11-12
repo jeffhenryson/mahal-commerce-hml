@@ -542,4 +542,42 @@ class ProductTest {
         assertThat(lm.isSellable("LM")).isTrue();
         assertThat(lm.withActive(false).parentSellable()).as("sobrevive às cópias").isTrue();
     }
+
+    // ── "Repor sozinha" (V202) ───────────────────────────────────────────────────────────────
+
+    @Test
+    void autoReplace_nasceDesligado() {
+        Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of());
+
+        assertThat(essencia.autoReplace()).isFalse();
+        assertThat(essencia.autoReplaceThreshold(5)).isNull();
+    }
+
+    @Test
+    void autoReplaceThreshold_usaOLimiteDoProduto_ouOSessionsPerUnitDaLata() {
+        Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of());
+
+        assertThat(essencia.withAutoReplace(true, 6).autoReplaceThreshold(5)).isEqualTo(6);
+        assertThat(essencia.withAutoReplace(true, null).autoReplaceThreshold(5)).isEqualTo(5);
+        assertThat(essencia.withAutoReplace(false, 6).autoReplaceThreshold(5)).isNull();
+    }
+
+    @Test
+    void autoReplaceLimit_foraDe1a99_eRecusado() {
+        Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of());
+
+        assertThatThrownBy(() -> essencia.withAutoReplace(true, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> essencia.withAutoReplace(true, 100)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(essencia.withAutoReplace(true, 99).autoReplaceLimit()).isEqualTo(99);
+    }
+
+    @Test
+    void autoReplace_sobreviveAsCopias() {
+        Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of()).withAutoReplace(true, 6);
+
+        Product copia = essencia.withActive(false).withSessionsPerUnit(5);
+
+        assertThat(copia.autoReplace()).isTrue();
+        assertThat(copia.autoReplaceLimit()).isEqualTo(6);
+    }
 }

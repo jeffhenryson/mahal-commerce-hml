@@ -38,6 +38,7 @@ import com.cernecommerce.adapter.in.dtos.response.PackagingLevelResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.PackagingResponseDTO;
 import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.adapter.in.dtos.request.ReplaceOpenPackageRequest;
+import com.cernecommerce.adapter.in.dtos.request.AutoReplaceRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockConversionRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockTransferRequest;
 import com.cernecommerce.adapter.in.dtos.request.WarehousePatchRequest;
@@ -58,6 +59,7 @@ import com.cernecommerce.adapter.in.dtos.response.ReservationIntegrityMismatchRe
 import com.cernecommerce.adapter.in.dtos.response.StockBalanceResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.AbcEntryResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OpenPackageResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.AutoReplaceResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.OpenPackageYieldResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockConversionResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.StockTransferResponseDTO;
@@ -1168,6 +1170,36 @@ public class EstoqueController {
                 .toList();
         return ResponseEntity.ok(new PageResult<>(mapped, result.page(), result.size(), result.totalElements(),
                 result.totalPages()));
+    }
+
+    @Operation(summary = "\"Repor sozinha\": troca automática da lata de uma essência",
+            description = "Com `enabled`, a sessão que fizer a lata atingir `limit` usos (ou, com `limit` "
+                    + "nulo, o `sessionsPerUnit` gravado na lata) fecha a lata com `AUTO_REPLACED` e abre a "
+                    + "próxima com baixa de 1 do depósito das latas, na mesma transação. Sem saldo, a sessão "
+                    + "passa e a lata continua aberta.\n\n"
+                    + "A configuração mora no **produto base**: pedida para uma variação, vale para todas as "
+                    + "variações do produto.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Gravada"),
+            @ApiResponse(responseCode = "400", description = "Limite fora de 1..99 ou ligado sem limite num "
+                    + "produto sem sessionsPerUnit (AUTO_REPLACE_INVALID_LIMIT), ou produto que não é de "
+                    + "sessão (NOT_A_PACKAGED_SESSION_PRODUCT)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "SKU não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @PutMapping("/open-packages/{sku}/auto-replace")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_STOCK_MANAGE','PDV_COMANDA_MANAGE')")
+    public ResponseEntity<AutoReplaceResponseDTO> setAutoReplace(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody AutoReplaceRequest request, Authentication authentication) {
+        Product saved = estoqueUseCase.setAutoReplace(sku, request.getEnabled(), request.getLimit());
+        Map<String, Object> details = new java.util.HashMap<>();
+        details.put("sku", sku);
+        details.put("enabled", saved.autoReplace());
+        details.put("limit", saved.autoReplaceLimit() == null ? "sessionsPerUnit" : saved.autoReplaceLimit());
+        publisher.publishEvent(AuditEvent.of(EventType.OPEN_PACKAGE_AUTO_REPLACE_SET, authentication.getName(),
+                details));
+        return ResponseEntity.ok(new AutoReplaceResponseDTO(sku, saved.autoReplace(), saved.autoReplaceLimit()));
     }
 
     @Operation(summary = "A lata aberta de um SKU (EST-F027)",

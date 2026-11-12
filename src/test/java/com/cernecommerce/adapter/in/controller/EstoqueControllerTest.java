@@ -922,12 +922,12 @@ public class EstoqueControllerTest {
                 e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.OPEN_PACKAGE_FINISHED));
     }
 
-    // ── Salão › Essências: histórico das latas ────────────────────────────────
+    // ── Salão › Essências: histórico e "Repor sozinha" (V202) ────────────────────────────────
 
     @Test
     void openPackageHistory_returns_200_paginado_comCloseReason() throws Exception {
         OpenPackage fechada = OpenPackage.open("ESSE-BLUE", 1L, 5, "joao", Instant.now()).withUses(6)
-                .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.REPLACED,
+                .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.AUTO_REPLACED,
                         Instant.now());
         when(estoqueUseCase.closedPackageHistory("ESSE-BLUE", "SALAO", LocalDate.of(2026, 11, 1),
                 LocalDate.of(2026, 11, 10), 0, 50))
@@ -946,7 +946,7 @@ public class EstoqueControllerTest {
                 .andExpect(jsonPath("$.content[0].warehouseCode").value("SALAO"))
                 .andExpect(jsonPath("$.content[0].uses").value(6))
                 .andExpect(jsonPath("$.content[0].sessionsPerUnit").value(5))
-                .andExpect(jsonPath("$.content[0].closeReason").value("REPLACED"))
+                .andExpect(jsonPath("$.content[0].closeReason").value("AUTO_REPLACED"))
                 .andExpect(jsonPath("$.content[0].closedAt").isNotEmpty())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.page").value(0))
@@ -962,6 +962,64 @@ public class EstoqueControllerTest {
                         .param("to", "2026-11-01"))
                 .andExpect(status().isBadRequest());
         verify(estoqueUseCase, never()).closedPackageHistory(any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void setAutoReplace_returns_200_comOSkuPedido_ePublicaOEvento() throws Exception {
+        when(estoqueUseCase.setAutoReplace("ESSE-BLUE-MENTA", true, 6))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())
+                        .withAutoReplace(true, 6));
+
+        mockMvc.perform(put("/estoque/open-packages/ESSE-BLUE-MENTA/auto-replace")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"limit\":6}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sku").value("ESSE-BLUE-MENTA"))
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.limit").value(6));
+
+        verify(publisher, times(1)).publishEvent(argThat((Object e) -> e instanceof AuditEvent audit
+                && audit.type() == AuditEvent.EventType.OPEN_PACKAGE_AUTO_REPLACE_SET));
+    }
+
+    @Test
+    void setAutoReplace_limiteInvalido_returns_400_comErrorCode() throws Exception {
+        when(estoqueUseCase.setAutoReplace("ESSE-BLUE", true, 0)).thenThrow(
+                new com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException("limite"));
+
+        mockMvc.perform(put("/estoque/open-packages/ESSE-BLUE/auto-replace")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"limit\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("AUTO_REPLACE_INVALID_LIMIT"));
+    }
+
+    @Test
+    void setAutoReplace_produtoQueNaoEDeSessao_returns_400_comErrorCode() throws Exception {
+        when(estoqueUseCase.setAutoReplace("CARVAO", true, 6)).thenThrow(
+                new com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException("CARVAO"));
+
+        mockMvc.perform(put("/estoque/open-packages/CARVAO/auto-replace")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"limit\":6}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("NOT_A_PACKAGED_SESSION_PRODUCT"));
+    }
+
+    @Test
+    void listProducts_trazAutoReplace_noProdutoENasVariacoes() throws Exception {
+        when(estoqueUseCase.listProducts(eq(0), eq(20), any(), any(), any()))
+                .thenReturn(new PageResult<>(List.of(product("ZOMO").withAutoReplace(true, 6)), 0, 20, 1L, 1));
+
+        mockMvc.perform(get("/estoque/products"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].autoReplace").value(true))
+                .andExpect(jsonPath("$.content[0].autoReplaceLimit").value(6))
+                .andExpect(jsonPath("$.content[0].variants[0].autoReplace").value(true))
+                .andExpect(jsonPath("$.content[0].variants[0].autoReplaceLimit").value(6));
     }
 
     @Test

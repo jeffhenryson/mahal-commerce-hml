@@ -59,6 +59,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // EST-F033 — cadastrar uma lata que já estava aberta é a única entrada no contador sem
         // SAIDA por trás: sem este evento, nada diria quem declarou quantas sessões ela tinha.
         OPEN_PACKAGE_REGISTERED,
+        // "Repor sozinha" (V202) — quem ligou a troca automática e com que limite; e cada troca feita
+        // pelo SISTEMA, que não tem autor humano (mesma lógica de STOCK_PACKAGE_BROKEN).
+        OPEN_PACKAGE_AUTO_REPLACE_SET, OPEN_PACKAGE_AUTO_REPLACED,
         // EST-F032 — ligar/desligar embalagem muda o que a próxima venda faz sozinha (abrir maço,
         // abrir carteira); a quebra em si é decisão do SISTEMA, sem autor humano, e por isso tem
         // evento próprio além dos dois movimentos no ledger.

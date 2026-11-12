@@ -990,6 +990,17 @@ public interface EstoqueUseCase {
             java.time.LocalDate to, int page, int size);
 
     /**
+     * "Repor sozinha" — liga/desliga a troca automática da lata do sabor. Grava no produto base: as
+     * variações herdam. {@code limit} nulo = usar o {@code sessionsPerUnit} da lata.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException produto
+     *         que não é de sessão
+     * @throws com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException limite fora
+     *         de 1..99, ou ligado sem limite num produto sem {@code sessionsPerUnit}
+     */
+    Product setAutoReplace(String sku, boolean enabled, Integer limit);
+
+    /**
      * EST-F037 — o rendimento real por sabor: as latas <b>fechadas</b> no período (por
      * {@code closed_at}; limites nulos = sem limite) com ao menos um uso, agrupadas por SKU. A lata
      * reposta logo depois de aberta, por engano, distorceria a média — por isso {@code uses > 0}.

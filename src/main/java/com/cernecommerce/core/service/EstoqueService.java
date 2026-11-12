@@ -55,6 +55,7 @@ import com.cernecommerce.core.domain.exception.estoque.StockReservationNotFoundE
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedLotInfoException;
 import com.cernecommerce.core.domain.exception.estoque.UnexpectedUnitCostException;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
+import com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidPackagingException;
@@ -1602,7 +1603,52 @@ public class EstoqueService implements EstoqueUseCase {
                     ? openSalaoPackage(sku, warehouse, product.sessionsPerUnit(), username)
                     : openPackage(sku, warehouse, product.sessionsPerUnit(), username);
         }
-        return openPackageRepository.save(current.withUses(sessions));
+        OpenPackage consumed = current.withUses(sessions);
+        // "Repor sozinha" — o limite compara com o sessionsPerUnit gravado NA LATA, não o do cadastro
+        // de hoje. A sessão que atingiu o limite conta na lata velha, que é a devolvida: o contador
+        // da linha da comanda mostra a lata em que a sessão caiu.
+        Integer threshold = product.autoReplaceThreshold(consumed.sessionsPerUnit());
+        if (threshold != null && consumed.uses() >= threshold) {
+            return autoReplace(consumed, warehouse, product, username);
+        }
+        return openPackageRepository.save(consumed);
+    }
+
+    /**
+     * Troca automática da lata ("Repor sozinha"), na transação da sessão. Mesma ordem e mesma
+     * {@code SAIDA} do {@link #replaceOpenPackage}: abre a nova (baixa 1), fecha a velha com
+     * {@code AUTO_REPLACED} e grava a nova com {@code uses = 0}.
+     *
+     * <p>Sem saldo, <b>não</b> falha a sessão: a lata fica aberta (passa a {@code exhausted}) e o
+     * caso vai para o log. O saldo é conferido <b>antes</b> de qualquer escrita, e não pegando a
+     * exceção depois, por dois motivos: a SAIDA do caixa pode quebrar embalagem e gravar movimentos
+     * antes de faltar saldo, e uma exceção que atravessa um método {@code @Transactional} do proxy
+     * marca a transação inteira — a da sessão — para rollback. Por isso também, no caixa, a troca
+     * automática não abre embalagem: só usa o saldo direto do sabor.</p>
+     */
+    private OpenPackage autoReplace(OpenPackage consumed, Warehouse warehouse, Product product, String username) {
+        String sku = consumed.sku();
+        BigDecimal available = stockBalanceRepository.findBySkuAndWarehouseId(sku, warehouse.id())
+                .map(StockBalance::availableQuantity).orElse(BigDecimal.ZERO);
+        if (available.compareTo(BigDecimal.ONE) < 0) {
+            log.warn("estoque.open-package.auto-replace.sem-saldo sku={} warehouse={} uses={}",
+                    sku, warehouse.code(), consumed.uses());
+            return openPackageRepository.save(consumed);
+        }
+        int sessionsPerUnit = product.sessionsPerUnit();
+        OpenPackage replacement = warehouse.type() == WarehouseType.SALAO
+                ? openSalaoPackage(sku, warehouse, sessionsPerUnit, username)
+                : openPackage(sku, warehouse, sessionsPerUnit, username);
+        // Fechada e gravada já, pelo mesmo motivo do replace: o índice parcial da V124.
+        OpenPackage closed = openPackageRepository.saveAndFlush(
+                consumed.closed(OpenPackageCloseReason.AUTO_REPLACED, Instant.now()));
+        openPackageRepository.save(replacement);
+        auditEvents.publish(AuditEvent.of(AuditEvent.EventType.OPEN_PACKAGE_AUTO_REPLACED, username, Map.of(
+                "sku", sku,
+                "warehouseCode", warehouse.code(),
+                "usesOnClosed", closed.uses(),
+                "sessionsPerUnit", closed.sessionsPerUnit())));
+        return closed;
     }
 
     @Override
@@ -1713,6 +1759,25 @@ public class EstoqueService implements EstoqueUseCase {
         Long warehouseId = warehouse.type() == WarehouseType.SALAO ? null : warehouse.id();
         return openPackageRepository.findClosed(sku, warehouseId, lower, upper, Math.max(0, page),
                 Math.min(Math.max(1, size), OPEN_PACKAGE_HISTORY_MAX_SIZE));
+    }
+
+    @Override
+    @Transactional
+    public Product setAutoReplace(String sku, boolean enabled, Integer limit) {
+        Product product = productRepository.findByAnySku(sku)
+                .orElseThrow(() -> new ProductNotFoundException(sku));
+        if (!product.sessionProduct()) {
+            throw new NotAPackagedSessionProductException(sku);
+        }
+        if (!Product.isValidAutoReplaceLimit(limit)) {
+            throw new AutoReplaceInvalidLimitException("O limite da reposição automática deve estar entre "
+                    + Product.AUTO_REPLACE_LIMIT_MIN + " e " + Product.AUTO_REPLACE_LIMIT_MAX + ": " + limit);
+        }
+        if (enabled && limit == null && product.sessionsPerUnit() == null) {
+            throw new AutoReplaceInvalidLimitException("Informe o limite: o produto " + product.sku()
+                    + " não tem sessões por lata cadastradas para usar como padrão");
+        }
+        return productRepository.save(product.withAutoReplace(enabled, limit));
     }
 
     /** EST-F037 — "Acabou". Ver {@link EstoqueUseCase#finishOpenPackage}. */

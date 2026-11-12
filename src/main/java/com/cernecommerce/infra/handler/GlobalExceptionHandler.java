@@ -62,6 +62,7 @@ import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableExceptio
 import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
+import com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException;
 import com.cernecommerce.core.domain.exception.estoque.ProductArchivedException;
 import com.cernecommerce.core.domain.exception.estoque.ProductHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.ProductIsDraftException;
@@ -582,6 +583,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleNotAPackagedSessionProduct(NotAPackagedSessionProductException ex,
             HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "NOT_A_PACKAGED_SESSION_PRODUCT", req);
+    }
+
+    @ExceptionHandler(AutoReplaceInvalidLimitException.class)
+    public ResponseEntity<ApiError> handleAutoReplaceInvalidLimit(AutoReplaceInvalidLimitException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "AUTO_REPLACE_INVALID_LIMIT", req);
     }
 
     @ExceptionHandler(ReplenishmentItemNotFoundException.class)

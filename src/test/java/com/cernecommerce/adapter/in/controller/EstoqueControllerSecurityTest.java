@@ -1732,6 +1732,29 @@ public class EstoqueControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** "Repor sozinha": mesma régua do /replace. O 404 é do SKU ausente na base de teste. */
+    @Test
+    void auto_replace_with_comanda_manage_reaches_the_route() throws Exception {
+        mockMvc.perform(put("/estoque/open-packages/ESSE-BLUE/auto-replace")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"limit\":6}")
+                .with(user("atendente").authorities(
+                        new SimpleGrantedAuthority("ROLE_ATENDENTE"),
+                        new SimpleGrantedAuthority("PDV_COMANDA_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void auto_replace_with_product_read_only_returns_403() throws Exception {
+        mockMvc.perform(put("/estoque/open-packages/ESSE-BLUE/auto-replace")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":true,\"limit\":6}")
+                .with(user("bob").authorities(
+                        new SimpleGrantedAuthority("ROLE_ATENDENTE"),
+                        new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isForbidden());
+    }
+
     /** Só leitura de catálogo não cadastra lata: ela muda o que a próxima sessão consome. */
     @Test
     void register_open_package_with_product_read_only_returns_403() throws Exception {

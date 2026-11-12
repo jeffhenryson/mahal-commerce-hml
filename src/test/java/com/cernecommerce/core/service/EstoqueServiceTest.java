@@ -18,6 +18,7 @@ import com.cernecommerce.core.domain.exception.estoque.PackagingNotFoundExceptio
 import com.cernecommerce.core.domain.exception.estoque.ParentNotSellableException;
 import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException;
+import com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException;
 import com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageAlreadyOpenException;
 import com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException;
@@ -4889,6 +4890,138 @@ class EstoqueServiceTest {
         assertThat(mesma.isOpen()).isTrue();
         verify(openPackageRepository, never()).save(argThat(p -> p.closeReason() != null));
         verifyNoInteractions(stockMovementRepository);
+    }
+
+    // ── "Repor sozinha" (V202) ───────────────────────────────────────────────────────────────
+
+    /**
+     * A sessão que faz a lata atingir o limite fecha a lata com AUTO_REPLACED, abre a próxima com
+     * SAIDA de 1 e uses = 0, na mesma chamada. A sessão conta na lata velha, que é a devolvida.
+     */
+    @Test
+    void consumeSession_atingindoOLimite_trocaALataSozinha_eBaixaUmaUnidade() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE"))
+                .thenReturn(Optional.of(essenciaDeSessao(5).withAutoReplace(true, 4)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(3)));
+        comSaldoDeEssencia("49.000");
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(openPackageRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage velha = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
+
+        assertThat(velha.uses()).isEqualTo(4);
+        assertThat(velha.closeReason()).isEqualTo(OpenPackageCloseReason.AUTO_REPLACED);
+        assertThat(velha.closedAt()).isNotNull();
+        InOrder ordem = inOrder(openPackageRepository);
+        ordem.verify(openPackageRepository).saveAndFlush(argThat(p ->
+                p.closeReason() == OpenPackageCloseReason.AUTO_REPLACED && p.uses() == 4));
+        ordem.verify(openPackageRepository).save(argThat(p -> p.isOpen() && p.uses() == 0));
+        verify(stockMovementRepository, times(1)).save(argThat(m -> m.type() == MovementType.SAIDA
+                && m.quantity().compareTo(BigDecimal.ONE) == 0
+                && m.reason().contains("Abertura de lata")));
+    }
+
+    /** Sem limite próprio, compara com o sessionsPerUnit gravado na LATA (5), não com o do cadastro (8). */
+    @Test
+    void consumeSession_semLimiteProprio_usaOSessionsPerUnitDaLata() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE"))
+                .thenReturn(Optional.of(essenciaDeSessao(8).withAutoReplace(true, null)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(4)));
+        comSaldoDeEssencia("10.000");
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(openPackageRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage velha = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
+
+        assertThat(velha.uses()).isEqualTo(5);
+        assertThat(velha.closeReason()).isEqualTo(OpenPackageCloseReason.AUTO_REPLACED);
+        // A lata nova nasce com a estimativa do cadastro de hoje.
+        verify(openPackageRepository).save(argThat(p -> p.isOpen() && p.sessionsPerUnit() == 8));
+    }
+
+    /**
+     * Sem saldo para a próxima, a sessão NÃO falha: a lata continua aberta (passa a exhausted) e
+     * nada sai do estoque.
+     */
+    @Test
+    void consumeSession_atingindoOLimiteSemSaldo_naoFalha_eALataContinuaAberta() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE"))
+                .thenReturn(Optional.of(essenciaDeSessao(5).withAutoReplace(true, null)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(4)));
+        comSaldoDeEssencia("0.000");
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage lata = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
+
+        assertThat(lata.uses()).isEqualTo(5);
+        assertThat(lata.isOpen()).isTrue();
+        assertThat(lata.isExhausted()).isTrue();
+        verify(openPackageRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(stockMovementRepository);
+        verify(stockBalanceRepository, never()).save(any());
+    }
+
+    /** Desligada, nada muda: a lata segue aberta além do limite até alguém marcar "Acabou" ou "Repor". */
+    @Test
+    void consumeSession_comAutoReplaceDesligado_naoTrocaALata() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(productRepository.findByAnySku("ESSE-BLUE"))
+                .thenReturn(Optional.of(essenciaDeSessao(5).withAutoReplace(false, 2)));
+        when(openPackageRepository.findOpenForUpdate("ESSE-BLUE", 1L)).thenReturn(Optional.of(lataAberta(4)));
+        when(openPackageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OpenPackage lata = estoqueService.consumeSession("ESSE-BLUE", "LOJA-01", BigDecimal.ONE, "atendente");
+
+        assertThat(lata.uses()).isEqualTo(5);
+        assertThat(lata.isOpen()).isTrue();
+        verify(openPackageRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(stockMovementRepository);
+    }
+
+    @Test
+    void setAutoReplace_gravaNoProdutoBase() {
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product salvo = estoqueService.setAutoReplace("ESSE-BLUE", true, 6);
+
+        assertThat(salvo.autoReplace()).isTrue();
+        assertThat(salvo.autoReplaceLimit()).isEqualTo(6);
+    }
+
+    @Test
+    void setAutoReplace_comLimiteForaDaFaixa_eRecusado() {
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(5)));
+
+        assertThatThrownBy(() -> estoqueService.setAutoReplace("ESSE-BLUE", true, 0))
+                .isInstanceOf(AutoReplaceInvalidLimitException.class);
+        assertThatThrownBy(() -> estoqueService.setAutoReplace("ESSE-BLUE", true, 100))
+                .isInstanceOf(AutoReplaceInvalidLimitException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void setAutoReplace_ligadoSemLimiteNumProdutoSemSessionsPerUnit_eRecusado() {
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(essenciaDeSessao(null)));
+
+        assertThatThrownBy(() -> estoqueService.setAutoReplace("ESSE-BLUE", true, null))
+                .isInstanceOf(AutoReplaceInvalidLimitException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void setAutoReplace_produtoQueNaoEDeSessao_eRecusado() {
+        when(productRepository.findByAnySku("ESSE-BLUE")).thenReturn(Optional.of(
+                Product.of(1L, "ESSE-BLUE", "Zgy Blueberry", "essencia", true, List.of())));
+
+        assertThatThrownBy(() -> estoqueService.setAutoReplace("ESSE-BLUE", true, 6))
+                .isInstanceOf(NotAPackagedSessionProductException.class);
+        verify(productRepository, never()).save(any());
     }
 
     /** Dias inclusivos no fuso da loja: 05/11 inteiro, de 00:00 a 23:59:59.999 em São Paulo (UTC-3). */
