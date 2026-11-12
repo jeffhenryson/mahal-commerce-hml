@@ -56,6 +56,7 @@ public class UserDTOConverter {
         dto.setCreatedAt(user.getCreatedAt());
         dto.setRoles(roles(user));
         dto.setPermissions(permissions(user));
+        dto.setCustomerId(user.getCustomerId());
         return dto;
     }
 

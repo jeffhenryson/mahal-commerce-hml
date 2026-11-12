@@ -81,7 +81,10 @@ class SecurityArchitectureTest {
     // getPublicConfig é GET /system/config/public, permitAll() em SecurityConfig.
     private static final Set<String> SELF_SERVICE_METHODS = Set.of(
             "UserController#me", "UserController#changeOwnPassword", "UserController#updateOwnProfile",
-            "SystemConfigController#getPublicConfig");
+            "SystemConfigController#getPublicConfig",
+            // GET /shop/catalog/{sku}/kit-items — conteúdo do kit pré-montado no app, permitAll() em
+            // SecurityConfig, mesma visibilidade de GET /shop/catalog/{sku} (sem custo).
+            "KitItemCatalogController#listPublicKitItems");
 
     static JavaClasses classes;
 

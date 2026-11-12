@@ -28,6 +28,14 @@ public class OfflineSaleRequest {
 
     private Long customerId;
 
+    @jakarta.validation.constraints.Min(1)
+    @jakarta.validation.constraints.Max(5)
+    @Schema(description = "Desconto do chefe (1–5), como na venda online: o valor rateado em `items[].discountAmount` "
+            + "tem que bater com percent × base elegível. Omitido (caixa antigo): o desconto concedido é aceito até "
+            + "o teto de 5% sobre a base elegível. Em ambos, desconto numa linha fora dos benefícios recusa a venda "
+            + "(DISCOUNT_LIMIT_EXCEEDED).", example = "5", minimum = "1", maximum = "5")
+    private Integer bossDiscountPercent;
+
     @NotEmpty
     @Valid
     private List<SaleItemRequest> items;

@@ -50,6 +50,52 @@
 			<version>3.0.0</version>
 		</dependency>
 
+		<!-- SDK oficial da Anthropic (Claude) — assistente de IA do admin -->
+		<dependency>
+			<groupId>com.anthropic</groupId>
+			<artifactId>anthropic-java</artifactId>
+			<version>2.34.0</version>
+			<exclusions>
+				<!-- Traz swagger-annotations 2.2.x não-jakarta, que compete com o swagger-annotations-jakarta do
+				     springdoc (mesmo pacote de classes) e derruba GET /v3/api-docs com
+				     NoSuchMethodError: Schema.$dynamicRef(). O jar jakarta do springdoc atende o SDK. -->
+				<exclusion>
+					<groupId>io.swagger.core.v3</groupId>
+					<artifactId>swagger-annotations</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- SDKs oficiais da OpenAI (ChatGPT) e do Google (Gemini) — provedores alternativos do assistente -->
+		<dependency>
+			<groupId>com.openai</groupId>
+			<artifactId>openai-java</artifactId>
+			<version>4.101.0</version>
+			<exclusions>
+				<!-- Traz swagger-annotations 2.2.x não-jakarta, que compete com o swagger-annotations-jakarta do
+				     springdoc (mesmo pacote de classes) e derruba GET /v3/api-docs com
+				     NoSuchMethodError: Schema.$dynamicRef(). O jar jakarta do springdoc atende o SDK. -->
+				<exclusion>
+					<groupId>io.swagger.core.v3</groupId>
+					<artifactId>swagger-annotations</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>com.google.genai</groupId>
+			<artifactId>google-genai</artifactId>
+			<version>2.0.0</version>
+			<exclusions>
+				<!-- Traz swagger-annotations 2.2.x não-jakarta, que compete com o swagger-annotations-jakarta do
+				     springdoc (mesmo pacote de classes) e derruba GET /v3/api-docs com
+				     NoSuchMethodError: Schema.$dynamicRef(). O jar jakarta do springdoc atende o SDK. -->
+				<exclusion>
+					<groupId>io.swagger.core.v3</groupId>
+					<artifactId>swagger-annotations</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
 		<!-- Tests (JUnit 5, Mockito, Spring Test) -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

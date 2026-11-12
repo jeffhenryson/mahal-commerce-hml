@@ -43,6 +43,7 @@ import com.cernecommerce.core.domain.exception.ecommerce.CartEmptyException;
 import com.cernecommerce.core.domain.exception.ecommerce.CartItemNotFoundException;
 import com.cernecommerce.core.domain.exception.financeiro.CashFlowEntryNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.BarcodeNotFoundException;
+import com.cernecommerce.core.domain.exception.estoque.InvalidReorderCriticalQuantityException;
 import com.cernecommerce.core.domain.exception.estoque.DefaultWarehouseNotConfiguredException;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
 import com.cernecommerce.core.domain.exception.estoque.BrandNotFoundException;
@@ -68,6 +69,14 @@ import com.cernecommerce.core.domain.exception.estoque.ProductNotDraftException;
 import com.cernecommerce.core.domain.exception.estoque.VariantHasStockHistoryException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateSkuException;
 import com.cernecommerce.core.domain.exception.estoque.DraftLimitReachedException;
+import com.cernecommerce.core.domain.exception.assistente.AcaoEmExecucaoException;
+import com.cernecommerce.core.domain.exception.assistente.AcaoExpiradaException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteNaoConfiguradoException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteOcupadoException;
+import com.cernecommerce.core.domain.exception.assistente.AssistenteProvedorException;
+import com.cernecommerce.core.domain.exception.assistente.ConversaNaoEncontradaException;
+import com.cernecommerce.core.domain.exception.assistente.MensagemNaoEncontradaException;
+import com.cernecommerce.core.domain.exception.assistente.TituloInvalidoException;
 import com.cernecommerce.core.domain.exception.estoque.DuplicateWarehouseCodeException;
 import com.cernecommerce.core.domain.exception.estoque.LotTrackedTransferUnsupportedException;
 import com.cernecommerce.core.domain.exception.estoque.SalaoSemEstoqueException;
@@ -207,6 +216,14 @@ import com.cernecommerce.core.domain.exception.pdv.NotAnOpenRoshException;
 import com.cernecommerce.core.domain.exception.pdv.SessionTierNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
+import com.cernecommerce.core.domain.exception.pdv.SessionModalityDuploException;
+import com.cernecommerce.core.domain.exception.pdv.SessionEssenceNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionCollectedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionAddonNotAfterDeliveryException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPackagePaidException;
+import com.cernecommerce.core.domain.exception.pdv.SessionLinkedLineException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPackagesRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionFlavorNotInPackagesException;
 import com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException;
 import com.cernecommerce.core.domain.exception.pdv.NotASessionLineException;
 import com.cernecommerce.core.domain.exception.pdv.NoPayLaterSessionException;
@@ -319,6 +336,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ApiError> handleUserNotFound(UserNotFoundException ex, HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "USER_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.user.UserCustomerNotLinkedException.class)
+    public ResponseEntity<ApiError> handleUserCustomerNotLinked(
+            com.cernecommerce.core.domain.exception.user.UserCustomerNotLinkedException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "USER_CUSTOMER_NOT_LINKED", req);
     }
 
     @ExceptionHandler(RoleNotFoundException.class)
@@ -683,6 +706,51 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "KIT_INITIAL_STOCK_NOT_ALLOWED", req);
     }
 
+    // ── Assistente de IA ──────────────────────────────────────────────────────
+
+    @ExceptionHandler(ConversaNaoEncontradaException.class)
+    public ResponseEntity<ApiError> handleConversaNaoEncontrada(ConversaNaoEncontradaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CONVERSA_NAO_ENCONTRADA", req);
+    }
+
+    @ExceptionHandler(MensagemNaoEncontradaException.class)
+    public ResponseEntity<ApiError> handleMensagemNaoEncontrada(MensagemNaoEncontradaException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "MENSAGEM_NAO_ENCONTRADA", req);
+    }
+
+    @ExceptionHandler(TituloInvalidoException.class)
+    public ResponseEntity<ApiError> handleTituloInvalido(TituloInvalidoException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "VALIDATION_ERROR", req);
+    }
+
+    @ExceptionHandler(AcaoExpiradaException.class)
+    public ResponseEntity<ApiError> handleAcaoExpirada(AcaoExpiradaException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ACAO_EXPIRADA", req);
+    }
+
+    @ExceptionHandler(AcaoEmExecucaoException.class)
+    public ResponseEntity<ApiError> handleAcaoEmExecucao(AcaoEmExecucaoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ACAO_EM_EXECUCAO", req);
+    }
+
+    @ExceptionHandler(AssistenteNaoConfiguradoException.class)
+    public ResponseEntity<ApiError> handleAssistenteNaoConfigurado(AssistenteNaoConfiguradoException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ASSISTENTE_NAO_CONFIGURADO", req);
+    }
+
+    @ExceptionHandler(AssistenteOcupadoException.class)
+    public ResponseEntity<ApiError> handleAssistenteOcupado(AssistenteOcupadoException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "ASSISTENTE_OCUPADO", req);
+    }
+
+    @ExceptionHandler(AssistenteProvedorException.class)
+    public ResponseEntity<ApiError> handleAssistenteProvedor(AssistenteProvedorException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_GATEWAY, ex.getMessage(), "ASSISTENTE_PROVEDOR", req);
+    }
+
     @ExceptionHandler(DraftLimitReachedException.class)
     public ResponseEntity<ApiError> handleDraftLimitReached(DraftLimitReachedException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "DRAFT_LIMIT_REACHED", req);
@@ -693,6 +761,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "KIT_DIRECT_ADJUSTMENT", req);
     }
+
 
     @ExceptionHandler(KitCostNotEditableException.class)
     public ResponseEntity<ApiError> handleKitCostNotEditable(KitCostNotEditableException ex, HttpServletRequest req) {
@@ -909,6 +978,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OrderNotExchangeableException.class)
     public ResponseEntity<ApiError> handleOrderNotExchangeable(OrderNotExchangeableException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "ORDER_NOT_EXCHANGEABLE", req);
+    }
+
+    /** V199 — nível crítico fora de {@code 0 ≤ crítico < mínimo} no ponto de reposição. */
+    @ExceptionHandler(InvalidReorderCriticalQuantityException.class)
+    public ResponseEntity<ApiError> handleInvalidReorderCritical(InvalidReorderCriticalQuantityException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), "REORDER_CRITICAL_INVALID", req);
     }
 
     @ExceptionHandler(ExchangeItemInvalidException.class)
@@ -1827,6 +1903,49 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ASSET_UNAVAILABLE", req);
     }
 
+    // PDV-F061 — modalidades da sessão e adicional após a entrega.
+    @ExceptionHandler(SessionModalityDuploException.class)
+    public ResponseEntity<ApiError> handleSessionModalityDuplo(SessionModalityDuploException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_MODALITY_DUPLO", req);
+    }
+
+    @ExceptionHandler(SessionEssenceNotAllowedException.class)
+    public ResponseEntity<ApiError> handleSessionEssenceNotAllowed(SessionEssenceNotAllowedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ESSENCE_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(SessionCollectedException.class)
+    public ResponseEntity<ApiError> handleSessionCollected(SessionCollectedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_COLLECTED", req);
+    }
+
+    @ExceptionHandler(SessionAddonNotAfterDeliveryException.class)
+    public ResponseEntity<ApiError> handleSessionAddonNotAfterDelivery(SessionAddonNotAfterDeliveryException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ADDON_NOT_AFTER_DELIVERY", req);
+    }
+
+    @ExceptionHandler(SessionPackagePaidException.class)
+    public ResponseEntity<ApiError> handleSessionPackagePaid(SessionPackagePaidException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_PACKAGE_PAID", req);
+    }
+
+    @ExceptionHandler(SessionPackagesRequiredException.class)
+    public ResponseEntity<ApiError> handleSessionPackagesRequired(SessionPackagesRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_PACKAGES_REQUIRED", req);
+    }
+
+    @ExceptionHandler(SessionFlavorNotInPackagesException.class)
+    public ResponseEntity<ApiError> handleSessionFlavorNotInPackages(SessionFlavorNotInPackagesException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SESSION_FLAVOR_NOT_IN_PACKAGES", req);
+    }
+
+    @ExceptionHandler(SessionLinkedLineException.class)
+    public ResponseEntity<ApiError> handleSessionLinkedLine(SessionLinkedLineException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_LINKED_LINE", req);
+    }
+
     @ExceptionHandler(SessionMenuConflictException.class)
     public ResponseEntity<ApiError> handleSessionMenuConflict(SessionMenuConflictException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_MENU_CONFLICT", req);
@@ -2185,6 +2304,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DiscountLimitExceededException.class)
     public ResponseEntity<ApiError> handleDiscountLimit(DiscountLimitExceededException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "DISCOUNT_LIMIT_EXCEEDED", req);
+    }
+
+    /**
+     * Desconto do chefe e resgate de cashback na mesma venda/fechamento: é um ou outro, nunca os dois.
+     * 409 como {@code DISCOUNT_LIMIT_EXCEEDED} — o corpo é válido, o que conflita é a regra comercial.
+     */
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.pedido.BenefitConflictException.class)
+    public ResponseEntity<ApiError> handleBenefitConflict(
+            com.cernecommerce.core.domain.exception.pedido.BenefitConflictException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "BENEFIT_CONFLICT", req);
     }
 
     /**

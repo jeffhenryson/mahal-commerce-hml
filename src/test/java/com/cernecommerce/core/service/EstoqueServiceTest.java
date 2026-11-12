@@ -1,5 +1,6 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.model.estoque.KitMode;
 import com.cernecommerce.core.domain.exception.estoque.BrandHasProductsException;
 import com.cernecommerce.core.domain.exception.estoque.BrandNotFoundException;
 import com.cernecommerce.core.domain.exception.estoque.DraftLimitReachedException;
@@ -155,6 +156,7 @@ class EstoqueServiceTest {
     @Mock com.cernecommerce.core.ports.out.estoque.SkuPackagingRepository skuPackagingRepository;
     @Mock com.cernecommerce.core.ports.out.notification.ManagerNotificationPort managerNotificationPort;
     @Mock com.cernecommerce.core.ports.out.event.AuditEventPublisherPort auditEventPublisherPort;
+    @Mock com.cernecommerce.core.ports.out.estoque.KitItemRepository kitItemRepository;
 
     /** Mesmo default de {@code estoque.reservation.default-ttl} em {@code CoreBeanConfig}. */
     private static final Duration RESERVATION_TTL = Duration.ofMinutes(30);
@@ -180,7 +182,8 @@ class EstoqueServiceTest {
                 stockReservationRepository, notificationUseCase, userRepository, immediateExecutor,
                 RESERVATION_TTL, kitComponentRepository, stockLotRepository, systemConfigPort, categoryRepository,
                 brandRepository, attributeTypeRepository, replenishmentListRepository, openPackageRepository,
-                managerNotificationPort, auditEventPublisherPort, skuPackagingRepository);
+                managerNotificationPort, auditEventPublisherPort, skuPackagingRepository, null, false,
+                kitItemRepository);
         lenient().when(reorderPointRepository.findBySkuAndWarehouseId(any(), any())).thenReturn(Optional.empty());
         // Padrão dos testes: o SKU existe no catálogo, que é a pré-condição das movimentações.
         // Os testes de createProduct e os de SKU desconhecido sobrescrevem este stub.
@@ -1529,6 +1532,179 @@ class EstoqueServiceTest {
                 && recipe.get(0).componentSku().equals("CARV-001")));
     }
 
+    // ── Kit pré-montado ─────────────────────────────────────────────────────
+
+    private static List<EstoqueUseCase.KitItemCommand> tresItens() {
+        return List.of(
+                new EstoqueUseCase.KitItemCommand(null, "Essência Menta 50g", 2, new BigDecimal("10.00"), null, null,
+                        null, null),
+                new EstoqueUseCase.KitItemCommand(null, "Carvão 1kg", 1, new BigDecimal("15.50"), null, null,
+                        null, null),
+                new EstoqueUseCase.KitItemCommand(null, "Piteira", 3, new BigDecimal("1.00"), null, null, " ", null));
+    }
+
+    private Product criarPreMontado(String sku, List<EstoqueUseCase.KitItemCommand> itens,
+            List<EstoqueUseCase.KitComponentCommand> components, InitialStockCommand initialStock) {
+        return estoqueService.createProduct(sku, "Kit Pré", "combo", List.of(), Pricing.empty(),
+                null, null, false, false, null, null, List.of(), List.of(), null, null, null, false, false,
+                null, null, ProductType.KIT, initialStock, "gerente", components, null, null, null,
+                KitMode.PRE_MONTADO, itens);
+    }
+
+    @Test
+    void createProduct_preMontado_gravaItensECustoSomado() {
+        when(productRepository.existsBySku(anyString())).thenReturn(false);
+        when(productRepository.save(any())).thenAnswer(inv -> {
+            Product p = inv.getArgument(0);
+            return p.id() == null ? Product.of(77L, p.sku(), p.name(), p.category(), p.active(), p.variants(),
+                    p.pricing(), p.type(), p.lotTracked(), p.brand(), p.imageUrl(), p.onSale(), p.superPromo(),
+                    p.description(), p.videoUrl(), p.images(), p.attributes(), p.categoryId(), p.barcode(), p.unit(),
+                    p.sampleProduct(), p.kitComponentEligible(), p.visibleInPos(), p.visibleInMarketplace(),
+                    p.status(), p.brandId(), p.availableForTable(), p.sessionProduct(), p.sessionsPerUnit(),
+                    p.openRoshPrice(), p.parentSellable(), p.sessionTierId(), p.sessionFlags(), p.kitMode()) : p;
+        });
+
+        Product result = criarPreMontado("KIT-PRE", tresItens(), null, null);
+
+        assertThat(result.isPreAssembledKit()).isTrue();
+        assertThat(result.pricing().costPrice()).isEqualByComparingTo("38.50");
+        verify(kitItemRepository).replaceAll(eq(77L), argThat(items -> items.size() == 3
+                && items.get(2).position() == 2 && items.get(2).description() == null));
+        verify(kitComponentRepository, never()).replaceRecipe(any(), any());
+    }
+
+    @Test
+    void createProduct_preMontado_itemSemCusto_custoDoKitFicaNulo() {
+        when(productRepository.existsBySku(anyString())).thenReturn(false);
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Product result = criarPreMontado("KIT-PRE-2", List.of(
+                new EstoqueUseCase.KitItemCommand(null, "Item", 1, new BigDecimal("5"), null, null, null, null),
+                new EstoqueUseCase.KitItemCommand(null, "Brinde", 1, null, null, null, null, null)), null, null);
+
+        assertThat(result.pricing().costPrice()).isNull();
+    }
+
+    @Test
+    void createProduct_preMontado_comComponents_recusa() {
+        assertThatThrownBy(() -> criarPreMontado("KIT-PRE-3", tresItens(),
+                List.of(new EstoqueUseCase.KitComponentCommand("ESS-001", BigDecimal.ONE)), null))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.KitPreAssembledNoRecipeException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void createProduct_preMontado_semItens_recusa() {
+        assertThatThrownBy(() -> criarPreMontado("KIT-PRE-4", List.of(), null, null))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.KitItemsEmptyException.class);
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void createProduct_kitModeSemTipoKit_recusa() {
+        assertThatThrownBy(() -> estoqueService.createProduct("SIMP-1", "Simples", "combo", List.of(),
+                Pricing.empty(), null, null, false, false, null, null, List.of(), List.of(), null, null, null,
+                false, false, null, null, ProductType.SIMPLES, null, "gerente", null, null, null, null,
+                KitMode.PRE_MONTADO, tresItens()))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.InvalidKitModeException.class);
+    }
+
+    @Test
+    void createProduct_preMontado_aceitaEstoqueInicial() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(productRepository.existsBySku(anyString())).thenReturn(false, true);
+        when(productRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // adjustStock relê o produto depois do save: tem que enxergar o kit pré-montado, não o de receita.
+        when(productRepository.findByAnySku("KIT-PRE-5")).thenReturn(Optional.of(Product.create("KIT-PRE-5",
+                "Kit Pré", "combo", List.of(), Pricing.empty(), ProductType.KIT, false)
+                .withKitMode(KitMode.PRE_MONTADO)));
+
+        criarPreMontado("KIT-PRE-5", tresItens(), null, new InitialStockCommand("LOJA-01", BigDecimal.TEN, null, null));
+
+        verify(stockBalanceRepository).save(argThat(b -> b.sku().equals("KIT-PRE-5")
+                && b.quantity().compareTo(BigDecimal.TEN) == 0));
+    }
+
+    @Test
+    void adjustStock_preMontado_baixaOSaldoDoProprioKit() {
+        Product kit = Product.create("KIT-PRE", "Kit Pré", "combo", List.of(), Pricing.empty(), ProductType.KIT,
+                false).withKitMode(KitMode.PRE_MONTADO);
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(productRepository.findByAnySku("KIT-PRE")).thenReturn(Optional.of(kit));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("KIT-PRE", 1L))
+                .thenReturn(Optional.of(StockBalance.of(5L, "KIT-PRE", 1L, BigDecimal.TEN, 0L)));
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        StockBalance result = estoqueService.adjustStock("KIT-PRE", "LOJA-01", MovementType.SAIDA, BigDecimal.ONE,
+                "Venda PDV", "caixa");
+
+        assertThat(result.quantity()).isEqualByComparingTo("9");
+        verify(kitComponentRepository, never()).findByKitSku(any());
+    }
+
+    @Test
+    void defineKitRecipe_preMontado_conflito() {
+        Product kit = Product.create("KIT-PRE", "Kit Pré", "combo", List.of(), Pricing.empty(), ProductType.KIT,
+                false).withKitMode(KitMode.PRE_MONTADO);
+        when(productRepository.findBySku("KIT-PRE")).thenReturn(Optional.of(kit));
+
+        assertThatThrownBy(() -> estoqueService.defineKitRecipe("KIT-PRE",
+                List.of(new EstoqueUseCase.KitComponentCommand("ESS-001", BigDecimal.ONE))))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.KitPreAssembledNoRecipeException.class)
+                .satisfies(ex -> assertThat(((com.cernecommerce.core.domain.exception.estoque
+                        .KitPreAssembledNoRecipeException) ex).isStateConflict()).isTrue());
+        assertThatThrownBy(() -> estoqueService.clearKitRecipe("KIT-PRE"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.KitPreAssembledNoRecipeException.class);
+    }
+
+    @Test
+    void replaceKitItems_kitDeReceita_conflito() {
+        Product kit = Product.create("KIT-LOJA", "Kit Loja", "combo", List.of(), Pricing.empty(), ProductType.KIT,
+                false);
+        when(productRepository.findBySku("KIT-LOJA")).thenReturn(Optional.of(kit));
+
+        assertThatThrownBy(() -> estoqueService.replaceKitItems("KIT-LOJA", tresItens()))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.KitNotPreAssembledException.class);
+    }
+
+    @Test
+    void replaceKitItems_recalculaCustoDoKit() {
+        Product kit = Product.of(9L, "KIT-PRE", "Kit Pré", "combo", true, List.of(),
+                Pricing.of(new BigDecimal("1"), null, new BigDecimal("80")), ProductType.KIT, false)
+                .withKitMode(KitMode.PRE_MONTADO);
+        when(productRepository.findBySku("KIT-PRE")).thenReturn(Optional.of(kit));
+        when(kitItemRepository.replaceAll(eq(9L), any())).thenAnswer(inv -> inv.getArgument(1));
+
+        List<com.cernecommerce.core.domain.model.estoque.KitItem> saved =
+                estoqueService.replaceKitItems("KIT-PRE", tresItens().subList(0, 2));
+
+        assertThat(saved).hasSize(2);
+        verify(productRepository).save(argThat(p -> p.pricing().costPrice().compareTo(new BigDecimal("35.50")) == 0
+                && p.pricing().salePrice().compareTo(new BigDecimal("80")) == 0));
+    }
+
+    @Test
+    void getKitAvailability_preMontado_usaSaldoDoKit() {
+        Product kit = Product.create("KIT-PRE", "Kit Pré", "combo", List.of(), Pricing.empty(), ProductType.KIT,
+                false).withKitMode(KitMode.PRE_MONTADO);
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(productRepository.findAllByType(ProductType.KIT)).thenReturn(List.of(kit));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("KIT-PRE", 1L))
+                .thenReturn(Optional.of(StockBalance.of(5L, "KIT-PRE", 1L, new BigDecimal("4"), 0L)));
+
+        var page = estoqueService.getKitAvailability("LOJA-01", null, 0, 20);
+
+        assertThat(page.content()).singleElement().satisfies(a -> {
+            assertThat(a.buildableQuantity()).isEqualByComparingTo("4");
+            assertThat(a.blocked()).isFalse();
+            assertThat(a.components()).isEmpty();
+        });
+    }
+
     @Test
     void createProduct_kitWithoutComponents_doesNotTouchRecipe() {
         when(productRepository.existsBySku(anyString())).thenReturn(false);
@@ -1723,6 +1899,72 @@ class EstoqueServiceTest {
         Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
         StockBalance existing = StockBalance.of(10L, "NARG-001", 1L, new BigDecimal("10.000"), 2L);
         ReorderPoint reorderPoint = ReorderPoint.of(1L, "NARG-001", 1L, new BigDecimal("10.000"));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockBalanceRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
+        when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(reorderPointRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(reorderPoint));
+        when(userRepository.findUsernamesByPermission("ESTOQUE_STOCK_MANAGE")).thenReturn(Set.of("gerente-estoque"));
+
+        estoqueService.adjustStock("NARG-001", "LOJA-01", MovementType.SAIDA, new BigDecimal("2.000"),
+                "Venda balcão", "vendedor");
+
+        verify(notificationUseCase).notify(eq("gerente-estoque"), eq(NotificationType.SYSTEM), any(), any());
+    }
+
+    @Test
+    void setReorderPoint_criticoAusente_mantemOSalvoQuandoContinuaValido() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        ReorderPoint existing = ReorderPoint.of(5L, "NARG-001", 1L, new BigDecimal("10"), new BigDecimal("2"));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(reorderPointRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
+
+        estoqueService.setReorderPoint("NARG-001", "LOJA-01", new BigDecimal("8"));
+
+        verify(reorderPointRepository).save(argThat(rp -> rp.criticalQuantity().compareTo(new BigDecimal("2")) == 0
+                && rp.minQuantity().compareTo(new BigDecimal("8")) == 0));
+    }
+
+    @Test
+    void setReorderPoint_criticoAusente_voltaAoPadraoQuandoFicaInvalido() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        ReorderPoint existing = ReorderPoint.of(5L, "NARG-001", 1L, new BigDecimal("10"), new BigDecimal("6"));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(reorderPointRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
+
+        estoqueService.setReorderPoint("NARG-001", "LOJA-01", new BigDecimal("5"));
+
+        verify(reorderPointRepository).save(argThat(rp -> rp.criticalQuantity() == null));
+    }
+
+    @Test
+    void setReorderPoint_criticoNullExplicito_voltaAoPadrao() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        ReorderPoint existing = ReorderPoint.of(5L, "NARG-001", 1L, new BigDecimal("10"), new BigDecimal("2"));
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(reorderPointRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
+
+        estoqueService.setReorderPoint("NARG-001", "LOJA-01", new BigDecimal("10"), true, null);
+
+        verify(reorderPointRepository).save(argThat(rp -> rp.criticalQuantity() == null));
+    }
+
+    @Test
+    void setReorderPoint_criticoInvalido_lanca422SemGravar() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(reorderPointRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> estoqueService.setReorderPoint("NARG-001", "LOJA-01", new BigDecimal("7"), true,
+                new BigDecimal("7")))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.estoque.InvalidReorderCriticalQuantityException.class);
+        verify(reorderPointRepository, never()).save(any());
+    }
+
+    @Test
+    void adjustStock_saida_atingeExatamenteOPontoDeReposicao_notifica() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        StockBalance existing = StockBalance.of(10L, "NARG-001", 1L, new BigDecimal("9.000"), 2L);
+        ReorderPoint reorderPoint = ReorderPoint.of(1L, "NARG-001", 1L, new BigDecimal("7.000"));
         when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
         when(stockBalanceRepository.findBySkuAndWarehouseId("NARG-001", 1L)).thenReturn(Optional.of(existing));
         when(stockBalanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

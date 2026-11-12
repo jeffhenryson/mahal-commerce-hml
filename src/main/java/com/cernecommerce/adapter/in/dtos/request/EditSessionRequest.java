@@ -47,4 +47,10 @@ public class EditSessionRequest {
 
     @Schema(description = "Adicionais pagos; id repetido cobra duas vezes.")
     private List<Long> adicionalIds;
+
+    @jakarta.validation.Valid
+    @Schema(description = "PDV-F061 — os pacotes da sessão das modalidades novas, inteiros. Comparados com os "
+            + "atuais: volta à loja o que saiu e baixa o que entrou. Omitido = os pacotes ficam como estão; "
+            + "com pacote já pago, mudar dá 409 SESSION_PACKAGE_PAID.")
+    private List<SessionPackageRequest> pacotes;
 }

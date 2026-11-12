@@ -497,15 +497,19 @@ class ComandaServiceTest {
                 i -> assertThat(i.discountAmount()).isEqualByComparingTo("0"));
     }
 
-    /** O teto é o mesmo do balcão, e é o do balcão que decide — não uma cópia da regra. */
+    /**
+     * A regra do desconto do chefe é a do balcão, e é o balcão que decide — não uma cópia: o desconto da
+     * conta, a base elegível e quantas linhas dividem o rateio.
+     */
     @Test
-    void closeComanda_checksTheDiscountAgainstTheSameLimitAsTheCounterSale() {
+    void closeComanda_checksTheDiscountAgainstTheSameRuleAsTheCounterSale() {
         givenCloseablePara(comandaDeDuasLinhas());
 
         comandaService.closeComanda(10L, dinheiro("90.00"), new BigDecimal("10.00"), false, "caixa1");
 
-        verify(pdvService).requireDiscountWithinLimit(argThat(
-                o -> o.discountAmount().compareTo(new BigDecimal("10.00")) == 0));
+        verify(pdvService).requireBossDiscount(any(),
+                argThat(d -> d.compareTo(new BigDecimal("10.00")) == 0),
+                argThat(b -> b.compareTo(new BigDecimal("100.00")) == 0), eq(2));
     }
 
     /** Desconto acima do teto aborta antes de gravar pedido ou pagamento. */
@@ -514,9 +518,10 @@ class ComandaServiceTest {
         Comanda comanda = comandaDeDuasLinhas();
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
         when(pdvService.getCurrentSession("caixa1")).thenReturn(openSession());
-        when(cashbackUseCase.resolveApplicableRate(any())).thenReturn(null);
+        // A regra roda antes do rateio e da resolução de taxa: o stub da taxa pode nem ser usado.
+        lenient().when(cashbackUseCase.resolveApplicableRate(any())).thenReturn(null);
         doThrow(new DiscountLimitExceededException(new BigDecimal("50"), new BigDecimal("10")))
-                .when(pdvService).requireDiscountWithinLimit(any());
+                .when(pdvService).requireBossDiscount(any(), any(), any(), anyInt());
 
         assertThatThrownBy(() -> comandaService.closeComanda(10L, dinheiro("50.00"),
                 new BigDecimal("50.00"), false, "caixa1"))
@@ -548,7 +553,7 @@ class ComandaServiceTest {
 
         // Nem o teto chega a ser consultado: o valor é aritmeticamente impossível antes de ser
         // política comercial.
-        verify(pdvService, never()).requireDiscountWithinLimit(any());
+        verify(pdvService, never()).requireBossDiscount(any(), any(), any(), anyInt());
         verify(orderRepository, never()).save(any());
         verifyNoInteractions(orderPaymentRepository);
     }
@@ -1944,8 +1949,9 @@ class ComandaServiceTest {
                         org.assertj.core.groups.Tuple.tuple("BEB-COLA", new BigDecimal("5.00")));
         assertThat(order.discountAmount()).isEqualByComparingTo("14.50");
         assertThat(order.netAmount()).isEqualByComparingTo("85.50");
-        verify(pdvService).requireDiscountWithinLimit(any(Order.class), eq(new BigDecimal("5.00")));
-        verify(pdvService, never()).requireDiscountWithinLimit(any(Order.class));
+        // Só o desconto de conta passa pela regra; o do kit (lineDiscount) fica fora dela.
+        verify(pdvService).requireBossDiscount(any(), argThat(d -> d.compareTo(new BigDecimal("9.50")) == 0),
+                argThat(b -> b.compareTo(new BigDecimal("95.00")) == 0), eq(3));
     }
 
     @Test
@@ -2477,5 +2483,95 @@ class ComandaServiceTest {
         ordem.verify(comandaRepository).findByIdForUpdate(30L);
         ordem.verify(pdvService).requireOpenSession(1L);
         ordem.verify(pdvService).requireOpenSession(2L);
+    }
+
+    // ── Cashback × desconto do chefe no fechamento da mesa ──────────────────────────────────
+
+    /** Essência de R$ 100 (elegível) + cigarro de R$ 50 (fora dos benefícios). */
+    private Comanda comandaComCigarro() {
+        return abertaComanda(
+                ComandaItem.of(1L, "ESS-MENTA", BigDecimal.ONE, new BigDecimal("100.00"),
+                        new BigDecimal("20.00"), "Essência Menta", Instant.now()),
+                ComandaItem.of(2L, "CIG-001", BigDecimal.ONE, new BigDecimal("50.00"),
+                        new BigDecimal("40.00"), "Cigarro", Instant.now()).withBenefitsExcluded(true));
+    }
+
+    private static com.cernecommerce.core.ports.in.PdvUseCase.BossDiscountRequest chefe(Integer percent) {
+        return com.cernecommerce.core.ports.in.PdvUseCase.BossDiscountRequest.online(percent);
+    }
+
+    @Test
+    void closeComanda_bossDiscountIsProratedOnlyAcrossEligibleLines() {
+        givenCloseablePara(comandaComCigarro());
+
+        Order order = comandaService.closeComanda(10L, dinheiro("145.00"), new BigDecimal("5.00"), false, null,
+                BigDecimal.ZERO, chefe(5), "caixa1");
+
+        assertThat(order.items()).extracting(OrderItem::sku, i -> i.discountAmount().toPlainString(),
+                        OrderItem::benefitsExcluded)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("ESS-MENTA", "5.00", false),
+                        org.assertj.core.groups.Tuple.tuple("CIG-001", "0.00", true));
+        // A base da regra é a elegível (100), não a conta inteira (150).
+        verify(pdvService).requireBossDiscount(any(), argThat(d -> d.compareTo(new BigDecimal("5.00")) == 0),
+                argThat(b -> b.compareTo(new BigDecimal("100.00")) == 0), eq(1));
+        org.mockito.ArgumentCaptor<Order> salvo = org.mockito.ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(salvo.capture());
+        assertThat(salvo.getValue().bossDiscountPercent()).isEqualTo(5);
+    }
+
+    @Test
+    void closeComanda_cigaretteLineGetsZeroCashbackRateEvenWithAGlobalRate() {
+        givenCloseablePara(comandaComCigarro());
+        when(cashbackUseCase.resolveApplicableRate(any())).thenReturn(new com.cernecommerce.core.domain.model
+                .cashback.CashbackRate(1L, com.cernecommerce.core.domain.model.cashback.CashbackScope.GLOBAL, null,
+                new BigDecimal("10"), true, Instant.now(), null, Instant.now()));
+
+        Order order = comandaService.closeComanda(10L, dinheiro("150.00"), null, false, null, BigDecimal.ZERO,
+                chefe(null), "caixa1");
+
+        assertThat(order.items().get(0).cashbackPercent()).isEqualByComparingTo("10");
+        assertThat(order.items().get(1).cashbackPercent()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void closeComanda_bossDiscountOnSplitBillIsRefusedBeforeAnything() {
+        assertThatThrownBy(() -> comandaService.closeComanda(10L, dinheiro("95.00"), new BigDecimal("5.00"), false,
+                List.of(1L), BigDecimal.ZERO, chefe(5), "caixa1"))
+                .isInstanceOf(DiscountLimitExceededException.class);
+
+        verifyNoInteractions(comandaRepository, orderRepository, orderPaymentRepository);
+    }
+
+    @Test
+    void closeComanda_bossDiscountWithCashbackRedemptionIsABenefitConflict() {
+        assertThatThrownBy(() -> comandaService.closeComanda(10L, dinheiro("75.00"), new BigDecimal("5.00"), false,
+                null, new BigDecimal("20.00"), chefe(5), "caixa1"))
+                .isInstanceOf(com.cernecommerce.core.domain.exception.pedido.BenefitConflictException.class);
+
+        verifyNoInteractions(comandaRepository, orderRepository, orderPaymentRepository);
+    }
+
+    @Test
+    void closeComanda_cashbackRedemptionIsValidatedAgainstTheEligibleBase() {
+        givenCloseablePara(comandaComCigarro());
+
+        comandaService.closeComanda(10L, dinheiro("130.00"), null, false, null, new BigDecimal("20.00"),
+                chefe(null), "caixa1");
+
+        verify(cashbackUseCase).validateRedemption(any(), argThat(b -> b.compareTo(new BigDecimal("100.00")) == 0),
+                eq(new BigDecimal("20.00")));
+    }
+
+    @Test
+    void closeComanda_discountOnlyOverCigarettesIsRefused() {
+        Comanda soCigarro = abertaComanda(ComandaItem.of(2L, "CIG-001", BigDecimal.ONE, new BigDecimal("50.00"),
+                new BigDecimal("40.00"), "Cigarro", Instant.now()).withBenefitsExcluded(true));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(soCigarro));
+        when(pdvService.getCurrentSession("caixa1")).thenReturn(openSession());
+
+        assertThatThrownBy(() -> comandaService.closeComanda(10L, dinheiro("47.50"), new BigDecimal("2.50"), false,
+                null, BigDecimal.ZERO, chefe(5), "caixa1"))
+                .isInstanceOf(DiscountLimitExceededException.class);
+        verify(orderRepository, never()).save(any());
     }
 }

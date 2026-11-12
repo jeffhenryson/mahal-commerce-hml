@@ -20,4 +20,10 @@ public class ProductVariantResponseDTO {
 
     /** Código de barras/EAN próprio da variação, quando cadastrado. */
     private String barcode;
+
+    /** PDV-F061 — já resolvido: a marcação da variação ou, sem ela, a do produto. */
+    private boolean sessionCompraEssencia;
+
+    /** PDV-F061 — já resolvido: a marcação da variação ou, sem ela, a do produto. */
+    private boolean sessionItensPessoais;
 }

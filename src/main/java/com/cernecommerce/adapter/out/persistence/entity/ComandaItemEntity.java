@@ -52,6 +52,11 @@ public class ComandaItemEntity {
     @Column(name = "added_at", nullable = false)
     private Instant addedAt;
 
+    // Perfil > métricas — quem lançou a linha (V190). Gravado só na criação, a partir do usuário
+    // autenticado; nulo nas linhas anteriores à V190 e nas lançadas sem usuário no contexto.
+    @Column(name = "added_by", length = 80)
+    private String addedBy;
+
     // PDV-F010 — por que a linha existe. Sem @Enumerated: mesma convenção enum-como-string de
     // product.type/product.unit.
     @Column(nullable = false, length = 20)
@@ -183,6 +188,17 @@ public class ComandaItemEntity {
     // PDV-F057 — o carvão jumbo saiu de cortesia, sem o acréscimo (V178).
     @Column(name = "carvao_cortesia", nullable = false)
     private boolean carvaoCortesia;
+
+    // PDV-F061 (V191) — modalidade da sessão e vínculo das linhas que nascem dela (pacote, adicional).
+    @Column(name = "session_modality", length = 20)
+    private String sessionModality;
+
+    @Column(name = "session_link", length = 20)
+    private String sessionLink;
+
+    // V198 — categoria fora dos benefícios, carimbada no lançamento.
+    @Column(name = "benefits_excluded", nullable = false)
+    private boolean benefitsExcluded;
 
     @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
     @BatchSize(size = 100)

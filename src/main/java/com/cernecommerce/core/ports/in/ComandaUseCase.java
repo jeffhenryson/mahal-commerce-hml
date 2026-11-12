@@ -299,8 +299,21 @@ public interface ComandaUseCase {
      * @throws com.cernecommerce.core.domain.exception.cashback.CashbackRedemptionNotAllowedException
      *         fora das regras do programa (422 CASHBACK_*)
      */
+    default Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username) {
+        return closeComanda(comandaId, payments, discountAmount, applyServiceFee, itemIds, cashbackToRedeem,
+                PdvUseCase.BossDiscountRequest.legacy(), username);
+    }
+
+    /**
+     * Igual à anterior, com o desconto do chefe: {@code discountAmount} tem que bater com
+     * {@code bossDiscount.percent() × base elegível} das linhas em aberto (linhas fora dos benefícios
+     * ficam de fora, e o rateio é só entre as elegíveis). Só no fechamento da conta inteira (sem
+     * {@code itemIds}); com resgate de cashback é {@code 409 BENEFIT_CONFLICT}.
+     */
     Order closeComanda(Long comandaId, List<PaymentCommand> payments, BigDecimal discountAmount,
-            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem, String username);
+            boolean applyServiceFee, List<Long> itemIds, BigDecimal cashbackToRedeem,
+            PdvUseCase.BossDiscountRequest bossDiscount, String username);
 
     /**
      * Percentual da taxa de serviço vigente (PDV-F015), para a tela mostrar ao operador quanto será
@@ -503,7 +516,15 @@ public interface ComandaUseCase {
      */
     record RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
             boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2,
-            boolean carvaoCortesia) {
+            boolean carvaoCortesia, RepeatMode repeticao) {
+
+        /** Sem {@code repeticao} (PDV-F061): na origem das modalidades novas, repete com as essências compradas. */
+        public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
+                boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2,
+                boolean carvaoCortesia) {
+            this(essencia, duplo, essenciaRosh, tierIdRosh, pagarNoFinal, essenciaSku, essenciaRoshSku, essenciaSku2,
+                    carvaoCortesia, null);
+        }
 
         public RepeatSessionCommand(String essencia, boolean duplo, String essenciaRosh, Long tierIdRosh,
                 boolean pagarNoFinal, String essenciaSku, String essenciaRoshSku, String essenciaSku2) {
@@ -549,11 +570,36 @@ public interface ComandaUseCase {
     record AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
             List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
             String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
-            ProporcaoMistura essenciaProporcao, boolean carvaoCortesia) {
+            ProporcaoMistura essenciaProporcao, boolean carvaoCortesia,
+            com.cernecommerce.core.domain.model.pdv.SessionModality modalidade, List<PackageChoice> pacotes) {
 
         public AddSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
             carvaoCortesia = carvaoCortesia && carvao == Charcoal.JUMBO;
+            modalidade = modalidade == null ? com.cernecommerce.core.domain.model.pdv.SessionModality.PADRAO
+                    : modalidade;
+            pacotes = pacotes == null ? List.of() : List.copyOf(pacotes);
+        }
+
+        /** Sem pacotes (PDV-F061): só a sessão padrão o dispensa. */
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+                String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
+                ProporcaoMistura essenciaProporcao, boolean carvaoCortesia,
+                com.cernecommerce.core.domain.model.pdv.SessionModality modalidade) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    essenciaSku, essenciaRoshSku, essenciaSku2, essenciaRoshSku2, essenciaProporcao, carvaoCortesia,
+                    modalidade, null);
+        }
+
+        /** Sem modalidade (PDV-F061): sessão padrão. */
+        public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
+                List<Long> adicionalIds, boolean duplo, String essenciaRosh, Long tierIdRosh, boolean pagarNoFinal,
+                String essenciaSku, String essenciaRoshSku, String essenciaSku2, String essenciaRoshSku2,
+                ProporcaoMistura essenciaProporcao, boolean carvaoCortesia) {
+            this(tierId, essencia, vasoGrande, carvao, adicionalIds, duplo, essenciaRosh, tierIdRosh, pagarNoFinal,
+                    essenciaSku, essenciaRoshSku, essenciaSku2, essenciaRoshSku2, essenciaProporcao, carvaoCortesia,
+                    null, null);
         }
 
         public AddSessionCommand(Long tierId, String essencia, boolean vasoGrande, Charcoal carvao,
@@ -625,6 +671,21 @@ public interface ComandaUseCase {
     Comanda convertToDuplo(Long comandaId, Long sessionItemId, String username);
 
     /**
+     * PDV-F061 — inclui um adicional (filtro de gelo, piteira) na sessão já lançada, até ela ser
+     * recolhida. Na sessão ainda sem pedido, ele entra nos adicionais dela e o valor sobe; na já paga,
+     * vira uma linha nova em aberto ({@code ADICIONAL_SESSAO}), ligada à sessão, e o valor pago não muda.
+     * Na sessão {@code ENTREGUE}, só vale adicional marcado {@code permitePosEntrega}.
+     *
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionCollectedException sessão recolhida ou
+     *         desistida
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionAddonNotAfterDeliveryException adicional
+     *         sem a marca, com a sessão entregue
+     * @throws com.cernecommerce.core.domain.exception.pdv.SessionAddonNotFoundException adicional inativo ou
+     *         inexistente
+     */
+    Comanda addSessionAddon(Long comandaId, Long sessionItemId, Long addonId, String username);
+
+    /**
      * PDV-F055 — desfaz o "Tornar duplo" (pedido do front em 2026-10-18): remove o 2º rosh cortesia
      * ligado à sessão enquanto ele ainda está {@code NA_FILA}. Nada foi consumido além, talvez, do uso
      * da lata do sabor já escolhido — esse volta, como na remoção de item. Vale também para o duplo
@@ -666,13 +727,32 @@ public interface ComandaUseCase {
      */
     record EditSessionCommand(Long tierId, String essencia, String essenciaSku, String essenciaSku2,
             ProporcaoMistura essenciaProporcao, boolean vasoGrande, Charcoal carvao, boolean carvaoCortesia,
-            List<Long> adicionalIds) {
+            List<Long> adicionalIds, List<PackageChoice> pacotes) {
 
         public EditSessionCommand {
             adicionalIds = adicionalIds == null ? List.of() : List.copyOf(adicionalIds);
             carvaoCortesia = carvaoCortesia && carvao == Charcoal.JUMBO;
+            pacotes = pacotes == null ? null : List.copyOf(pacotes);
+        }
+
+        /** Sem {@code pacotes}: os pacotes da sessão ficam como estão (PDV-F061). */
+        public EditSessionCommand(Long tierId, String essencia, String essenciaSku, String essenciaSku2,
+                ProporcaoMistura essenciaProporcao, boolean vasoGrande, Charcoal carvao, boolean carvaoCortesia,
+                List<Long> adicionalIds) {
+            this(tierId, essencia, essenciaSku, essenciaSku2, essenciaProporcao, vasoGrande, carvao, carvaoCortesia,
+                    adicionalIds, null);
         }
     }
+
+    /** PDV-F061 — um pacote da loja escolhido para a sessão: SKU e quantidade (≥ 1). */
+    record PackageChoice(String sku, int quantidade) {
+    }
+
+    /**
+     * PDV-F061 — como repetir uma sessão das modalidades novas: com as essências que o cliente já
+     * comprou (mesma modalidade e preço, sem pacote novo) ou como sessão padrão da casa.
+     */
+    enum RepeatMode { ESSENCIAS_COMPRADAS, PADRAO }
 
     /** Resultado de {@link #editSession}: a comanda salva e a linha antes e depois (para a auditoria). */
     record SessionEdited(Comanda comanda, ComandaItem before, ComandaItem after) {

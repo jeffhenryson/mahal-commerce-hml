@@ -14,4 +14,12 @@ public class DiscountLimitExceededException extends RuntimeException {
         super("Desconto de " + discountPercent + "% excede o teto de " + maxPercent
                 + "% por pedido. Ajuste o desconto ou peça autorização para alterar o limite.");
     }
+
+    /**
+     * Desconto do chefe fora da regra (percentual exato sobre a base elegível, linha fora dos
+     * benefícios, fechamento parcial…). Mesmo {@code 409 DISCOUNT_LIMIT_EXCEEDED} que a tela já trata.
+     */
+    public DiscountLimitExceededException(String message) {
+        super(message);
+    }
 }

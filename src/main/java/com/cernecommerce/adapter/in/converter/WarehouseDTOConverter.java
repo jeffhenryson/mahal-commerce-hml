@@ -55,6 +55,7 @@ public class WarehouseDTOConverter {
         dto.setSku(sku);
         dto.setWarehouseCode(warehouseCode);
         dto.setMinQuantity(reorderPoint == null ? null : reorderPoint.minQuantity());
+        dto.setCriticalQuantity(reorderPoint == null ? null : reorderPoint.criticalQuantity());
         return dto;
     }
 }

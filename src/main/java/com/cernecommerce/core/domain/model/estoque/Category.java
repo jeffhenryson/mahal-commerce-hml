@@ -20,9 +20,14 @@ package com.cernecommerce.core.domain.model.estoque;
  * <p>{@code cigarette} (PDV-F045) marca a categoria de cigarros: os produtos dela saem da grade do
  * PDV e são vendidos pela Central de cigarros, por carteira › maço › solto. Antes o front decidia
  * pelo nome ("cigarr"), o que quebrava com qualquer grafia nova.</p>
+ *
+ * <p>{@code cashbackExcluded} (V197) tira a categoria dos benefícios: os produtos dela não geram
+ * cashback, o saldo de cashback não abate o valor deles e o desconto do chefe não incide sobre eles.
+ * É separado de {@code cigarette} porque palheiro, por exemplo, sai dos benefícios sem ir para a
+ * Central de cigarros.</p>
  */
 public record Category(Long id, String name, boolean featured, int displayOrder, boolean active,
-        boolean cigarette) {
+        boolean cigarette, boolean cashbackExcluded) {
 
     public Category {
         if (name == null || name.isBlank()) {
@@ -46,7 +51,13 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
 
     /** PDV-F045 — cria uma categoria nova (sem id, ativa), marcando se é de cigarros. */
     public static Category create(String name, boolean featured, int displayOrder, boolean cigarette) {
-        return new Category(null, name, featured, displayOrder, true, cigarette);
+        return create(name, featured, displayOrder, cigarette, false);
+    }
+
+    /** V197 — cria uma categoria nova (sem id, ativa), marcando se é de cigarros e se sai dos benefícios. */
+    public static Category create(String name, boolean featured, int displayOrder, boolean cigarette,
+            boolean cashbackExcluded) {
+        return new Category(null, name, featured, displayOrder, true, cigarette, cashbackExcluded);
     }
 
     /** Reconstitui a partir de persistência, sem a marcação de cigarros. */
@@ -57,7 +68,13 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
     /** Reconstitui a partir de persistência. */
     public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active,
             boolean cigarette) {
-        return new Category(id, name, featured, displayOrder, active, cigarette);
+        return of(id, name, featured, displayOrder, active, cigarette, false);
+    }
+
+    /** Reconstitui a partir de persistência, com a marcação de fora dos benefícios (V197). */
+    public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active,
+            boolean cigarette, boolean cashbackExcluded) {
+        return new Category(id, name, featured, displayOrder, active, cigarette, cashbackExcluded);
     }
 
     /**
@@ -72,16 +89,23 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
 
     /** {@link #withDetails(String, Boolean, Integer)} com a marcação de cigarros (PDV-F045); nulo não mexe. */
     public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder, Boolean newCigarette) {
+        return withDetails(newName, newFeatured, newDisplayOrder, newCigarette, null);
+    }
+
+    /** V197 — {@link #withDetails(String, Boolean, Integer, Boolean)} com a marcação de fora dos benefícios; nulo não mexe. */
+    public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder, Boolean newCigarette,
+            Boolean newCashbackExcluded) {
         return new Category(id,
                 newName == null ? name : newName,
                 newFeatured == null ? featured : newFeatured,
                 newDisplayOrder == null ? displayOrder : newDisplayOrder,
                 active,
-                newCigarette == null ? cigarette : newCigarette);
+                newCigarette == null ? cigarette : newCigarette,
+                newCashbackExcluded == null ? cashbackExcluded : newCashbackExcluded);
     }
 
     /** Ativa ou desativa a categoria, preservando o resto. */
     public Category withActive(boolean newActive) {
-        return new Category(id, name, featured, displayOrder, newActive, cigarette);
+        return new Category(id, name, featured, displayOrder, newActive, cigarette, cashbackExcluded);
     }
 }

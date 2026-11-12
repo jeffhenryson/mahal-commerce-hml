@@ -26,13 +26,16 @@ public class CashbackSettingsRequest {
     @Max(3650)
     private Integer expiracaoDias;
 
-    @Schema(description = "Teto do resgate, em % do valor da mercadoria da compra. 0 desliga o resgate.", example = "50")
+    @Schema(description = "Obsoleto: o resgate não tem mais teto percentual (o limite é o saldo disponível e o "
+            + "líquido dos itens elegíveis). Aceito e devolvido só por compatibilidade — reenvie o valor lido.",
+            example = "50", deprecated = true)
     @NotNull
     @DecimalMin("0.0")
     @DecimalMax("100.0")
     private BigDecimal resgateTetoPercent;
 
-    @Schema(description = "Saldo disponível mínimo para o cliente poder resgatar.", example = "50.00")
+    @Schema(description = "Obsoleto: o resgate não tem mais saldo mínimo. Aceito e devolvido só por "
+            + "compatibilidade — reenvie o valor lido.", example = "50.00", deprecated = true)
     @NotNull
     @DecimalMin("0.0")
     private BigDecimal resgateMinimoSaldo;

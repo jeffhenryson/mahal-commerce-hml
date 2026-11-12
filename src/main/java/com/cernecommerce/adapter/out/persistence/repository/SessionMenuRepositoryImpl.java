@@ -88,7 +88,7 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
     @Override
     public SessionAddon saveAddon(SessionAddon addon) {
         return toDomain(addonJpa.save(new SessionAddonEntity(addon.id(), addon.nome(), addon.preco(), addon.ordem(),
-                addon.ativo())));
+                addon.ativo(), addon.permitePosEntrega())));
     }
 
     @Override
@@ -127,7 +127,7 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
         return settingsJpa.findById(SessionSettingsEntity.SINGLETON_ID)
                 .map(e -> new SessionSettings(e.getVasoPadraoCodigo(), e.getVasoGrandeCodigo(),
                         e.getUpgradeVasoGrandePreco(), SessionSettings.parseDias(e.getDiasDuploRosh()),
-                        e.getUpgradeCarvaoJumboPreco()))
+                        e.getUpgradeCarvaoJumboPreco(), e.getItensPessoaisPreco(), e.getCompraEssenciaDesconto()))
                 .orElseGet(SessionSettings::defaults);
     }
 
@@ -135,7 +135,7 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
     public SessionSettings saveSettings(SessionSettings settings) {
         settingsJpa.save(new SessionSettingsEntity(SessionSettingsEntity.SINGLETON_ID, settings.vasoPadraoCodigo(),
                 settings.vasoGrandeCodigo(), settings.upgradeVasoGrandePreco(), settings.diasDuploRoshAsText(),
-                settings.upgradeCarvaoJumboPreco()));
+                settings.upgradeCarvaoJumboPreco(), settings.itensPessoaisPreco(), settings.compraEssenciaDesconto()));
         return getSettings();
     }
 
@@ -182,7 +182,7 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
     }
 
     private SessionAddon toDomain(SessionAddonEntity e) {
-        return new SessionAddon(e.getId(), e.getNome(), e.getPreco(), e.getOrdem(), e.isAtivo());
+        return new SessionAddon(e.getId(), e.getNome(), e.getPreco(), e.getOrdem(), e.isAtivo(), e.isPermitePosEntrega());
     }
 
     private SessionAssetType toDomain(SessionAssetTypeEntity e) {

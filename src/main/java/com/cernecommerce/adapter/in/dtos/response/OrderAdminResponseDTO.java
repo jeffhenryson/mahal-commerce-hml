@@ -47,6 +47,8 @@ public class OrderAdminResponseDTO {
     private BigDecimal grossAmount;
     private BigDecimal discountAmount;
     private BigDecimal cashbackRedeemed;
+    /** Percentual do desconto do chefe (1–5); nulo sem desconto do chefe. */
+    private Integer bossDiscountPercent;
     private BigDecimal netAmount;
     private BigDecimal changeAmount;
 

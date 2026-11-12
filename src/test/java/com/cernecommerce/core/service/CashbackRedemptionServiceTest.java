@@ -68,16 +68,27 @@ class CashbackRedemptionServiceTest {
 
     // ── Prévia e validação ──────────────────────────────────────────────────────────────────
 
+    /** Sem teto percentual: o máximo é o menor entre o saldo disponível e a base elegível. */
     @Test
-    void quote_maxIsTheSmallerOfBalanceAndCap() {
+    void quote_maxIsTheSmallerOfBalanceAndEligibleBase() {
         registered();
         balance("80.00", earning(1L, "80.00", 30));
 
         CashbackRedemptionQuote quote = service.quoteRedemption(CUSTOMER, new BigDecimal("100.00"));
 
         assertThat(quote.reason()).isNull();
-        assertThat(quote.capAmount()).isEqualByComparingTo("50.00");
-        assertThat(quote.maxRedeemable()).isEqualByComparingTo("50.00");
+        assertThat(quote.capAmount()).isEqualByComparingTo("100.00");
+        assertThat(quote.capPercent()).isEqualByComparingTo("100");
+        assertThat(quote.maxRedeemable()).isEqualByComparingTo("80.00");
+    }
+
+    @Test
+    void quote_eligibleBaseBelowBalanceLimitsTheMax() {
+        registered();
+        balance("80.00", earning(1L, "80.00", 30));
+
+        assertThat(service.quoteRedemption(CUSTOMER, new BigDecimal("35.00")).maxRedeemable())
+                .isEqualByComparingTo("35.00");
     }
 
     @Test
@@ -92,34 +103,47 @@ class CashbackRedemptionServiceTest {
         assertThat(quote.maxRedeemable()).isEqualByComparingTo("0");
     }
 
+    /** Sem saldo mínimo: R$ 0,50 disponíveis já podem ser usados. */
     @Test
-    void quote_balanceBelowMinimumCannotRedeem() {
+    void quote_smallBalanceCanBeRedeemed() {
         registered();
-        balance("49.99", earning(1L, "49.99", 30));
+        balance("0.50", earning(1L, "0.50", 30));
 
         CashbackRedemptionQuote quote = service.quoteRedemption(CUSTOMER, new BigDecimal("100.00"));
 
-        assertThat(quote.reason()).isEqualTo(CashbackRedemptionNotAllowedException.BELOW_MINIMUM_BALANCE);
-        assertThat(quote.maxRedeemable()).isEqualByComparingTo("0");
+        assertThat(quote.reason()).isNull();
+        assertThat(quote.minimumBalance()).isEqualByComparingTo("0");
+        assertThat(quote.maxRedeemable()).isEqualByComparingTo("0.50");
     }
 
+    /** O teto configurado (mesmo 0) não vale mais: o campo ficou só por compatibilidade. */
     @Test
-    void quote_zeroCapDisablesRedemption() {
+    void quote_ignoresTheLegacyCapSetting() {
         registered();
         balance("80.00", earning(1L, "80.00", 30));
         lenient().when(systemConfigPort.getDecimal(eq(CashbackSettings.KEY_RESGATE_TETO_PERCENT), any()))
                 .thenReturn(BigDecimal.ZERO);
 
-        assertThat(service.quoteRedemption(CUSTOMER, new BigDecimal("100.00")).reason())
-                .isEqualTo(CashbackRedemptionNotAllowedException.REDEMPTION_DISABLED);
+        CashbackRedemptionQuote quote = service.quoteRedemption(CUSTOMER, new BigDecimal("100.00"));
+
+        assertThat(quote.reason()).isNull();
+        assertThat(quote.maxRedeemable()).isEqualByComparingTo("80.00");
     }
 
     @Test
-    void validate_refusesAboveCap() {
+    void validate_acceptsTheWholeBalanceUpToTheEligibleBase() {
         registered();
         balance("80.00", earning(1L, "80.00", 30));
 
-        assertThatThrownBy(() -> service.validateRedemption(CUSTOMER, new BigDecimal("100.00"), new BigDecimal("50.01")))
+        service.validateRedemption(CUSTOMER, new BigDecimal("100.00"), new BigDecimal("80.00"));
+    }
+
+    @Test
+    void validate_refusesAboveTheEligibleBase() {
+        registered();
+        balance("80.00", earning(1L, "80.00", 30));
+
+        assertThatThrownBy(() -> service.validateRedemption(CUSTOMER, new BigDecimal("30.00"), new BigDecimal("30.01")))
                 .isInstanceOf(CashbackRedemptionNotAllowedException.class)
                 .extracting("code").isEqualTo(CashbackRedemptionNotAllowedException.ABOVE_CAP);
     }
@@ -289,6 +313,47 @@ class CashbackRedemptionServiceTest {
         assertThat(entry.getValue().amount()).isEqualByComparingTo("6.00");
     }
 
+    @Test
+    void recordEarnedForOrder_withBossDiscountRecordsNothing() {
+        registered();
+
+        service.recordEarnedForOrder(orderRedeeming("0").withBossDiscountPercent(3));
+
+        verify(cashbackEntryRepository, never()).save(any());
+    }
+
+    /** Cigarro + item comum: o ganho sai só sobre o item comum, mesmo com taxa global cobrindo os dois. */
+    @Test
+    void recordEarnedForOrder_skipsItemsOutsideTheBenefits() {
+        registered();
+        when(cashbackEntryRepository.existsEarnedForOrder(501L)).thenReturn(false);
+        when(orderPaymentRepository.findByOrderId(501L)).thenReturn(List.of());
+
+        service.recordEarnedForOrder(orderWithCigarette());
+
+        ArgumentCaptor<CashbackEntry> entry = ArgumentCaptor.forClass(CashbackEntry.class);
+        verify(cashbackEntryRepository).save(entry.capture());
+        assertThat(entry.getValue().orderItemId()).isEqualTo(9L);
+        assertThat(entry.getValue().amount()).isEqualByComparingTo("10.00");
+    }
+
+    /** Sob a trava, o resgate é revalidado contra a base elegível (R$ 100), não contra a mercadoria (R$ 150). */
+    @Test
+    void redeemForOrder_revalidatesAgainstTheEligibleBaseOnly() {
+        registered();
+        balance("200.00", earning(1L, "200.00", 30));
+        when(cashbackEntryRepository.findRedeemedByOrderId(501L)).thenReturn(Optional.empty());
+        Order pedido = orderWithCigarette();
+        Order acimaDaBase = Order.of(501L, "000000501", SalesChannel.BALCAO, OrderStatus.CONCLUIDO, CUSTOMER, 1L,
+                "LOJA-01", pedido.items(), new BigDecimal("150.00"), BigDecimal.ZERO, new BigDecimal("120.00"),
+                new BigDecimal("30.00"), null, null, pedido.paidAt(), pedido.paidAt(), pedido.paidAt(), null, null, 0L);
+
+        assertThatThrownBy(() -> service.redeemForOrder(acimaDaBase))
+                .isInstanceOf(CashbackRedemptionNotAllowedException.class)
+                .extracting("code").isEqualTo(CashbackRedemptionNotAllowedException.ABOVE_CAP);
+        verify(cashbackEntryRepository, never()).save(any());
+    }
+
     // ── Parâmetros ──────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -345,6 +410,18 @@ class CashbackRedemptionServiceTest {
     private static CashbackEntry withId(CashbackEntry e, Long id) {
         return CashbackEntry.of(id, e.customerId(), e.orderId(), e.orderItemId(), e.type(), e.amount(),
                 e.availableAt(), e.expiresAt(), e.reversesEntryId(), e.createdAt());
+    }
+
+    /** Item comum de R$ 100 a 10% + cigarro de R$ 50 (fora dos benefícios), sem resgate. */
+    private static Order orderWithCigarette() {
+        OrderItem comum = OrderItem.of(9L, "CARV-001", BigDecimal.ONE, new BigDecimal("100.00"),
+                new BigDecimal("80.00"), BigDecimal.ZERO, new BigDecimal("10.0"));
+        OrderItem cigarro = OrderItem.of(10L, "CIG-001", BigDecimal.ONE, new BigDecimal("50.00"),
+                new BigDecimal("40.00"), BigDecimal.ZERO, new BigDecimal("10.0")).withBenefitsExcluded(true);
+        Instant paidAt = Instant.parse("2026-07-29T12:00:00Z");
+        return Order.of(501L, "000000501", SalesChannel.BALCAO, OrderStatus.CONCLUIDO, CUSTOMER, 1L,
+                "LOJA-01", List.of(comum, cigarro), new BigDecimal("150.00"), BigDecimal.ZERO, BigDecimal.ZERO,
+                new BigDecimal("150.00"), null, null, paidAt, paidAt, paidAt, null, null, 0L);
     }
 
     /** Pedido de R$ 100 (item a 10% de cashback), pago em parte com {@code redeemed} de cashback. */

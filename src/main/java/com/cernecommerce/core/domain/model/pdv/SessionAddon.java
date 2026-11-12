@@ -6,9 +6,13 @@ import java.math.BigDecimal;
  * Adicional pago da sessão (PDV-F024) — "Filtro de gelo R$ 5". Item do cardápio da mesa no molde
  * de {@link SessionTier}: fora do catálogo, sem estoque. Entra no preço da linha da sessão.
  */
-public record SessionAddon(Long id, String nome, BigDecimal preco, int ordem, boolean ativo) {
+public record SessionAddon(Long id, String nome, BigDecimal preco, int ordem, boolean ativo,
+        boolean permitePosEntrega) {
 
     public static final int NOME_MAX_LENGTH = 60;
+
+    /** PDV-F061 — SKU sintético da linha do adicional cobrado depois que a sessão já foi paga. */
+    public static final String SKU_PREFIX = "ADIC-";
 
     public SessionAddon {
         if (nome == null || nome.isBlank()) {
@@ -26,11 +30,25 @@ public record SessionAddon(Long id, String nome, BigDecimal preco, int ordem, bo
         }
     }
 
+    /** Adicional que só entra no lançamento e na edição, não depois da entrega. */
+    public SessionAddon(Long id, String nome, BigDecimal preco, int ordem, boolean ativo) {
+        this(id, nome, preco, ordem, ativo, false);
+    }
+
     public static SessionAddon create(String nome, BigDecimal preco, int ordem) {
-        return new SessionAddon(null, nome, preco, ordem, true);
+        return create(nome, preco, ordem, false);
+    }
+
+    public static SessionAddon create(String nome, BigDecimal preco, int ordem, boolean permitePosEntrega) {
+        return new SessionAddon(null, nome, preco, ordem, true, permitePosEntrega);
     }
 
     public SessionAddon withData(String novoNome, BigDecimal novoPreco, int novaOrdem, boolean novoAtivo) {
-        return new SessionAddon(id, novoNome, novoPreco, novaOrdem, novoAtivo);
+        return withData(novoNome, novoPreco, novaOrdem, novoAtivo, permitePosEntrega);
+    }
+
+    public SessionAddon withData(String novoNome, BigDecimal novoPreco, int novaOrdem, boolean novoAtivo,
+            boolean novoPermitePosEntrega) {
+        return new SessionAddon(id, novoNome, novoPreco, novaOrdem, novoAtivo, novoPermitePosEntrega);
     }
 }

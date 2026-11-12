@@ -1,6 +1,7 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.AuditLogEntity;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -8,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 
 public interface AuditLogJpaRepository extends JpaRepository<AuditLogEntity, Long>,
         JpaSpecificationExecutor<AuditLogEntity> {
@@ -17,4 +19,6 @@ public interface AuditLogJpaRepository extends JpaRepository<AuditLogEntity, Lon
     long deleteOlderThan(@Param("cutoff") Instant cutoff);
 
     long countByActionAndTargetAndTimestampGreaterThanEqual(String action, String target, Instant since);
+
+    List<AuditLogEntity> findByActionAndTargetOrderByTimestampDesc(String action, String target, Pageable pageable);
 }

@@ -50,11 +50,18 @@ public enum ConsumptionMode {
      * 2º rosh de uma {@link #SESSAO} (PDV-F021): nova essência, mesmos utensílios. De graça nos
      * dias de duplo rosh, pelo preço da faixa nos demais. Sempre ligado à sessão.
      */
-    ROSH_EXTRA;
+    ROSH_EXTRA,
+
+    /**
+     * PDV-F061 — adicional (filtro de gelo, piteira) incluído depois que a {@link #SESSAO} já foi
+     * paga: uma cobrança nova, ligada a ela. SKU sintético {@code ADIC-{id}}: não é produto do
+     * catálogo e não move estoque.
+     */
+    ADICIONAL_SESSAO;
 
     /** Modos que só fazem sentido ligados a outra linha da mesma comanda. */
     public boolean requiresLinkedItem() {
-        return this == SABOR_EXTRA || this == TROCA || this == ROSH_EXTRA;
+        return this == SABOR_EXTRA || this == TROCA || this == ROSH_EXTRA || this == ADICIONAL_SESSAO;
     }
 
     /**
@@ -75,7 +82,7 @@ public enum ConsumptionMode {
      * sintético, então nem cashback por SKU, nem devolução de estoque no estorno se aplicam.
      */
     public boolean isCatalogLine() {
-        return !isMenuSession();
+        return !isMenuSession() && this != ADICIONAL_SESSAO;
     }
 
     /**

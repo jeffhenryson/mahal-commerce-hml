@@ -212,7 +212,10 @@ public class CashbackController {
     }
 
     @Operation(summary = "Prévia do resgate: quanto o cliente pode usar nesta compra",
-            description = "amount = valor da mercadoria da compra (bruto − desconto, sem taxa de serviço/entrega). "
+            description = "amount = base elegível da compra: o líquido (bruto − desconto, sem taxa de serviço/entrega) "
+                    + "só dos itens de categoria sem `cashbackExcluded`. maxRedeemable = min(saldo disponível, amount) — "
+                    + "sem teto percentual e sem saldo mínimo (resgateTetoPercent/resgateMinimoSaldo não valem mais; "
+                    + "capPercent volta 100 e minimumBalance 0). Na venda o servidor recalcula a base sozinho. "
                     + "Nunca recusa por regra de resgate — devolve maxRedeemable = 0 e o motivo em reason.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = CashbackRedemptionQuoteResponseDTO.class))),

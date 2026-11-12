@@ -134,7 +134,8 @@ public class CashbackRetroactiveService implements CashbackRetroactiveUseCase {
         int skipped = 0;
         for (Order order : paidOrders(customerId)) {
             // Conta também ganho revertido: um crédito revogado não volta por aqui.
-            if (cashbackEntryRepository.existsEarnedForOrder(order.id())) {
+            // Venda com desconto do chefe não gera cashback, nem retroativo.
+            if (order.hasBossDiscount() || cashbackEntryRepository.existsEarnedForOrder(order.id())) {
                 skipped++;
                 continue;
             }
@@ -166,7 +167,8 @@ public class CashbackRetroactiveService implements CashbackRetroactiveUseCase {
         List<ItemCredit> credits = new ArrayList<>();
         for (OrderItem item : order.items()) {
             BigDecimal net = item.netAmount();
-            if (net == null || item.quantity().signum() <= 0) {
+            // Linha de categoria fora dos benefícios (cigarros, palheiros…) não gera cashback.
+            if (net == null || item.quantity().signum() <= 0 || item.benefitsExcluded()) {
                 continue;
             }
             BigDecimal kept = item.quantity().subtract(refunded.getOrDefault(item.id(), BigDecimal.ZERO));

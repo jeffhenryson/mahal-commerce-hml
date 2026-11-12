@@ -17,11 +17,20 @@ import com.cernecommerce.core.service.ReceivableService;
 import com.cernecommerce.core.ports.in.ReceivableUseCase;
 import com.cernecommerce.core.ports.in.AutomationDispatchUseCase;
 import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
+import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
+import com.cernecommerce.core.domain.model.config.ProvedorIa;
+import com.cernecommerce.core.ports.in.AssistenteConversaUseCase;
+import com.cernecommerce.core.ports.in.IntegrationHistoryUseCase;
+import com.cernecommerce.core.ports.out.assistente.AssistenteRepositoryPort;
+import com.cernecommerce.core.ports.out.llm.AssistenteLlmPort;
 import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import com.cernecommerce.core.ports.out.event.AuditEventPublisherPort;
 import com.cernecommerce.core.ports.out.notification.WhatsappPort;
 import com.cernecommerce.core.service.AutomationDispatchService;
 import com.cernecommerce.core.service.AutomationPlatformIntegrationService;
+import com.cernecommerce.core.service.AssistantIntegrationService;
+import com.cernecommerce.core.service.AssistenteConversaService;
+import com.cernecommerce.core.service.IntegrationHistoryService;
 import com.cernecommerce.core.service.WhatsappIntegrationService;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
@@ -384,7 +393,7 @@ class CoreBeanConfig {
             // Teto de desconto por pedido (PDV-F004). Acima dele, 409 em vez de um segundo nível de
             // permissão — dois níveis só criariam a tentação de distribuir o maior. Migra para
             // system_config junto com o painel de configuração.
-            @Value("${pdv.sale.max-discount-percent:10}") BigDecimal maxDiscountPercent,
+            @Value("${pdv.sale.max-discount-percent:5}") BigDecimal maxDiscountPercent,
             // CRM-F010 — o marcar na venda e a quitação no caixa de quem recebe.
             ReceivableUseCase receivableUseCase,
             // PDV-F043 — o fechamento recusa caixa com venda offline recusada esperando revisão.
@@ -642,6 +651,15 @@ class CoreBeanConfig {
         return new com.cernecommerce.core.service.SalesAnalyticsService(salesAnalyticsRepository, customerRepository);
     }
 
+    /** Perfil > métricas do próprio usuário e da ficha do admin. */
+    @Bean
+    com.cernecommerce.core.ports.in.UserMetricsUseCase userMetricsUseCase(
+            com.cernecommerce.core.ports.out.user.UserMetricsRepository userMetricsRepository,
+            CashRegisterRepository cashRegisterRepository, PdvUseCase pdvUseCase) {
+        return new com.cernecommerce.core.service.UserMetricsService(userMetricsRepository, cashRegisterRepository,
+                pdvUseCase);
+    }
+
     @Bean
     EcommerceUseCase ecommerceUseCase(CartRepository cartRepository) {
         return new EcommerceService(cartRepository);
@@ -817,6 +835,57 @@ class CoreBeanConfig {
         boolean allowInsecureHttp = !environment.acceptsProfiles(Profiles.of("prod"));
         return new AutomationPlatformIntegrationService(configPort, secretCipherPort, campaignWebhookPort,
                 allowInsecureHttp);
+    }
+
+    @Bean
+    AssistantIntegrationUseCase assistantIntegrationUseCase(SystemConfigPort configPort,
+            SecretCipherPort secretCipherPort, AssistenteLlmPort assistenteLlmPort,
+            @Value("${assistente.anthropic.model:${assistente.model:claude-sonnet-5-5}}") String anthropicModel,
+            @Value("${assistente.openai.model:gpt-5.5}") String openaiModel,
+            @Value("${assistente.gemini.model:gemini-3.5-flash}") String geminiModel) {
+        return new AssistantIntegrationService(configPort, secretCipherPort, assistenteLlmPort, java.util.Map.of(
+                ProvedorIa.ANTHROPIC, anthropicModel,
+                ProvedorIa.OPENAI, openaiModel,
+                ProvedorIa.GEMINI, geminiModel));
+    }
+
+    @Bean
+    AssistenteConversaUseCase assistenteConversaUseCase(AssistenteRepositoryPort assistenteRepositoryPort,
+            @Value("${assistente.acao.validade:PT10M}") java.time.Duration validadeAcao) {
+        return new AssistenteConversaService(assistenteRepositoryPort, validadeAcao, java.time.Clock.systemUTC());
+    }
+
+    /**
+     * Preço por milhão de tokens de cada provedor ({@code assistente.preco.<anthropic|openai|gemini>.
+     * entrada|saida|cache}), só para o custo estimado de GET /assistente/uso. Provedor sem os três
+     * valores fica sem custo (o relatório devolve custoEstimado nulo).
+     */
+    @Bean
+    com.cernecommerce.core.ports.in.AssistenteUsoUseCase assistenteUsoUseCase(
+            com.cernecommerce.core.ports.out.assistente.AssistenteUsoPort assistenteUsoPort,
+            AssistantIntegrationUseCase assistantIntegrationUseCase,
+            org.springframework.core.env.Environment env,
+            @Value("${assistente.preco.moeda:USD}") String moeda) {
+        java.util.Map<String, com.cernecommerce.core.domain.model.assistente.PrecoTokens> precos = new java.util.HashMap<>();
+        for (ProvedorIa p : ProvedorIa.values()) {
+            String base = "assistente.preco." + p.chave() + ".";
+            String entrada = env.getProperty(base + "entrada");
+            String saida = env.getProperty(base + "saida");
+            String cache = env.getProperty(base + "cache");
+            if (entrada != null && !entrada.isBlank() && saida != null && !saida.isBlank()
+                    && cache != null && !cache.isBlank()) {
+                precos.put(p.name(), new com.cernecommerce.core.domain.model.assistente.PrecoTokens(
+                        new java.math.BigDecimal(entrada.strip()), new java.math.BigDecimal(saida.strip()),
+                        new java.math.BigDecimal(cache.strip())));
+            }
+        }
+        return new com.cernecommerce.core.service.AssistenteUsoService(assistenteUsoPort, assistantIntegrationUseCase,
+                precos, moeda, java.time.Clock.systemUTC(), java.time.ZoneId.of("America/Sao_Paulo"));
+    }
+
+    @Bean
+    IntegrationHistoryUseCase integrationHistoryUseCase(AuditLogRepository auditLogRepository) {
+        return new IntegrationHistoryService(auditLogRepository);
     }
 
     @Bean

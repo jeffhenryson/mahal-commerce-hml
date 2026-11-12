@@ -16,6 +16,8 @@ import com.cernecommerce.core.domain.model.pdv.ComandaItem;
 import com.cernecommerce.core.domain.model.pdv.ComandaStatus;
 import com.cernecommerce.adapter.out.persistence.entity.ComandaItemAddonEntity;
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
+import com.cernecommerce.core.domain.model.pdv.SessionLink;
+import com.cernecommerce.core.domain.model.pdv.SessionModality;
 import com.cernecommerce.core.domain.model.pdv.SessionProgress;
 import com.cernecommerce.core.domain.model.pdv.SessionSetup;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
@@ -24,6 +26,8 @@ import com.cernecommerce.core.domain.model.pedido.ConsumptionMode;
 import com.cernecommerce.core.ports.out.pdv.ComandaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -322,6 +326,7 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             if (itemEntity == null) {
                 itemEntity = new ComandaItemEntity();
                 itemEntity.setComanda(entity);
+                itemEntity.setAddedBy(currentUsername());
                 entity.getItems().add(itemEntity);
             }
             itemEntity.setSku(item.sku());
@@ -350,6 +355,9 @@ public class ComandaRepositoryImpl implements ComandaRepository {
             itemEntity.setPromotionId(item.promotionId());
             itemEntity.setPromotionName(item.promotionName());
             itemEntity.setPromotionDiscountAmount(item.promotionDiscount());
+            itemEntity.setSessionModality(item.modality() == null ? null : item.modality().name());
+            itemEntity.setSessionLink(item.sessionLink() == null ? null : item.sessionLink().name());
+            itemEntity.setBenefitsExcluded(item.benefitsExcluded());
             SessionProgress session = item.session();
             itemEntity.setSessionStatus(session == null ? null : session.status().name());
             itemEntity.setStartedAt(session == null ? null : session.startedAt());
@@ -405,7 +413,9 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                 toSetup(e), e.getEssenceSku(), e.getEssenceSku2(), e.isEssence2Package(),
                 e.getEssenceRatio() == null ? null : ProporcaoMistura.valueOf(e.getEssenceRatio()),
                 e.isCompraNaLoja(), e.getStoreDiscountAmount(), e.getPromotionId(), e.getPromotionName(),
-                e.getPromotionDiscountAmount());
+                e.getPromotionDiscountAmount(),
+                e.getSessionModality() == null ? null : SessionModality.valueOf(e.getSessionModality()),
+                e.getSessionLink() == null ? null : SessionLink.valueOf(e.getSessionLink()), e.isBenefitsExcluded());
     }
 
     private static SessionSetup toSetup(ComandaItemEntity e) {
@@ -417,5 +427,19 @@ public class ComandaRepositoryImpl implements ComandaRepository {
                         .map(a -> new SessionSetup.Addon(a.getAddonId(), a.getNome(), a.getPreco()))
                         .toList(),
                 e.isVasoGrande(), e.isCarvaoCortesia());
+    }
+
+    /**
+     * Perfil > métricas — autor da linha nova, lido do contexto de segurança como faria um
+     * {@code @CreatedBy}. Evita carregar o username pelo record {@code ComandaItem} e pelas
+     * dezenas de fábricas dele. Sem usuário autenticado (job, chamada interna), fica nulo.
+     */
+    private static String currentUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            return null;
+        }
+        String name = auth.getName();
+        return name != null && name.length() > 80 ? name.substring(0, 80) : name;
     }
 }

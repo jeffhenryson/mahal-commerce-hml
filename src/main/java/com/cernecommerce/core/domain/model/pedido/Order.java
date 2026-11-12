@@ -71,7 +71,8 @@ public record Order(
         Long comandaId,
         String tableLabel,
         BigDecimal serviceFeeAmount,
-        OrderDelivery delivery) {
+        OrderDelivery delivery,
+        Integer bossDiscountPercent) {
 
     public Order {
         if (channel == null) {
@@ -119,6 +120,10 @@ public record Order(
         cashbackRedeemed = requireNonNegative(cashbackRedeemed, "cashbackRedeemed");
         netAmount = requireNonNegative(netAmount, "netAmount");
         serviceFeeAmount = requireNonNegative(serviceFeeAmount, "serviceFeeAmount");
+        // V198 — desconto do chefe: percentual inteiro de 1 a 5. O CHECK do schema espelha a regra.
+        if (bossDiscountPercent != null && (bossDiscountPercent < 1 || bossDiscountPercent > 5)) {
+            throw new IllegalArgumentException("bossDiscountPercent deve estar entre 1 e 5: " + bossDiscountPercent);
+        }
 
         // PDV-F015: os 10% do garçom são serviço de mesa, e só existem onde há mesa. No balcão não
         // há o que cobrar — mesma razão pela qual comandaId/tableLabel também são exclusivos de
@@ -205,7 +210,7 @@ public record Order(
         return new Order(null, null, SalesChannel.BALCAO, OrderStatus.CRIADO, customerId, sessionId,
                 warehouseCode, items, totals.gross(), totals.discount(), BigDecimal.ZERO, totals.net(),
                 null, null, Instant.now(), null, null, null, null, null, null, null, null, 0L, null, null,
-                BigDecimal.ZERO, delivery);
+                BigDecimal.ZERO, delivery, null);
     }
 
     /**
@@ -232,7 +237,7 @@ public record Order(
         return new Order(null, null, SalesChannel.MESA, OrderStatus.CRIADO, customerId, sessionId,
                 warehouseCode, items, totals.gross(), totals.discount(), BigDecimal.ZERO, totals.net(),
                 null, null, Instant.now(), null, null, null, null, null, null, null, null, 0L,
-                comandaId, tableLabel, BigDecimal.ZERO, null);
+                comandaId, tableLabel, BigDecimal.ZERO, null, null);
     }
 
     /**
@@ -253,7 +258,7 @@ public record Order(
         return new Order(null, null, SalesChannel.MARKETPLACE, OrderStatus.AGUARDANDO_PAGAMENTO, customerId,
                 null, warehouseCode, items, totals.gross(), totals.discount(), BigDecimal.ZERO, totals.net(),
                 null, null, Instant.now(), null, null, null, null, null, null, null, null, 0L, null, null,
-                BigDecimal.ZERO, delivery);
+                BigDecimal.ZERO, delivery, null);
     }
 
     /**
@@ -351,7 +356,24 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, null);
+    }
+
+    /**
+     * Reconstitui um pedido a partir de persistência — forma canônica, com o percentual do desconto do
+     * chefe (V198; nulo quando não houve).
+     */
+    public static Order of(Long id, String orderNumber, SalesChannel channel, OrderStatus status,
+            Long customerId, Long sessionId, String warehouseCode, List<OrderItem> items,
+            BigDecimal grossAmount, BigDecimal discountAmount, BigDecimal cashbackRedeemed,
+            BigDecimal netAmount, BigDecimal changeAmount, String cancelReason, Instant createdAt,
+            Instant paidAt, Instant concludedAt, Instant cancelledAt, Instant refundedAt, Instant reservedAt,
+            Instant separatedAt, Instant shippedAt, Instant deliveredAt, long version, Long comandaId,
+            String tableLabel, BigDecimal serviceFeeAmount, OrderDelivery delivery, Integer bossDiscountPercent) {
+        return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
+                grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
+                createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -369,7 +391,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.CONCLUIDO, customerId, sessionId,
                 warehouseCode, items, grossAmount, discountAmount, cashbackRedeemed, netAmount,
                 changeAmount, cancelReason, createdAt, paidAt == null ? concludedAt : paidAt,
-                concludedAt, null, null, reservedAt, separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                concludedAt, null, null, reservedAt, separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -393,7 +415,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.RESERVADO, customerId, sessionId,
                 warehouseCode, items, grossAmount, discountAmount, cashbackRedeemed, netAmount,
                 changeAmount, cancelReason, createdAt, paidAt == null ? reservedAt : paidAt,
-                null, null, null, reservedAt, separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                null, null, null, reservedAt, separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -408,7 +430,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.CONCLUIDO, customerId, sessionId,
                 warehouseCode, items, grossAmount, discountAmount, cashbackRedeemed, netAmount,
                 changeAmount, cancelReason, createdAt, paidAt, concludedAt, null, null, reservedAt,
-                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /** Marca o pagamento como confirmado — caminho do marketplace, disparado pelo webhook. */
@@ -417,7 +439,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.PAGO, customerId, sessionId, warehouseCode,
                 items, grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, null, null, reservedAt, separatedAt, shippedAt, deliveredAt,
-                version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -434,7 +456,7 @@ public record Order(
         return new Order(id, orderNumber, channel, newStatus, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, null, null, reservedAt, newSeparatedAt, newShippedAt,
-                newDeliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                newDeliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -451,7 +473,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.CANCELADO, customerId, sessionId,
                 warehouseCode, items, grossAmount, discountAmount, cashbackRedeemed, netAmount,
                 changeAmount, reason, createdAt, paidAt, concludedAt, cancelledAt, null, reservedAt,
-                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -467,7 +489,7 @@ public record Order(
         return new Order(id, orderNumber, channel, OrderStatus.REEMBOLSADO, customerId, sessionId,
                 warehouseCode, items, grossAmount, discountAmount, cashbackRedeemed, netAmount,
                 changeAmount, reason, createdAt, paidAt, concludedAt, null, refundedAt, reservedAt,
-                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -478,15 +500,16 @@ public record Order(
      */
     public Order withCashbackRedeemed(BigDecimal redeemed) {
         BigDecimal value = redeemed == null ? BigDecimal.ZERO : redeemed;
-        if (value.compareTo(merchandiseNet()) > 0) {
+        // V198 — o saldo não abate item de categoria fora dos benefícios.
+        if (value.compareTo(eligibleMerchandiseNet()) > 0) {
             throw new IllegalArgumentException("cashback resgatado (" + value
-                    + ") não pode passar do valor da mercadoria (" + merchandiseNet() + ")");
+                    + ") não pode passar do valor da mercadoria elegível (" + eligibleMerchandiseNet() + ")");
         }
         BigDecimal newNet = grossAmount.subtract(discountAmount).subtract(value);
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, value, newNet, changeAmount, cancelReason, createdAt,
                 paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -509,7 +532,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, newSessionId, warehouseCode,
                 items, grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount,
                 cancelReason, createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt,
-                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -520,7 +543,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode,
                 items, grossAmount, discountAmount, cashbackRedeemed, netAmount, newChangeAmount,
                 cancelReason, createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt,
-                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                separatedAt, shippedAt, deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -540,7 +563,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, newItems,
                 newGross, newDiscount, cashbackRedeemed, newNet, changeAmount, cancelReason, createdAt,
                 paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /** Vincula o pedido a um cliente identificado depois da montagem — o "CPF na nota?" do balcão. */
@@ -548,7 +571,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, newCustomerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery);
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, delivery, bossDiscountPercent);
     }
 
     /**
@@ -577,7 +600,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, newDelivery);
+                deliveredAt, version, comandaId, tableLabel, serviceFeeAmount, newDelivery, bossDiscountPercent);
     }
 
     /**
@@ -634,7 +657,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, fee, delivery);
+                deliveredAt, version, comandaId, tableLabel, fee, delivery, bossDiscountPercent);
     }
 
     /**
@@ -668,7 +691,7 @@ public record Order(
         return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
                 grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason,
                 createdAt, paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt,
-                deliveredAt, version, comandaId, tableLabel, fee, delivery);
+                deliveredAt, version, comandaId, tableLabel, fee, delivery, bossDiscountPercent);
     }
 
     /**
@@ -676,7 +699,12 @@ public record Order(
      * {@link #cashbackEarningFraction()}: a parte paga com cashback resgatado não gera cashback.
      */
     public BigDecimal totalCashbackEarned() {
+        // V198 — com desconto do chefe não há cashback; linha fora dos benefícios também não gera.
+        if (hasBossDiscount()) {
+            return BigDecimal.ZERO;
+        }
         BigDecimal raw = items.stream()
+                .filter(i -> !i.benefitsExcluded())
                 .map(OrderItem::cashbackAmount)
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -701,6 +729,38 @@ public record Order(
     /** Valor da mercadoria depois dos descontos e antes do resgate de cashback: {@code bruto − desconto}. */
     public BigDecimal merchandiseNet() {
         return grossAmount.subtract(discountAmount);
+    }
+
+    /**
+     * V198 — {@link #merchandiseNet()} só das linhas elegíveis a benefícios: a base do resgate de
+     * cashback. Linha de categoria fora dos benefícios (cigarros, palheiros…) fica de fora; linha legada
+     * sem preço congelado também (sem preço não há base).
+     */
+    public BigDecimal eligibleMerchandiseNet() {
+        return items.stream()
+                .filter(i -> !i.benefitsExcluded())
+                .map(OrderItem::netAmount)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
+     * V198 — o pedido teve desconto do chefe (percentual de 1–5, já rateado nos itens)? Pedido com ele
+     * não gera cashback. Quem decide por cashback pergunta aqui, e não por {@code bossDiscountPercent() !=
+     * null}: um {@code Order} de teste mockado devolve 0 no getter {@code Integer}, nunca nulo.
+     */
+    public boolean hasBossDiscount() {
+        return bossDiscountPercent != null;
+    }
+
+    /**
+     * V198 — carimba o percentual do desconto do chefe. Ver {@link #hasBossDiscount()}.
+     */
+    public Order withBossDiscountPercent(Integer percent) {
+        return new Order(id, orderNumber, channel, status, customerId, sessionId, warehouseCode, items,
+                grossAmount, discountAmount, cashbackRedeemed, netAmount, changeAmount, cancelReason, createdAt,
+                paidAt, concludedAt, cancelledAt, refundedAt, reservedAt, separatedAt, shippedAt, deliveredAt,
+                version, comandaId, tableLabel, serviceFeeAmount, delivery, percent);
     }
 
     /**

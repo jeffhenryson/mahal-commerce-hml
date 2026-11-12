@@ -45,4 +45,9 @@ public class RepeatSessionRequest {
     @Schema(description = "PDV-F057 — o jumbo da origem sai de cortesia. Não herda da origem: sem o campo o "
             + "jumbo vai cobrado. Exige PDV_COMANDA_COURTESY.")
     private boolean carvaoCortesia;
+
+    @Schema(description = "PDV-F061 — só na origem COMPRA_ESSENCIA/ITENS_PESSOAIS: ESSENCIAS_COMPRADAS (padrão) "
+            + "repete na mesma modalidade e preço, sem pacote novo, com sabor entre os que o cliente já comprou "
+            + "(400 SESSION_FLAVOR_NOT_IN_PACKAGES); PADRAO repete como sessão da casa, pela faixa e com a lata.")
+    private com.cernecommerce.core.ports.in.ComandaUseCase.RepeatMode repeticao;
 }

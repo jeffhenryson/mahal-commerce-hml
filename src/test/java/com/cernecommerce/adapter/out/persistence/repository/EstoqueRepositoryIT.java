@@ -1895,14 +1895,35 @@ class EstoqueRepositoryIT {
         stockBalanceRepository.save(
                 StockBalance.of(null, "SUM-ALERT-ATENCAO", deposito.id(), new BigDecimal("7"), 0L));
 
-        // OK: no mínimo.
+        // NO_LIMITE conta em "atenção": saldo exatamente no mínimo.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-LIMITE", deposito.id(), new BigDecimal("10")));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-LIMITE", deposito.id(), new BigDecimal("10"), 0L));
+
+        // Crítico padrão de mínimo ímpar: floor(7/2) = 3.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-IMPAR", deposito.id(), new BigDecimal("7")));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-IMPAR", deposito.id(), new BigDecimal("3"), 0L));
+
+        // Crítico configurado (1): saldo 2 fica em ABAIXO, não CRÍTICO.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-CUSTOM", deposito.id(), new BigDecimal("7"),
+                BigDecimal.ONE));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-CUSTOM", deposito.id(), new BigDecimal("2"), 0L));
+
+        // Fracionário: min 2,5 → crítico 1,25.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-KG", deposito.id(), new BigDecimal("2.5")));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-KG", deposito.id(), new BigDecimal("1.25"), 0L));
+
+        // OK: acima do mínimo.
         reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-OK", deposito.id(), new BigDecimal("10")));
-        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-OK", deposito.id(), new BigDecimal("10"), 0L));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-OK", deposito.id(), new BigDecimal("11"), 0L));
+
+        // Mínimo zero desliga o alerta, mesmo com saldo zerado.
+        reorderPointRepository.save(ReorderPoint.create("SUM-ALERT-ZERO", deposito.id(), BigDecimal.ZERO));
+        stockBalanceRepository.save(StockBalance.of(null, "SUM-ALERT-ZERO", deposito.id(), BigDecimal.ZERO, 0L));
         flushAndClear();
 
         ReorderAlertCounts depois = reorderPointRepository.countAlerts();
-        assertThat(depois.criticos()).isEqualTo(antes.criticos() + 1);
-        assertThat(depois.atencao()).isEqualTo(antes.atencao() + 1);
+        assertThat(depois.criticos()).isEqualTo(antes.criticos() + 3);
+        assertThat(depois.atencao()).isEqualTo(antes.atencao() + 3);
     }
 
     /** EST-F053 — a base de produto com variações não tem saldo: o mínimo nela não é alerta. */

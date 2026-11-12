@@ -31,6 +31,7 @@ public class CategoryRepositoryImpl implements CategoryRepository {
         entity.setDisplayOrder(category.displayOrder());
         entity.setActive(category.active());
         entity.setCigarette(category.cigarette());
+        entity.setCashbackExcluded(category.cashbackExcluded());
         return toDomain(jpaRepository.save(entity));
     }
 
@@ -76,6 +77,6 @@ public class CategoryRepositoryImpl implements CategoryRepository {
 
     private Category toDomain(ProductCategoryEntity e) {
         return Category.of(e.getId(), e.getName(), e.isFeatured(), e.getDisplayOrder(), e.isActive(),
-                e.isCigarette());
+                e.isCigarette(), e.isCashbackExcluded());
     }
 }

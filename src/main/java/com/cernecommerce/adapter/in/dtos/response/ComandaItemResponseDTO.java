@@ -140,7 +140,25 @@ public class ComandaItemResponseDTO {
             + "desconto.")
     private BigDecimal storeDiscountAmount;
 
+    @Schema(description = "PDV-F061 — modalidade da linha de sessão: PADRAO, COMPRA_ESSENCIA ou ITENS_PESSOAIS. "
+            + "Nulo nas linhas que não são sessão; ausente nas sessões antigas (= PADRAO).")
+    private String modalidade;
+
+    @Schema(description = "PDV-F061 — por que a linha (que não é rosh) está ligada à sessão de linkedItemId: "
+            + "PACOTE_ESSENCIA (o pacote da compra de essência) ou ADICIONAL (adicional incluído com a sessão "
+            + "já paga).")
+    private String vinculoSessao;
+
+    @Schema(description = "PDV-F061 — o pacote do sabor principal que vem no kit de itens pessoais, a R$ 0 "
+            + "(vinculoSessao PACOTE_ESSENCIA).")
+    private boolean incluso;
+
     @Schema(description = "Adicionais pagos cobrados nesta sessão, com o preço da época (PDV-F024). "
             + "Vazio fora de sessão do cardápio.")
     private List<ComandaItemAddonResponseDTO> adicionais = List.of();
+
+    @Schema(description = "Linha de categoria fora dos benefícios "
+            + "(cigarros, palheiros…), carimbada no lançamento: não gera cashback e sai da base do desconto do "
+            + "chefe e do resgate no fechamento da mesa.")
+    private boolean cashbackExcluded;
 }

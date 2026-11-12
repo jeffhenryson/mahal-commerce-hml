@@ -777,7 +777,7 @@ class ShopServiceTest {
                 order.cashbackRedeemed(), order.netAmount(), order.changeAmount(), order.cancelReason(),
                 order.createdAt(), order.paidAt(), order.concludedAt(), order.cancelledAt(), order.refundedAt(),
                 order.reservedAt(), order.separatedAt(), order.shippedAt(), order.deliveredAt(), order.version(),
-                order.comandaId(), order.tableLabel(), order.serviceFeeAmount(), order.delivery());
+                order.comandaId(), order.tableLabel(), order.serviceFeeAmount(), order.delivery(), order.bossDiscountPercent());
     }
 
     @Test

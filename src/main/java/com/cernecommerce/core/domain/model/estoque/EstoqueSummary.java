@@ -16,7 +16,8 @@ import java.math.BigDecimal;
  *        fallback para o {@code costPrice} manual do produto. Saldo sem nenhum custo conhecido
  *        contribui zero, não envenena a soma.
  * @param alertasCriticos quantidade de pares SKU/depósito em {@link AlertSeverity#CRITICO}.
- * @param alertasAtencao quantidade de pares SKU/depósito em {@link AlertSeverity#ATENCAO}.
+ * @param alertasAtencao quantidade de pares SKU/depósito em {@link AlertSeverity#ABAIXO} ou
+ *                       {@link AlertSeverity#NO_LIMITE}.
  * @param categoriaComMaisProdutos categoria com mais produtos vinculados, ou {@code null} se
  *        nenhum produto está vinculado a uma categoria.
  */

@@ -69,6 +69,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         entity.setComandaId(order.comandaId());
         entity.setTableLabel(order.tableLabel());
         entity.setServiceFeeAmount(order.serviceFeeAmount());
+        entity.setBossDiscountPercent(order.bossDiscountPercent());
         writeDelivery(entity, order.delivery());
 
         // PED-C005 — os itens só são escritos na CRIAÇÃO. Depois disso o pedido muda de status,
@@ -107,6 +108,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         itemEntity.setPromotionId(item.promotionId());
         itemEntity.setPromotionName(item.promotionName());
         itemEntity.setPromotionDiscountAmount(item.promotionDiscountAmount());
+        itemEntity.setBenefitsExcluded(item.benefitsExcluded());
         itemEntity.setSurchargeAmount(item.surchargeAmount());
         return itemEntity;
     }
@@ -283,7 +285,7 @@ public class OrderRepositoryImpl implements OrderRepository {
                 // Pedido anterior a PDV-F015 lê como zero: o DEFAULT da V118 cobre as linhas já
                 // gravadas, e este null-check cobre carga direta.
                 e.getServiceFeeAmount() == null ? java.math.BigDecimal.ZERO : e.getServiceFeeAmount(),
-                readDelivery(e));
+                readDelivery(e), e.getBossDiscountPercent());
     }
 
     /** PDV-F022 — sem entrega, tudo nulo: a linha opcional de order_delivery não é gravada. */
@@ -335,6 +337,6 @@ public class OrderRepositoryImpl implements OrderRepository {
                 e.getDiscountAmount(), e.getCashbackPercent(), e.getProductName(),
                 e.getMode() == null ? ConsumptionMode.NORMAL : ConsumptionMode.valueOf(e.getMode()),
                 e.isCourtesy(), e.getNotes(), e.getSurchargeAmount(), e.getCharcoal(),
-                e.getPromotionId(), e.getPromotionName(), e.getPromotionDiscountAmount());
+                e.getPromotionId(), e.getPromotionName(), e.getPromotionDiscountAmount(), e.isBenefitsExcluded());
     }
 }

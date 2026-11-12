@@ -1,25 +1,34 @@
 package com.cernecommerce.adapter.in.controller;
 
+import com.cernecommerce.adapter.in.dtos.request.AssistantIntegrationRequest;
 import com.cernecommerce.adapter.in.dtos.request.AutomationPlatformIntegrationRequest;
 import com.cernecommerce.adapter.in.dtos.request.EmailIntegrationRequest;
 import com.cernecommerce.adapter.in.dtos.request.EmailIntegrationTestRequest;
 import com.cernecommerce.adapter.in.dtos.request.WhatsappIntegrationRequest;
 import com.cernecommerce.adapter.in.dtos.request.WhatsappTestRequest;
+import com.cernecommerce.adapter.in.dtos.response.AssistantIntegrationResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.AssistantProviderOptionDTO;
 import com.cernecommerce.adapter.in.dtos.response.AutomationPlatformIntegrationResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.EmailIntegrationResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.EmailTestResultDTO;
+import com.cernecommerce.adapter.in.dtos.response.IntegrationHistoryEntryDTO;
 import com.cernecommerce.adapter.in.dtos.response.IntegrationTestResultDTO;
 import com.cernecommerce.adapter.in.dtos.response.WhatsappIntegrationResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
+import com.cernecommerce.core.domain.model.config.AssistantSettings;
+import com.cernecommerce.core.domain.model.config.ProvedorIa;
+import com.cernecommerce.core.domain.exception.integration.InvalidIntegrationException;
 import com.cernecommerce.core.domain.model.config.AutomationPlatformSettings;
 import com.cernecommerce.core.domain.model.config.EmailIntegrationSettings;
 import com.cernecommerce.core.domain.model.config.IntegrationTestResult;
 import com.cernecommerce.core.domain.model.config.WhatsappConnectionStatus;
 import com.cernecommerce.core.domain.model.config.WhatsappIntegrationSettings;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
+import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
 import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
 import com.cernecommerce.core.ports.in.EmailIntegrationUseCase;
+import com.cernecommerce.core.ports.in.IntegrationHistoryUseCase;
 import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,20 +43,24 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/store/integrations")
-@Tag(name = "Store Integrations", description = "Tokens de integração da loja (e-mail/Resend, WhatsApp, n8n/Make)")
+@Tag(name = "Store Integrations", description = "Tokens de integração da loja (e-mail/Resend, WhatsApp, n8n/Make, IA do assistente)")
 public class StoreIntegrationController {
 
     private final EmailIntegrationUseCase emailIntegrationUseCase;
     private final WhatsappIntegrationUseCase whatsappIntegrationUseCase;
     private final AutomationPlatformIntegrationUseCase automationPlatformIntegrationUseCase;
+    private final AssistantIntegrationUseCase assistantIntegrationUseCase;
+    private final IntegrationHistoryUseCase integrationHistoryUseCase;
     private final ApplicationEventPublisher publisher;
     private final String mailpitUiUrl;
     private final String whatsappCallbackUrl;
@@ -55,11 +68,15 @@ public class StoreIntegrationController {
     public StoreIntegrationController(EmailIntegrationUseCase emailIntegrationUseCase,
             WhatsappIntegrationUseCase whatsappIntegrationUseCase,
             AutomationPlatformIntegrationUseCase automationPlatformIntegrationUseCase,
+            AssistantIntegrationUseCase assistantIntegrationUseCase,
+            IntegrationHistoryUseCase integrationHistoryUseCase,
             ApplicationEventPublisher publisher, @Value("${mailpit.ui-url:}") String mailpitUiUrl,
             @Value("${whatsapp.webhook-url:}") String whatsappCallbackUrl) {
         this.emailIntegrationUseCase = emailIntegrationUseCase;
         this.whatsappIntegrationUseCase = whatsappIntegrationUseCase;
         this.automationPlatformIntegrationUseCase = automationPlatformIntegrationUseCase;
+        this.assistantIntegrationUseCase = assistantIntegrationUseCase;
+        this.integrationHistoryUseCase = integrationHistoryUseCase;
         this.publisher = publisher;
         this.mailpitUiUrl = mailpitUiUrl == null || mailpitUiUrl.isBlank() ? null : mailpitUiUrl.strip();
         this.whatsappCallbackUrl = whatsappCallbackUrl == null || whatsappCallbackUrl.isBlank()
@@ -188,6 +205,166 @@ public class StoreIntegrationController {
     @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
     public ResponseEntity<IntegrationTestResultDTO> testAutomationPlatform(Authentication authentication) {
         return ResponseEntity.ok(toResponse(automationPlatformIntegrationUseCase.sendTest(authentication.getName())));
+    }
+
+    // ── IA do assistente (Claude, ChatGPT, Gemini) ────────────────────────────
+
+    @Operation(summary = "Integração da IA do assistente", description = "Nunca devolve as chaves.")
+    @GetMapping("/assistant")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<AssistantIntegrationResponseDTO> getAssistant() {
+        return ResponseEntity.ok(toResponse(assistantIntegrationUseCase.get()));
+    }
+
+    @Operation(summary = "Provedores de IA suportados pelo assistente", description = "Com o modelo padrão de cada um.")
+    @GetMapping("/assistant/providers")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<List<AssistantProviderOptionDTO>> assistantProviders() {
+        Map<ProvedorIa, String> modelos = assistantIntegrationUseCase.defaultModels();
+        return ResponseEntity.ok(java.util.Arrays.stream(ProvedorIa.values())
+                .map(p -> new AssistantProviderOptionDTO(p.name(), p.rotulo(), modelos.get(p)))
+                .toList());
+    }
+
+    @Operation(summary = "Atualiza a integração da IA do assistente",
+            description = "Uma chave por provedor (ANTHROPIC, OPENAI, GEMINI), um ativo e um reserva opcional. "
+                    + "apiKey ausente mantém a chave salva; \"\" remove. Aceita também o formato antigo "
+                    + "{enabled, apiKey, model}, aplicado ao provedor ativo. monthlyTokenLimit: teto mensal de tokens (ausente "
+                    + "mantém, 0 remove). 400 se ativar sem a chave do ativo, "
+                    + "reserva sem chave ou igual ao ativo, ou modelo que não é do provedor.")
+    @PutMapping("/assistant")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<AssistantIntegrationResponseDTO> updateAssistant(
+            @Valid @RequestBody AssistantIntegrationRequest request, Authentication authentication) {
+        AssistantSettings before = assistantIntegrationUseCase.get();
+        ProvedorIa provider = provedor(request.getProvider());
+        Map<ProvedorIa, AssistantIntegrationUseCase.ProviderCommand> comandos = new java.util.EnumMap<>(ProvedorIa.class);
+        if (request.getProviders() != null) {
+            request.getProviders().forEach((nome, c) -> comandos.put(provedorObrigatorio(nome),
+                    new AssistantIntegrationUseCase.ProviderCommand(c == null ? null : c.getApiKey(),
+                            c == null ? null : c.getModel())));
+        }
+        AssistantSettings saved = assistantIntegrationUseCase.update(new AssistantIntegrationUseCase.UpdateCommand(
+                request.isEnabled(), provider, provedor(request.getFallbackProvider()),
+                request.isFallbackProviderPresent(), comandos, request.getApiKey(), request.getModel()),
+                authentication.getName());
+        if (request.getMonthlyTokenLimit() != null) {
+            saved = assistantIntegrationUseCase.updateMonthlyTokenLimit(request.getMonthlyTokenLimit(),
+                    authentication.getName());
+        }
+
+        // Formato antigo: a chave e o modelo do topo foram para o provedor ativo.
+        if ((request.getApiKey() != null || request.getModel() != null) && !comandos.containsKey(saved.provider())) {
+            comandos.put(saved.provider(), new AssistantIntegrationUseCase.ProviderCommand(request.getApiKey(),
+                    request.getModel()));
+        }
+        List<String> fields = new ArrayList<>();
+        boolean secretSet = false;
+        boolean secretRemoved = false;
+        if (before.enabled() != saved.enabled()) {
+            fields.add("enabled");
+        }
+        if (before.provider() != saved.provider()) {
+            fields.add("provider");
+        }
+        if (before.fallbackProvider() != saved.fallbackProvider()) {
+            fields.add("fallbackProvider");
+        }
+        if (!java.util.Objects.equals(before.monthlyTokenLimit(), saved.monthlyTokenLimit())) {
+            fields.add("monthlyTokenLimit");
+        }
+        for (Map.Entry<ProvedorIa, AssistantIntegrationUseCase.ProviderCommand> e : comandos.entrySet()) {
+            String apiKey = e.getValue().apiKey();
+            if (apiKey != null) {
+                fields.add("providers." + e.getKey().name() + ".apiKey");
+                secretRemoved |= apiKey.isBlank();
+                secretSet |= !apiKey.isBlank();
+            }
+            if (!java.util.Objects.equals(before.doProvedor(e.getKey()).model(), saved.doProvedor(e.getKey()).model())) {
+                fields.add("providers." + e.getKey().name() + ".model");
+            }
+        }
+        String historyAction = secretRemoved ? "SECRET_REMOVED"
+                : secretSet ? "SECRET_SET"
+                : before.enabled() != saved.enabled() ? (saved.enabled() ? "ENABLED" : "DISABLED")
+                : "UPDATED";
+        Map<String, Object> details = new HashMap<>();
+        details.put("integration", "assistant");
+        details.put("enabled", saved.enabled());
+        details.put("provider", saved.provider().name());
+        if (saved.fallbackProvider() != null) {
+            details.put("fallbackProvider", saved.fallbackProvider().name());
+        }
+        details.put("apiKeyChanged", secretSet || secretRemoved);
+        details.put("historyAction", historyAction);
+        details.put("fields", fields);
+        publisher.publishEvent(AuditEvent.of(EventType.INTEGRATION_UPDATED, authentication.getName(), details));
+        return ResponseEntity.ok(toResponse(saved));
+    }
+
+    @Operation(summary = "Testa a IA do assistente",
+            description = "Chamada mínima ao provedor com a chave salva dele (mesmo desativado). Sem provider, testa "
+                    + "o ativo. Recusa do provedor volta 200 com success=false e o motivo em error; detail traz o modelo.")
+    @PostMapping("/assistant/test")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<IntegrationTestResultDTO> testAssistant(@RequestParam(required = false) String provider,
+            Authentication authentication) {
+        return ResponseEntity.ok(toResponse(assistantIntegrationUseCase.sendTest(provedor(provider),
+                authentication.getName())));
+    }
+
+    @Operation(summary = "Histórico de alterações da IA do assistente",
+            description = "Mais recente primeiro. Nunca traz valores, só os campos alterados.")
+    @GetMapping("/assistant/history")
+    @PreAuthorize("hasAuthority('INTEGRATION_MANAGE')")
+    public ResponseEntity<List<IntegrationHistoryEntryDTO>> assistantHistory(
+            @RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(integrationHistoryUseCase.history("assistant", limit).stream()
+                .map(e -> new IntegrationHistoryEntryDTO(e.at(), e.user(), e.action(), e.fields()))
+                .toList());
+    }
+
+    private static ProvedorIa provedorObrigatorio(String valor) {
+        ProvedorIa p = provedor(valor);
+        if (p == null) {
+            throw new InvalidIntegrationException("Informe o provedor de IA (ANTHROPIC, OPENAI ou GEMINI)");
+        }
+        return p;
+    }
+
+    private static ProvedorIa provedor(String valor) {
+        try {
+            return ProvedorIa.de(valor);
+        } catch (IllegalArgumentException ex) {
+            throw new InvalidIntegrationException("Provedor de IA desconhecido: " + valor
+                    + " (use ANTHROPIC, OPENAI ou GEMINI)");
+        }
+    }
+
+    private static AssistantIntegrationResponseDTO toResponse(AssistantSettings s) {
+        AssistantIntegrationResponseDTO dto = new AssistantIntegrationResponseDTO();
+        dto.setEnabled(s.enabled());
+        dto.setProvider(s.provider().name());
+        dto.setFallbackProvider(s.fallbackProvider() == null ? null : s.fallbackProvider().name());
+        dto.setApiKeyConfigured(s.apiKeyConfigured());
+        dto.setApiKeyLast4(s.apiKeyLast4());
+        dto.setModel(s.model());
+        dto.setSource("STORE");
+        dto.setStatusDetail(s.statusDetail());
+        dto.setProviders(s.providers().stream().map(p -> {
+            AssistantIntegrationResponseDTO.Provider item = new AssistantIntegrationResponseDTO.Provider();
+            item.setProvider(p.provider().name());
+            item.setLabel(p.provider().rotulo());
+            item.setApiKeyConfigured(p.apiKeyConfigured());
+            item.setApiKeyLast4(p.apiKeyLast4());
+            item.setModel(p.model());
+            item.setStatusDetail(p.statusDetail());
+            return item;
+        }).toList());
+        dto.setUpdatedAt(s.updatedAt());
+        dto.setUpdatedBy(s.updatedBy());
+        dto.setMonthlyTokenLimit(s.monthlyTokenLimit());
+        return dto;
     }
 
     private WhatsappIntegrationResponseDTO toResponse(WhatsappIntegrationSettings s) {

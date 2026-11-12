@@ -14,7 +14,13 @@ import com.cernecommerce.core.domain.model.config.EmailSample;
 import com.cernecommerce.core.domain.model.config.EmailTestResult;
 import com.cernecommerce.core.domain.model.config.EmailTestTarget;
 import com.cernecommerce.core.domain.model.notification.EmailChannelStatus;
+import com.cernecommerce.core.ports.in.AssistantIntegrationUseCase;
 import com.cernecommerce.core.ports.in.AutomationPlatformIntegrationUseCase;
+import com.cernecommerce.core.ports.in.IntegrationHistoryUseCase;
+import com.cernecommerce.core.domain.model.config.AssistantProviderSettings;
+import com.cernecommerce.core.domain.model.config.AssistantSettings;
+import com.cernecommerce.core.domain.model.config.ProvedorIa;
+import com.cernecommerce.core.domain.model.config.IntegrationHistoryEntry;
 import com.cernecommerce.core.ports.in.EmailIntegrationUseCase;
 import com.cernecommerce.core.ports.in.WhatsappIntegrationUseCase;
 import com.cernecommerce.infra.handler.GlobalExceptionHandler;
@@ -29,6 +35,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+
+import org.assertj.core.api.InstanceOfAssertFactories;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
@@ -50,6 +58,8 @@ class StoreIntegrationControllerTest {
     private EmailIntegrationUseCase useCase;
     private WhatsappIntegrationUseCase whatsapp;
     private AutomationPlatformIntegrationUseCase platform;
+    private AssistantIntegrationUseCase assistant;
+    private IntegrationHistoryUseCase history;
     private ApplicationEventPublisher publisher;
 
     @BeforeEach
@@ -57,6 +67,8 @@ class StoreIntegrationControllerTest {
         useCase = mock(EmailIntegrationUseCase.class);
         whatsapp = mock(WhatsappIntegrationUseCase.class);
         platform = mock(AutomationPlatformIntegrationUseCase.class);
+        assistant = mock(AssistantIntegrationUseCase.class);
+        history = mock(IntegrationHistoryUseCase.class);
         publisher = mock(ApplicationEventPublisher.class);
         when(useCase.activeChannel()).thenReturn(EmailChannelStatus.of(true, "RESEND", "loja"));
         when(useCase.environmentChannel()).thenReturn(EmailChannelStatus.of(true, "MAILPIT", "hml"));
@@ -65,7 +77,7 @@ class StoreIntegrationControllerTest {
 
     private MockMvc controller(String mailpitUiUrl) {
         return MockMvcBuilders
-                .standaloneSetup(new StoreIntegrationController(useCase, whatsapp, platform, publisher, mailpitUiUrl,
+                .standaloneSetup(new StoreIntegrationController(useCase, whatsapp, platform, assistant, history, publisher, mailpitUiUrl,
                         "https://api.mahal.com/webhooks/whatsapp"))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -278,5 +290,159 @@ class StoreIntegrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.detail").value("HTTP 200"));
+    }
+
+    // ── IA do assistente ──────────────────────────────────────────────────────
+
+    private static AssistantSettings assistant(boolean enabled, ProvedorIa ativo, ProvedorIa reserva,
+            AssistantProviderSettings... providers) {
+        return new AssistantSettings(enabled, ativo, reserva, List.of(providers),
+                Instant.parse("2026-11-09T12:00:00Z"), "admin", null);
+    }
+
+    private static final AssistantSettings ASSISTANT = assistant(true, ProvedorIa.OPENAI, ProvedorIa.ANTHROPIC,
+            new AssistantProviderSettings(ProvedorIa.ANTHROPIC, "WXYZ", "claude-sonnet-5-5", null),
+            new AssistantProviderSettings(ProvedorIa.OPENAI, "ABCD", "gpt-5.5", "OK — gpt-5.5"),
+            new AssistantProviderSettings(ProvedorIa.GEMINI, null, "gemini-3.5-flash", null));
+
+    @Test
+    void assistant_get_nunca_devolve_as_chaves_e_traz_os_provedores() throws Exception {
+        when(assistant.get()).thenReturn(ASSISTANT);
+
+        mockMvc.perform(get("/store/integrations/assistant").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.provider").value("OPENAI"))
+                .andExpect(jsonPath("$.fallbackProvider").value("ANTHROPIC"))
+                // Campos de topo = provedor ativo (o card antigo continua funcionando).
+                .andExpect(jsonPath("$.apiKeyLast4").value("ABCD"))
+                .andExpect(jsonPath("$.model").value("gpt-5.5"))
+                .andExpect(jsonPath("$.statusDetail").value("OK — gpt-5.5"))
+                .andExpect(jsonPath("$.source").value("STORE"))
+                .andExpect(jsonPath("$.providers.length()").value(3))
+                .andExpect(jsonPath("$.providers[2].provider").value("GEMINI"))
+                .andExpect(jsonPath("$.providers[2].apiKeyConfigured").value(false))
+                .andExpect(jsonPath("$.providers[0].label").value("Claude (Anthropic)"))
+                .andExpect(jsonPath("$.apiKey").doesNotExist());
+    }
+
+    @Test
+    void assistant_providers_lista_os_suportados_com_modelo_padrao() throws Exception {
+        when(assistant.defaultModels()).thenReturn(java.util.Map.of(ProvedorIa.ANTHROPIC, "claude-sonnet-5-5",
+                ProvedorIa.OPENAI, "gpt-5.5", ProvedorIa.GEMINI, "gemini-3.5-flash"));
+
+        mockMvc.perform(get("/store/integrations/assistant/providers").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[1].provider").value("OPENAI"))
+                .andExpect(jsonPath("$[1].label").value("ChatGPT (OpenAI)"))
+                .andExpect(jsonPath("$[1].defaultModel").value("gpt-5.5"));
+    }
+
+    @Test
+    void assistant_put_formato_antigo_audita_sem_a_chave() throws Exception {
+        AssistantSettings antes = assistant(false, ProvedorIa.ANTHROPIC, null);
+        AssistantSettings depois = assistant(true, ProvedorIa.ANTHROPIC, null,
+                new AssistantProviderSettings(ProvedorIa.ANTHROPIC, "WXYZ", "claude-sonnet-5-5", null));
+        when(assistant.get()).thenReturn(antes);
+        when(assistant.update(any(), eq("admin"))).thenReturn(depois);
+
+        mockMvc.perform(put("/store/integrations/assistant").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"apiKey\":\"sk-ant-segredo-WXYZ\"}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("sk-ant-segredo"))));
+
+        ArgumentCaptor<AssistantIntegrationUseCase.UpdateCommand> cmd =
+                ArgumentCaptor.forClass(AssistantIntegrationUseCase.UpdateCommand.class);
+        verify(assistant).update(cmd.capture(), eq("admin"));
+        assertThat(cmd.getValue().apiKey()).isEqualTo("sk-ant-segredo-WXYZ");
+        assertThat(cmd.getValue().provider()).isNull();
+        assertThat(cmd.getValue().fallbackInformado()).isFalse();
+
+        ArgumentCaptor<AuditEvent> evento = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(publisher).publishEvent(evento.capture());
+        assertThat(evento.getValue().details())
+                .containsEntry("integration", "assistant")
+                .containsEntry("historyAction", "SECRET_SET")
+                .containsEntry("provider", "ANTHROPIC");
+        assertThat(evento.getValue().details().get("fields")).asInstanceOf(InstanceOfAssertFactories.LIST)
+                .contains("enabled", "providers.ANTHROPIC.apiKey");
+        assertThat(evento.getValue().details().toString()).doesNotContain("sk-ant-segredo");
+    }
+
+    @Test
+    void assistant_put_formato_novo_com_provedor_reserva_e_chaves() throws Exception {
+        when(assistant.get()).thenReturn(assistant(false, ProvedorIa.ANTHROPIC, null));
+        when(assistant.update(any(), eq("admin"))).thenReturn(ASSISTANT);
+
+        mockMvc.perform(put("/store/integrations/assistant").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"provider\":\"openai\",\"fallbackProvider\":\"ANTHROPIC\","
+                                + "\"providers\":{\"OPENAI\":{\"apiKey\":\"sk-proj-segredo\",\"model\":\"gpt-5.5\"}}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("OPENAI"));
+
+        ArgumentCaptor<AssistantIntegrationUseCase.UpdateCommand> cmd =
+                ArgumentCaptor.forClass(AssistantIntegrationUseCase.UpdateCommand.class);
+        verify(assistant).update(cmd.capture(), eq("admin"));
+        assertThat(cmd.getValue().provider()).isEqualTo(ProvedorIa.OPENAI);
+        assertThat(cmd.getValue().fallbackProvider()).isEqualTo(ProvedorIa.ANTHROPIC);
+        assertThat(cmd.getValue().fallbackInformado()).isTrue();
+        assertThat(cmd.getValue().providers().get(ProvedorIa.OPENAI).apiKey()).isEqualTo("sk-proj-segredo");
+
+        ArgumentCaptor<AuditEvent> evento = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(publisher).publishEvent(evento.capture());
+        assertThat(evento.getValue().details().get("fields")).asInstanceOf(InstanceOfAssertFactories.LIST)
+                .contains("provider", "fallbackProvider", "providers.OPENAI.apiKey");
+        assertThat(evento.getValue().details().toString()).doesNotContain("sk-proj-segredo");
+    }
+
+    @Test
+    void assistant_put_provedor_desconhecido_400() throws Exception {
+        when(assistant.get()).thenReturn(assistant(false, ProvedorIa.ANTHROPIC, null));
+
+        mockMvc.perform(put("/store/integrations/assistant").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false,\"provider\":\"MISTRAL\"}"))
+                .andExpect(status().isBadRequest());
+        verify(assistant, never()).update(any(), any());
+    }
+
+    @Test
+    void assistant_put_ativar_sem_chave_400() throws Exception {
+        when(assistant.get()).thenReturn(assistant(false, ProvedorIa.ANTHROPIC, null));
+        when(assistant.update(any(), eq("admin")))
+                .thenThrow(new InvalidIntegrationException("Para ativar o assistente informe a chave de Claude"));
+
+        mockMvc.perform(put("/store/integrations/assistant").principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isBadRequest());
+        verify(publisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void assistant_test_por_provedor_e_sem_parametro_testa_o_ativo() throws Exception {
+        when(assistant.sendTest(ProvedorIa.GEMINI, "admin")).thenReturn(IntegrationTestResult.failed(
+                "Gemini (Google) recusou a chave da API.", "gemini-3.5-flash"));
+        when(assistant.sendTest(null, "admin")).thenReturn(IntegrationTestResult.ok("gpt-5.5"));
+
+        mockMvc.perform(post("/store/integrations/assistant/test").param("provider", "GEMINI").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value("Gemini (Google) recusou a chave da API."));
+        mockMvc.perform(post("/store/integrations/assistant/test").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    void assistant_history_lista_alteracoes_sem_valores() throws Exception {
+        when(history.history("assistant", 5)).thenReturn(List.of(new IntegrationHistoryEntry(
+                Instant.parse("2026-11-09T12:00:00Z"), "admin", "SECRET_SET", List.of("providers.OPENAI.apiKey"))));
+
+        mockMvc.perform(get("/store/integrations/assistant/history").param("limit", "5").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].user").value("admin"))
+                .andExpect(jsonPath("$[0].action").value("SECRET_SET"))
+                .andExpect(jsonPath("$[0].fields[0]").value("providers.OPENAI.apiKey"));
     }
 }

@@ -89,9 +89,20 @@ public class ProductEntity {
     @Column(name = "parent_sellable", nullable = false)
     private boolean parentSellable;
 
+    // Kit pré-montado (V200) — LOJA ou PRE_MONTADO, só em type = KIT. Enum-como-string, como "type".
+    @Column(name = "kit_mode", length = 20)
+    private String kitMode;
+
     // PDV-F048 — faixa da sessão sugerida no PDV para esta essência (V159). FK só no banco, como brand_id.
     @Column(name = "session_tier_id")
     private Long sessionTierId;
+
+    // PDV-F061 — modalidades novas da sessão em que a essência pode ser vendida (V191).
+    @Column(name = "session_compra_essencia", nullable = false)
+    private boolean sessionCompraEssencia;
+
+    @Column(name = "session_itens_pessoais", nullable = false)
+    private boolean sessionItensPessoais;
 
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @ToString.Exclude

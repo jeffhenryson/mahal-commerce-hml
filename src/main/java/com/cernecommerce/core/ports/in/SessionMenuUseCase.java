@@ -34,14 +34,25 @@ public interface SessionMenuUseCase {
     List<SessionAddon> listAddons();
 
     /** @throws com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException nome repetido */
-    SessionAddon createAddon(String nome, BigDecimal preco, int ordem);
+    default SessionAddon createAddon(String nome, BigDecimal preco, int ordem) {
+        return createAddon(nome, preco, ordem, false);
+    }
+
+    /** PDV-F061 — com a marca "pode incluir após entrega". */
+    SessionAddon createAddon(String nome, BigDecimal preco, int ordem, boolean permitePosEntrega);
 
     /**
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionAddonNotFoundException se não existir
      * @throws com.cernecommerce.core.domain.exception.pdv.SessionMenuConflictException nome repetido
      */
     /** PDV-C028 — {@code ordem} nula mantém a atual. */
-    SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo);
+    default SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo) {
+        return updateAddon(id, nome, preco, ordem, ativo, null);
+    }
+
+    /** PDV-F061 — {@code permitePosEntrega} nulo mantém o atual. */
+    SessionAddon updateAddon(Long id, String nome, BigDecimal preco, Integer ordem, boolean ativo,
+            Boolean permitePosEntrega);
 
     List<SessionAssetType> listAssetTypes();
 

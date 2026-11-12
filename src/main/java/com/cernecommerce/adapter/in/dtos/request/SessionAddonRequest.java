@@ -31,4 +31,8 @@ public class SessionAddonRequest {
 
     @Schema(description = "Só no PUT; adicional inativo some do cardápio da mesa.", defaultValue = "true")
     private Boolean ativo;
+
+    @Schema(description = "PDV-F061 — pode ser incluído com a sessão já na mesa (ENTREGUE). Omitido no PUT = "
+            + "mantém; no POST = false.", defaultValue = "false")
+    private Boolean permitePosEntrega;
 }

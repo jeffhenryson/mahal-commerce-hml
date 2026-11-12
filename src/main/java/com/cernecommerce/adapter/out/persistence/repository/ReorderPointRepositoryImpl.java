@@ -45,6 +45,7 @@ public class ReorderPointRepositoryImpl implements ReorderPointRepository {
         entity.setSku(reorderPoint.sku());
         entity.setWarehouseId(reorderPoint.warehouseId());
         entity.setMinQuantity(reorderPoint.minQuantity());
+        entity.setCriticalQuantity(reorderPoint.criticalQuantity());
         return toDomain(reorderPointJpaRepository.save(entity));
     }
 
@@ -67,6 +68,6 @@ public class ReorderPointRepositoryImpl implements ReorderPointRepository {
     }
 
     private ReorderPoint toDomain(ReorderPointEntity e) {
-        return ReorderPoint.of(e.getId(), e.getSku(), e.getWarehouseId(), e.getMinQuantity());
+        return ReorderPoint.of(e.getId(), e.getSku(), e.getWarehouseId(), e.getMinQuantity(), e.getCriticalQuantity());
     }
 }

@@ -202,4 +202,18 @@ class OrderItemTest {
         assertThat(discounted.netAmount()).isEqualByComparingTo("40.00");
         assertThat(stamped.cashbackPercent()).isEqualByComparingTo("2.5000");
     }
+
+    /** Fora dos benefícios: a taxa de cashback zera, antes ou depois de carimbada. */
+    @Test
+    void withBenefitsExcluded_zeraATaxaDeCashback_eOCarimboDepoisNaoReativa() {
+        OrderItem item = OrderItem.of(1L, "CIG", BigDecimal.ONE, new BigDecimal("50.00"), null, null,
+                new BigDecimal("5"));
+
+        OrderItem excluido = item.withBenefitsExcluded(true);
+        assertThat(excluido.benefitsExcluded()).isTrue();
+        assertThat(excluido.cashbackAmount()).isEqualByComparingTo("0");
+        assertThat(excluido.withCashbackPercent(new BigDecimal("10")).cashbackPercent()).isEqualByComparingTo("0");
+        assertThat(excluido.withNotes("x").benefitsExcluded()).isTrue();
+        assertThat(item.withBenefitsExcluded(false).cashbackPercent()).isEqualByComparingTo("5");
+    }
 }

@@ -132,6 +132,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // PDV-F058 — sessão editada antes da entrega, com o antes e o depois; PDV-F059 — sessão que
         // passou a pagar no final depois de lançada.
         COMANDA_SESSION_EDITED, COMANDA_SESSION_PAY_LATER,
+        // PDV-F061 — adicional incluído na sessão depois do lançamento (inclusive já entregue).
+        COMANDA_SESSION_ADDON_ADDED,
         // PDV-F016. COMANDA_MERGED é o que distingue, na trilha, a origem de uma junção de uma
         // mesa abandonada: as duas terminam CANCELADA, mas só o abandono devolveu estoque.
         COMANDA_RENAMED, COMANDA_MERGED, COMANDA_CUSTOMER_LINKED,

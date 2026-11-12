@@ -585,8 +585,12 @@ public class PdvComandaController {
                     + "mesa. Qualquer atendente com PDV_COMANDA_MANAGE pode fechar, e o pedido "
                     + "entra na sessão de caixa de QUEM FECHA — o dinheiro pertence à gaveta que o "
                     + "recebeu. PDV-F014: discountAmount abate a CONTA INTEIRA e é rateado entre as "
-                    + "linhas pelo servidor (exige PDV_COMANDA_DISCOUNT, teto "
-                    + "pdv.sale.max-discount-percent). PDV-F015: a taxa de serviço vem APLICADA POR "
+                    + "linhas ELEGÍVEIS pelo servidor (exige PDV_COMANDA_DISCOUNT). Desconto do chefe: "
+                    + "`bossDiscountPercent` (1–5, fora disso 400) e `discountAmount` = percent × base elegível "
+                    + "(líquido das linhas em aberto com `cashbackExcluded=false`), ±R$ 0,01 por linha — senão 409 "
+                    + "DISCOUNT_LIMIT_EXCEEDED, como também sem percentual ou na conta dividida (itemIds). Com "
+                    + "`cashbackToRedeem > 0`: 409 BENEFIT_CONFLICT. Mesa fechada com desconto do chefe não gera "
+                    + "cashback. PDV-F015: a taxa de serviço vem APLICADA POR "
                     + "PADRÃO sobre o líquido — applyServiceFee=false é o cliente recusando — e é "
                     + "gravada fora do netAmount, que continua sendo só a receita da mercadoria. O "
                     + "pagamento é validado contra netAmount + taxa. PDV-F017: mandando itemIds, "
@@ -605,13 +609,17 @@ public class PdvComandaController {
             @ApiResponse(responseCode = "404", description = "Comanda não encontrada", content = @Content),
             @ApiResponse(responseCode = "400", description = "Linha inexistente ou já cobrada em itemIds (ITEM_NOT_OPEN_IN_COMANDA)", content = @Content),
             @ApiResponse(responseCode = "422", description = "Resgate de cashback fora das regras (CASHBACK_*)", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sem itens (COMANDA_EMPTY), só com cortesias (COMANDA_ONLY_COURTESY), quem fecha não tem caixa aberto, desconto acima do teto (DISCOUNT_LIMIT_EXCEEDED), pagamento não-dinheiro acima do total, ou seleção que separa linhas ligadas (LINKED_ITEM_MUST_CLOSE_TOGETHER) ou sessão não recolhida no fechamento total (SESSION_NOT_COLLECTED)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não está aberta, sem itens (COMANDA_EMPTY), só com cortesias (COMANDA_ONLY_COURTESY), quem fecha não tem caixa aberto, desconto do chefe fora da regra (DISCOUNT_LIMIT_EXCEEDED), desconto do chefe com resgate de cashback (BENEFIT_CONFLICT), pagamento não-dinheiro acima do total, ou seleção que separa linhas ligadas (LINKED_ITEM_MUST_CLOSE_TOGETHER) ou sessão não recolhida no fechamento total (SESSION_NOT_COLLECTED)", content = @Content)
     })
     @PostMapping("/{id}/close")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
     public ResponseEntity<OrderResponseDTO> closeComanda(@PathVariable("id") Long comandaId,
             @Valid @RequestBody CloseComandaRequest request, Authentication authentication) {
         requireComandaDiscountAuthority(request.getDiscountAmount(), authentication);
+        if (request.getBossDiscountPercent() != null) {
+            requireAuthority(COMANDA_DISCOUNT_AUTHORITY, authentication,
+                    () -> new ComandaDiscountNotAllowedException(authentication.getName()));
+        }
         // PDV-C034 — a mesma conversão do balcão: a cópia inline daqui aceitava GATEWAY_PIX.
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
         OnAccountGuard.requireAuthorityIfOnAccount(payments, authentication);
@@ -619,6 +627,7 @@ public class PdvComandaController {
         // interface e perdem a transação quando chamadas pelo proxy (PLAT-C047).
         Order order = comandaUseCase.closeComanda(comandaId, payments, request.getDiscountAmount(),
                 request.isServiceFeeApplied(), request.getItemIds(), request.getCashbackToRedeem(),
+                com.cernecommerce.core.ports.in.PdvUseCase.BossDiscountRequest.online(request.getBossDiscountPercent()),
                 authentication.getName());
         // PDV-C014 — era o pior dos três: STOCK_MOVEMENT_REGISTERED num caminho que NÃO move
         // estoque nenhum (o débito aconteceu item a item, no lançamento). O evento entrava na

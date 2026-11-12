@@ -7,10 +7,12 @@ import java.time.DayOfWeek;
 import java.util.List;
 
 public record SessionSettingsResponseDTO(String vasoPadraoCodigo, String vasoGrandeCodigo,
-        BigDecimal upgradeVasoGrandePreco, List<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco) {
+        BigDecimal upgradeVasoGrandePreco, List<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco,
+        BigDecimal itensPessoaisPreco, BigDecimal compraEssenciaDesconto) {
 
     public static SessionSettingsResponseDTO of(SessionSettings s) {
         return new SessionSettingsResponseDTO(s.vasoPadraoCodigo(), s.vasoGrandeCodigo(), s.upgradeVasoGrandePreco(),
-                s.diasDuploRosh().stream().sorted().toList(), s.upgradeCarvaoJumboPreco());
+                s.diasDuploRosh().stream().sorted().toList(), s.upgradeCarvaoJumboPreco(),
+                s.itensPessoaisPreco(), s.compraEssenciaDesconto());
     }
 }

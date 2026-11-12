@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import com.cernecommerce.core.domain.model.pdv.Charcoal;
 import com.cernecommerce.core.domain.model.pdv.ProporcaoMistura;
+import com.cernecommerce.core.domain.model.pdv.SessionModality;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -80,6 +81,19 @@ public class AddSessionRequest {
     @Schema(description = "PDV-F034 — a sessão vai direto ao preparo e fica a receber até a conta. Exige "
             + "PDV_SESSION_PAY_LATER (403 SESSION_PAY_LATER_NOT_ALLOWED). O front avisa o risco antes.")
     private boolean pagarNoFinal;
+
+    @Schema(description = "PDV-F061 — PADRAO (padrão), COMPRA_ESSENCIA (o cliente compra o pacote: sessão "
+            + "com desconto e o pacote ligado a ela, pelo preço de venda) ou ITENS_PESSOAIS (narguilé do "
+            + "cliente: preço fixo, sem utensílio da casa nem vaso grande). As duas novas exigem essenciaSku "
+            + "marcado para a modalidade e não aceitam DUPLO. Não muda na edição.", defaultValue = "PADRAO")
+    private SessionModality modalidade;
+
+    @jakarta.validation.Valid
+    @Schema(description = "PDV-F061 — pacotes da loja (Central de essências). Obrigatório em COMPRA_ESSENCIA e "
+            + "ITENS_PESSOAIS (400 SESSION_PACKAGES_REQUIRED); ignorado na PADRAO. essenciaSku/essenciaSku2 têm "
+            + "de estar aqui (400 SESSION_FLAVOR_NOT_IN_PACKAGES). Todos cobrados pelo preço de venda, menos 1 "
+            + "pacote do sabor principal nos itens pessoais, que vem incluso.")
+    private List<SessionPackageRequest> pacotes;
 
     public enum Modo { NORMAL, DUPLO }
 

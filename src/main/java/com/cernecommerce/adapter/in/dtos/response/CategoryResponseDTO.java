@@ -20,6 +20,9 @@ public class CategoryResponseDTO {
     /** PDV-F045 — categoria de cigarros: vendida pela Central de cigarros, fora da grade do PDV. */
     private boolean cigarette;
 
+    /** V197 — fora dos benefícios: sem cashback, sem resgate e sem desconto do chefe. */
+    private boolean cashbackExcluded;
+
     /** Produtos vinculados a esta categoria (Bloco 2.1) — evita a varredura de catálogo no admin. */
     private long productCount;
 

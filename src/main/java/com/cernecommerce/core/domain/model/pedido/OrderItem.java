@@ -25,6 +25,9 @@ import java.math.BigDecimal;
  *       valor gerado por pedidos de ontem.</li>
  * </ul>
  *
+ * <p>{@link #benefitsExcluded} (V198) — a linha era de categoria fora dos benefícios no instante da
+ * venda: não gera cashback, não entra na base do resgate nem na do desconto do chefe.</p>
+ *
  * <h2>Desconto é campo próprio, não preço menor</h2>
  * <p>{@link #discountAmount} existe em vez de simplesmente gravar um {@code unitPrice} mais baixo
  * porque é o que permite responder "quanto de margem o desconto do balcão comeu no mês" com um
@@ -51,7 +54,8 @@ public record OrderItem(
         String charcoal,
         Long promotionId,
         String promotionName,
-        BigDecimal promotionDiscountAmount) {
+        BigDecimal promotionDiscountAmount,
+        boolean benefitsExcluded) {
 
     public OrderItem {
         if (sku == null || sku.isBlank()) {
@@ -144,7 +148,8 @@ public record OrderItem(
             }
         }
         return new OrderItem(null, sku, quantity, pricing.effectivePrice(), pricing.costPrice(),
-                discountAmount, null, productName, ConsumptionMode.NORMAL, false, null, null, null, null, null, null);
+                discountAmount, null, productName, ConsumptionMode.NORMAL, false, null, null, null, null, null, null,
+                false);
     }
 
     /**
@@ -201,7 +206,7 @@ public record OrderItem(
             BigDecimal costPrice, BigDecimal discountAmount, BigDecimal cashbackPercent, String productName,
             ConsumptionMode mode, boolean courtesy, String notes, BigDecimal surchargeAmount, String charcoal) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal, null, null, null);
+                mode, courtesy, notes, surchargeAmount, charcoal, null, null, null, false);
     }
 
     /** Reconstitui um item com o detalhamento da promoção por quantidade (zero/nulos sem promoção). */
@@ -209,8 +214,18 @@ public record OrderItem(
             BigDecimal costPrice, BigDecimal discountAmount, BigDecimal cashbackPercent, String productName,
             ConsumptionMode mode, boolean courtesy, String notes, BigDecimal surchargeAmount, String charcoal,
             Long promotionId, String promotionName, BigDecimal promotionDiscountAmount) {
+        return of(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName, mode,
+                courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount, false);
+    }
+
+    /** Reconstitui um item com a marcação de fora dos benefícios (V198). */
+    public static OrderItem of(Long id, String sku, BigDecimal quantity, BigDecimal unitPrice,
+            BigDecimal costPrice, BigDecimal discountAmount, BigDecimal cashbackPercent, String productName,
+            ConsumptionMode mode, boolean courtesy, String notes, BigDecimal surchargeAmount, String charcoal,
+            Long promotionId, String promotionName, BigDecimal promotionDiscountAmount, boolean benefitsExcluded) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount,
+                benefitsExcluded);
     }
 
     /**
@@ -224,13 +239,27 @@ public record OrderItem(
         BigDecimal promo = Money.of(amount);
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount.add(promo), cashbackPercent,
                 productName, mode, courtesy, notes, surchargeAmount, charcoal, newPromotionId, newPromotionName,
-                promotionDiscountAmount.add(promo));
+                promotionDiscountAmount.add(promo), benefitsExcluded);
     }
 
     /** Carimba a taxa de cashback vigente. Cópia — o item permanece imutável. */
     public OrderItem withCashbackPercent(BigDecimal newCashbackPercent) {
-        return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, newCashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
+        // V198 — linha fora dos benefícios fica em zero, qualquer que seja a taxa resolvida.
+        BigDecimal percent = benefitsExcluded ? BigDecimal.ZERO : newCashbackPercent;
+        return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, percent, productName,
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount,
+                benefitsExcluded);
+    }
+
+    /**
+     * V198 — marca a linha como de categoria fora dos benefícios (cigarros, palheiros…). Excluída, a
+     * taxa de cashback é zerada junto: nem uma taxa por SKU nem a global geram cashback sobre ela.
+     */
+    public OrderItem withBenefitsExcluded(boolean excluded) {
+        BigDecimal percent = excluded ? BigDecimal.ZERO : cashbackPercent;
+        return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, percent, productName,
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount,
+                excluded);
     }
 
     /**
@@ -240,13 +269,15 @@ public record OrderItem(
     public OrderItem withNotes(String newNotes) {
         String trimmed = newNotes == null || newNotes.isBlank() ? null : newNotes.trim();
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, discountAmount, cashbackPercent, productName,
-                mode, courtesy, trimmed, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
+                mode, courtesy, trimmed, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount,
+                benefitsExcluded);
     }
 
     /** Concede desconto neste item. Cópia — o item permanece imutável. */
     public OrderItem withDiscount(BigDecimal newDiscountAmount) {
         return new OrderItem(id, sku, quantity, unitPrice, costPrice, newDiscountAmount, cashbackPercent, productName,
-                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount);
+                mode, courtesy, notes, surchargeAmount, charcoal, promotionId, promotionName, promotionDiscountAmount,
+                benefitsExcluded);
     }
 
     /**

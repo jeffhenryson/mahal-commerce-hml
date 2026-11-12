@@ -85,4 +85,8 @@ public class OrderItemEntity {
 
     @Column(name = "promotion_discount_amount", nullable = false, precision = 14, scale = 2)
     private BigDecimal promotionDiscountAmount = BigDecimal.ZERO;
+
+    // V198 — a linha era de categoria fora dos benefícios no instante da venda.
+    @Column(name = "benefits_excluded", nullable = false)
+    private boolean benefitsExcluded;
 }
