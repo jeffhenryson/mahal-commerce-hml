@@ -922,6 +922,48 @@ public class EstoqueControllerTest {
                 e instanceof AuditEvent audit && audit.type() == AuditEvent.EventType.OPEN_PACKAGE_FINISHED));
     }
 
+    // ── Salão › Essências: histórico das latas ────────────────────────────────
+
+    @Test
+    void openPackageHistory_returns_200_paginado_comCloseReason() throws Exception {
+        OpenPackage fechada = OpenPackage.open("ESSE-BLUE", 1L, 5, "joao", Instant.now()).withUses(6)
+                .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.REPLACED,
+                        Instant.now());
+        when(estoqueUseCase.closedPackageHistory("ESSE-BLUE", "SALAO", LocalDate.of(2026, 11, 1),
+                LocalDate.of(2026, 11, 10), 0, 50))
+                .thenReturn(new PageResult<>(List.of(fechada), 0, 50, 1L, 1));
+        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+
+        mockMvc.perform(get("/estoque/open-packages/history")
+                        .param("sku", "ESSE-BLUE")
+                        .param("warehouseCode", "SALAO")
+                        .param("from", "2026-11-01")
+                        .param("to", "2026-11-10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].sku").value("ESSE-BLUE"))
+                .andExpect(jsonPath("$.content[0].productName").value("Essência Blueberry"))
+                .andExpect(jsonPath("$.content[0].warehouseCode").value("SALAO"))
+                .andExpect(jsonPath("$.content[0].uses").value(6))
+                .andExpect(jsonPath("$.content[0].sessionsPerUnit").value(5))
+                .andExpect(jsonPath("$.content[0].closeReason").value("REPLACED"))
+                .andExpect(jsonPath("$.content[0].closedAt").isNotEmpty())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(50));
+    }
+
+    @Test
+    void openPackageHistory_fromDepoisDeTo_returns_400() throws Exception {
+        mockMvc.perform(get("/estoque/open-packages/history")
+                        .param("sku", "ESSE-BLUE")
+                        .param("warehouseCode", "SALAO")
+                        .param("from", "2026-11-10")
+                        .param("to", "2026-11-01"))
+                .andExpect(status().isBadRequest());
+        verify(estoqueUseCase, never()).closedPackageHistory(any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
     @Test
     void finishOpenPackage_semLataAberta_returns_404() throws Exception {
         when(estoqueUseCase.finishOpenPackage(any(), any(), any()))

@@ -1696,6 +1696,25 @@ public class EstoqueService implements EstoqueUseCase {
         return openPackageRepository.save(replacement);
     }
 
+    /** Teto da página do histórico de latas: a tela pede 50; acima disso é varredura, não leitura. */
+    private static final int OPEN_PACKAGE_HISTORY_MAX_SIZE = 200;
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<OpenPackage> closedPackageHistory(String sku, String warehouseCode, java.time.LocalDate from,
+            java.time.LocalDate to, int page, int size) {
+        Warehouse warehouse = warehouseRepository.findByCode(warehouseCode)
+                .orElseThrow(() -> new WarehouseNotFoundException(warehouseCode));
+        // Dias inclusivos no fuso da loja; sem limite = EPOCH/teto, nunca parâmetro nulo (EST-C024).
+        Instant lower = from == null ? Instant.EPOCH : from.atStartOfDay(ZONA_LOJA).toInstant();
+        Instant upper = to == null ? YIELD_UPPER_BOUND
+                : to.plusDays(1).atStartOfDay(ZONA_LOJA).toInstant().minusNanos(1);
+        // EST-F038 — o Salão herda o histórico das latas fechadas no caixa, como no rendimento.
+        Long warehouseId = warehouse.type() == WarehouseType.SALAO ? null : warehouse.id();
+        return openPackageRepository.findClosed(sku, warehouseId, lower, upper, Math.max(0, page),
+                Math.min(Math.max(1, size), OPEN_PACKAGE_HISTORY_MAX_SIZE));
+    }
+
     /** EST-F037 — "Acabou". Ver {@link EstoqueUseCase#finishOpenPackage}. */
     @Override
     @Transactional

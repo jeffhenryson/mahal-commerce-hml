@@ -980,6 +980,16 @@ public interface EstoqueUseCase {
     OpenPackage finishOpenPackage(String sku, String warehouseCode, String username);
 
     /**
+     * Histórico das latas <b>fechadas</b> de um sabor, mais recente primeiro (Salão › Essências).
+     * {@code from}/{@code to} são dias inclusivos no fuso da loja sobre {@code closedAt}; nulos = sem
+     * limite. Pedido o depósito do Salão, soma todos os depósitos, como {@link #openPackageYield}.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException depósito inexistente
+     */
+    PageResult<OpenPackage> closedPackageHistory(String sku, String warehouseCode, java.time.LocalDate from,
+            java.time.LocalDate to, int page, int size);
+
+    /**
      * EST-F037 — o rendimento real por sabor: as latas <b>fechadas</b> no período (por
      * {@code closed_at}; limites nulos = sem limite) com ao menos um uso, agrupadas por SKU. A lata
      * reposta logo depois de aberta, por engano, distorceria a média — por isso {@code uses > 0}.

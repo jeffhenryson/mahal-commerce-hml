@@ -1,9 +1,12 @@
 package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.OpenPackageEntity;
+import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.OpenPackage;
 import com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason;
 import com.cernecommerce.core.ports.out.estoque.OpenPackageRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +44,19 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
         return jpaRepository.findByWarehouseIdAndClosedAtIsNullOrderBySkuAsc(warehouseId).stream()
                 .map(this::toDomain)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<OpenPackage> findClosed(String sku, Long warehouseId, java.time.Instant from,
+            java.time.Instant to, int page, int size) {
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<OpenPackageEntity> result = warehouseId == null
+                ? jpaRepository.findBySkuAndClosedAtBetweenOrderByClosedAtDescIdDesc(sku, from, to, pageable)
+                : jpaRepository.findBySkuAndWarehouseIdAndClosedAtBetweenOrderByClosedAtDescIdDesc(
+                        sku, warehouseId, from, to, pageable);
+        return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
+                page, size, result.getTotalElements(), result.getTotalPages());
     }
 
     @Override

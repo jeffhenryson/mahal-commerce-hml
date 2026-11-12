@@ -1711,6 +1711,27 @@ public class EstoqueControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    /** Histórico das latas: mesma régua da lista. O 404 é do depósito ausente na base de teste. */
+    @Test
+    void open_package_history_with_product_read_reaches_the_route() throws Exception {
+        mockMvc.perform(get("/estoque/open-packages/history")
+                .param("sku", "ESSE-BLUE")
+                .param("warehouseCode", "LOJA-01")
+                .with(user("bob").authorities(
+                        new SimpleGrantedAuthority("ROLE_ATENDENTE"),
+                        new SimpleGrantedAuthority("ESTOQUE_PRODUCT_READ"))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void open_package_history_with_user_role_only_returns_403() throws Exception {
+        mockMvc.perform(get("/estoque/open-packages/history")
+                .param("sku", "ESSE-BLUE")
+                .param("warehouseCode", "LOJA-01")
+                .with(user("bob").authorities(new SimpleGrantedAuthority("ROLE_USER"))))
+                .andExpect(status().isForbidden());
+    }
+
     /** Só leitura de catálogo não cadastra lata: ela muda o que a próxima sessão consome. */
     @Test
     void register_open_package_with_product_read_only_returns_403() throws Exception {

@@ -2,6 +2,8 @@ package com.cernecommerce.adapter.out.persistence.repository;
 
 import com.cernecommerce.adapter.out.persistence.entity.OpenPackageEntity;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +18,14 @@ public interface OpenPackageJpaRepository extends JpaRepository<OpenPackageEntit
     Optional<OpenPackageEntity> findBySkuAndWarehouseIdAndClosedAtIsNull(String sku, Long warehouseId);
 
     List<OpenPackageEntity> findByWarehouseIdAndClosedAtIsNullOrderBySkuAsc(Long warehouseId);
+
+    /** Histórico de latas fechadas de um sabor num depósito, mais recente primeiro (Salão › Essências). */
+    Page<OpenPackageEntity> findBySkuAndWarehouseIdAndClosedAtBetweenOrderByClosedAtDescIdDesc(
+            String sku, Long warehouseId, java.time.Instant from, java.time.Instant to, Pageable pageable);
+
+    /** O mesmo histórico somando todos os depósitos — o Salão herda as latas fechadas no caixa (EST-F038). */
+    Page<OpenPackageEntity> findBySkuAndClosedAtBetweenOrderByClosedAtDescIdDesc(
+            String sku, java.time.Instant from, java.time.Instant to, Pageable pageable);
 
     /** Trava a lata em uso até o fim da transação (EST-C025) — ver {@code OpenPackageRepository.findOpenForUpdate}. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

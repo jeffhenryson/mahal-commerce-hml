@@ -1,5 +1,6 @@
 package com.cernecommerce.core.ports.out.estoque;
 
+import com.cernecommerce.core.domain.model.PageResult;
 import com.cernecommerce.core.domain.model.estoque.OpenPackage;
 
 import java.util.List;
@@ -34,6 +35,15 @@ public interface OpenPackageRepository {
 
     /** Todas as latas em uso de um depósito, para a tela de acompanhamento. */
     List<OpenPackage> findAllOpen(Long warehouseId);
+
+    /**
+     * Latas <b>fechadas</b> de um SKU num depósito com {@code closedAt} em {@code [from, to]},
+     * ordenadas por {@code closedAt} decrescente. {@code warehouseId} nulo = todos os depósitos (o
+     * Salão herda o histórico do caixa, EST-F038). Os limites não podem ser nulos (EST-C024): quem
+     * chama usa {@code Instant.EPOCH} e um teto fixo para o intervalo aberto.
+     */
+    PageResult<OpenPackage> findClosed(String sku, Long warehouseId, java.time.Instant from, java.time.Instant to,
+            int page, int size);
 
     OpenPackage save(OpenPackage openPackage);
 

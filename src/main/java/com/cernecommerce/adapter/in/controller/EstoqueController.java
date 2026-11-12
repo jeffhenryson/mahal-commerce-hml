@@ -1135,6 +1135,41 @@ public class EstoqueController {
                 .toList());
     }
 
+    @Operation(summary = "Histórico das latas fechadas de um sabor (Salão › Essências)",
+            description = "Só as latas **fechadas**, mais recente primeiro. `from`/`to` são dias "
+                    + "(`AAAA-MM-DD`) inclusivos no fuso da loja, sobre `closedAt`. `sessionsPerUnit` é a "
+                    + "estimativa gravada quando a lata abriu. Pedido o depósito do Salão, inclui as latas "
+                    + "fechadas no caixa antes de o Salão existir, como o rendimento.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "400", description = "from depois de to", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
+    })
+    @GetMapping("/open-packages/history")
+    @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','PDV_COMANDA_MANAGE')")
+    public ResponseEntity<PageResult<OpenPackageResponseDTO>> openPackageHistory(
+            @RequestParam @NotBlank @Size(min = 3, max = 50) String sku,
+            @RequestParam @NotBlank @Size(min = 2, max = 50) String warehouseCode,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("from não pode ser depois de to");
+        }
+        PageResult<OpenPackage> result = estoqueUseCase.closedPackageHistory(sku, warehouseCode, from, to, page, size);
+        // Todas as latas são do mesmo SKU: um nome só, em vez de uma consulta por linha.
+        String productName = result.content().isEmpty() ? null : estoqueUseCase.findProductBySku(sku).name();
+        List<OpenPackageResponseDTO> mapped = result.content().stream()
+                .map(open -> toResponse(open, warehouseCode, productName))
+                .toList();
+        return ResponseEntity.ok(new PageResult<>(mapped, result.page(), result.size(), result.totalElements(),
+                result.totalPages()));
+    }
+
     @Operation(summary = "A lata aberta de um SKU (EST-F027)",
             description = "404 quando não há nenhuma aberta — estado normal, não erro: a próxima "
                     + "sessão abre uma. Distinto do 400 de produto que não é vendido por sessão.")
@@ -1336,11 +1371,15 @@ public class EstoqueController {
      * em lote pelos SKUs da página.
      */
     private OpenPackageResponseDTO toResponse(OpenPackage open, String warehouseCode) {
-        OpenPackageResponseDTO dto = new OpenPackageResponseDTO();
-        dto.setSku(open.sku());
         // findProductBySku, e não resolveSaleInfo: ler o nome não é venda, e a guarda de EST-F036
         // recusaria uma lata legada aberta no SKU base.
-        dto.setProductName(estoqueUseCase.findProductBySku(open.sku()).name());
+        return toResponse(open, warehouseCode, estoqueUseCase.findProductBySku(open.sku()).name());
+    }
+
+    private OpenPackageResponseDTO toResponse(OpenPackage open, String warehouseCode, String productName) {
+        OpenPackageResponseDTO dto = new OpenPackageResponseDTO();
+        dto.setSku(open.sku());
+        dto.setProductName(productName);
         dto.setWarehouseCode(warehouseCode);
         dto.setUses(open.uses());
         dto.setSessionsPerUnit(open.sessionsPerUnit());

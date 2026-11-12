@@ -4891,6 +4891,33 @@ class EstoqueServiceTest {
         verifyNoInteractions(stockMovementRepository);
     }
 
+    /** Dias inclusivos no fuso da loja: 05/11 inteiro, de 00:00 a 23:59:59.999 em São Paulo (UTC-3). */
+    @Test
+    void closedPackageHistory_converteOsDiasNoFusoDaLoja() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(openPackageRepository.findClosed(any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new PageResult<>(List.of(), 0, 50, 0, 0));
+
+        estoqueService.closedPackageHistory("ESSE-BLUE", "LOJA-01", LocalDate.of(2026, 11, 5),
+                LocalDate.of(2026, 11, 5), 0, 50);
+
+        verify(openPackageRepository).findClosed("ESSE-BLUE", 1L, Instant.parse("2026-11-05T03:00:00Z"),
+                Instant.parse("2026-11-06T02:59:59.999999999Z"), 0, 50);
+    }
+
+    /** Sem datas, nunca parâmetro nulo (EST-C024); e a página tem teto. */
+    @Test
+    void closedPackageHistory_semDatas_usaLimitesFixos_eLimitaOTamanho() {
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(LOJA));
+        when(openPackageRepository.findClosed(any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new PageResult<>(List.of(), 0, 200, 0, 0));
+
+        estoqueService.closedPackageHistory("ESSE-BLUE", "LOJA-01", null, null, 0, 10_000);
+
+        verify(openPackageRepository).findClosed(eq("ESSE-BLUE"), eq(1L), eq(Instant.EPOCH),
+                argThat(to -> to.isAfter(Instant.parse("9999-01-01T00:00:00Z"))), eq(0), eq(200));
+    }
+
     /** EST-F037 — "Acabou": fecha com FINISHED, sem abrir outra e sem baixa. */
     @Test
     void finishOpenPackage_fechaComFinished_semAbrirOutraNemBaixar() {
