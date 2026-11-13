@@ -159,6 +159,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         ATTENDANT_CREDIT_LIMIT_CAP_CHANGED,
         // PDV-F047 — atividade do operador anotada na sessão de caixa (varrer, trocar dinheiro...).
         CASH_SESSION_ACTIVITY_REGISTERED,
+        // Valor recebido por fora do sistema (Pix/cartão na maquininha), lançado ou apagado no caixa.
+        OFF_SYSTEM_RECEIPT_REGISTERED, OFF_SYSTEM_RECEIPT_DELETED,
         // PDV-F022 — códigos da 99, rastreio, entregador preenchidos depois da venda.
         ORDER_DELIVERY_UPDATED,
         // Falha ao processar notificação do gateway de pagamento — vira alerta para os devs.

@@ -189,6 +189,7 @@ import com.cernecommerce.core.domain.exception.pagamento.InsufficientPaymentExce
 import com.cernecommerce.core.domain.exception.pagamento.PaymentExceedsOrderTotalException;
 import com.cernecommerce.core.domain.exception.pagamento.PaymentGatewayException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotFoundException;
+import com.cernecommerce.core.domain.exception.pdv.OffSystemReceiptNotFoundException;
 import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.pdv.LeftInDrawerExceedsCountedException;
 import com.cernecommerce.core.domain.exception.compras.DuplicateSupplierTaxIdException;
@@ -1394,6 +1395,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleCashRegisterSessionNotFound(CashRegisterSessionNotFoundException ex,
             HttpServletRequest req) {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CASH_REGISTER_SESSION_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(OffSystemReceiptNotFoundException.class)
+    public ResponseEntity<ApiError> handleOffSystemReceiptNotFound(OffSystemReceiptNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "OFF_SYSTEM_RECEIPT_NOT_FOUND", req);
     }
 
     // ── CRM-F010: "Marcar" ───────────────────────────────────────────────────────────────────

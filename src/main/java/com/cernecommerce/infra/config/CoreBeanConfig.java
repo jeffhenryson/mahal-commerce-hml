@@ -7,8 +7,11 @@ import com.cernecommerce.core.service.QuantityPromotionService;
 import com.cernecommerce.core.ports.out.pedido.OrderItemRefundRepository;
 import com.cernecommerce.core.ports.out.pedido.OrderItemExchangeRepository;
 import com.cernecommerce.core.service.CashSessionActivityService;
+import com.cernecommerce.core.service.OffSystemReceiptService;
 import com.cernecommerce.core.ports.out.pdv.CashSessionActivityRepository;
+import com.cernecommerce.core.ports.out.pdv.OffSystemReceiptRepository;
 import com.cernecommerce.core.ports.in.CashSessionActivityUseCase;
+import com.cernecommerce.core.ports.in.OffSystemReceiptUseCase;
 import com.cernecommerce.core.ports.in.ReceiptEmailUseCase;
 import com.cernecommerce.core.ports.out.recebivel.CustomerCreditLimitRepository;
 import com.cernecommerce.core.ports.out.recebivel.CustomerReceivableRepository;
@@ -484,6 +487,13 @@ class CoreBeanConfig {
     CashSessionActivityUseCase cashSessionActivityUseCase(CashRegisterRepository cashRegisterRepository,
             CashSessionActivityRepository cashSessionActivityRepository) {
         return new CashSessionActivityService(cashRegisterRepository, cashSessionActivityRepository);
+    }
+
+    /** Valor recebido por fora do sistema, para a conferência por operadora do caixa. */
+    @Bean
+    OffSystemReceiptUseCase offSystemReceiptUseCase(CashRegisterRepository cashRegisterRepository,
+            OffSystemReceiptRepository offSystemReceiptRepository) {
+        return new OffSystemReceiptService(cashRegisterRepository, offSystemReceiptRepository);
     }
 
     /**
