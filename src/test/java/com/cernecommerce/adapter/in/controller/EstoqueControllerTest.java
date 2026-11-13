@@ -966,9 +966,10 @@ public class EstoqueControllerTest {
 
     @Test
     void setAutoReplace_returns_200_comOSkuPedido_ePublicaOEvento() throws Exception {
+        // Um front antigo que mande enabled=true recebe enabled=false: a troca automática saiu.
         when(estoqueUseCase.setAutoReplace("ESSE-BLUE-MENTA", true, 6))
                 .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())
-                        .withAutoReplace(true, 6));
+                        .withAutoReplace(false, 6));
 
         mockMvc.perform(put("/estoque/open-packages/ESSE-BLUE-MENTA/auto-replace")
                         .principal(AUTH)
@@ -976,7 +977,7 @@ public class EstoqueControllerTest {
                         .content("{\"enabled\":true,\"limit\":6}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sku").value("ESSE-BLUE-MENTA"))
-                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.enabled").value(false))
                 .andExpect(jsonPath("$.limit").value(6));
 
         verify(publisher, times(1)).publishEvent(argThat((Object e) -> e instanceof AuditEvent audit
@@ -1032,6 +1033,64 @@ public class EstoqueControllerTest {
                         .principal(AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"warehouseCode\":\"LOJA-01\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_NOT_FOUND"));
+    }
+
+    // ── Correção dos usos da lata (PATCH /open-packages/{sku}/uses) ──────────────────────────
+
+    @Test
+    void adjustOpenPackageUses_returns_200_comExhaustedRecalculado() throws Exception {
+        when(estoqueUseCase.adjustOpenPackageUses("ESSE-BLUE", "SALAO", 6, "Correção no PDV", "admin"))
+                .thenReturn(OpenPackage.open("ESSE-BLUE", 1L, 5, "admin", Instant.now()).withUsesAdjustedTo(6));
+        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
+                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-BLUE/uses")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"SALAO\",\"uses\":6,\"reason\":\"Correção no PDV\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.uses").value(6))
+                .andExpect(jsonPath("$.remaining").value(0))
+                .andExpect(jsonPath("$.exhausted").value(true))
+                .andExpect(jsonPath("$.warehouseCode").value("SALAO"));
+    }
+
+    @Test
+    void adjustOpenPackageUses_foraDaFaixa_returns_400_comErrorCode() throws Exception {
+        when(estoqueUseCase.adjustOpenPackageUses(any(), any(), anyInt(), any(), any())).thenThrow(
+                com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException.adjusted(1000, 999));
+
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-BLUE/uses")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"SALAO\",\"uses\":1000}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_INVALID_USES"));
+    }
+
+    @Test
+    void adjustOpenPackageUses_semUses_returns_400_semChamarOServico() throws Exception {
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-BLUE/uses")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"SALAO\"}"))
+                .andExpect(status().isBadRequest());
+        verify(estoqueUseCase, never()).adjustOpenPackageUses(any(), any(), anyInt(), any(), any());
+    }
+
+    /** Com errorCode: sem ele, o front entende que a rota não existe. */
+    @Test
+    void adjustOpenPackageUses_semLataAberta_returns_404_comErrorCode() throws Exception {
+        when(estoqueUseCase.adjustOpenPackageUses(any(), any(), anyInt(), any(), any()))
+                .thenThrow(new com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException(
+                        "ESSE-BLUE", "SALAO"));
+
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-BLUE/uses")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"SALAO\",\"uses\":3}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errorCode").value("OPEN_PACKAGE_NOT_FOUND"));
     }

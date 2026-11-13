@@ -550,16 +550,7 @@ class ProductTest {
         Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of());
 
         assertThat(essencia.autoReplace()).isFalse();
-        assertThat(essencia.autoReplaceThreshold(5)).isNull();
-    }
-
-    @Test
-    void autoReplaceThreshold_usaOLimiteDoProduto_ouOSessionsPerUnitDaLata() {
-        Product essencia = Product.create("ZOMO", "Zomo", "essencia", List.of());
-
-        assertThat(essencia.withAutoReplace(true, 6).autoReplaceThreshold(5)).isEqualTo(6);
-        assertThat(essencia.withAutoReplace(true, null).autoReplaceThreshold(5)).isEqualTo(5);
-        assertThat(essencia.withAutoReplace(false, 6).autoReplaceThreshold(5)).isNull();
+        assertThat(essencia.autoReplaceLimit()).isNull();
     }
 
     @Test

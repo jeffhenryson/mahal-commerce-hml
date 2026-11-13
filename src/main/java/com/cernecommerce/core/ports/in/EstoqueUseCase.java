@@ -980,6 +980,16 @@ public interface EstoqueUseCase {
     OpenPackage finishOpenPackage(String sku, String warehouseCode, String username);
 
     /**
+     * O gerente corrige quantas sessões a lata aberta já fez. Só a contagem: não mexe em saldo nem
+     * gera movimento. Publica {@code OPEN_PACKAGE_USES_ADJUSTED} com o antes e o depois.
+     *
+     * @throws com.cernecommerce.core.domain.exception.estoque.InvalidOpenPackageUsesException fora de 0..999
+     * @throws com.cernecommerce.core.domain.exception.estoque.OpenPackageNotFoundException sem lata aberta
+     * @throws com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException depósito inexistente
+     */
+    OpenPackage adjustOpenPackageUses(String sku, String warehouseCode, int uses, String reason, String username);
+
+    /**
      * Histórico das latas <b>fechadas</b> de um sabor, mais recente primeiro (Salão › Essências).
      * {@code from}/{@code to} são dias inclusivos no fuso da loja sobre {@code closedAt}; nulos = sem
      * limite. Pedido o depósito do Salão, soma todos os depósitos, como {@link #openPackageYield}.
@@ -990,13 +1000,16 @@ public interface EstoqueUseCase {
             java.time.LocalDate to, int page, int size);
 
     /**
-     * "Repor sozinha" — liga/desliga a troca automática da lata do sabor. Grava no produto base: as
-     * variações herdam. {@code limit} nulo = usar o {@code sessionsPerUnit} da lata.
+     * Limite de usos da lata do sabor: ao chegar nele, o PDV pergunta "Essa lata acabou?". Grava no
+     * produto base: as variações herdam. {@code limit} nulo = usar o {@code sessionsPerUnit} da lata.
+     *
+     * <p>A troca automática saiu em 2026-11-13: {@code enabled} é ignorado e o produto fica sempre com
+     * {@code autoReplace = false}, para um front antigo não religar.</p>
      *
      * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException produto
      *         que não é de sessão
      * @throws com.cernecommerce.core.domain.exception.estoque.AutoReplaceInvalidLimitException limite fora
-     *         de 1..99, ou ligado sem limite num produto sem {@code sessionsPerUnit}
+     *         de 1..99
      */
     Product setAutoReplace(String sku, boolean enabled, Integer limit);
 

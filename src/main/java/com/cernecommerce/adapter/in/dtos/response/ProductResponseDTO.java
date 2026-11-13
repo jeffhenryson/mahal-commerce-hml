@@ -100,12 +100,12 @@ public class ProductResponseDTO {
     private Integer sessionsPerUnit;
 
     /**
-     * "Repor sozinha" — a lata troca sozinha ao atingir o limite. Sempre preenchido (true/false):
-     * ausente, para o front, quer dizer "servidor sem a função".
+     * "Repor sozinha" (V202). Desde 2026-11-13 a lata nunca troca sozinha: vem sempre {@code false}.
+     * Fica no contrato porque, para o front, ausente quer dizer "servidor sem a função".
      */
     private Boolean autoReplace;
 
-    /** Usos que fazem a lata trocar sozinha (1..99). Nulo = o sessionsPerUnit da lata. */
+    /** Usos em que o PDV pergunta "Essa lata acabou?" (1..99). Nulo = o sessionsPerUnit da lata. */
     private Integer autoReplaceLimit;
 
     /** Consumo livre por valor fixo, cobrado uma vez por sessão. Nulo quando o produto não tem open rosh. */

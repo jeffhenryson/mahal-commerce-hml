@@ -1862,4 +1862,30 @@ public class EstoqueControllerSecurityTest {
         mockMvc.perform(delete("/estoque/products/SKU-DRAFT"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ── Correção dos usos da lata: só o gerente (ESTOQUE_PRODUCT_MANAGE) ─────────────────────
+
+    @Test
+    void adjust_open_package_uses_with_pdv_comanda_manage_only_returns_403() throws Exception {
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-QUALQUER/uses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"SALAO\",\"uses\":3}")
+                        .with(user("atendente").authorities(
+                                new SimpleGrantedAuthority("ROLE_ADMIN"),
+                                new SimpleGrantedAuthority("PDV_COMANDA_MANAGE"),
+                                new SimpleGrantedAuthority("ESTOQUE_STOCK_MANAGE"))))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Passa pela autorização e chega ao serviço: o depósito inexistente dá 404, e não 403. */
+    @Test
+    void adjust_open_package_uses_with_product_manage_passes_authorization() throws Exception {
+        mockMvc.perform(patch("/estoque/open-packages/ESSE-QUALQUER/uses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"warehouseCode\":\"NAO-EXISTE\",\"uses\":3}")
+                        .with(user("gerente").authorities(
+                                new SimpleGrantedAuthority("ROLE_ADMIN"),
+                                new SimpleGrantedAuthority("ESTOQUE_PRODUCT_MANAGE"))))
+                .andExpect(status().isNotFound());
+    }
 }

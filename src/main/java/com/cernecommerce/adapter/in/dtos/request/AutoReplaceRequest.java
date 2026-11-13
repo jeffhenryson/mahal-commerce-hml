@@ -15,11 +15,12 @@ import lombok.Data;
 public class AutoReplaceRequest {
 
     @NotNull
-    @Schema(description = "Liga ou desliga a reposição automática", example = "true",
+    @Schema(description = "Ignorado desde 2026-11-13: a lata nunca troca sozinha e grava sempre false",
+            example = "false",
             requiredMode = Schema.RequiredMode.REQUIRED)
     private Boolean enabled;
 
-    @Schema(description = "Usos que fazem a lata trocar sozinha, de 1 a 99. Nulo = usar o sessionsPerUnit da lata",
+    @Schema(description = "Usos em que o PDV pergunta se a lata acabou, de 1 a 99. Nulo = usar o sessionsPerUnit da lata",
             example = "6", nullable = true)
     private Integer limit;
 }

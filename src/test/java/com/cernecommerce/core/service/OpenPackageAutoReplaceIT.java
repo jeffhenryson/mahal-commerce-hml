@@ -10,10 +10,13 @@ import com.cernecommerce.core.ports.in.EstoqueUseCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -22,9 +25,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * "Repor sozinha" e histórico de latas (V202) contra o banco: a CHECK nova aceita AUTO_REPLACED, a
- * troca baixa 1 na mesma transação da sessão, sem saldo a sessão passa, e o histórico lista só as
- * fechadas, mais recente primeiro, com filtro de dias e paginação.
+ * Limite da lata sem troca automática (2026-11-13), contra o banco: passar do limite só soma usos,
+ * a V204 desliga quem tinha a troca ligada, a correção de usos não mexe em saldo, e o histórico
+ * lista só as fechadas, mais recente primeiro, com filtro de dias e paginação.
  */
 @SpringBootTest
 @ActiveProfiles("dev")
@@ -34,9 +37,10 @@ class OpenPackageAutoReplaceIT {
     private static final ZoneId ZONA_LOJA = ZoneId.of("America/Sao_Paulo");
 
     @Autowired EstoqueUseCase estoqueUseCase;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
-    void lataTrocaSozinhaNoLimite_semSaldoASessaoPassa_eOHistoricoListaAsFechadas() {
+    void passarDoLimite_soSomaUsos_aCorrecaoNaoMexeNoSaldo_eOHistoricoListaAsFechadas() throws Exception {
         String s = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
         String sku = "ZOMO-UVA-" + s;
         String warehouse = "LOUNGE-" + s;
@@ -48,35 +52,50 @@ class OpenPackageAutoReplaceIT {
                 null, null, null, null, null, null, null, null, null, null,
                 new EstoqueUseCase.TableSessionCommand(true, true, 5, null));
         estoqueUseCase.adjustStock(sku, warehouse, MovementType.ENTRADA, new BigDecimal("2"), "carga", operador);
-        estoqueUseCase.setAutoReplace(sku, true, 2);
-        assertThat(estoqueUseCase.findProductBySku(sku).autoReplaceLimit()).isEqualTo(2);
 
-        // 1ª sessão abre a lata (SAIDA 1 → saldo 1); a 2ª atinge o limite e troca (SAIDA 1 → saldo 0).
+        // Front antigo pede para ligar: grava só o limite.
+        estoqueUseCase.setAutoReplace(sku, true, 5);
+        assertThat(estoqueUseCase.findProductBySku(sku).autoReplace()).isFalse();
+        assertThat(estoqueUseCase.findProductBySku(sku).autoReplaceLimit()).isEqualTo(5);
+
+        // Dado legado, ligado antes da mudança: a V204 desliga e mantém o limite.
+        jdbc.update("UPDATE product SET auto_replace = TRUE WHERE sku = ?", sku);
+        jdbc.execute(new ClassPathResource("db/migration/V204__product_auto_replace_off.sql")
+                .getContentAsString(StandardCharsets.UTF_8));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM product WHERE auto_replace = TRUE", Integer.class))
+                .isZero();
+        assertThat(estoqueUseCase.findProductBySku(sku).autoReplaceLimit()).isEqualTo(5);
+
+        // A 1ª sessão abre a lata (SAIDA 1 → saldo 1). A 6ª passa do limite 5: uses = 6, lata aberta, sem baixa.
+        OpenPackage lata = null;
+        for (int i = 0; i < 6; i++) {
+            lata = estoqueUseCase.consumeSession(sku, warehouse, BigDecimal.ONE, operador);
+        }
+        assertThat(lata.uses()).isEqualTo(6);
+        assertThat(lata.isOpen()).isTrue();
+        assertThat(lata.isExhausted()).isTrue();
+        assertThat(estoqueUseCase.getStockBalance(sku, warehouse).quantity()).isEqualByComparingTo("1");
+
+        // O gerente corrige para 3: exhausted recalculado, saldo intocado.
+        OpenPackage corrigida = estoqueUseCase.adjustOpenPackageUses(sku, warehouse, 3, "Correção no PDV", "gerente");
+        assertThat(corrigida.uses()).isEqualTo(3);
+        assertThat(corrigida.isExhausted()).isFalse();
+        assertThat(estoqueUseCase.findOpenPackage(sku, warehouse).uses()).isEqualTo(3);
+        assertThat(estoqueUseCase.getStockBalance(sku, warehouse).quantity()).isEqualByComparingTo("1");
+
+        // "Repor" fecha a primeira (SAIDA 1 → saldo 0); "Acabou" fecha a segunda.
+        estoqueUseCase.replaceOpenPackage(sku, warehouse, operador);
         estoqueUseCase.consumeSession(sku, warehouse, BigDecimal.ONE, operador);
-        OpenPackage trocada = estoqueUseCase.consumeSession(sku, warehouse, BigDecimal.ONE, operador);
-        assertThat(trocada.closeReason()).isEqualTo(OpenPackageCloseReason.AUTO_REPLACED);
-        assertThat(trocada.uses()).isEqualTo(2);
-        assertThat(estoqueUseCase.getStockBalance(sku, warehouse).quantity()).isEqualByComparingTo("0");
-        assertThat(estoqueUseCase.findOpenPackage(sku, warehouse).uses()).isZero();
-
-        // A nova chega ao limite sem saldo: a sessão passa, a lata continua aberta e nada sai.
-        estoqueUseCase.consumeSession(sku, warehouse, BigDecimal.ONE, operador);
-        OpenPackage semSaldo = estoqueUseCase.consumeSession(sku, warehouse, BigDecimal.ONE, operador);
-        assertThat(semSaldo.isOpen()).isTrue();
-        assertThat(semSaldo.uses()).isEqualTo(2);
-        assertThat(estoqueUseCase.getStockBalance(sku, warehouse).quantity()).isEqualByComparingTo("0");
-
-        // "Acabou" fecha a segunda; o histórico traz as duas, a mais recente primeiro.
         estoqueUseCase.finishOpenPackage(sku, warehouse, operador);
         PageResult<OpenPackage> historico = estoqueUseCase.closedPackageHistory(sku, warehouse, null, null, 0, 50);
         assertThat(historico.totalElements()).isEqualTo(2);
         assertThat(historico.content()).extracting(OpenPackage::closeReason)
-                .containsExactly(OpenPackageCloseReason.FINISHED, OpenPackageCloseReason.AUTO_REPLACED);
+                .containsExactly(OpenPackageCloseReason.FINISHED, OpenPackageCloseReason.REPLACED);
 
         // Paginação e filtro de dias (inclusivos, no fuso da loja).
         PageResult<OpenPackage> pagina = estoqueUseCase.closedPackageHistory(sku, warehouse, null, null, 1, 1);
         assertThat(pagina.content()).singleElement()
-                .extracting(OpenPackage::closeReason).isEqualTo(OpenPackageCloseReason.AUTO_REPLACED);
+                .extracting(OpenPackage::closeReason).isEqualTo(OpenPackageCloseReason.REPLACED);
         assertThat(pagina.totalPages()).isEqualTo(2);
         LocalDate hoje = LocalDate.now(ZONA_LOJA);
         assertThat(estoqueUseCase.closedPackageHistory(sku, warehouse, hoje, hoje, 0, 50).totalElements())

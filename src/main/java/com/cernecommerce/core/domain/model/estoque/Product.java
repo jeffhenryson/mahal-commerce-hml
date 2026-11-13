@@ -793,17 +793,6 @@ public record Product(
                 sessionFlags, kitMode, newAutoReplace, newLimit);
     }
 
-    /**
-     * Quantos usos fazem a lata trocar sozinha: o {@code autoReplaceLimit} do produto ou, sem ele,
-     * o {@code sessionsPerUnit} gravado na própria lata. {@code null} = reposição automática desligada.
-     */
-    public Integer autoReplaceThreshold(int packageSessionsPerUnit) {
-        if (!autoReplace) {
-            return null;
-        }
-        return autoReplaceLimit != null ? autoReplaceLimit : packageSessionsPerUnit;
-    }
-
     /** Indica se este produto/kit ainda é rascunho — fora das vitrines que filtram por publicado (EST-F023). */
     public boolean isDraft() {
         return status == ProductStatus.RASCUNHO;

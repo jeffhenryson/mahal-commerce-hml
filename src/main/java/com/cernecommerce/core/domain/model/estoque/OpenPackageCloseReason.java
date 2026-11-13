@@ -29,6 +29,9 @@ public enum OpenPackageCloseReason {
      * ({@code autoReplaceLimit}, ou o {@code sessionsPerUnit} da lata) e o servidor a trocou na
      * mesma transação da sessão, abrindo a próxima com {@code SAIDA} de 1. O front mostra
      * "Automática".
+     *
+     * <p>Desligada em 2026-11-13 (o PDV sempre pergunta se a lata acabou): nenhuma lata nova fecha
+     * assim. O valor fica para o histórico das que fecharam antes.</p>
      */
     AUTO_REPLACED
 }

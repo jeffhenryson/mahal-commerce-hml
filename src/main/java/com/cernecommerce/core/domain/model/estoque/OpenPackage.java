@@ -143,6 +143,21 @@ public record OpenPackage(
                 openedAt, openedBy, closedAt, closeReason);
     }
 
+    /** Teto da correção manual de usos: acima disso é erro de digitação, não lata. */
+    public static final int MAX_ADJUSTED_USES = 999;
+
+    /**
+     * O gerente corrige quantas sessões a lata já fez (PATCH /open-packages/{sku}/uses). Pode passar
+     * do {@code sessionsPerUnit}, que é só estimativa (EST-F037). Não mexe em saldo: é só a contagem.
+     */
+    public OpenPackage withUsesAdjustedTo(int newUses) {
+        if (newUses < 0 || newUses > MAX_ADJUSTED_USES) {
+            throw InvalidOpenPackageUsesException.adjusted(newUses, MAX_ADJUSTED_USES);
+        }
+        return new OpenPackage(id, sku, warehouseId, newUses, sessionsPerUnit, openedAt, openedBy,
+                closedAt, closeReason);
+    }
+
     public OpenPackage closed(OpenPackageCloseReason reason, Instant at) {
         if (reason == null || at == null) {
             throw new IllegalArgumentException("motivo e momento do fechamento são obrigatórios");

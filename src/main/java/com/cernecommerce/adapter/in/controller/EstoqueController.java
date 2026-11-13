@@ -39,6 +39,7 @@ import com.cernecommerce.adapter.in.dtos.response.PackagingResponseDTO;
 import com.cernecommerce.core.domain.model.estoque.SkuPackaging;
 import com.cernecommerce.adapter.in.dtos.request.ReplaceOpenPackageRequest;
 import com.cernecommerce.adapter.in.dtos.request.AutoReplaceRequest;
+import com.cernecommerce.adapter.in.dtos.request.AdjustOpenPackageUsesRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockConversionRequest;
 import com.cernecommerce.adapter.in.dtos.request.StockTransferRequest;
 import com.cernecommerce.adapter.in.dtos.request.WarehousePatchRequest;
@@ -1172,18 +1173,17 @@ public class EstoqueController {
                 result.totalPages()));
     }
 
-    @Operation(summary = "\"Repor sozinha\": troca automática da lata de uma essência",
-            description = "Com `enabled`, a sessão que fizer a lata atingir `limit` usos (ou, com `limit` "
-                    + "nulo, o `sessionsPerUnit` gravado na lata) fecha a lata com `AUTO_REPLACED` e abre a "
-                    + "próxima com baixa de 1 do depósito das latas, na mesma transação. Sem saldo, a sessão "
-                    + "passa e a lata continua aberta.\n\n"
+    @Operation(summary = "Limite de usos da lata de uma essência",
+            description = "Grava `limit`: ao chegar nele (ou, com `limit` nulo, no `sessionsPerUnit` da lata), "
+                    + "o PDV pergunta \"Essa lata acabou?\".\n\n"
+                    + "**A lata nunca troca sozinha (2026-11-13):** `enabled` é ignorado e a resposta vem "
+                    + "sempre com `enabled=false`, para um front antigo não religar a troca automática.\n\n"
                     + "A configuração mora no **produto base**: pedida para uma variação, vale para todas as "
                     + "variações do produto.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Gravada"),
-            @ApiResponse(responseCode = "400", description = "Limite fora de 1..99 ou ligado sem limite num "
-                    + "produto sem sessionsPerUnit (AUTO_REPLACE_INVALID_LIMIT), ou produto que não é de "
-                    + "sessão (NOT_A_PACKAGED_SESSION_PRODUCT)", content = @Content),
+            @ApiResponse(responseCode = "400", description = "Limite fora de 1..99 (AUTO_REPLACE_INVALID_LIMIT), "
+                    + "ou produto que não é de sessão (NOT_A_PACKAGED_SESSION_PRODUCT)", content = @Content),
             @ApiResponse(responseCode = "404", description = "SKU não encontrado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
@@ -1266,6 +1266,28 @@ public class EstoqueController {
         publisher.publishEvent(AuditEvent.of(EventType.OPEN_PACKAGE_FINISHED, authentication.getName(),
                 Map.of("sku", sku, "warehouseCode", request.getWarehouseCode(), "uses", finished.uses())));
         return ResponseEntity.ok(toResponse(finished, request.getWarehouseCode()));
+    }
+
+    @Operation(summary = "Corrigir quantas sessões a lata aberta já fez",
+            description = "O gerente ajusta o contador da lata do card do sabor no PDV. `uses` de 0 a 999; "
+                    + "pode passar do `sessionsPerUnit`, que é estimativa. `remaining` e `exhausted` saem "
+                    + "recalculados.\n\n"
+                    + "**Não mexe em saldo** nem gera movimento: é só a contagem. Fica na auditoria "
+                    + "(`OPEN_PACKAGE_USES_ADJUSTED`, com o antes, o depois e o motivo).")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Corrigida — devolve a lata"),
+            @ApiResponse(responseCode = "400", description = "`uses` fora de 0..999 (`OPEN_PACKAGE_INVALID_USES`)", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Não há lata aberta do SKU (OPEN_PACKAGE_NOT_FOUND), ou depósito não encontrado", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem permissão (só gerente: ESTOQUE_PRODUCT_MANAGE)", content = @Content)
+    })
+    @PatchMapping("/open-packages/{sku}/uses")
+    @PreAuthorize("hasAuthority('ESTOQUE_PRODUCT_MANAGE')")
+    public ResponseEntity<OpenPackageResponseDTO> adjustOpenPackageUses(
+            @PathVariable @NotBlank @Size(min = 3, max = 50) String sku,
+            @Valid @RequestBody AdjustOpenPackageUsesRequest request, Authentication authentication) {
+        OpenPackage adjusted = estoqueUseCase.adjustOpenPackageUses(sku, request.getWarehouseCode(),
+                request.getUses(), request.getReason(), authentication.getName());
+        return ResponseEntity.ok(toResponse(adjusted, request.getWarehouseCode()));
     }
 
     @Operation(summary = "Rendimento real das essências (EST-F037)",

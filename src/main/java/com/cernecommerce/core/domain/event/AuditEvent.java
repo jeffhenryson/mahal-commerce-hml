@@ -62,6 +62,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         // "Repor sozinha" (V202) — quem ligou a troca automática e com que limite; e cada troca feita
         // pelo SISTEMA, que não tem autor humano (mesma lógica de STOCK_PACKAGE_BROKEN).
         OPEN_PACKAGE_AUTO_REPLACE_SET, OPEN_PACKAGE_AUTO_REPLACED,
+        // O gerente corrigiu quantas sessões a lata aberta já fez (PATCH /open-packages/{sku}/uses):
+        // só a contagem muda, sem stock_movement, então o antes/depois só existe aqui.
+        OPEN_PACKAGE_USES_ADJUSTED,
         // EST-F032 — ligar/desligar embalagem muda o que a próxima venda faz sozinha (abrir maço,
         // abrir carteira); a quebra em si é decisão do SISTEMA, sem autor humano, e por isso tem
         // evento próprio além dos dois movimentos no ledger.
