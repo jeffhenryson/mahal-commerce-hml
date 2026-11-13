@@ -126,6 +126,9 @@ services:
       PORT: 8082
       AVATAR_BASE_URL: http://127.0.0.1:8080
       PRODUCT_IMAGE_BASE_URL: http://127.0.0.1:8080
+      # XMLs de NF-e e anexos de nota do CRM no volume uploads_hml (o default ./data/... não persiste).
+      NFE_IMPORT_STORAGE_DIR: /app/uploads/nfe-imports
+      CRM_NOTE_ATTACHMENTS_STORAGE_DIR: /app/uploads/crm-note-attachments
       # InfinitePay real ainda não configurado (handle vem do cliente depois) —
       # payment.gateway.provider != infinitepay ativa StubPaymentGatewayAdapter
       # (PaymentGatewayAdapterConfig), evitando exigir infinitepay.handle/webhook-url

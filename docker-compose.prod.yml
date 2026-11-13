@@ -82,6 +82,8 @@ services:
       PRODUCT_IMAGE_BASE_URL: ${PRODUCT_IMAGE_BASE_URL:-https://api.mahaltabacaria.com.br}
       # XMLs de NF-e importados ficam no mesmo volume (default ./data/nfe-imports não persiste).
       NFE_IMPORT_STORAGE_DIR: /app/uploads/nfe-imports
+      # Anexos de nota do CRM no mesmo volume (default ./data/crm-note-attachments não persiste).
+      CRM_NOTE_ATTACHMENTS_STORAGE_DIR: /app/uploads/crm-note-attachments
       EMAIL_VERIFICATION_FRONTEND_URL: ${EMAIL_VERIFICATION_FRONTEND_URL:-https://mahaltabacaria.com.br/verify}
       PASSWORD_RESET_FRONTEND_URL: ${PASSWORD_RESET_FRONTEND_URL:-https://admin.mahaltabacaria.com.br/auth/reset-password}
       PASSWORD_RESET_CUSTOMER_FRONTEND_URL: ${PASSWORD_RESET_CUSTOMER_FRONTEND_URL:-}
