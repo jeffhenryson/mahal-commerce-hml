@@ -82,6 +82,12 @@ public interface CustomerReceivableRepository {
     /** V173 — quitações lançadas na sessão e depois estornadas, todos os métodos. */
     BigDecimal sumReversedBySession(Long sessionId);
 
+    /** Quitações lançadas na sessão, estornadas ou não, em ordem de gravação. */
+    List<ReceivablePayment> findPaymentsBySessionId(Long sessionId);
+
+    /** Lotes de quitação recebidos na sessão (o troco de cada um está aqui). */
+    List<ReceivablePaymentBatch> findBatchesBySessionId(Long sessionId);
+
     record CustomerBalanceRow(Long customerId, BigDecimal openBalance, BigDecimal overdueBalance,
             LocalDate nextDueDate, long count, BigDecimal openBalanceBalcao, BigDecimal openBalanceMesa) {
     }

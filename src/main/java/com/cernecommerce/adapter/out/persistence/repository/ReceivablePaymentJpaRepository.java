@@ -15,6 +15,8 @@ public interface ReceivablePaymentJpaRepository extends JpaRepository<Receivable
 
     List<ReceivablePaymentEntity> findByBatchIdOrderByIdAsc(Long batchId);
 
+    List<ReceivablePaymentEntity> findByCashSessionIdOrderByIdAsc(Long cashSessionId);
+
     /** V173 — lote estornado não é dinheiro recebido: fica fora do esperado e de payment-totals. */
     @Query("""
             SELECT COALESCE(SUM(p.amount), 0) FROM ReceivablePaymentEntity p

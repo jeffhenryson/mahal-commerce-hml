@@ -286,6 +286,20 @@ public class CustomerReceivableRepositoryImpl implements CustomerReceivableRepos
         return orZero(paymentJpa.sumReversedBySession(sessionId));
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReceivablePayment> findPaymentsBySessionId(Long sessionId) {
+        return paymentJpa.findByCashSessionIdOrderByIdAsc(sessionId).stream()
+                .map(CustomerReceivableRepositoryImpl::toDomain).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReceivablePaymentBatch> findBatchesBySessionId(Long sessionId) {
+        return batchJpa.findByCashSessionId(sessionId).stream()
+                .map(CustomerReceivableRepositoryImpl::toDomain).toList();
+    }
+
     // ── Mapeamento ───────────────────────────────────────────────────────────────────────────
 
     /** Itens de todos os recebíveis da lista numa consulta só. */

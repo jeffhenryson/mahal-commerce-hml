@@ -11,6 +11,7 @@ import com.cernecommerce.core.domain.model.recebivel.ReceivableFilter;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePayment;
 import com.cernecommerce.core.domain.model.recebivel.ReceivablePaymentBatchReversal;
 import com.cernecommerce.core.domain.model.recebivel.ReceivableStatus;
+import com.cernecommerce.core.domain.model.recebivel.SessionReceivablePayment;
 import com.cernecommerce.core.ports.in.PdvUseCase.PaymentCommand;
 
 import java.util.Map;
@@ -141,6 +142,12 @@ public interface ReceivableUseCase {
 
     /** V173 — quitações lançadas na sessão e depois estornadas (todos os métodos); fora do esperado. */
     BigDecimal reversedInSession(Long sessionId);
+
+    /**
+     * Quitações de marcado recebidas no caixa, mais recentes primeiro, com as estornadas marcadas
+     * REFUNDED. Funciona com o caixa aberto ou fechado. 404 se a sessão não existe.
+     */
+    List<SessionReceivablePayment> listPaymentsBySession(Long sessionId);
 
     // ── Tipos ────────────────────────────────────────────────────────────────────────────────
 

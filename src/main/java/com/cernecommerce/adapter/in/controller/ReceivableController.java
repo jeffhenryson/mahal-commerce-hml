@@ -9,6 +9,7 @@ import com.cernecommerce.adapter.in.dtos.request.ReceivablePaymentRequest;
 import com.cernecommerce.adapter.in.dtos.request.ReceivablePaymentReversalRequest;
 import com.cernecommerce.adapter.in.dtos.response.CreditLimitCapResponseDTO;
 import com.cernecommerce.adapter.in.dtos.response.ReceivableResponseDTO;
+import com.cernecommerce.adapter.in.dtos.response.SessionReceivablePaymentResponseDTO;
 import com.cernecommerce.core.domain.event.AuditEvent;
 import com.cernecommerce.core.domain.event.AuditEvent.EventType;
 import com.cernecommerce.core.domain.exception.recebivel.CashDrawerConfirmationRequiredException;
@@ -140,6 +141,23 @@ public class ReceivableController {
     public ResponseEntity<List<ReceivableResponseDTO>> listByCustomer(@PathVariable("id") Long customerId) {
         return ResponseEntity.ok(receivableUseCase.listByCustomer(customerId).stream()
                 .map(ReceivableController::toResponse).toList());
+    }
+
+    @Operation(summary = "Quitações de marcado recebidas no caixa",
+            description = "Uma linha por marcado abatido, mais recentes primeiro, com o caixa aberto ou fechado. "
+                    + "amount é o valor entregue: na última linha em DINHEIRO de cada recebimento, é o abatido "
+                    + "mais o troco, e changeAmount é o troco (nas outras, zero). Σamount − ΣchangeAmount das "
+                    + "linhas CAPTURED bate com receivableReceived do resumo. status REFUNDED: lote estornado.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "404", description = "Sessão não encontrada", content = @Content)
+    })
+    @GetMapping("/pdv/sessions/{id}/receivable-payments")
+    @PreAuthorize("hasAnyAuthority('PDV_READ', 'ORDER_READ')")
+    public ResponseEntity<List<SessionReceivablePaymentResponseDTO>> listBySession(
+            @PathVariable("id") Long sessionId) {
+        return ResponseEntity.ok(receivableUseCase.listPaymentsBySession(sessionId).stream()
+                .map(SessionReceivablePaymentResponseDTO::from).toList());
     }
 
     @Operation(summary = "Pré-checagem do \"Marcar\" para o PDV",
