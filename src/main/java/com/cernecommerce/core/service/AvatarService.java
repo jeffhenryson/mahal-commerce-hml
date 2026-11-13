@@ -3,11 +3,13 @@ package com.cernecommerce.core.service;
 import com.cernecommerce.core.domain.exception.avatar.AvatarTooLargeException;
 import com.cernecommerce.core.domain.exception.avatar.InvalidAvatarFormatException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
+import com.cernecommerce.core.domain.model.storage.CompressedImage;
 import com.cernecommerce.core.domain.model.storage.FileServeResult;
 import com.cernecommerce.core.domain.model.storage.ImageFormat;
 import com.cernecommerce.core.domain.model.auth.User;
 import com.cernecommerce.core.ports.in.AvatarUseCase;
 import com.cernecommerce.core.ports.out.storage.AvatarStoragePort;
+import com.cernecommerce.core.ports.out.storage.ImageCompressorPort;
 import com.cernecommerce.core.ports.out.user.UserCachePort;
 import com.cernecommerce.core.ports.out.user.UserRepository;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,15 +22,20 @@ public class AvatarService implements AvatarUseCase {
     private final UserRepository userRepository;
     private final AvatarStoragePort storagePort;
     private final UserCachePort userCachePort;
+    private final ImageCompressorPort compressor;
     private final long maxSizeBytes;
+    private final int maxDimension;
     private final String avatarBaseUrl;
 
     public AvatarService(UserRepository userRepository, AvatarStoragePort storagePort,
-                         UserCachePort userCachePort, long maxSizeBytes, String avatarBaseUrl) {
+                         UserCachePort userCachePort, ImageCompressorPort compressor,
+                         long maxSizeBytes, int maxDimension, String avatarBaseUrl) {
         this.userRepository = userRepository;
         this.storagePort = storagePort;
         this.userCachePort = userCachePort;
+        this.compressor = compressor;
         this.maxSizeBytes = maxSizeBytes;
+        this.maxDimension = maxDimension;
         this.avatarBaseUrl = avatarBaseUrl;
     }
 
@@ -37,7 +44,7 @@ public class AvatarService implements AvatarUseCase {
     public String upload(String username, byte[] bytes, String originalFilename) {
         if (bytes.length > maxSizeBytes) throw new AvatarTooLargeException(maxSizeBytes);
 
-        String extension = detectExtension(bytes);
+        ImageFormat format = detectFormat(bytes);
 
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UserNotFoundException(username));
@@ -46,7 +53,9 @@ public class AvatarService implements AvatarUseCase {
             storagePort.delete(user.getAvatarFilename());
         }
 
-        String filename = storagePort.save(bytes, extension);
+        // Avatar aparece em 40–80 px na tela; guardar a foto crua do celular é só desperdício.
+        CompressedImage image = compressor.compress(bytes, format, maxDimension);
+        String filename = storagePort.save(image.bytes(), image.format().extension());
         user.setAvatar(filename);
         userRepository.save(user);
         userCachePort.evict(username);
@@ -94,9 +103,8 @@ public class AvatarService implements AvatarUseCase {
      * reconheci" para a exceção de avatar fica neste ponto, porque o formato aceito é comum aos
      * dois casos mas o erro devolvido ao cliente não é.
      */
-    private String detectExtension(byte[] bytes) {
+    private ImageFormat detectFormat(byte[] bytes) {
         return ImageFormat.detect(bytes)
-                .orElseThrow(InvalidAvatarFormatException::new)
-                .extension();
+                .orElseThrow(InvalidAvatarFormatException::new);
     }
 }

@@ -2,9 +2,11 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.storage.ImageTooLargeException;
 import com.cernecommerce.core.domain.exception.storage.InvalidImageFormatException;
+import com.cernecommerce.core.domain.model.storage.CompressedImage;
 import com.cernecommerce.core.domain.model.storage.FileServeResult;
 import com.cernecommerce.core.domain.model.storage.ImageFormat;
 import com.cernecommerce.core.ports.in.ProductImageUseCase;
+import com.cernecommerce.core.ports.out.storage.ImageCompressorPort;
 import com.cernecommerce.core.ports.out.storage.ProductImageStoragePort;
 
 import java.io.IOException;
@@ -20,12 +22,17 @@ import java.io.InputStream;
 public class ProductImageService implements ProductImageUseCase {
 
     private final ProductImageStoragePort storagePort;
+    private final ImageCompressorPort compressor;
     private final long maxSizeBytes;
+    private final int maxDimension;
     private final String baseUrl;
 
-    public ProductImageService(ProductImageStoragePort storagePort, long maxSizeBytes, String baseUrl) {
+    public ProductImageService(ProductImageStoragePort storagePort, ImageCompressorPort compressor,
+                               long maxSizeBytes, int maxDimension, String baseUrl) {
         this.storagePort = storagePort;
+        this.compressor = compressor;
         this.maxSizeBytes = maxSizeBytes;
+        this.maxDimension = maxDimension;
         this.baseUrl = baseUrl;
     }
 
@@ -38,7 +45,10 @@ public class ProductImageService implements ProductImageUseCase {
         ImageFormat format = ImageFormat.detect(bytes)
                 .orElseThrow(InvalidImageFormatException::new);
 
-        String filename = storagePort.save(bytes, format.extension());
+        // maxSizeBytes limita a ENTRADA; o que vai para o disco é a versão reduzida. A extensão
+        // vem do resultado, porque PNG sem transparência sai como JPEG.
+        CompressedImage image = compressor.compress(bytes, format, maxDimension);
+        String filename = storagePort.save(image.bytes(), image.format().extension());
 
         // Com S3/CDN a URL é a do bucket; com armazenamento local não existe URL pública e quem
         // serve os bytes é a própria API, em GET /product-images/{filename}.

@@ -4,7 +4,10 @@ import com.cernecommerce.core.domain.exception.avatar.AvatarTooLargeException;
 import com.cernecommerce.core.domain.exception.avatar.InvalidAvatarFormatException;
 import com.cernecommerce.core.domain.exception.user.UserNotFoundException;
 import com.cernecommerce.core.domain.model.auth.User;
+import com.cernecommerce.core.domain.model.storage.CompressedImage;
+import com.cernecommerce.core.domain.model.storage.ImageFormat;
 import com.cernecommerce.core.ports.out.storage.AvatarStoragePort;
+import com.cernecommerce.core.ports.out.storage.ImageCompressorPort;
 import com.cernecommerce.core.ports.out.user.UserCachePort;
 import com.cernecommerce.core.ports.out.user.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +39,7 @@ class AvatarServiceTest {
     @BeforeEach
     void setUp() {
         avatarService = new AvatarService(userRepository, storagePort, userCachePort,
-                MAX_BYTES, "http://localhost:8080");
+                (b, f, d) -> new CompressedImage(b, f), MAX_BYTES, 400, "http://localhost:8080");
     }
 
     // --- magic bytes JPEG ---
@@ -89,6 +92,22 @@ class AvatarServiceTest {
         String url = avatarService.upload("alice", PNG_BYTES, "photo.png");
 
         assertThat(url).endsWith("uuid.png");
+    }
+
+    @Test
+    void upload_grava_a_versao_reduzida_pelo_compressor_no_tamanho_de_avatar() {
+        ImageCompressorPort compressor = mock(ImageCompressorPort.class);
+        byte[] reduzido = new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF, 0x01};
+        when(compressor.compress(PNG_BYTES, ImageFormat.PNG, 400))
+                .thenReturn(new CompressedImage(reduzido, ImageFormat.JPEG));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(userWithoutAvatar()));
+        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(storagePort.save(reduzido, "jpg")).thenReturn("uuid.jpg");
+        AvatarService comCompressor = new AvatarService(userRepository, storagePort, userCachePort,
+                compressor, MAX_BYTES, 400, "http://localhost:8080");
+
+        assertThat(comCompressor.upload("alice", PNG_BYTES, "photo.png")).endsWith("uuid.jpg");
+        verify(storagePort).save(reduzido, "jpg");
     }
 
     @Test

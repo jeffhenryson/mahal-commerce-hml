@@ -93,6 +93,8 @@ import com.cernecommerce.core.ports.out.notification.NotificationRepository;
 import com.cernecommerce.core.ports.out.support.BugReportRepository;
 import com.cernecommerce.adapter.out.storage.LocalAvatarStorageAdapter;
 import com.cernecommerce.adapter.out.storage.LocalProductImageStorageAdapter;
+import com.cernecommerce.adapter.out.storage.ThumbnailatorImageCompressorAdapter;
+import com.cernecommerce.core.ports.out.storage.ImageCompressorPort;
 import com.cernecommerce.core.ports.out.storage.AvatarStoragePort;
 import com.cernecommerce.core.ports.out.storage.ProductImageStoragePort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -898,13 +900,20 @@ class CoreBeanConfig {
         return new IntegrationHistoryService(auditLogRepository);
     }
 
+    // Compartilhado por avatar e imagem de produto: não tem estado, só a regra de redução.
+    @Bean
+    ImageCompressorPort imageCompressorPort() {
+        return new ThumbnailatorImageCompressorAdapter();
+    }
+
     @Bean
     AvatarUseCase avatarUseCase(UserRepository userRepository,
             AvatarStoragePort storagePort,
             UserCachePort userCachePort,
+            ImageCompressorPort imageCompressorPort,
             AvatarProperties avatarProps) {
-        return new AvatarService(userRepository, storagePort, userCachePort,
-                avatarProps.getMaxSizeBytes(), avatarProps.getBaseUrl());
+        return new AvatarService(userRepository, storagePort, userCachePort, imageCompressorPort,
+                avatarProps.getMaxSizeBytes(), avatarProps.getMaxDimension(), avatarProps.getBaseUrl());
     }
 
     // Imagem de produto tem configuração independente da de avatar — um pode estar em S3 e o
@@ -917,8 +926,10 @@ class CoreBeanConfig {
 
     @Bean
     ProductImageUseCase productImageUseCase(ProductImageStoragePort productImageStoragePort,
+            ImageCompressorPort imageCompressorPort,
             ProductImageProperties productImageProps) {
-        return new ProductImageService(productImageStoragePort,
-                productImageProps.getMaxSizeBytes(), productImageProps.getBaseUrl());
+        return new ProductImageService(productImageStoragePort, imageCompressorPort,
+                productImageProps.getMaxSizeBytes(), productImageProps.getMaxDimension(),
+                productImageProps.getBaseUrl());
     }
 }

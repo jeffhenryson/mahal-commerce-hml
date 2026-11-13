@@ -271,6 +271,13 @@
 			<artifactId>caffeine</artifactId>
 		</dependency>
 
+		<!-- Redimensiona/recomprime imagens no upload, respeitando a orientação EXIF -->
+		<dependency>
+			<groupId>net.coobird</groupId>
+			<artifactId>thumbnailator</artifactId>
+			<version>0.4.20</version>
+		</dependency>
+
 		<!-- TOTP (2FA via Google Authenticator / Authy) -->
 		<dependency>
 			<groupId>dev.samstevens.totp</groupId>

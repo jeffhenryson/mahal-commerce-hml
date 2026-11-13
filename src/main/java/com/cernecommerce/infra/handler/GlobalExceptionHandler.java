@@ -4,6 +4,7 @@ import com.cernecommerce.core.domain.exception.ModuleDisabledException;
 import com.cernecommerce.core.domain.exception.auth.TotpSetupRequiredException;
 import com.cernecommerce.core.domain.exception.avatar.AvatarTooLargeException;
 import com.cernecommerce.core.domain.exception.avatar.InvalidAvatarFormatException;
+import com.cernecommerce.core.domain.exception.storage.ImageDimensionsTooLargeException;
 import com.cernecommerce.core.domain.exception.storage.ImageTooLargeException;
 import com.cernecommerce.core.domain.exception.storage.InvalidImageFormatException;
 import com.cernecommerce.core.domain.exception.PermissionAlreadyExistsException;
@@ -1285,6 +1286,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ImageTooLargeException.class)
     public ResponseEntity<ApiError> handleImageTooLarge(ImageTooLargeException ex, HttpServletRequest req) {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "IMAGE_TOO_LARGE", req);
+    }
+
+    @ExceptionHandler(ImageDimensionsTooLargeException.class)
+    public ResponseEntity<ApiError> handleImageDimensionsTooLarge(ImageDimensionsTooLargeException ex,
+                                                                  HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "IMAGE_DIMENSIONS_TOO_LARGE", req);
     }
 
     @ExceptionHandler(InvalidImageFormatException.class)

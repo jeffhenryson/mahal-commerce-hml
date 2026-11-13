@@ -22,8 +22,17 @@ public class ProductImageProperties {
     /** 5 MB — o admin redimensiona para 600 px antes de enviar, então é folga generosa. */
     private long maxSizeBytes = 5_242_880L;
 
+    /**
+     * Maior lado gravado, em px. O admin já envia em 600 px, então o que vem de lá passa direto;
+     * isto só pega upload que chegou cru (API direta, cliente antigo).
+     */
+    private int maxDimension = 1200;
+
     private final Storage storage = new Storage();
     private final S3 s3 = new S3();
+
+    public int getMaxDimension() { return maxDimension; }
+    public void setMaxDimension(int maxDimension) { this.maxDimension = maxDimension; }
 
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }

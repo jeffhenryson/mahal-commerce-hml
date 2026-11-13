@@ -9,6 +9,8 @@ public class AvatarProperties {
 
     private String baseUrl = "http://localhost:8080";
     private long maxSizeBytes = 2_097_152L;
+    /** Maior lado gravado, em px — avatar aparece pequeno, 400 cobre tela retina com folga. */
+    private int maxDimension = 400;
     private final Storage storage = new Storage();
     private final S3 s3 = new S3();
 
@@ -34,6 +36,9 @@ public class AvatarProperties {
 
     public long getMaxSizeBytes() { return maxSizeBytes; }
     public void setMaxSizeBytes(long maxSizeBytes) { this.maxSizeBytes = maxSizeBytes; }
+
+    public int getMaxDimension() { return maxDimension; }
+    public void setMaxDimension(int maxDimension) { this.maxDimension = maxDimension; }
 
     public S3 getS3() { return s3; }
 

@@ -2,7 +2,10 @@ package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.storage.ImageTooLargeException;
 import com.cernecommerce.core.domain.exception.storage.InvalidImageFormatException;
+import com.cernecommerce.core.domain.model.storage.CompressedImage;
 import com.cernecommerce.core.domain.model.storage.FileServeResult;
+import com.cernecommerce.core.domain.model.storage.ImageFormat;
+import com.cernecommerce.core.ports.out.storage.ImageCompressorPort;
 import com.cernecommerce.core.ports.out.storage.ProductImageStoragePort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,13 +24,17 @@ class ProductImageServiceTest {
     private static final long MAX_SIZE = 1024L;
     private static final String BASE_URL = "https://api.mahal.test";
 
+    private static final int MAX_DIMENSION = 1200;
+    /** Compressor que devolve o que recebeu — os testes de formato/limite não dependem dele. */
+    private static final ImageCompressorPort PASS_THROUGH = (b, f, d) -> new CompressedImage(b, f);
+
     private ProductImageStoragePort storagePort;
     private ProductImageService service;
 
     @BeforeEach
     void setup() {
         storagePort = mock(ProductImageStoragePort.class);
-        service = new ProductImageService(storagePort, MAX_SIZE, BASE_URL);
+        service = new ProductImageService(storagePort, PASS_THROUGH, MAX_SIZE, MAX_DIMENSION, BASE_URL);
     }
 
     private static byte[] jpeg(int totalLength) {
@@ -105,10 +112,29 @@ class ProductImageServiceTest {
 
     @Test
     void mensagem_do_limite_sai_em_mb_para_o_operador() {
-        ProductImageService bigger = new ProductImageService(storagePort, 5_242_880L, BASE_URL);
+        ProductImageService bigger = new ProductImageService(storagePort, PASS_THROUGH, 5_242_880L,
+                MAX_DIMENSION, BASE_URL);
         ImageTooLargeException ex = assertThrows(ImageTooLargeException.class,
                 () -> bigger.upload(jpeg(5_242_881)));
         assertTrue(ex.getMessage().contains("5 MB"), ex.getMessage());
+    }
+
+    @Test
+    void upload_grava_a_saida_do_compressor_com_a_extensao_dela() {
+        // PNG sem transparência vira JPEG no compressor: o arquivo gravado tem que ser .jpg com
+        // os bytes reduzidos, não o PNG original com a extensão detectada na entrada.
+        byte[] png = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00};
+        byte[] reduzido = jpeg(16);
+        ImageCompressorPort compressor = mock(ImageCompressorPort.class);
+        when(compressor.compress(png, ImageFormat.PNG, MAX_DIMENSION))
+                .thenReturn(new CompressedImage(reduzido, ImageFormat.JPEG));
+        when(storagePort.save(reduzido, "jpg")).thenReturn("abc.jpg");
+        when(storagePort.getPublicUrl("abc.jpg")).thenReturn(Optional.empty());
+        ProductImageService comCompressor =
+                new ProductImageService(storagePort, compressor, MAX_SIZE, MAX_DIMENSION, BASE_URL);
+
+        assertEquals(BASE_URL + "/product-images/abc.jpg", comCompressor.upload(png));
+        verify(storagePort).save(reduzido, "jpg");
     }
 
     // --- serve ---
