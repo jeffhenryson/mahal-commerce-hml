@@ -24,6 +24,7 @@ public class CategoryDTOConverter {
         dto.setActive(category.active());
         dto.setCigarette(category.cigarette());
         dto.setCashbackExcluded(category.cashbackExcluded());
+        dto.setColor(category.color());
         dto.setProductCount(productCount);
         dto.setAverageMarginPercent(averageMarginPercent);
         return dto;

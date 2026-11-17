@@ -1,5 +1,6 @@
 package com.cernecommerce.adapter.in.dtos.response;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -22,6 +23,14 @@ public class CategoryResponseDTO {
 
     /** V197 — fora dos benefícios: sem cashback, sem resgate e sem desconto do chefe. */
     private boolean cashbackExcluded;
+
+    /**
+     * V205 — cor no PDV, "#RRGGBB" em maiúsculo, ou nula (card neutro). A chave sai sempre, mesmo
+     * nula: o front usa a presença dela para saber que o backend suporta cor. Não pôr NON_NULL.
+     */
+    @Schema(description = "Cor da categoria no PDV, \"#RRGGBB\", ou nulo (sem cor)",
+            example = "#F5B638", nullable = true)
+    private String color;
 
     /** Produtos vinculados a esta categoria (Bloco 2.1) — evita a varredura de catálogo no admin. */
     private long productCount;

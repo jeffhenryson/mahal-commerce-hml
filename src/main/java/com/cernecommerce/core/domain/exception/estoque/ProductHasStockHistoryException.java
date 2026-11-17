@@ -11,17 +11,20 @@ package com.cernecommerce.core.domain.exception.estoque;
  */
 public class ProductHasStockHistoryException extends RuntimeException {
     public ProductHasStockHistoryException(String sku) {
-        super("Rascunho " + sku + " não pode ser excluído: há saldo ou movimentação de estoque "
-                + "gravados para este SKU");
+        this(sku, false);
     }
 
-    private ProductHasStockHistoryException(String message) {
-        super(message);
+    // O motivo vai num boolean porque um segundo construtor (String) colidiria com o público.
+    private ProductHasStockHistoryException(String sku, boolean comLata) {
+        super(comLata
+                ? "Rascunho não pode ser excluído: há lata de essência registrada para o SKU " + sku
+                        + ". Inative o produto ou a variação em vez de excluir"
+                : "Rascunho " + sku + " não pode ser excluído: há saldo ou movimentação de estoque "
+                        + "gravados para este SKU");
     }
 
     /** O SKU (pai ou variação) tem lata de essência registrada, aberta ou fechada. */
     public static ProductHasStockHistoryException comLataRegistrada(String sku) {
-        return new ProductHasStockHistoryException("Rascunho não pode ser excluído: há lata de essência "
-                + "registrada para o SKU " + sku + ". Inative o produto ou a variação em vez de excluir");
+        return new ProductHasStockHistoryException(sku, true);
     }
 }

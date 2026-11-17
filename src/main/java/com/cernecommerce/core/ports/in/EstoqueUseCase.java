@@ -608,8 +608,14 @@ public interface EstoqueUseCase {
     }
 
     /** V197 — {@link #createCategory(String, boolean, int, boolean)} marcando se a categoria sai dos benefícios. */
+    default Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette,
+            boolean cashbackExcluded) {
+        return createCategory(name, featured, displayOrder, cigarette, cashbackExcluded, null);
+    }
+
+    /** V205 — {@link #createCategory(String, boolean, int, boolean, boolean)} com a cor do PDV; nula = sem cor. */
     Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette,
-            boolean cashbackExcluded);
+            boolean cashbackExcluded, String color);
 
     /**
      * Alteração parcial: campo nulo é mantido. Renomear <b>propaga</b> o novo nome para a coluna
@@ -624,8 +630,17 @@ public interface EstoqueUseCase {
     }
 
     /** V197 — {@link #updateCategory(Long, String, Boolean, Integer, Boolean)} com a marcação de fora dos benefícios; nulo não muda. */
+    default Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette,
+            Boolean cashbackExcluded) {
+        return updateCategory(id, name, featured, displayOrder, cigarette, cashbackExcluded, null);
+    }
+
+    /**
+     * V205 — {@link #updateCategory(Long, String, Boolean, Integer, Boolean, Boolean)} com a cor do PDV:
+     * nula não muda, {@code ""} remove e {@code "#RRGGBB"} troca.
+     */
     Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder, Boolean cigarette,
-            Boolean cashbackExcluded);
+            Boolean cashbackExcluded, String color);
 
     /**
      * Ativa ou desativa uma categoria. Desativada, ela some da vitrine

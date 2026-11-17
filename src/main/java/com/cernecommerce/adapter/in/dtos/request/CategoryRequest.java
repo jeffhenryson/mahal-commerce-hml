@@ -2,6 +2,7 @@ package com.cernecommerce.adapter.in.dtos.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -31,4 +32,10 @@ public class CategoryRequest {
             + "cashback, o saldo de cashback não abate o valor deles e o desconto do chefe não incide sobre "
             + "eles. Omitido, nasce false.")
     private Boolean cashbackExcluded;
+
+    /** V205 — cor no PDV, "#RRGGBB". Omitido = sem cor. */
+    @Pattern(regexp = "^#[0-9A-Fa-f]{6}$", message = "Use uma cor #RRGGBB")
+    @Schema(description = "V205 — cor da categoria no PDV (borda do card e etiqueta), \"#RRGGBB\". "
+            + "O servidor grava em maiúsculo. Omitido, nasce sem cor.", example = "#F5B638", nullable = true)
+    private String color;
 }

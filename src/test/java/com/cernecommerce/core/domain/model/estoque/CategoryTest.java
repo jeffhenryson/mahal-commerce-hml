@@ -83,4 +83,49 @@ class CategoryTest {
         assertThat(category.featured()).isTrue();
         assertThat(category.displayOrder()).isZero();
     }
+
+    // ===== Cor no PDV (V205) =====
+
+    @Test
+    void cor_nasceNulaPorPadrao() {
+        assertThat(Category.create("Narguilé").color()).isNull();
+        assertThat(Category.of(1L, "Narguilé", false, 0, true).color()).isNull();
+    }
+
+    @Test
+    void cor_minusculaViraMaiuscula_eEAparada() {
+        assertThat(Category.create("Essências", false, 0, false, false, " #f5b638 ").color()).isEqualTo("#F5B638");
+    }
+
+    @Test
+    void cor_brancaViraNula() {
+        assertThat(Category.create("Essências", false, 0, false, false, "  ").color()).isNull();
+    }
+
+    @Test
+    void cor_hexInvalidoERecusado() {
+        for (String cor : java.util.List.of("#12", "vermelho", "#GGGGGG", "F5B638", "#F5B6380")) {
+            assertThatThrownBy(() -> Category.create("X", false, 0, false, false, cor))
+                    .as(cor)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void withDetails_corNulaMantem_vaziaRemove_eValorTroca() {
+        Category comCor = Category.of(1L, "Essências", false, 0, true, false, false, "#F5B638");
+
+        assertThat(comCor.withDetails(null, null, null, null, null, null).color()).isEqualTo("#F5B638");
+        assertThat(comCor.withDetails(null, null, null, null, null, "").color()).isNull();
+        assertThat(comCor.withDetails(null, null, null, null, null, "#abc123").color()).isEqualTo("#ABC123");
+        // As sobrecargas antigas não mexem na cor.
+        assertThat(comCor.withDetails("Outro", true, 2).color()).isEqualTo("#F5B638");
+    }
+
+    @Test
+    void withActive_preservaACor() {
+        Category comCor = Category.of(1L, "Essências", false, 0, true, false, false, "#F5B638");
+
+        assertThat(comCor.withActive(false).color()).isEqualTo("#F5B638");
+    }
 }

@@ -2833,7 +2833,7 @@ public class EstoqueControllerTest {
 
     @Test
     void createCategory_returns_201_comLocationEBody() throws Exception {
-        when(estoqueUseCase.createCategory("Narguilé", true, 3, false, false))
+        when(estoqueUseCase.createCategory("Narguilé", true, 3, false, false, null))
                 .thenReturn(Category.of(7L, "Narguilé", true, 3, true));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2852,7 +2852,7 @@ public class EstoqueControllerTest {
     /** PDV-F045 — a marcação de cigarros vai na criação e volta no corpo. */
     @Test
     void createCategory_deCigarros_passaAMarcacao_eDevolveNoCorpo() throws Exception {
-        when(estoqueUseCase.createCategory("Cigarros", false, 0, true, false))
+        when(estoqueUseCase.createCategory("Cigarros", false, 0, true, false, null))
                 .thenReturn(Category.of(8L, "Cigarros", false, 0, true, true));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2865,7 +2865,7 @@ public class EstoqueControllerTest {
 
     @Test
     void updateCategory_cigarette_chegaExplicito_eAusenteChegaNull() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any(), any()))
                 .thenReturn(Category.of(7L, "Cigarros", false, 0, true, false));
 
         mockMvc.perform(patch("/estoque/categories/7")
@@ -2875,13 +2875,13 @@ public class EstoqueControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cigarette").value(false));
 
-        verify(estoqueUseCase).updateCategory(7L, null, null, null, false, null);
+        verify(estoqueUseCase).updateCategory(7L, null, null, null, false, null, null);
     }
 
     /** Cashback × desconto do chefe — a marcação de fora dos benefícios vai na criação e volta no corpo. */
     @Test
     void createCategory_foraDosBeneficios_passaAMarcacao_eDevolveNoCorpo() throws Exception {
-        when(estoqueUseCase.createCategory("Palheiros", false, 0, false, true))
+        when(estoqueUseCase.createCategory("Palheiros", false, 0, false, true, null))
                 .thenReturn(Category.of(9L, "Palheiros", false, 0, true, false, true));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2896,7 +2896,7 @@ public class EstoqueControllerTest {
     /** Omitido no PATCH não muda (chega null); explícito chega como veio. */
     @Test
     void updateCategory_cashbackExcluded_chegaExplicito_eAusenteChegaNull() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any(), any()))
                 .thenReturn(Category.of(7L, "Cigarros", false, 0, true, true, true));
 
         mockMvc.perform(patch("/estoque/categories/7")
@@ -2906,12 +2906,12 @@ public class EstoqueControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cashbackExcluded").value(true));
 
-        verify(estoqueUseCase).updateCategory(7L, null, null, null, null, true);
+        verify(estoqueUseCase).updateCategory(7L, null, null, null, null, true, null);
     }
 
     @Test
     void createCategory_nomeDuplicado_returns_409() throws Exception {
-        when(estoqueUseCase.createCategory(anyString(), anyBoolean(), anyInt(), anyBoolean(), anyBoolean()))
+        when(estoqueUseCase.createCategory(anyString(), anyBoolean(), anyInt(), anyBoolean(), anyBoolean(), any()))
                 .thenThrow(new DuplicateCategoryNameException("Narguilé"));
 
         mockMvc.perform(post("/estoque/categories")
@@ -2946,7 +2946,7 @@ public class EstoqueControllerTest {
 
     @Test
     void updateCategory_camposAusentes_chegamComoNull() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any(), any()))
                 .thenReturn(Category.of(7L, "Narguilé", false, 0, true));
 
         mockMvc.perform(patch("/estoque/categories/7")
@@ -2956,12 +2956,12 @@ public class EstoqueControllerTest {
                 .andExpect(status().isOk());
 
         // name e displayOrder nulos = "não mexer"; featured explícito troca.
-        verify(estoqueUseCase).updateCategory(7L, null, true, null, null, null);
+        verify(estoqueUseCase).updateCategory(7L, null, true, null, null, null, null);
     }
 
     @Test
     void updateCategory_idInexistente_returns_404() throws Exception {
-        when(estoqueUseCase.updateCategory(eq(99L), any(), any(), any(), any(), any()))
+        when(estoqueUseCase.updateCategory(eq(99L), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new CategoryNotFoundException(99L));
 
         mockMvc.perform(patch("/estoque/categories/99")
@@ -2993,7 +2993,92 @@ public class EstoqueControllerTest {
         mockMvc.perform(get("/estoque/categories").principal(AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].name").value("Narguilé"))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.totalElements").value(1))
+                // V205 — a chave sai mesmo nula: é por ela que o front sabe que o backend suporta cor.
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"color\":null")));
+    }
+
+    // ===== Cor da categoria no PDV (V205) =====
+
+    @Test
+    void createCategory_comCor_repassaAoUseCase_eDevolveEmMaiusculo() throws Exception {
+        when(estoqueUseCase.createCategory("Essências", false, 0, false, false, "#f5b638"))
+                .thenReturn(Category.of(10L, "Essências", false, 0, true, false, false, "#f5b638"));
+
+        mockMvc.perform(post("/estoque/categories")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Essências\",\"color\":\"#f5b638\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.color").value("#F5B638"));
+    }
+
+    @Test
+    void createCategory_semCor_devolveAChaveColorNula() throws Exception {
+        when(estoqueUseCase.createCategory("Narguilé", false, 0, false, false, null))
+                .thenReturn(Category.of(7L, "Narguilé", false, 0, true));
+
+        mockMvc.perform(post("/estoque/categories")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Narguilé\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.color").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"color\":null")));
+    }
+
+    @Test
+    void createCategory_corInvalida_returns_400() throws Exception {
+        for (String cor : List.of("#12", "vermelho", "#GGGGGG", "")) {
+            mockMvc.perform(post("/estoque/categories")
+                            .principal(AUTH)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"X\",\"color\":\"" + cor + "\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    @Test
+    void updateCategory_corInvalida_returns_400() throws Exception {
+        mockMvc.perform(patch("/estoque/categories/7")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"#12\"}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(estoqueUseCase);
+    }
+
+    @Test
+    void updateCategory_semCor_chegaNull_paraNaoMexer() throws Exception {
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any(), any()))
+                .thenReturn(Category.of(7L, "Narguilé", true, 0, true, false, false, "#F5B638"));
+
+        mockMvc.perform(patch("/estoque/categories/7")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"featured\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.color").value("#F5B638"));
+
+        verify(estoqueUseCase).updateCategory(7L, null, true, null, null, null, null);
+    }
+
+    @Test
+    void updateCategory_corVazia_chegaVazia_paraRemover() throws Exception {
+        when(estoqueUseCase.updateCategory(eq(7L), any(), any(), any(), any(), any(), any()))
+                .thenReturn(Category.of(7L, "Narguilé", false, 0, true));
+
+        mockMvc.perform(patch("/estoque/categories/7")
+                        .principal(AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.color").value(org.hamcrest.Matchers.nullValue()));
+
+        verify(estoqueUseCase).updateCategory(7L, null, null, null, null, null, "");
     }
 
     // ===== Marcas do catálogo =====

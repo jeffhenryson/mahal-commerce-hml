@@ -784,17 +784,18 @@ public class EstoqueService implements EstoqueUseCase {
     @Override
     @Transactional
     public Category createCategory(String name, boolean featured, int displayOrder, boolean cigarette,
-            boolean cashbackExcluded) {
+            boolean cashbackExcluded, String color) {
         categoryRepository.findByName(name).ifPresent(existing -> {
             throw new DuplicateCategoryNameException(name);
         });
-        return categoryRepository.save(Category.create(name, featured, displayOrder, cigarette, cashbackExcluded));
+        return categoryRepository.save(Category.create(name, featured, displayOrder, cigarette, cashbackExcluded,
+                color));
     }
 
     @Override
     @Transactional
     public Category updateCategory(Long id, String name, Boolean featured, Integer displayOrder,
-            Boolean cigarette, Boolean cashbackExcluded) {
+            Boolean cigarette, Boolean cashbackExcluded, String color) {
         Category current = categoryRepository.findById(id)
                 .orElseThrow(() -> new CategoryNotFoundException(id));
         if (name != null) {
@@ -807,7 +808,7 @@ public class EstoqueService implements EstoqueUseCase {
                     });
         }
         Category updated = categoryRepository.save(current.withDetails(name, featured, displayOrder, cigarette,
-                cashbackExcluded));
+                cashbackExcluded, color));
         if (name != null && !name.equals(current.name())) {
             // Propaga para a coluna denormalizada dos produtos vinculados. Sem isso a vitrine
             // passaria a exibir o nome antigo e a ordenar pelo novo.

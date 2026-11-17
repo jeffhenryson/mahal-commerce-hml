@@ -464,7 +464,7 @@ public class EstoqueController {
             Authentication authentication) {
         Category created = estoqueUseCase.createCategory(request.getName(), request.isFeatured(),
                 request.getDisplayOrder(), Boolean.TRUE.equals(request.getCigarette()),
-                Boolean.TRUE.equals(request.getCashbackExcluded()));
+                Boolean.TRUE.equals(request.getCashbackExcluded()), request.getColor());
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_CREATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(created.id()),
                         "name", created.name())));
@@ -472,9 +472,9 @@ public class EstoqueController {
                 .body(categoryConverter.toResponse(created));
     }
 
-    @Operation(summary = "Altera parcialmente uma categoria (nome, destaque, ordem e/ou cigarros)",
+    @Operation(summary = "Altera parcialmente uma categoria (nome, destaque, ordem, cigarros e/ou cor)",
             description = "Campo ausente ou nulo é mantido. Renomear propaga o novo nome para "
-                    + "todos os produtos vinculados.")
+                    + "todos os produtos vinculados. color: \"\" remove a cor, \"#RRGGBB\" troca.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "404", description = "Categoria não encontrada", content = @Content),
@@ -486,7 +486,8 @@ public class EstoqueController {
     public ResponseEntity<CategoryResponseDTO> updateCategory(@PathVariable Long id,
             @Valid @RequestBody CategoryPatchRequest request, Authentication authentication) {
         Category updated = estoqueUseCase.updateCategory(id, request.getName(), request.getFeatured(),
-                request.getDisplayOrder(), request.getCigarette(), request.getCashbackExcluded());
+                request.getDisplayOrder(), request.getCigarette(), request.getCashbackExcluded(),
+                request.getColor());
         publisher.publishEvent(AuditEvent.of(EventType.CATEGORY_UPDATED,
                 authentication.getName(), Map.of("categoryId", String.valueOf(id))));
         return ResponseEntity.ok(categoryConverter.toResponse(updated));

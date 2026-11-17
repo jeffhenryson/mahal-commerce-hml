@@ -3752,6 +3752,28 @@ class EstoqueServiceTest {
     }
 
     @Test
+    void createCategory_gravaACorNormalizada() {
+        when(categoryRepository.findByName("Essências")).thenReturn(Optional.empty());
+        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Category criada = estoqueService.createCategory("Essências", false, 0, false, false, "#f5b638");
+
+        assertThat(criada.color()).isEqualTo("#F5B638");
+    }
+
+    @Test
+    void updateCategory_corNulaMantem_eVaziaRemove() {
+        Category atual = Category.of(1L, "Essências", false, 0, true, false, false, "#F5B638");
+        when(categoryRepository.findById(1L)).thenReturn(Optional.of(atual));
+        when(categoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(estoqueService.updateCategory(1L, null, true, null, null, null, null).color())
+                .isEqualTo("#F5B638");
+        assertThat(estoqueService.updateCategory(1L, null, null, null, null, null, "").color())
+                .isNull();
+    }
+
+    @Test
     void updateCategory_semRenomear_naoTocaNosProdutos() {
         Category atual = Category.of(1L, "Narguilé", false, 0, true);
         when(categoryRepository.findById(1L)).thenReturn(Optional.of(atual));

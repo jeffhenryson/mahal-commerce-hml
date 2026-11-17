@@ -1,5 +1,8 @@
 package com.cernecommerce.core.domain.model.estoque;
 
+import java.util.Locale;
+import java.util.regex.Pattern;
+
 /**
  * Categoria do catálogo.
  *
@@ -25,9 +28,15 @@ package com.cernecommerce.core.domain.model.estoque;
  * cashback, o saldo de cashback não abate o valor deles e o desconto do chefe não incide sobre eles.
  * É separado de {@code cigarette} porque palheiro, por exemplo, sai dos benefícios sem ir para a
  * Central de cigarros.</p>
+ *
+ * <p>{@code color} (V205) é a cor da categoria no PDV, {@code "#RRGGBB"} sempre em maiúsculo: pinta a
+ * borda do card do produto e a etiqueta da categoria. Nula = card neutro. É só visual: não afeta preço,
+ * estoque, cashback nem desconto.</p>
  */
 public record Category(Long id, String name, boolean featured, int displayOrder, boolean active,
-        boolean cigarette, boolean cashbackExcluded) {
+        boolean cigarette, boolean cashbackExcluded, String color) {
+
+    private static final Pattern COLOR = Pattern.compile("^#[0-9A-F]{6}$");
 
     public Category {
         if (name == null || name.isBlank()) {
@@ -36,6 +45,11 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
         name = name.trim();
         if (displayOrder < 0) {
             throw new IllegalArgumentException("displayOrder não pode ser negativo");
+        }
+        // Branco vira nulo: é assim que o withDetails("") remove a cor.
+        color = (color == null || color.isBlank()) ? null : color.trim().toUpperCase(Locale.ROOT);
+        if (color != null && !COLOR.matcher(color).matches()) {
+            throw new IllegalArgumentException("color da categoria deve ser #RRGGBB");
         }
     }
 
@@ -57,7 +71,13 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
     /** V197 — cria uma categoria nova (sem id, ativa), marcando se é de cigarros e se sai dos benefícios. */
     public static Category create(String name, boolean featured, int displayOrder, boolean cigarette,
             boolean cashbackExcluded) {
-        return new Category(null, name, featured, displayOrder, true, cigarette, cashbackExcluded);
+        return create(name, featured, displayOrder, cigarette, cashbackExcluded, null);
+    }
+
+    /** V205 — cria uma categoria nova (sem id, ativa) com a cor do PDV; nula ou branca = sem cor. */
+    public static Category create(String name, boolean featured, int displayOrder, boolean cigarette,
+            boolean cashbackExcluded, String color) {
+        return new Category(null, name, featured, displayOrder, true, cigarette, cashbackExcluded, color);
     }
 
     /** Reconstitui a partir de persistência, sem a marcação de cigarros. */
@@ -74,7 +94,13 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
     /** Reconstitui a partir de persistência, com a marcação de fora dos benefícios (V197). */
     public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active,
             boolean cigarette, boolean cashbackExcluded) {
-        return new Category(id, name, featured, displayOrder, active, cigarette, cashbackExcluded);
+        return of(id, name, featured, displayOrder, active, cigarette, cashbackExcluded, null);
+    }
+
+    /** Reconstitui a partir de persistência, com a cor do PDV (V205). */
+    public static Category of(Long id, String name, boolean featured, int displayOrder, boolean active,
+            boolean cigarette, boolean cashbackExcluded, String color) {
+        return new Category(id, name, featured, displayOrder, active, cigarette, cashbackExcluded, color);
     }
 
     /**
@@ -95,17 +121,27 @@ public record Category(Long id, String name, boolean featured, int displayOrder,
     /** V197 — {@link #withDetails(String, Boolean, Integer, Boolean)} com a marcação de fora dos benefícios; nulo não mexe. */
     public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder, Boolean newCigarette,
             Boolean newCashbackExcluded) {
+        return withDetails(newName, newFeatured, newDisplayOrder, newCigarette, newCashbackExcluded, null);
+    }
+
+    /**
+     * V205 — {@link #withDetails(String, Boolean, Integer, Boolean, Boolean)} com a cor do PDV:
+     * nulo não mexe, {@code ""} (ou só espaços) remove e qualquer outro valor troca.
+     */
+    public Category withDetails(String newName, Boolean newFeatured, Integer newDisplayOrder, Boolean newCigarette,
+            Boolean newCashbackExcluded, String newColor) {
         return new Category(id,
                 newName == null ? name : newName,
                 newFeatured == null ? featured : newFeatured,
                 newDisplayOrder == null ? displayOrder : newDisplayOrder,
                 active,
                 newCigarette == null ? cigarette : newCigarette,
-                newCashbackExcluded == null ? cashbackExcluded : newCashbackExcluded);
+                newCashbackExcluded == null ? cashbackExcluded : newCashbackExcluded,
+                newColor == null ? color : newColor);
     }
 
     /** Ativa ou desativa a categoria, preservando o resto. */
     public Category withActive(boolean newActive) {
-        return new Category(id, name, featured, displayOrder, newActive, cigarette, cashbackExcluded);
+        return new Category(id, name, featured, displayOrder, newActive, cigarette, cashbackExcluded, color);
     }
 }
