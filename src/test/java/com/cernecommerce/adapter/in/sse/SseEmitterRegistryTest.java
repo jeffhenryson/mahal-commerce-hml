@@ -85,4 +85,21 @@ class SseEmitterRegistryTest {
     void activeConnections_retorna_zero_para_usuario_sem_emitters() {
         assertThat(registry.activeConnections("nobody")).isZero();
     }
+
+    /**
+     * Prazo vencido é o fim normal do stream: além de sair do registro, o emitter é completado.
+     * Sem o complete() o Spring levanta AsyncRequestTimeoutException, que virava ERROR e alerta.
+     */
+    @Test
+    void timeout_remove_do_registro_e_completa_o_emitter() {
+        SseEmitter emitter = org.mockito.Mockito.mock(SseEmitter.class);
+        registry.register("alice", emitter);
+        org.mockito.ArgumentCaptor<Runnable> aoVencer = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.mockito.Mockito.verify(emitter).onTimeout(aoVencer.capture());
+
+        aoVencer.getValue().run();
+
+        assertThat(registry.activeConnections("alice")).isZero();
+        org.mockito.Mockito.verify(emitter).complete();
+    }
 }

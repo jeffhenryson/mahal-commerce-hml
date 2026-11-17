@@ -52,6 +52,15 @@ final class SseAssistenteWriter {
         emitter.onTimeout(() -> {
             log.warn("assistente.sse.timeout turnoId={} ms={}", turnoId, ms());
             fechar(true);
+            // Encerra a requisição: sem isto o Spring levanta AsyncRequestTimeoutException, que o
+            // handler global tratava como erro 500. A marca evita que o onCompletion a seguir
+            // registre o prazo como "cliente saiu".
+            concluidoPeloServidor = true;
+            try {
+                emitter.complete();
+            } catch (RuntimeException ex) {
+                log.debug("assistente.sse.complete.falhou turnoId={} erro={}", turnoId, ex.getMessage());
+            }
         });
         emitter.onError(e -> {
             log.info("assistente.sse.erro turnoId={} classe={} erro={} ms={}", turnoId,

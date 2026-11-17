@@ -63,7 +63,13 @@ public class SseEmitterRegistry implements NotificationSsePort {
         }
         list.add(emitter);
         emitter.onCompletion(() -> remove(username, emitter));
-        emitter.onTimeout(() -> remove(username, emitter));
+        // Prazo vencido é o fim normal do stream. complete() dá a requisição por encerrada: sem ele
+        // o Spring levanta AsyncRequestTimeoutException, que virava ERROR, alerta e um 503 por cima
+        // de uma resposta text/event-stream. O cliente vê o stream fechar e reconecta.
+        emitter.onTimeout(() -> {
+            remove(username, emitter);
+            emitter.complete();
+        });
         emitter.onError(ex -> remove(username, emitter));
     }
 

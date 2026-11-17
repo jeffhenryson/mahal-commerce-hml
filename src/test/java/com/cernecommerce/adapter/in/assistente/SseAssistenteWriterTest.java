@@ -68,4 +68,18 @@ class SseAssistenteWriterTest {
         writer.concluir();
         assertThat(quedas).hasValue(0);
     }
+
+    /** No prazo o writer fecha e completa o emitter — sem isso o Spring levanta AsyncRequestTimeoutException. */
+    @Test
+    void timeout_fecha_o_writer_e_completa_o_emitter() {
+        SseEmitter emitter = mock(SseEmitter.class);
+        SseAssistenteWriter writer = new SseAssistenteWriter(emitter, "t", null, null, () -> { });
+        org.mockito.ArgumentCaptor<Runnable> aoVencer = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        verify(emitter).onTimeout(aoVencer.capture());
+
+        aoVencer.getValue().run();
+
+        assertThat(writer.fechado()).isTrue();
+        verify(emitter).complete();
+    }
 }

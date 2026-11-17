@@ -308,6 +308,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
@@ -2541,6 +2543,29 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.NOT_ACCEPTABLE,
                 "Nenhum dos formatos aceitos pelo cliente é produzido por este recurso",
                 "NOT_ACCEPTABLE", req);
+    }
+
+    /**
+     * Fim normal de um stream SSE, não defeito: o prazo do emitter venceu
+     * ({@code GET /notifications/stream} dura 30 min) ou o cliente desconectou (Broken pipe).
+     *
+     * <p>Sem handler próprio caíam em {@link #handleUnexpected}: centenas de ERROR e de alertas por
+     * dia, e a tentativa de devolver {@code ApiError} em JSON numa resposta
+     * {@code text/event-stream} gerava um segundo erro, {@code HttpMediaTypeNotAcceptableException},
+     * e um 503. Por isso <b>não escrevem corpo</b> (retorno {@code void}: nada a negociar), não
+     * passam de DEBUG e não chamam {@code alertDevs}.</p>
+     *
+     * <p>O Spring escolhe o handler do tipo mais específico, então estes ganham do de
+     * {@link Exception} sem depender da ordem de declaração.</p>
+     */
+    @ExceptionHandler(AsyncRequestTimeoutException.class)
+    public void handleAsyncRequestTimeout(AsyncRequestTimeoutException ex, HttpServletRequest req) {
+        log.debug("Stream assíncrono encerrado por prazo em {}", req.getRequestURI());
+    }
+
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleAsyncRequestNotUsable(AsyncRequestNotUsableException ex, HttpServletRequest req) {
+        log.debug("Cliente desconectou do stream em {}: {}", req.getRequestURI(), ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
