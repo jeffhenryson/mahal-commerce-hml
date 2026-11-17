@@ -40,6 +40,12 @@ public class OpenPackageRepositoryImpl implements OpenPackageRepository {
 
     @Override
     @Transactional(readOnly = true)
+    public boolean existsBySku(String sku) {
+        return jpaRepository.existsBySku(sku);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<OpenPackage> findAllOpen(Long warehouseId) {
         return jpaRepository.findByWarehouseIdAndClosedAtIsNullOrderBySkuAsc(warehouseId).stream()
                 .map(this::toDomain)

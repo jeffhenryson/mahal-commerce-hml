@@ -684,6 +684,12 @@ public class EstoqueService implements EstoqueUseCase {
         if (stockBalanceRepository.existsBySku(variantSku) || stockMovementRepository.existsBySku(variantSku)) {
             throw new VariantHasStockHistoryException(productSku, variantSku);
         }
+        // open_package também guarda o SKU sem FK, e a lata cadastrada como "já aberta" (sem baixa)
+        // não tem saldo nem movimento: passava pela checagem acima e ficava órfã. Fechada também
+        // conta — é o histórico e o rendimento do sabor.
+        if (openPackageRepository.existsBySku(variantSku)) {
+            throw VariantHasStockHistoryException.comLataRegistrada(productSku, variantSku);
+        }
         List<ProductVariant> remaining = current.variants().stream()
                 .filter(v -> !v.sku().equals(variantSku))
                 .toList();
@@ -708,6 +714,15 @@ public class EstoqueService implements EstoqueUseCase {
         for (ProductVariant variant : current.variants()) {
             if (hasStockHistory(variant.sku())) {
                 throw new ProductHasStockHistoryException(variant.sku());
+            }
+        }
+        // Lata de essência (open_package): mesma régua de deleteVariant, no pai e em cada variação.
+        if (openPackageRepository.existsBySku(sku)) {
+            throw ProductHasStockHistoryException.comLataRegistrada(sku);
+        }
+        for (ProductVariant variant : current.variants()) {
+            if (openPackageRepository.existsBySku(variant.sku())) {
+                throw ProductHasStockHistoryException.comLataRegistrada(variant.sku());
             }
         }
         productRepository.deleteBySku(sku);

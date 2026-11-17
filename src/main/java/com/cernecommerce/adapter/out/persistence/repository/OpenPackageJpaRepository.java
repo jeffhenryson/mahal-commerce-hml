@@ -19,6 +19,9 @@ public interface OpenPackageJpaRepository extends JpaRepository<OpenPackageEntit
 
     List<OpenPackageEntity> findByWarehouseIdAndClosedAtIsNullOrderBySkuAsc(Long warehouseId);
 
+    /** Qualquer lata do SKU, aberta ou fechada, em qualquer depósito. */
+    boolean existsBySku(String sku);
+
     /** Histórico de latas fechadas de um sabor num depósito, mais recente primeiro (Salão › Essências). */
     Page<OpenPackageEntity> findBySkuAndWarehouseIdAndClosedAtBetweenOrderByClosedAtDescIdDesc(
             String sku, Long warehouseId, java.time.Instant from, java.time.Instant to, Pageable pageable);

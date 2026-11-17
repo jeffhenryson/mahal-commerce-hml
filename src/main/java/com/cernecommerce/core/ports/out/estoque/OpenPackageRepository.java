@@ -33,6 +33,14 @@ public interface OpenPackageRepository {
      */
     Optional<OpenPackage> findOpenForUpdate(String sku, Long warehouseId);
 
+    /**
+     * Existe alguma lata deste SKU, <b>aberta ou fechada</b>, em qualquer depósito? É a régua de
+     * quem apaga produto ou variação: {@code open_package.sku} é texto livre, sem FK, e a lata
+     * cadastrada como "já aberta" sem baixa não deixa saldo nem movimento — só esta tabela sabe
+     * dela. As fechadas contam porque alimentam o histórico e o rendimento.
+     */
+    boolean existsBySku(String sku);
+
     /** Todas as latas em uso de um depósito, para a tela de acompanhamento. */
     List<OpenPackage> findAllOpen(Long warehouseId);
 

@@ -905,8 +905,8 @@ public class EstoqueControllerTest {
                 .thenReturn(OpenPackage.open("ESSE-BLUE", 1L, 5, "admin", Instant.now()).withUses(6)
                         .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.FINISHED,
                                 Instant.now()));
-        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
-                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
 
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE/close")
                         .principal(AUTH)
@@ -932,8 +932,8 @@ public class EstoqueControllerTest {
         when(estoqueUseCase.closedPackageHistory("ESSE-BLUE", "SALAO", LocalDate.of(2026, 11, 1),
                 LocalDate.of(2026, 11, 10), 0, 50))
                 .thenReturn(new PageResult<>(List.of(fechada), 0, 50, 1L, 1));
-        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
-                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
 
         mockMvc.perform(get("/estoque/open-packages/history")
                         .param("sku", "ESSE-BLUE")
@@ -1023,6 +1023,70 @@ public class EstoqueControllerTest {
                 .andExpect(jsonPath("$.content[0].variants[0].autoReplaceLimit").value(6));
     }
 
+    // ── Lata órfã: o SKU da lata não tem mais produto ────────────────────────────────────────
+
+    /** Uma lata sem produto derrubava a lista inteira com 404 e a tela Salão › Essências não abria. */
+    @Test
+    void listOpenPackages_comLataDeSkuSemProduto_returns_200_comTodasAsLatas() throws Exception {
+        when(estoqueUseCase.listOpenPackages("SALAO")).thenReturn(List.of(
+                OpenPackage.open("ESSE-BLUE", 1L, 5, "admin", Instant.now()),
+                OpenPackage.open("SUMIU-001", 1L, 5, "admin", Instant.now())));
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
+
+        mockMvc.perform(get("/estoque/open-packages").param("warehouseCode", "SALAO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].sku").value("ESSE-BLUE"))
+                .andExpect(jsonPath("$[0].productName").value("Essência Blueberry"))
+                .andExpect(jsonPath("$[1].sku").value("SUMIU-001"))
+                .andExpect(jsonPath("$[1].productName").value("SUMIU-001"));
+
+        // Em lote: uma consulta para a lista, nenhuma por lata.
+        verify(estoqueUseCase, times(1)).findProductsByAnySku(any());
+        verify(estoqueUseCase, never()).findProductBySku(anyString());
+    }
+
+    /** A lata aberta num SKU de variação leva o nome do produto pai, como antes. */
+    @Test
+    void listOpenPackages_resolveONomePeloSkuDaVariacao() throws Exception {
+        when(estoqueUseCase.listOpenPackages("SALAO")).thenReturn(List.of(
+                OpenPackage.open("ZOMO-MENTA", 1L, 5, "admin", Instant.now())));
+        when(estoqueUseCase.findProductsByAnySku(any())).thenReturn(List.of(
+                Product.of(1L, "ZOMO", "Zomo", "Essências", true,
+                        List.of(ProductVariant.create("ZOMO-MENTA", List.of(), null, null)))));
+
+        mockMvc.perform(get("/estoque/open-packages").param("warehouseCode", "SALAO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].productName").value("Zomo"));
+    }
+
+    @Test
+    void findOpenPackage_comSkuSemProduto_returns_200_comOSkuNoNome() throws Exception {
+        when(estoqueUseCase.findOpenPackage("SUMIU-001", "SALAO"))
+                .thenReturn(OpenPackage.open("SUMIU-001", 1L, 5, "admin", Instant.now()));
+
+        mockMvc.perform(get("/estoque/open-packages/SUMIU-001").param("warehouseCode", "SALAO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sku").value("SUMIU-001"))
+                .andExpect(jsonPath("$.productName").value("SUMIU-001"));
+    }
+
+    @Test
+    void openPackageHistory_comSkuSemProduto_returns_200_comOSkuNoNome() throws Exception {
+        OpenPackage fechada = OpenPackage.open("SUMIU-001", 1L, 5, "joao", Instant.now()).withUses(3)
+                .closed(com.cernecommerce.core.domain.model.estoque.OpenPackageCloseReason.FINISHED,
+                        Instant.now());
+        when(estoqueUseCase.closedPackageHistory(eq("SUMIU-001"), eq("SALAO"), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new PageResult<>(List.of(fechada), 0, 50, 1L, 1));
+
+        mockMvc.perform(get("/estoque/open-packages/history")
+                        .param("sku", "SUMIU-001")
+                        .param("warehouseCode", "SALAO"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].productName").value("SUMIU-001"));
+    }
+
     @Test
     void finishOpenPackage_semLataAberta_returns_404() throws Exception {
         when(estoqueUseCase.finishOpenPackage(any(), any(), any()))
@@ -1043,8 +1107,8 @@ public class EstoqueControllerTest {
     void adjustOpenPackageUses_returns_200_comExhaustedRecalculado() throws Exception {
         when(estoqueUseCase.adjustOpenPackageUses("ESSE-BLUE", "SALAO", 6, "Correção no PDV", "admin"))
                 .thenReturn(OpenPackage.open("ESSE-BLUE", 1L, 5, "admin", Instant.now()).withUsesAdjustedTo(6));
-        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
-                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
 
         mockMvc.perform(patch("/estoque/open-packages/ESSE-BLUE/uses")
                         .principal(AUTH)
@@ -1133,9 +1197,9 @@ public class EstoqueControllerTest {
     void registerOpenPackage_returns_201_withTheCounter() throws Exception {
         when(estoqueUseCase.registerOpenPackage("ESSE-BLUE", "LOJA-01", 2, null, false, "admin"))
                 .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
-        // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
-        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
-                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+        // O nome da lata vem do produto, lido em lote (ler o nome não é venda — EST-F036).
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
 
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
                         .principal(AUTH)
@@ -1156,9 +1220,9 @@ public class EstoqueControllerTest {
     void registerOpenPackage_publishesOpenPackageRegistered() throws Exception {
         when(estoqueUseCase.registerOpenPackage(any(), any(), anyInt(), any(), anyBoolean(), any()))
                 .thenReturn(OpenPackage.registered("ESSE-BLUE", 1L, 5, 2, "admin", Instant.now()));
-        // O nome da lata vem de findProductBySku (ler o nome não é venda — EST-F036).
-        when(estoqueUseCase.findProductBySku("ESSE-BLUE"))
-                .thenReturn(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of()));
+        // O nome da lata vem do produto, lido em lote (ler o nome não é venda — EST-F036).
+        when(estoqueUseCase.findProductsByAnySku(any()))
+                .thenReturn(List.of(Product.of(1L, "ESSE-BLUE", "Essência Blueberry", "Essências", true, List.of())));
 
         mockMvc.perform(post("/estoque/open-packages/ESSE-BLUE")
                         .principal(AUTH)
@@ -3116,6 +3180,18 @@ public class EstoqueControllerTest {
         mockMvc.perform(delete("/estoque/products/NARG-001/variants/NARG-001-M").principal(AUTH))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("VARIANT_HAS_STOCK_HISTORY"));
+    }
+
+    /** Lata registrada recusa com o mesmo 409 e código; a mensagem é que diz o motivo e o caminho. */
+    @Test
+    void deleteVariant_comLataRegistrada_returns_409_comAMensagemDaLata() throws Exception {
+        when(estoqueUseCase.deleteVariant("NARG-001", "NARG-001-M"))
+                .thenThrow(VariantHasStockHistoryException.comLataRegistrada("NARG-001", "NARG-001-M"));
+
+        mockMvc.perform(delete("/estoque/products/NARG-001/variants/NARG-001-M").principal(AUTH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("VARIANT_HAS_STOCK_HISTORY"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("lata de essência")));
     }
 
     // ===== Histórico de compras por SKU (item 2) =====

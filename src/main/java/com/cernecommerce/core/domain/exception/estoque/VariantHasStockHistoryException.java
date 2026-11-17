@@ -12,4 +12,19 @@ public class VariantHasStockHistoryException extends RuntimeException {
         super("Variante " + variantSku + " do produto " + productSku
                 + " não pode ser removida: há saldo ou movimentação de estoque gravados para este SKU");
     }
+
+    private VariantHasStockHistoryException(String message) {
+        super(message);
+    }
+
+    /**
+     * A variante tem lata de essência registrada ({@code open_package}), aberta ou fechada. Caso à
+     * parte do saldo/movimento: a lata cadastrada como "já aberta", sem baixa, não deixa nenhum dos
+     * dois, e apagar a variante deixava a lata apontando para um SKU sem produto.
+     */
+    public static VariantHasStockHistoryException comLataRegistrada(String productSku, String variantSku) {
+        return new VariantHasStockHistoryException("Variante " + variantSku + " do produto " + productSku
+                + " não pode ser removida: há lata de essência registrada para este SKU. "
+                + "Inative a variação em vez de excluir");
+    }
 }

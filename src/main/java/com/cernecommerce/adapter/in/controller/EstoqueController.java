@@ -115,6 +115,8 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -128,6 +130,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -143,6 +146,8 @@ import java.util.Optional;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 public class EstoqueController {
+
+    private static final Logger log = LoggerFactory.getLogger(EstoqueController.class);
 
     private final EstoqueUseCase estoqueUseCase;
     private final ProductDTOConverter converter;
@@ -1133,8 +1138,10 @@ public class EstoqueController {
     @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','PDV_COMANDA_MANAGE')")
     public ResponseEntity<List<OpenPackageResponseDTO>> listOpenPackages(
             @RequestParam @NotBlank @Size(min = 2, max = 50) String warehouseCode) {
-        return ResponseEntity.ok(estoqueUseCase.listOpenPackages(warehouseCode).stream()
-                .map(open -> toResponse(open, warehouseCode))
+        List<OpenPackage> open = estoqueUseCase.listOpenPackages(warehouseCode);
+        Map<String, String> names = productNamesBySku(open.stream().map(OpenPackage::sku).toList(), warehouseCode);
+        return ResponseEntity.ok(open.stream()
+                .map(lata -> toResponse(lata, warehouseCode, names.get(lata.sku())))
                 .toList());
     }
 
@@ -1165,7 +1172,8 @@ public class EstoqueController {
         }
         PageResult<OpenPackage> result = estoqueUseCase.closedPackageHistory(sku, warehouseCode, from, to, page, size);
         // Todas as latas são do mesmo SKU: um nome só, em vez de uma consulta por linha.
-        String productName = result.content().isEmpty() ? null : estoqueUseCase.findProductBySku(sku).name();
+        String productName = result.content().isEmpty() ? null
+                : productNamesBySku(List.of(sku), warehouseCode).get(sku);
         List<OpenPackageResponseDTO> mapped = result.content().stream()
                 .map(open -> toResponse(open, warehouseCode, productName))
                 .toList();
@@ -1417,17 +1425,41 @@ public class EstoqueController {
                 .body(toResponse(registered, request.getWarehouseCode()));
     }
 
-    /**
-     * O nome do produto sai de {@code resolveSaleInfo}, uma consulta por lata. É N+1 assumido, e
-     * limitado por construção: existe no máximo uma lata aberta por SKU de essência num depósito,
-     * e o salão trabalha com algumas dezenas de sabores — não é a listagem de catálogo, que por
-     * isso é ID-first. Se um dia virar problema, o caminho é o mesmo de EST-C009: buscar os nomes
-     * em lote pelos SKUs da página.
-     */
+    /** Uma lata só. A lista usa {@link #productNamesBySku} direto, numa consulta para todas. */
     private OpenPackageResponseDTO toResponse(OpenPackage open, String warehouseCode) {
-        // findProductBySku, e não resolveSaleInfo: ler o nome não é venda, e a guarda de EST-F036
-        // recusaria uma lata legada aberta no SKU base.
-        return toResponse(open, warehouseCode, estoqueUseCase.findProductBySku(open.sku()).name());
+        return toResponse(open, warehouseCode,
+                productNamesBySku(List.of(open.sku()), warehouseCode).get(open.sku()));
+    }
+
+    /**
+     * SKU → nome do produto dono (pai ou variação), numa consulta. Todo SKU pedido volta no mapa:
+     * o que não tem produto volta com o próprio SKU como nome, e um WARN.
+     *
+     * <p>{@code open_package.sku} é texto livre, sem FK. Uma lata cujo produto sumiu não pode
+     * derrubar a resposta: com {@code findProductBySku} por lata, uma única órfã fazia a lista
+     * inteira do depósito responder 404 e a tela Salão › Essências parava de abrir.</p>
+     *
+     * <p>Lê o produto, e não {@code resolveSaleInfo}: ler o nome não é venda, e a guarda de EST-F036
+     * recusaria uma lata legada aberta no SKU base.</p>
+     */
+    private Map<String, String> productNamesBySku(Collection<String> skus, String warehouseCode) {
+        Map<String, String> names = new HashMap<>();
+        for (Product product : estoqueUseCase.findProductsByAnySku(skus)) {
+            names.put(product.sku(), product.name());
+            if (product.variants() != null) {
+                product.variants().forEach(variant -> names.put(variant.sku(), product.name()));
+            }
+        }
+        Map<String, String> result = new HashMap<>();
+        for (String sku : skus) {
+            String name = names.get(sku);
+            if (name == null) {
+                log.warn("estoque.open_package.orfa sku={} warehouse={}", sku, warehouseCode);
+                name = sku;
+            }
+            result.put(sku, name);
+        }
+        return result;
     }
 
     private OpenPackageResponseDTO toResponse(OpenPackage open, String warehouseCode, String productName) {

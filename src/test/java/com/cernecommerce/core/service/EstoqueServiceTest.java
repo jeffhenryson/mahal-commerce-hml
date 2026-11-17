@@ -4164,6 +4164,26 @@ class EstoqueServiceTest {
         verify(productRepository, never()).save(any());
     }
 
+    /**
+     * A lata cadastrada como "já aberta", sem baixa, não deixa saldo nem movimento: só open_package
+     * sabe dela. A consulta não distingue aberta de fechada — a fechada é o histórico do sabor.
+     */
+    @Test
+    void deleteVariant_recusaQuandoHaLataRegistrada() {
+        ProductVariant variante = ProductVariant.create("ESS-001-50G", List.of(), null, null);
+        Product current = Product.of(1L, "ESS-001", "Essência", "essencia", true, List.of(variante));
+        when(productRepository.findBySku("ESS-001")).thenReturn(Optional.of(current));
+        when(stockBalanceRepository.existsBySku("ESS-001-50G")).thenReturn(false);
+        when(stockMovementRepository.existsBySku("ESS-001-50G")).thenReturn(false);
+        when(openPackageRepository.existsBySku("ESS-001-50G")).thenReturn(true);
+
+        assertThatThrownBy(() -> estoqueService.deleteVariant("ESS-001", "ESS-001-50G"))
+                .isInstanceOf(VariantHasStockHistoryException.class)
+                .hasMessageContaining("lata de essência")
+                .hasMessageContaining("Inative");
+        verify(productRepository, never()).save(any());
+    }
+
     @Test
     void deleteVariant_throwsWhenVariantNotFound() {
         Product current = Product.of(1L, "ESS-001", "Essência", "essencia", true, List.of());
@@ -5643,6 +5663,36 @@ class EstoqueServiceTest {
 
         assertThatThrownBy(() -> estoqueService.deleteProduct("SKU-001"))
                 .isInstanceOf(ProductNotDraftException.class);
+
+        verify(productRepository, never()).deleteBySku(any());
+    }
+
+    @Test
+    void deleteProduct_comLataRegistradaNoSkuPai_eRecusado() {
+        Product rascunho = Product.of(1L, "SKU-DRAFT", "Rascunho", "essencia", true, List.of())
+                .withStatus(ProductStatus.RASCUNHO);
+        when(productRepository.findBySku("SKU-DRAFT")).thenReturn(Optional.of(rascunho));
+        when(openPackageRepository.existsBySku("SKU-DRAFT")).thenReturn(true);
+
+        assertThatThrownBy(() -> estoqueService.deleteProduct("SKU-DRAFT"))
+                .isInstanceOf(ProductHasStockHistoryException.class)
+                .hasMessageContaining("lata de essência");
+
+        verify(productRepository, never()).deleteBySku(any());
+    }
+
+    @Test
+    void deleteProduct_comLataRegistradaNumaVariacao_eRecusado() {
+        ProductVariant variante = ProductVariant.create("SKU-DRAFT-MENTA", List.of(), null, null);
+        Product rascunho = Product.of(1L, "SKU-DRAFT", "Rascunho", "essencia", true, List.of(variante))
+                .withStatus(ProductStatus.RASCUNHO);
+        when(productRepository.findBySku("SKU-DRAFT")).thenReturn(Optional.of(rascunho));
+        when(openPackageRepository.existsBySku("SKU-DRAFT")).thenReturn(false);
+        when(openPackageRepository.existsBySku("SKU-DRAFT-MENTA")).thenReturn(true);
+
+        assertThatThrownBy(() -> estoqueService.deleteProduct("SKU-DRAFT"))
+                .isInstanceOf(ProductHasStockHistoryException.class)
+                .hasMessageContaining("SKU-DRAFT-MENTA");
 
         verify(productRepository, never()).deleteBySku(any());
     }

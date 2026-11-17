@@ -301,6 +301,18 @@ class SalaoAutoatendimentoServiceTest {
 
     // ── O que o QR oferece ────────────────────────────────────────────────────────────────────
 
+    /** Lata aberta cujo SKU não tem mais produto: fica fora do cardápio, sem derrubar a leitura. */
+    @Test
+    void cardapio_ignoraLataAbertaDeSkuSemProduto() {
+        when(estoqueUseCase.listOpenPackages("SALAO")).thenReturn(List.of(
+                new OpenPackage(1L, "ZOMO-MENTA", 10L, 2, 5, AGORA, "ana", null, null),
+                new OpenPackage(9L, "SUMIU-001", 10L, 1, 5, AGORA, "ana", null, null)));
+
+        CardapioDaMesa cardapio = service.cardapioPorToken("tok-mesa-4", APARELHO);
+
+        assertThat(cardapio.essencias()).extracting(EssenciaOferecida::sku).containsExactly("ZOMO-MENTA");
+    }
+
     @Test
     void cardapio_ofereceAsLatasAbertasComFaixaAtivaEOsExtras() {
         CardapioDaMesa cardapio = service.cardapioPorToken("tok-mesa-4", APARELHO);

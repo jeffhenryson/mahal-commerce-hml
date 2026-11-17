@@ -14,4 +14,14 @@ public class ProductHasStockHistoryException extends RuntimeException {
         super("Rascunho " + sku + " não pode ser excluído: há saldo ou movimentação de estoque "
                 + "gravados para este SKU");
     }
+
+    private ProductHasStockHistoryException(String message) {
+        super(message);
+    }
+
+    /** O SKU (pai ou variação) tem lata de essência registrada, aberta ou fechada. */
+    public static ProductHasStockHistoryException comLataRegistrada(String sku) {
+        return new ProductHasStockHistoryException("Rascunho não pode ser excluído: há lata de essência "
+                + "registrada para o SKU " + sku + ". Inative o produto ou a variação em vez de excluir");
+    }
 }
