@@ -20,6 +20,7 @@ import com.cernecommerce.core.ports.out.pedido.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -32,7 +33,9 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Promoção por quantidade na mesa: recalculada a cada item que entra ou sai. */
@@ -79,11 +82,15 @@ class ComandaPromocaoQuantidadeTest {
     }
 
     private static Comanda mesa(ComandaItem... items) {
+        return mesa(10L, items);
+    }
+
+    private static Comanda mesa(long id, ComandaItem... items) {
         Comanda comanda = Comanda.open(1L, "LOJA-01", "Mesa 4", "caixa1");
         for (ComandaItem item : items) {
             comanda = comanda.withAddedItem(item);
         }
-        return Comanda.of(10L, comanda.sessionId(), comanda.warehouseCode(), comanda.tableOrCustomerLabel(),
+        return Comanda.of(id, comanda.sessionId(), comanda.warehouseCode(), comanda.tableOrCustomerLabel(),
                 comanda.customerId(), comanda.status(), comanda.items(), comanda.orderId(), comanda.openedBy(),
                 comanda.openedAt(), comanda.closedAt());
     }
@@ -143,5 +150,65 @@ class ComandaPromocaoQuantidadeTest {
         assertThat(linha.lineDiscount()).isEqualByComparingTo("1.00");
         assertThat(linha.netSubtotal()).isEqualByComparingTo("2.50");
         assertThat(linha.withoutPromotion().promotionDiscount()).isEqualByComparingTo("0");
+    }
+    @Test
+    void contaDivididaMantemAPromocaoDoRestanteAoLancarOutroItem() {
+        // 4 sedas fecharam o grupo; 2 já foram pagas numa conta dividida, levando R$ 1,00 cada.
+        ComandaItem paga1 = seda(1).withPromotion(7L, "x", BigDecimal.ONE).closedIn(99L);
+        ComandaItem paga2 = seda(2).withPromotion(7L, "x", BigDecimal.ONE).closedIn(99L);
+        ComandaItem aberta3 = seda(3).withPromotion(7L, "x", BigDecimal.ONE);
+        ComandaItem aberta4 = seda(4).withPromotion(7L, "x", BigDecimal.ONE);
+        lenient().when(estoqueUseCase.resolveSaleInfo("AGUA"))
+                .thenReturn(new EstoqueUseCase.CatalogSaleInfo("Água",
+                        Pricing.of(new BigDecimal("1.00"), null, new BigDecimal("5.00"))));
+        when(comandaRepository.findByIdForUpdate(10L))
+                .thenReturn(Optional.of(mesa(paga1, paga2, aberta3, aberta4)));
+
+        Comanda updated = comandaService.addItem(10L, "AGUA", BigDecimal.ONE, "caixa1");
+
+        assertThat(updated.promotionDiscountTotal()).isEqualByComparingTo("2.00");
+        // 2 sedas (7,00) − 2,00 de promoção + água 5,00
+        assertThat(updated.runningTotal()).isEqualByComparingTo("10.00");
+        assertThat(updated.items().stream().filter(i -> !i.isOpen()))
+                .allSatisfy(i -> assertThat(i.promotionDiscount()).isEqualByComparingTo("1.00"));
+    }
+
+    @Test
+    void removerSedaDepoisDaContaDivididaNaoDaDescontoNegativo() {
+        ComandaItem paga1 = seda(1).withPromotion(7L, "x", BigDecimal.ONE).closedIn(99L);
+        ComandaItem paga2 = seda(2).withPromotion(7L, "x", BigDecimal.ONE).closedIn(99L);
+        ComandaItem aberta3 = seda(3).withPromotion(7L, "x", BigDecimal.ONE);
+        ComandaItem aberta4 = seda(4).withPromotion(7L, "x", BigDecimal.ONE);
+        when(comandaRepository.findByIdForUpdate(10L))
+                .thenReturn(Optional.of(mesa(paga1, paga2, aberta3, aberta4)));
+
+        Comanda updated = comandaService.removeItem(10L, 4L, "caixa1");
+
+        assertThat(updated.promotionDiscountTotal()).isEqualByComparingTo("0");
+        assertThat(updated.runningTotal()).isEqualByComparingTo("3.50");
+        // O que já foi pago não muda.
+        assertThat(updated.items().stream().filter(i -> !i.isOpen()))
+                .allSatisfy(i -> assertThat(i.promotionDiscount()).isEqualByComparingTo("1.00"));
+    }
+
+    @Test
+    void juntarMesasFechaOGrupo() {
+        Comanda origem = mesa(20L, seda(1), seda(2));
+        Comanda origemVazia = mesa(20L);
+        Comanda destino = mesa(10L, seda(3), seda(4));
+        Comanda destinoJuntado = mesa(10L, seda(1), seda(2), seda(3), seda(4));
+        when(comandaRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(origem), Optional.of(origemVazia));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(destino), Optional.of(destinoJuntado));
+        lenient().when(comandaRepository.findById(10L)).thenReturn(Optional.of(destinoJuntado));
+
+        comandaService.mergeComanda(20L, 10L, "caixa1");
+
+        ArgumentCaptor<Comanda> salvas = ArgumentCaptor.forClass(Comanda.class);
+        verify(comandaRepository, atLeastOnce()).save(salvas.capture());
+        Comanda recalculada = salvas.getAllValues().stream().filter(c -> Long.valueOf(10L).equals(c.id()))
+                .findFirst().orElseThrow();
+        assertThat(recalculada.items()).hasSize(4);
+        assertThat(recalculada.promotionDiscountTotal()).isEqualByComparingTo("4.00");
+        assertThat(recalculada.runningTotal()).isEqualByComparingTo("10.00");
     }
 }

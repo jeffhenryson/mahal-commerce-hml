@@ -1231,14 +1231,24 @@ public class ComandaService implements ComandaUseCase {
      * <p>Só conta o consumo comum: linha {@code NORMAL} em aberto, fora de kit, sem cortesia e que não
      * seja compra na loja (que já levou a promoção do balcão no lançamento). Sessão, rosh, sabor extra
      * e troca ficam de fora.</p>
+     *
+     * <p>Conta dividida: as linhas elegíveis já cobradas também entram no motor, para o grupo que
+     * começou numa conta e terminou na outra continuar valendo. Elas nunca são reescritas. O desconto
+     * de cada SKU nas linhas em aberto é o que o motor dá sobre todas as unidades menos o que as
+     * cobradas daquele SKU já levaram, com piso em zero (o que já foi pago não é cobrado de volta).
+     * Sem isto, qualquer lançamento depois de uma conta dividida derrubava a promoção do restante.</p>
      */
     private Comanda recalculatePromotions(Comanda comanda) {
         if (quantityPromotions == null) {
             return comanda;
         }
         List<ComandaItem> pool = comanda.items().stream().filter(ComandaService::inPromotionPool).toList();
+        List<ComandaItem> charged = comanda.items().stream()
+                .filter(i -> !i.isOpen() && promotionEligible(i)).toList();
+        List<ComandaItem> engineLines = new ArrayList<>(charged);
+        engineLines.addAll(pool);
         QuantityPromotionEngine.Result result = pool.isEmpty() ? QuantityPromotionEngine.Result.EMPTY
-                : quantityPromotions.calculate(PromotionChannel.COMANDA, Instant.now(), pool.stream()
+                : quantityPromotions.calculate(PromotionChannel.COMANDA, Instant.now(), engineLines.stream()
                         .map(i -> new QuantityPromotionEngine.CartLine(i.sku(), i.quantity(), i.unitPrice()))
                         .toList(), Map.of());
 
@@ -1248,8 +1258,14 @@ public class ComandaService implements ComandaUseCase {
         }
         result.bySku().forEach((sku, promo) -> {
             List<ComandaItem> lines = pool.stream().filter(i -> i.sku().equals(sku)).toList();
+            if (lines.isEmpty()) {
+                return;
+            }
+            BigDecimal alreadyCharged = charged.stream().filter(i -> i.sku().equals(sku))
+                    .map(ComandaItem::promotionDiscount).reduce(BigDecimal.ZERO, BigDecimal::add);
             List<BigDecimal> room = lines.stream().map(ComandaItem::subtotal).toList();
-            BigDecimal amount = promo.discount().min(room.stream().reduce(BigDecimal.ZERO, BigDecimal::add));
+            BigDecimal amount = promo.discount().subtract(alreadyCharged)
+                    .min(room.stream().reduce(BigDecimal.ZERO, BigDecimal::add));
             if (amount.signum() <= 0) {
                 return;
             }
@@ -1264,7 +1280,12 @@ public class ComandaService implements ComandaUseCase {
     }
 
     private static boolean inPromotionPool(ComandaItem i) {
-        return i.isOpen() && i.mode() == ConsumptionMode.NORMAL && !i.inKit() && !i.courtesy()
+        return i.isOpen() && promotionEligible(i);
+    }
+
+    /** Consumo comum que a promoção por quantidade enxerga, em aberto ou já cobrado. */
+    private static boolean promotionEligible(ComandaItem i) {
+        return i.mode() == ConsumptionMode.NORMAL && !i.inKit() && !i.courtesy()
                 && !i.storePurchase() && !i.isWithdrawn() && i.sessionLink() == null && i.unitPrice() != null && i.unitPrice().signum() > 0;
     }
 
@@ -2384,6 +2405,13 @@ public class ComandaService implements ComandaUseCase {
                 ? origemAtual.closed(pedidoDaOrigem.get(), agora)
                 : origemAtual.cancelled(agora));
         comandaRepository.recordClosing(fromComandaId, username, "Juntada à comanda #" + toComandaId);
+        // Promoção por quantidade: as linhas que chegaram podem fechar (ou completar) um grupo no destino.
+        // Relido pelo mesmo motivo da origem: o objeto de antes do move não tem as linhas movidas.
+        Comanda destinoAtual = getComandaForUpdate(toComandaId);
+        Comanda recalculado = recalculatePromotions(destinoAtual);
+        if (recalculado != destinoAtual) {
+            comandaRepository.save(recalculado);
+        }
         return getComanda(toComandaId);
     }
 
