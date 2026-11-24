@@ -203,6 +203,13 @@ public class SalaoAutoatendimentoRepositoryImpl implements SalaoAutoatendimentoR
 
     @Override
     @Transactional(readOnly = true)
+    public boolean existsPendenteDoCliente(Long customerId, Instant desde) {
+        return solicitacaoJpa.existsByCustomerIdAndStatusAndCriadoEmAfter(customerId,
+                SolicitacaoStatus.PENDENTE.name(), desde);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public boolean existsPendenteDoAparelho(Long mesaId, String deviceToken, Instant desde) {
         return solicitacaoJpa.existsByMesaIdAndDeviceTokenAndStatusAndCriadoEmAfter(mesaId, deviceToken,
                 SolicitacaoStatus.PENDENTE.name(), desde);

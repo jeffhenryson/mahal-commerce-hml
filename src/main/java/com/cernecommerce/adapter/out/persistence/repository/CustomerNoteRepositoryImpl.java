@@ -101,4 +101,16 @@ public class CustomerNoteRepositoryImpl implements CustomerNoteRepository {
     private CustomerNote toDomain(CustomerNoteEntity e) {
         return CustomerNote.of(e.getId(), e.getCustomerId(), e.getAutor(), e.getTexto(), e.getCriadoEm());
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<String> findAttachmentKeysByCustomerId(Long customerId) {
+        return attachmentJpaRepository.findStorageKeysByCustomerId(customerId);
+    }
+
+    @Override
+    public void deleteAllByCustomerId(Long customerId) {
+        attachmentJpaRepository.deleteAllByCustomerId(customerId);
+        customerNoteJpaRepository.deleteAllByCustomerId(customerId);
+    }
 }

@@ -43,6 +43,7 @@ public class CustomerDTOConverter {
         dto.setSegmentoManual(customer.segmentoManual());
         dto.setCidade(customer.cidade());
         dto.setAvatarUrl(customer.avatarUrl());
+        dto.setAnonymized(customer.isAnonymized());
         dto.setTags(tagNomes);
         return dto;
     }

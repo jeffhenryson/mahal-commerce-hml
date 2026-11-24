@@ -29,6 +29,8 @@ final class CustomerSpecifications {
     static Specification<CustomerEntity> of(CustomerFilter filter) {
         return (root, query, cb) -> {
             List<Predicate> and = new ArrayList<>();
+            // V206 — o cliente anonimizado não volta na lista nem no export.
+            and.add(cb.isNull(root.get("anonymizedAt")));
             if (filter.search() != null) {
                 and.add(search(root, cb, filter.search()));
             }

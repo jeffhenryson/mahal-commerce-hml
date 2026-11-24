@@ -42,4 +42,9 @@ public class CustomerTagRepositoryImpl implements CustomerTagRepository {
     private Tag toDomain(TagEntity e) {
         return Tag.of(e.getId(), e.getNome());
     }
+
+    @Override
+    public void removeAllByCustomerId(Long customerId) {
+        customerTagJpaRepository.deleteAllByCustomerId(customerId);
+    }
 }

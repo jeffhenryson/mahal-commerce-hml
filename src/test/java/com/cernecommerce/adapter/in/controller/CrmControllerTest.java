@@ -69,6 +69,8 @@ public class CrmControllerTest {
     private MockMvc mockMvc;
     private CrmUseCase crmUseCase;
     private CashbackUseCase cashbackUseCase;
+    private com.cernecommerce.core.ports.in.CustomerDeletionUseCase customerDeletionUseCase;
+    private ApplicationEventPublisher publisher;
 
     private static final UsernamePasswordAuthenticationToken AUTH =
             new UsernamePasswordAuthenticationToken("admin", null,
@@ -86,13 +88,15 @@ public class CrmControllerTest {
         ReceivableUseCase receivableUseCase = mock(ReceivableUseCase.class);
         when(receivableUseCase.balance(any())).thenReturn(new ReceivableUseCase.CustomerBalance(
                 java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO));
-        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        publisher = mock(ApplicationEventPublisher.class);
+        customerDeletionUseCase = mock(com.cernecommerce.core.ports.in.CustomerDeletionUseCase.class);
         mockMvc = MockMvcBuilders
                 .standaloneSetup(new CrmController(crmUseCase, cashbackUseCase, receivableUseCase,
                         new CustomerDTOConverter(),
                         new CustomerNoteDTOConverter(), new StageTransitionDTOConverter(),
                         new TagDTOConverter(), new CustomerCsvConverter(), new CampaignDTOConverter(),
-                        new ChannelStatusDTOConverter(), new CashbackDTOConverter(), publisher))
+                        new ChannelStatusDTOConverter(), new CashbackDTOConverter(), publisher,
+                        customerDeletionUseCase))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -114,6 +118,79 @@ public class CrmControllerTest {
     private StageTransition transition(Long id, Long customerId) {
         return StageTransition.of(id, customerId, CustomerStage.NOVO_LEAD, CustomerStage.EM_ATENDIMENTO, "admin",
                 Instant.now());
+    }
+
+    // ── V206 — exclusão do perfil (anonimização LGPD) ─────────────────────────
+
+    @Test
+    void deleteCustomer_returns_204_andAuditsWithoutPersonalData() throws Exception {
+        when(customerDeletionUseCase.deleteCustomer(7L)).thenReturn(true);
+
+        mockMvc.perform(delete("/crm/customers/7").principal(AUTH))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        verify(customerDeletionUseCase).deleteCustomer(7L);
+        org.mockito.ArgumentCaptor<Object> event = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(publisher).publishEvent(event.capture());
+        com.cernecommerce.core.domain.event.AuditEvent audit =
+                (com.cernecommerce.core.domain.event.AuditEvent) event.getValue();
+        org.assertj.core.api.Assertions.assertThat(audit.type())
+                .isEqualTo(com.cernecommerce.core.domain.event.AuditEvent.EventType.CUSTOMER_DELETED);
+        org.assertj.core.api.Assertions.assertThat(audit.username()).isEqualTo("admin");
+        org.assertj.core.api.Assertions.assertThat(audit.details()).containsOnlyKeys("customerId")
+                .containsEntry("customerId", "7");
+    }
+
+    @Test
+    void deleteCustomer_alreadyAnonymized_returns_204_withoutSecondAudit() throws Exception {
+        when(customerDeletionUseCase.deleteCustomer(7L)).thenReturn(false);
+
+        mockMvc.perform(delete("/crm/customers/7").principal(AUTH))
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void deleteCustomer_notFound_returns_404() throws Exception {
+        doThrow(new CustomerNotFoundException(7L)).when(customerDeletionUseCase).deleteCustomer(7L);
+
+        mockMvc.perform(delete("/crm/customers/7").principal(AUTH))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_NOT_FOUND"));
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void deleteCustomer_withOpenComanda_returns_409() throws Exception {
+        doThrow(new com.cernecommerce.core.domain.exception.crm.CustomerHasOpenComandaException(7L))
+                .when(customerDeletionUseCase).deleteCustomer(7L);
+
+        mockMvc.perform(delete("/crm/customers/7").principal(AUTH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_HAS_OPEN_COMANDA"));
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void deleteCustomer_withOpenBalance_returns_409() throws Exception {
+        doThrow(new com.cernecommerce.core.domain.exception.crm.CustomerHasOpenBalanceException(7L))
+                .when(customerDeletionUseCase).deleteCustomer(7L);
+
+        mockMvc.perform(delete("/crm/customers/7").principal(AUTH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_HAS_OPEN_BALANCE"));
+    }
+
+    @Test
+    void converter_exposesAnonymizedFlag() throws Exception {
+        Customer anon = Customer.of(9L, Customer.NOME_ANONIMIZADO, null, null, null, null, Instant.now(),
+                CustomerStage.NOVO_LEAD, null, null, null, "Novo", false, Instant.now());
+        org.assertj.core.api.Assertions.assertThat(new CustomerDTOConverter().toResponse(anon).isAnonymized())
+                .isTrue();
+        org.assertj.core.api.Assertions.assertThat(new CustomerDTOConverter()
+                .toResponse(customer(1L, "maria@example.com")).isAnonymized()).isFalse();
     }
 
     @Test

@@ -34,6 +34,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -388,6 +389,53 @@ class CashbackServiceTest {
         when(cashbackEntryRepository.findEarnedPendingExpiry(any(), eq(50))).thenReturn(List.of());
 
         assertThat(cashbackService.expireEntries(50)).isZero();
+        verify(cashbackEntryRepository, never()).save(any());
+    }
+
+    // ── V206 — zerar o saldo do cliente excluído ─────────────────────────────────────────────
+
+    @Test
+    void forfeitAll_zeroesAvailableAndPendingByEntry_keepingTheLedger() {
+        Instant past = Instant.parse("2026-01-01T00:00:00Z");
+        Instant future = Instant.now().plus(java.time.Duration.ofDays(5));
+        // Liberado e parcialmente resgatado (4 de 10 consumidos): expira só a sobra, 6.
+        CashbackEntry disponivel = CashbackEntry.of(5L, 1L, 2L, 3L, CashbackEntryType.EARNED,
+                new BigDecimal("10.00"), past, Instant.now().plus(java.time.Duration.ofDays(90)), null, past);
+        // Em carência: reverte o valor cheio, mantendo a data de liberação.
+        CashbackEntry carencia = CashbackEntry.of(6L, 1L, 4L, 7L, CashbackEntryType.EARNED,
+                new BigDecimal("3.00"), future, future.plus(java.time.Duration.ofDays(90)), null, past);
+        // Todo consumido: nada a zerar.
+        CashbackEntry consumido = CashbackEntry.of(8L, 1L, 9L, 10L, CashbackEntryType.EARNED,
+                new BigDecimal("2.00"), past, Instant.now().plus(java.time.Duration.ofDays(90)), null, past);
+        when(cashbackEntryRepository.findEarnedNotReversedByCustomerId(1L))
+                .thenReturn(List.of(disponivel, carencia, consumido));
+        when(cashbackEntryRepository.sumConsumedByEarnedIds(List.of(5L, 6L, 8L)))
+                .thenReturn(Map.of(5L, new BigDecimal("4.00"), 8L, new BigDecimal("2.00")));
+
+        int written = cashbackService.forfeitAll(1L, CashbackEntry.REASON_CUSTOMER_DELETED);
+
+        assertThat(written).isEqualTo(2);
+        verify(cashbackEntryRepository).lockCustomer(1L);
+        ArgumentCaptor<CashbackEntry> captor = ArgumentCaptor.forClass(CashbackEntry.class);
+        verify(cashbackEntryRepository, times(2)).save(captor.capture());
+        CashbackEntry expirado = captor.getAllValues().get(0);
+        assertThat(expirado.type()).isEqualTo(CashbackEntryType.EXPIRED);
+        assertThat(expirado.reversesEntryId()).isEqualTo(5L);
+        assertThat(expirado.amount()).isEqualByComparingTo("-6.00");
+        assertThat(expirado.reason()).isEqualTo("CUSTOMER_DELETED");
+        CashbackEntry revertido = captor.getAllValues().get(1);
+        assertThat(revertido.type()).isEqualTo(CashbackEntryType.REVERSED);
+        assertThat(revertido.reversesEntryId()).isEqualTo(6L);
+        assertThat(revertido.amount()).isEqualByComparingTo("-3.00");
+        assertThat(revertido.availableAt()).isEqualTo(future);
+        assertThat(revertido.reason()).isEqualTo("CUSTOMER_DELETED");
+    }
+
+    @Test
+    void forfeitAll_withoutBalance_writesNothing() {
+        when(cashbackEntryRepository.findEarnedNotReversedByCustomerId(1L)).thenReturn(List.of());
+
+        assertThat(cashbackService.forfeitAll(1L, CashbackEntry.REASON_CUSTOMER_DELETED)).isZero();
         verify(cashbackEntryRepository, never()).save(any());
     }
 

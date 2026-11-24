@@ -155,6 +155,67 @@ public class CrmControllerSecurityTest {
         return "839" + String.format("%08d", System.nanoTime() % 100_000_000L);
     }
 
+    // ── V206 — exclusão do perfil (anonimização LGPD) ─────────────────────────
+
+    @Test
+    void delete_customer_without_crm_customer_delete_returns_403() throws Exception {
+        Long id = givenCustomer();
+        // Gerenciar o cadastro não basta: excluir é permissão própria.
+        mockMvc.perform(delete("/crm/customers/" + id)
+                .with(user("atendente").authorities(
+                        new SimpleGrantedAuthority("CRM_CUSTOMER_READ"),
+                        new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/crm/customers/" + id)
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void delete_customer_with_crm_customer_delete_returns_204_then_404_and_frees_identifiers() throws Exception {
+        String email = "lgpd_" + System.nanoTime() + "@example.com";
+        String phone = uniquePhone();
+        String location = mockMvc.perform(post("/crm/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"Joana Excluida\",\"contato\":\"" + phone + "\",\"email\":\"" + email + "\"}")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getHeader("Location");
+        Long id = Long.valueOf(location.substring(location.lastIndexOf('/') + 1));
+        SimpleGrantedAuthority delete = new SimpleGrantedAuthority("CRM_CUSTOMER_DELETE");
+
+        mockMvc.perform(delete("/crm/customers/" + id).with(user("gerente").authorities(delete)))
+                .andExpect(status().isNoContent());
+        awaitAction("CUSTOMER_DELETED");
+
+        // Segunda chamada: idempotente (204). A ficha: 404.
+        mockMvc.perform(delete("/crm/customers/" + id).with(user("gerente").authorities(delete)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/crm/customers/999999999").with(user("gerente").authorities(delete)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("CUSTOMER_NOT_FOUND"));
+        mockMvc.perform(get("/crm/customers/" + id)
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isNotFound());
+
+        // Some da listagem e da busca.
+        mockMvc.perform(get("/crm/customers").param("search", "Joana Excluida")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == " + id + ")]").isEmpty());
+        mockMvc.perform(get("/crm/customers").param("search", "Cliente exclu")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_READ"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == " + id + ")]").isEmpty());
+
+        // O mesmo telefone e o mesmo e-mail cadastram de novo, sem 409.
+        mockMvc.perform(post("/crm/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nome\":\"Joana Nova\",\"contato\":\"" + phone + "\",\"email\":\"" + email + "\"}")
+                .with(user("gerente").authorities(new SimpleGrantedAuthority("CRM_CUSTOMER_MANAGE"))))
+                .andExpect(status().isCreated());
+    }
+
     @Test
     void create_customer_with_crm_lead_create_returns_201() throws Exception {
         mockMvc.perform(post("/crm/customers")

@@ -2438,6 +2438,29 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public PageResult<StockMovement> searchMovements(String q, String warehouseCode, MovementType type,
+            Instant from, Instant to, int page, int size) {
+        Long warehouseId = warehouseCode == null ? null : requireWarehouse(warehouseCode).id();
+        List<String> terms = searchTerms(q);
+        if (terms.isEmpty()) {
+            return stockMovementRepository.findBySkuAndWarehouseId(null, warehouseId, type, from, to, page, size);
+        }
+        return stockMovementRepository.searchByText(terms, warehouseId, type, from, to, page, size);
+    }
+
+    /** Palavras distintas do termo, em minúsculas — a ordem não importa, todas têm de aparecer. */
+    static List<String> searchTerms(String q) {
+        if (q == null || q.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(q.trim().toLowerCase(java.util.Locale.ROOT).split("\\s+"))
+                .filter(t -> !t.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public PageResult<StockMovement> listPurchaseHistory(String sku, String warehouseCode, int page, int size) {
         Warehouse warehouse = requireWarehouse(warehouseCode);
         return stockMovementRepository.findEntradasBySkuAndWarehouseId(sku, warehouse.id(), page, size);

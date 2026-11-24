@@ -4232,6 +4232,30 @@ class EstoqueServiceTest {
                 20);
     }
 
+    @Test
+    void searchMovements_quebraEmPalavrasMinusculasERepassaOsFiltros() {
+        Warehouse warehouse = Warehouse.of(1L, "LOJA-01", "Loja Centro", WarehouseType.LOJA_FISICA, true);
+        Instant from = Instant.parse("2026-07-01T00:00:00Z");
+        when(warehouseRepository.findByCode("LOJA-01")).thenReturn(Optional.of(warehouse));
+        when(stockMovementRepository.searchByText(List.of("menta", "zomo"), 1L, MovementType.SAIDA, from, null, 0,
+                20)).thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        estoqueService.searchMovements("  Menta   ZOMO menta ", "LOJA-01", MovementType.SAIDA, from, null, 0, 20);
+
+        verify(stockMovementRepository).searchByText(List.of("menta", "zomo"), 1L, MovementType.SAIDA, from, null,
+                0, 20);
+    }
+
+    @Test
+    void searchMovements_soEspacos_devolveOFeedSemFiltroDeTexto() {
+        when(stockMovementRepository.findBySkuAndWarehouseId(null, null, null, null, null, 0, 20))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        estoqueService.searchMovements("   ", null, null, null, null, 0, 20);
+
+        verify(stockMovementRepository, never()).searchByText(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
     // ── Lista de Reposição (item 1) ───────────────────────────────────────────
 
     @Test

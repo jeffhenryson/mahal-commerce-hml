@@ -23,4 +23,10 @@ public interface CustomerNoteRepository {
     java.util.Optional<com.cernecommerce.core.domain.model.crm.CustomerNoteAttachment> findAttachment(Long attachmentId);
 
     java.util.Optional<CustomerNote> findById(Long noteId);
+
+    /** V206 — chaves no storage de todos os anexos das notas do cliente. */
+    List<String> findAttachmentKeysByCustomerId(Long customerId);
+
+    /** V206 — apaga as notas do cliente e os anexos delas (só as linhas; os arquivos são do serviço). */
+    void deleteAllByCustomerId(Long customerId);
 }

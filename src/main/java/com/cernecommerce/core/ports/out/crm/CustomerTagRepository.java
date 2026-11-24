@@ -16,4 +16,7 @@ public interface CustomerTagRepository {
 
     /** Lista as tags associadas a um cliente. */
     List<Tag> findTagsByCustomerId(Long customerId);
+
+    /** V206 — remove todas as tags do cliente, a VIP inclusive. */
+    void removeAllByCustomerId(Long customerId);
 }

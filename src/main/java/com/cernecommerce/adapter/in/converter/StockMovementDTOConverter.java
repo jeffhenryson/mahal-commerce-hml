@@ -19,7 +19,15 @@ public class StockMovementDTOConverter {
     }
 
     public StockMovementResponseDTO toResponse(StockMovement movement, String warehouseCode, MeasurementUnit unit) {
+        return toResponse(movement, warehouseCode, unit, null, null);
+    }
+
+    /** Com o nome do produto e o rótulo da variação, resolvidos em lote pelo controller. */
+    public StockMovementResponseDTO toResponse(StockMovement movement, String warehouseCode, MeasurementUnit unit,
+            String productName, String variantLabel) {
         StockMovementResponseDTO dto = new StockMovementResponseDTO();
+        dto.setProductName(productName);
+        dto.setVariantLabel(variantLabel);
         dto.setId(movement.id());
         dto.setSku(movement.sku());
         dto.setWarehouseCode(warehouseCode);

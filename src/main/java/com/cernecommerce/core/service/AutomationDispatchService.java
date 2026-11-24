@@ -170,7 +170,9 @@ public class AutomationDispatchService implements AutomationDispatchUseCase {
         // Eventos de pedido/venda não carregam o cliente: ele vem do próprio pedido.
         Long customerId = occurrence.customerId() != null ? occurrence.customerId()
                 : order == null ? null : order.customerId();
-        Customer customer = customerId == null ? null : customerRepository.findById(customerId).orElse(null);
+        // V206 — cliente com o perfil excluído não recebe mais nada: conta como "sem cliente".
+        Customer customer = customerId == null ? null
+                : customerRepository.findById(customerId).filter(c -> !c.isAnonymized()).orElse(null);
         if (occurrence.requiresCustomer() && customer == null) {
             log.debug("automation.dispatch.skip reason=no-customer event={} key={}", occurrence.eventName(),
                     occurrence.key());

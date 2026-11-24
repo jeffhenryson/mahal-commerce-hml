@@ -46,6 +46,7 @@ public class CashbackDTOConverter {
         dto.setExpiresAt(entry.expiresAt());
         dto.setReversesEntryId(entry.reversesEntryId());
         dto.setCreatedAt(entry.createdAt());
+        dto.setReason(entry.reason());
         return dto;
     }
 

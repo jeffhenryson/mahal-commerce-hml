@@ -8,7 +8,15 @@ import com.cernecommerce.core.domain.model.estoque.StockMovementOrigin;
 import com.cernecommerce.core.domain.model.estoque.StockMovementOriginType;
 import com.cernecommerce.core.domain.model.estoque.StockMovement;
 import com.cernecommerce.core.ports.out.estoque.StockMovementRepository;
+import com.cernecommerce.adapter.out.persistence.entity.ProductEntity;
+import com.cernecommerce.adapter.out.persistence.entity.ProductVariantEntity;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -101,6 +109,59 @@ public class StockMovementRepositoryImpl implements StockMovementRepository {
                         Sort.by(Sort.Direction.DESC, "id"))));
         return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
                 page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    /**
+     * {@code stock_movement.sku} é texto livre, sem FK (EST-C011): o vínculo com o catálogo é por
+     * subconsulta EXISTS no SKU do produto pai e no da variação, nunca por JOIN — um JOIN duplicaria a
+     * linha a cada atributo da variação e quebraria a contagem da página. Cada termo é um OR entre SKU,
+     * nome e atributos; os termos entre si são AND, então "menta zomo" acha "Zomo — Sabor: Menta".
+     * Os dois lados passam por unaccent(lower()) (V122); o termo vai como literal, como em
+     * CustomerSpecifications, para o Postgres não receber parâmetro sem tipo (EST-C024).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<StockMovement> searchByText(List<String> terms, Long warehouseId, MovementType type,
+            Instant from, Instant to, int page, int size) {
+        Specification<StockMovementEntity> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (warehouseId != null) predicates.add(cb.equal(root.get("warehouseId"), warehouseId));
+            if (type        != null) predicates.add(cb.equal(root.get("type"), type.name()));
+            if (from        != null) predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), from));
+            if (to          != null) predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), to));
+            for (String term : terms) {
+                Expression<String> pattern = unaccent(cb, cb.literal("%" + term + "%"));
+
+                Subquery<Long> base = query.subquery(Long.class);
+                Root<ProductEntity> p = base.from(ProductEntity.class);
+                base.select(p.get("id")).where(cb.equal(p.get("sku"), root.get("sku")),
+                        cb.like(unaccent(cb, cb.lower(p.get("name"))), pattern));
+
+                Subquery<Long> variant = query.subquery(Long.class);
+                Root<ProductVariantEntity> v = variant.from(ProductVariantEntity.class);
+                Join<ProductVariantEntity, ProductEntity> parent = v.join("product");
+                Join<ProductVariantEntity, ?> attr = v.join("attributes", JoinType.LEFT);
+                variant.select(v.get("id")).where(cb.equal(v.get("sku"), root.get("sku")), cb.or(
+                        cb.like(unaccent(cb, cb.lower(parent.get("name"))), pattern),
+                        cb.like(unaccent(cb, cb.lower(attr.get("type"))), pattern),
+                        cb.like(unaccent(cb, cb.lower(attr.get("value"))), pattern)));
+
+                predicates.add(cb.or(
+                        cb.like(unaccent(cb, cb.lower(root.get("sku"))), pattern),
+                        cb.exists(base),
+                        cb.exists(variant)));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+        Page<StockMovementEntity> result = stockMovementJpaRepository.findAll(spec,
+                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt").and(
+                        Sort.by(Sort.Direction.DESC, "id"))));
+        return new PageResult<>(result.getContent().stream().map(this::toDomain).toList(),
+                page, size, result.getTotalElements(), result.getTotalPages());
+    }
+
+    private static Expression<String> unaccent(CriteriaBuilder cb, Expression<String> value) {
+        return cb.function("unaccent", String.class, value);
     }
 
     @Override

@@ -1687,6 +1687,91 @@ public class EstoqueControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("WAREHOUSE_NOT_FOUND"));
     }
 
+    // ── Movimentações: nome do produto e busca livre ──────────────────────────
+
+    private static StockMovement movementOf(long id, String sku) {
+        return StockMovement.of(id, sku, 1L, MovementType.SAIDA, BigDecimal.ONE, "Venda", "gerente",
+                Instant.parse("2026-07-26T12:00:00Z"));
+    }
+
+    @Test
+    void listMovements_resolvesProductNameAndVariantLabel_inOneLookupPerPage() throws Exception {
+        Product zomo = Product.of(5L, "ESS-ZOMO", "Essência Zomo", "Essências", true, List.of(
+                ProductVariant.of(51L, "ESS-ZOMO-MENTA", List.of(new ProductAttribute("Sabor", "Menta")), true),
+                ProductVariant.of(52L, "ESS-ZOMO-UVA", List.of(new ProductAttribute("Tamanho", "50g"),
+                        new ProductAttribute("Sabor", "Uva")), true)));
+        when(estoqueUseCase.listMovements(null, "LOJA-01", null, null, null, 0, 20))
+                .thenReturn(new PageResult<>(List.of(movementOf(4L, "ESS-ZOMO"), movementOf(3L, "ESS-ZOMO-MENTA"),
+                        movementOf(2L, "ESS-ZOMO-UVA"), movementOf(1L, "APAGADO-001"),
+                        movementOf(0L, "ESS-ZOMO-MENTA")), 0, 20, 5L, 1));
+        when(estoqueUseCase.findProductsByAnySku(any())).thenReturn(List.of(zomo));
+
+        mockMvc.perform(get("/estoque/movements").principal(AUTH).param("warehouseCode", "LOJA-01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].productName").value("Essência Zomo"))
+                .andExpect(jsonPath("$.content[0].variantLabel").doesNotExist())
+                .andExpect(jsonPath("$.content[1].productName").value("Essência Zomo"))
+                .andExpect(jsonPath("$.content[1].variantLabel").value("Sabor: Menta"))
+                // Vários atributos: ordem estável por tipo.
+                .andExpect(jsonPath("$.content[2].variantLabel").value("Sabor: Uva · Tamanho: 50g"))
+                // SKU órfão (produto apagado): nulo, sem derrubar a página.
+                .andExpect(jsonPath("$.content[3].sku").value("APAGADO-001"))
+                .andExpect(jsonPath("$.content[3].productName").doesNotExist())
+                .andExpect(jsonPath("$.content[3].variantLabel").doesNotExist());
+
+        // Uma consulta de nomes para a página inteira, com os SKUs distintos — nada por linha.
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<String>> skus =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(estoqueUseCase, times(1)).findProductsByAnySku(skus.capture());
+        org.assertj.core.api.Assertions.assertThat(skus.getValue())
+                .containsExactlyInAnyOrder("ESS-ZOMO", "ESS-ZOMO-MENTA", "ESS-ZOMO-UVA", "APAGADO-001");
+        verify(estoqueUseCase, never()).findProductBySku(any());
+    }
+
+    @Test
+    void listMovements_emptyPage_skipsNameLookup() throws Exception {
+        when(estoqueUseCase.listMovements(null, null, null, null, null, 0, 20))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        mockMvc.perform(get("/estoque/movements").principal(AUTH)).andExpect(status().isOk());
+
+        verify(estoqueUseCase, never()).findProductsByAnySku(any());
+    }
+
+    @Test
+    void listMovements_withQ_searchesByText_combinedWithTypeAndPeriod() throws Exception {
+        Instant from = Instant.parse("2026-07-01T00:00:00Z");
+        Instant to = Instant.parse("2026-07-31T23:59:59Z");
+        when(estoqueUseCase.searchMovements("menta zomo", "LOJA-01", MovementType.SAIDA, from, to, 0, 20))
+                .thenReturn(new PageResult<>(List.of(movementOf(3L, "ESS-ZOMO-MENTA")), 0, 20, 1L, 1));
+
+        mockMvc.perform(get("/estoque/movements").principal(AUTH)
+                        .param("q", "menta zomo")
+                        .param("warehouseCode", "LOJA-01")
+                        .param("type", "SAIDA")
+                        .param("from", from.toString())
+                        .param("to", to.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].sku").value("ESS-ZOMO-MENTA"));
+
+        verify(estoqueUseCase, never()).listMovements(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void listMovements_withSkuAndQ_theSkuWins() throws Exception {
+        when(estoqueUseCase.listMovements("NARG-001", null, null, null, null, 0, 20))
+                .thenReturn(new PageResult<>(List.of(), 0, 20, 0L, 0));
+
+        mockMvc.perform(get("/estoque/movements").principal(AUTH)
+                        .param("sku", "NARG-001")
+                        .param("q", "menta"))
+                .andExpect(status().isOk());
+
+        verify(estoqueUseCase).listMovements("NARG-001", null, null, null, null, 0, 20);
+        verify(estoqueUseCase, never()).searchMovements(any(), any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
     @Test
     void listOrphanSkus_returns_200_with_diagnosticRows() throws Exception {
         OrphanSku orphan = OrphanSku.of("SKU-FANTASMA", "LOJA-01", new BigDecimal("3.000"), 2L, true,

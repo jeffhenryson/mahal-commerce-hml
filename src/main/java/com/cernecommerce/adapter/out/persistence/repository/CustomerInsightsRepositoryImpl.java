@@ -125,7 +125,7 @@ public class CustomerInsightsRepositoryImpl implements CustomerInsightsRepositor
     @Override
     public Map<String, Long> countBySegmento() {
         Map<String, Long> out = new LinkedHashMap<>();
-        for (Object[] r : em.createQuery("SELECT c.segmento, COUNT(c) FROM CustomerEntity c GROUP BY c.segmento "
+        for (Object[] r : em.createQuery("SELECT c.segmento, COUNT(c) FROM CustomerEntity c WHERE c.anonymizedAt IS NULL GROUP BY c.segmento "
                 + "ORDER BY c.segmento", Object[].class).getResultList()) {
             out.put((String) r[0], ((Number) r[1]).longValue());
         }
@@ -140,9 +140,11 @@ public class CustomerInsightsRepositoryImpl implements CustomerInsightsRepositor
     @Transactional
     public int recalculateSegments(Long customerId, Instant now) {
         List<Long> ids = customerId == null
-                ? em.createQuery("SELECT c.id FROM CustomerEntity c WHERE c.segmentoManual = false", Long.class)
+                ? em.createQuery("SELECT c.id FROM CustomerEntity c WHERE c.segmentoManual = false"
+                        + " AND c.anonymizedAt IS NULL", Long.class)
                         .getResultList()
-                : em.createQuery("SELECT c.id FROM CustomerEntity c WHERE c.segmentoManual = false AND c.id = :id",
+                : em.createQuery("SELECT c.id FROM CustomerEntity c WHERE c.segmentoManual = false AND c.id = :id"
+                        + " AND c.anonymizedAt IS NULL",
                         Long.class).setParameter("id", customerId).getResultList();
         if (ids.isEmpty()) {
             return 0;
@@ -167,7 +169,7 @@ public class CustomerInsightsRepositoryImpl implements CustomerInsightsRepositor
             for (List<Long> chunk : chunks(e.getValue())) {
                 updated += em.createQuery("""
                         UPDATE CustomerEntity c SET c.segmento = :segmento, c.segmentoCalculadoEm = :now
-                        WHERE c.id IN :ids AND c.segmentoManual = false
+                        WHERE c.id IN :ids AND c.segmentoManual = false AND c.anonymizedAt IS NULL
                         """)
                         .setParameter("segmento", e.getKey()).setParameter("now", now)
                         .setParameter("ids", chunk).executeUpdate();

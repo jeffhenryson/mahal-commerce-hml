@@ -528,7 +528,7 @@ public class OrdersControllerTest {
         when(customer.nome()).thenReturn("Ana");
         when(customer.contato()).thenReturn("(21) 99999-0000");
         when(customer.cpf()).thenReturn("123.456.789-00");
-        when(crmUseCase.findCustomerById(7L)).thenReturn(customer);
+        when(crmUseCase.findCustomersByIds(java.util.List.of(7L))).thenReturn(java.util.Map.of(7L, customer));
         CashRegisterSession session = mock(CashRegisterSession.class);
         when(session.operator()).thenReturn("caixa1");
         when(pdvUseCase.getSession(3L)).thenReturn(session);
@@ -544,7 +544,7 @@ public class OrdersControllerTest {
     @Test
     void getReceipt_stillPrintsWhenCustomerOrSessionIsGone() throws Exception {
         receiptWith(7L, 3L);
-        when(crmUseCase.findCustomerById(7L)).thenThrow(new RuntimeException("removido"));
+        when(crmUseCase.findCustomersByIds(java.util.List.of(7L))).thenReturn(java.util.Map.of());
         when(pdvUseCase.getSession(3L)).thenThrow(new RuntimeException("sem sessão"));
 
         mockMvc.perform(get("/orders/1/receipt").principal(AUTH))
@@ -552,6 +552,22 @@ public class OrdersControllerTest {
                 .andExpect(jsonPath("$.customerId").value(7))
                 .andExpect(jsonPath("$.customerName").doesNotExist())
                 .andExpect(jsonPath("$.operatorName").doesNotExist());
+    }
+
+    /** V206 — o cupom de um cliente com o perfil excluído sai com o nome neutro e sem dados pessoais. */
+    @Test
+    void getReceipt_anonymizedCustomer_printsNeutralName() throws Exception {
+        receiptWith(7L, null);
+        Customer anon = Customer.of(7L, Customer.NOME_ANONIMIZADO, null, null, null, null,
+                java.time.Instant.now(), com.cernecommerce.core.domain.model.crm.CustomerStage.NOVO_LEAD, null,
+                null, null, "Novo", false, java.time.Instant.now());
+        when(crmUseCase.findCustomersByIds(java.util.List.of(7L))).thenReturn(java.util.Map.of(7L, anon));
+
+        mockMvc.perform(get("/orders/1/receipt").principal(AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerName").value("Cliente excluído"))
+                .andExpect(jsonPath("$.customerPhone").doesNotExist())
+                .andExpect(jsonPath("$.customerDocument").doesNotExist());
     }
 
     @Test

@@ -380,10 +380,15 @@ public class OrdersController {
     private void enrichReceipt(SaleReceiptResponseDTO receipt) {
         if (receipt.getCustomerId() != null) {
             try {
-                Customer customer = crmUseCase.findCustomerById(receipt.getCustomerId());
-                receipt.setCustomerName(customer.nome());
-                receipt.setCustomerPhone(customer.contato());
-                receipt.setCustomerDocument(customer.cpf());
+                // findCustomersByIds enxerga o cliente anonimizado (V206): o cupom reimpresso sai com
+                // "Cliente excluído" e sem telefone/CPF, que já foram apagados.
+                Customer customer = crmUseCase.findCustomersByIds(List.of(receipt.getCustomerId()))
+                        .get(receipt.getCustomerId());
+                if (customer != null) {
+                    receipt.setCustomerName(customer.nome());
+                    receipt.setCustomerPhone(customer.contato());
+                    receipt.setCustomerDocument(customer.cpf());
+                }
             } catch (RuntimeException e) {
                 // cliente fora do CRM — o cupom sai só com o id
             }

@@ -69,6 +69,7 @@ public class AssistenteConsultasJdbc implements AssistenteConsultasQuery {
         String sql = "SELECT c.id, c.nome, MAX(o.sold_at) AS ultima, COUNT(o.id)"
                 + " FROM customers c JOIN sales_order o ON o.customer_id = c.id"
                 + " WHERE o.status IN " + STATUS_RECEITA
+                + " AND c.anonymized_at IS NULL"
                 + " GROUP BY c.id, c.nome"
                 + " HAVING MAX(o.sold_at) < ?"
                 + " ORDER BY ultima DESC"

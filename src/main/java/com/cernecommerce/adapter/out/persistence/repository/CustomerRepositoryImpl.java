@@ -44,13 +44,13 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     @Override
     @Transactional(readOnly = true)
     public Optional<Customer> findByEmail(String email) {
-        return customerJpaRepository.findByEmail(email).map(this::toDomain);
+        return customerJpaRepository.findByEmailAndAnonymizedAtIsNull(email).map(this::toDomain);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Optional<Customer> findByCpf(String cpf) {
-        return customerJpaRepository.findByCpf(cpf).map(this::toDomain);
+        return customerJpaRepository.findByCpfAndAnonymizedAtIsNull(cpf).map(this::toDomain);
     }
 
     @Override
@@ -66,7 +66,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         if (digits == null) {
             return List.of();
         }
-        return customerJpaRepository.findByPhoneNormalizedOrderByIdAsc(digits).stream()
+        return customerJpaRepository.findByPhoneNormalizedAndAnonymizedAtIsNullOrderByIdAsc(digits).stream()
                 .map(this::toDomain).toList();
     }
 
@@ -99,6 +99,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         entity.setAvatarUrl(customer.avatarUrl());
         entity.setSegmento(customer.segmento());
         entity.setSegmentoManual(customer.segmentoManual());
+        entity.setAnonymizedAt(customer.anonymizedAt());
         CustomerEntity saved = customerJpaRepository.save(entity);
         return toDomain(saved);
     }
@@ -111,7 +112,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         PageRequest pageRequest = PageRequest.of(page, size,
                 Sort.by(Sort.Order.desc("cadastradoEm"), Sort.Order.desc("id")));
         Page<CustomerEntity> result = (search == null || search.isBlank())
-                ? customerJpaRepository.findAll(pageRequest)
+                ? customerJpaRepository.findByAnonymizedAtIsNull(pageRequest)
                 : searchPage(search.trim(), cpfSearchDigits(search), pageRequest);
         List<Customer> content = result.getContent().stream().map(this::toDomain).toList();
         return new PageResult<>(content, page, size, result.getTotalElements(), result.getTotalPages());
@@ -137,7 +138,7 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     @Transactional(readOnly = true)
     public List<Customer> findAllForExport(String search) {
         List<CustomerEntity> entities = (search == null || search.isBlank())
-                ? customerJpaRepository.findAll()
+                ? customerJpaRepository.findByAnonymizedAtIsNull()
                 : searchAll(search.trim(), cpfSearchDigits(search));
         return entities.stream().map(this::toDomain).toList();
     }
@@ -145,13 +146,13 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     @Override
     @Transactional(readOnly = true)
     public long countAll() {
-        return customerJpaRepository.count();
+        return customerJpaRepository.countByAnonymizedAtIsNull();
     }
 
     @Override
     @Transactional(readOnly = true)
     public long countActive() {
-        return customerJpaRepository.countByEstagioNot(CustomerStage.INATIVO);
+        return customerJpaRepository.countByEstagioNotAndAnonymizedAtIsNull(CustomerStage.INATIVO);
     }
 
     @Override
@@ -167,7 +168,12 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     @Override
     @Transactional(readOnly = true)
     public List<Customer> findByEstagio(CustomerStage estagio) {
-        return customerJpaRepository.findByEstagio(estagio).stream().map(this::toDomain).toList();
+        return customerJpaRepository.findByEstagioAndAnonymizedAtIsNull(estagio).stream().map(this::toDomain).toList();
+    }
+
+    @Override
+    public boolean anonymize(Long id, String nome, java.time.Instant now) {
+        return customerJpaRepository.anonymize(id, nome, now) > 0;
     }
 
     /**
@@ -195,6 +201,6 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     private Customer toDomain(CustomerEntity e) {
         return Customer.of(e.getId(), e.getNome(), e.getContato(), e.getEmail(), e.getCpf(), e.getOrigem(),
                 e.getCadastradoEm(), e.getEstagio(), e.getDataNascimento(), e.getCidade(), e.getAvatarUrl(),
-                e.getSegmento(), e.isSegmentoManual());
+                e.getSegmento(), e.isSegmentoManual(), e.getAnonymizedAt());
     }
 }

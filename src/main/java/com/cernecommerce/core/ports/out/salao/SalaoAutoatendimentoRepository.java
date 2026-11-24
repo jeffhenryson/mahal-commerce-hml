@@ -67,6 +67,9 @@ public interface SalaoAutoatendimentoRepository {
     /** Pendentes desde {@code desde} (as mais antigas já expiraram) desta mesa e cliente. */
     boolean existsPendente(Long mesaId, Long customerId, Instant desde);
 
+    /** V206 — o cliente tem solicitação de sessão pendente desde {@code desde}, em qualquer mesa? */
+    boolean existsPendenteDoCliente(Long customerId, Instant desde);
+
     /** Pendentes desde {@code desde} pedidas por este aparelho na mesa — a regra do acompanhante. */
     boolean existsPendenteDoAparelho(Long mesaId, String deviceToken, Instant desde);
 

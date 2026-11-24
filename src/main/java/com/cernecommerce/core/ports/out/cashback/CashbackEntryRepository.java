@@ -59,6 +59,9 @@ public interface CashbackEntryRepository {
      */
     List<CashbackEntry> findEarnedByOrderId(Long orderId);
 
+    /** V206 — ganhos {@code EARNED} do cliente ainda não anulados (em carência ou já liberados). */
+    List<CashbackEntry> findEarnedNotReversedByCustomerId(Long customerId);
+
     /**
      * Existe algum lançamento {@code EARNED} para este pedido — revertido ou não. Distinto de
      * {@link #findEarnedByOrderId}, que propositalmente esconde entradas já revertidas: esta

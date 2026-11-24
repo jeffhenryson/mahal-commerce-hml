@@ -48,6 +48,10 @@ public class CustomerResponseDTO {
     @Schema(description = "V183 — URL da foto do cliente.", nullable = true)
     private String avatarUrl;
 
+    @Schema(description = "V206 — true quando o perfil foi excluído (anonimizado, LGPD): nome \"Cliente excluído\" "
+            + "e dados pessoais nulos. As listagens e a ficha não devolvem cliente anonimizado.")
+    private boolean anonymized;
+
     @Schema(description = "Pendência 8 — quantidade de pedidos pagos.", nullable = true)
     private Long pedidosCount;
 

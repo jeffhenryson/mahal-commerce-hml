@@ -75,4 +75,12 @@ public class CustomerEntity {
 
     @Column(name = "segmento_calculado_em")
     private java.time.Instant segmentoCalculadoEm;
+
+    /**
+     * V206 — preenchido na exclusão do perfil (anonimização LGPD). A linha fica para os pedidos,
+     * comandas e o extrato de cashback continuarem apontando para ela; listagem, busca, lookup,
+     * segmentos e disparos ignoram o cliente anonimizado.
+     */
+    @Column(name = "anonymized_at")
+    private Instant anonymizedAt;
 }

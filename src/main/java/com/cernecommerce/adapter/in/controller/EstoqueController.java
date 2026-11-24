@@ -1582,9 +1582,15 @@ public class EstoqueController {
             description = "`sku` e `warehouseCode` são opcionais. Omitidos, devolve o feed geral de "
                     + "movimentações (mais recentes primeiro); informados, filtram por esse SKU e/ou "
                     + "depósito. `type` e o intervalo `from`/`to` (data-hora ISO) também são "
-                    + "opcionais e combináveis com os demais.")
+                    + "opcionais e combináveis com os demais. `q` é a busca livre: cada palavra tem de "
+                    + "aparecer, sem diferenciar maiúsculas nem acentos, no nome do produto, no rótulo da "
+                    + "variação ou no SKU, em qualquer ordem (\"menta zomo\" acha \"Essência Zomo — Sabor: "
+                    + "Menta\"). Com `sku` e `q` juntos, vale o `sku` (exato). Cada linha traz `productName` "
+                    + "e `variantLabel`, resolvidos numa consulta só por página.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK"),
+            @ApiResponse(responseCode = "400", description = "VALIDATION_ERROR — `q` fora de 2 a 80 caracteres, "
+                    + "`sku` fora de 3 a 50 ou paginação inválida", content = @Content),
             @ApiResponse(responseCode = "404", description = "Depósito não encontrado", content = @Content),
             @ApiResponse(responseCode = "403", description = "Sem permissão", content = @Content)
     })
@@ -1599,24 +1605,75 @@ public class EstoqueController {
     @PreAuthorize("hasAnyAuthority('ESTOQUE_PRODUCT_READ','ESTOQUE_STOCK_MANAGE')")
     public ResponseEntity<PageResult<StockMovementResponseDTO>> listMovements(
             @RequestParam(required = false) @Size(min = 3, max = 50) String sku,
+            @io.swagger.v3.oas.annotations.Parameter(description = "Busca livre (2 a 80 caracteres) no nome do "
+                    + "produto, no rótulo da variação e no SKU; cada palavra tem de aparecer. Ignorada quando "
+                    + "`sku` vem junto.")
+            @RequestParam(required = false) @Size(min = 2, max = 80) String q,
             @RequestParam(required = false) @Size(min = 2, max = 50) String warehouseCode,
             @RequestParam(required = false) MovementType type,
             @RequestParam(required = false) Instant from,
             @RequestParam(required = false) Instant to,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        PageResult<StockMovement> result = estoqueUseCase.listMovements(sku, warehouseCode, type, from, to, page,
-                size);
+        // O sku exato (atalho "Ver movimentações" do catálogo) vence a busca livre.
+        PageResult<StockMovement> result = sku == null && q != null
+                ? estoqueUseCase.searchMovements(q, warehouseCode, type, from, to, page, size)
+                : estoqueUseCase.listMovements(sku, warehouseCode, type, from, to, page, size);
         Map<Long, String> warehouseCodesById = warehouseCode != null ? Map.of() : resolveWarehouseCodes(result);
-        Map<String, MeasurementUnit> unitsBySku = new HashMap<>();
+        Map<String, SkuInfo> skuInfo = skuInfoBySku(result.content().stream().map(StockMovement::sku)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)));
         PageResult<StockMovementResponseDTO> response = new PageResult<>(
                 result.content().stream()
-                        .map(m -> movementConverter.toResponse(m,
-                                warehouseCode != null ? warehouseCode : warehouseCodesById.get(m.warehouseId()),
-                                unitsBySku.computeIfAbsent(m.sku(), this::resolveUnit)))
+                        .map(m -> {
+                            SkuInfo info = skuInfo.getOrDefault(m.sku(), SkuInfo.ORPHAN);
+                            return movementConverter.toResponse(m,
+                                    warehouseCode != null ? warehouseCode : warehouseCodesById.get(m.warehouseId()),
+                                    info.unit(), info.productName(), info.variantLabel());
+                        })
                         .toList(),
                 result.page(), result.size(), result.totalElements(), result.totalPages());
         return ResponseEntity.ok(response);
+    }
+
+    /** Nome do produto, rótulo da variação e unidade de um SKU da página de movimentações. */
+    private record SkuInfo(String productName, String variantLabel, MeasurementUnit unit) {
+        static final SkuInfo ORPHAN = new SkuInfo(null, null, null);
+    }
+
+    /**
+     * Resolve, numa consulta só para a página inteira, o produto dono de cada SKU — o pai e as
+     * variações chegam juntos em {@code findProductsByAnySku}. Substitui a antiga resolução da
+     * unidade SKU a SKU (uma consulta por SKU distinto). SKU órfão (produto apagado) fica fora do
+     * mapa e sai com tudo nulo: {@code stock_movement.sku} é texto livre, sem FK (EST-C011).
+     */
+    private Map<String, SkuInfo> skuInfoBySku(Collection<String> skus) {
+        if (skus.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, SkuInfo> info = new HashMap<>();
+        for (Product product : estoqueUseCase.findProductsByAnySku(skus)) {
+            info.put(product.sku(), new SkuInfo(product.name(), null, product.unit()));
+            if (product.variants() != null) {
+                product.variants().forEach(variant -> info.put(variant.sku(),
+                        new SkuInfo(product.name(), variantLabel(variant), product.unit())));
+            }
+        }
+        return info;
+    }
+
+    /**
+     * "Tipo: valor" de cada atributo, em ordem estável (por tipo, depois valor — a coleção não tem
+     * ordem no banco), unidos por " · ". Ex.: "Sabor: Menta". Nulo se a variação não tem atributo.
+     */
+    static String variantLabel(com.cernecommerce.core.domain.model.estoque.ProductVariant variant) {
+        if (variant.attributes() == null || variant.attributes().isEmpty()) {
+            return null;
+        }
+        return variant.attributes().stream()
+                .sorted(java.util.Comparator.comparing(com.cernecommerce.core.domain.model.estoque.ProductAttribute::type)
+                        .thenComparing(com.cernecommerce.core.domain.model.estoque.ProductAttribute::value))
+                .map(a -> a.type() + ": " + a.value())
+                .collect(java.util.stream.Collectors.joining(" · "));
     }
 
     /**

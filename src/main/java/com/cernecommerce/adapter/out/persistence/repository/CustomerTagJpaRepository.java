@@ -16,6 +16,11 @@ public interface CustomerTagJpaRepository extends JpaRepository<CustomerTagEntit
     @Modifying
     void deleteByCustomerIdAndTagId(Long customerId, Long tagId);
 
+    /** V206 — tira todas as tags do cliente, a VIP inclusive (exclusão do perfil). */
+    @Modifying
+    @Query("DELETE FROM CustomerTagEntity ct WHERE ct.customerId = :customerId")
+    int deleteAllByCustomerId(@Param("customerId") Long customerId);
+
     @Query("SELECT t FROM TagEntity t JOIN CustomerTagEntity ct ON ct.tagId = t.id "
             + "WHERE ct.customerId = :customerId ORDER BY t.nome")
     List<TagEntity> findTagsByCustomerId(@Param("customerId") Long customerId);

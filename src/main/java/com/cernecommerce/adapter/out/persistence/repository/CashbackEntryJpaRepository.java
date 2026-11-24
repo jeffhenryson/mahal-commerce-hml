@@ -91,6 +91,18 @@ public interface CashbackEntryJpaRepository extends JpaRepository<CashbackEntryE
             """)
     List<CashbackEntryEntity> findEarnedByOrderId(@Param("orderId") Long orderId);
 
+    /**
+     * V206 — todos os ganhos {@code EARNED} do cliente ainda não anulados (em carência ou não), mesma
+     * guarda NOT EXISTS: base para zerar o saldo de quem teve o perfil excluído.
+     */
+    @Query("""
+            SELECT e FROM CashbackEntryEntity e
+            WHERE e.type = 'EARNED' AND e.customerId = :customerId
+              AND NOT EXISTS (SELECT 1 FROM CashbackEntryEntity x WHERE x.reversesEntryId = e.id)
+            ORDER BY e.id ASC
+            """)
+    List<CashbackEntryEntity> findEarnedNotReversedByCustomerId(@Param("customerId") Long customerId);
+
     boolean existsByOrderIdAndType(Long orderId, String type);
 
     /** Já existe um lançamento anulando este (estorno ou expiração)? */

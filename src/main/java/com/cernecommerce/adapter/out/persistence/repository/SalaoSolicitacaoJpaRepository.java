@@ -21,6 +21,8 @@ public interface SalaoSolicitacaoJpaRepository extends JpaRepository<SalaoSolici
 
     Optional<SalaoSolicitacaoEntity> findByCodigo(UUID codigo);
 
+    boolean existsByCustomerIdAndStatusAndCriadoEmAfter(Long customerId, String status, Instant criadoEm);
+
     boolean existsByMesaIdAndCustomerIdAndStatusAndCriadoEmAfter(Long mesaId, Long customerId, String status,
             Instant desde);
 

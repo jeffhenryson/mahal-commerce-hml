@@ -14,6 +14,10 @@ import java.util.Optional;
  */
 public interface CustomerRepository {
 
+    /**
+     * Enxerga também o cliente anonimizado (V206), como {@link #findByIds}. Todas as demais
+     * consultas deste port o ignoram.
+     */
     Optional<Customer> findById(Long id);
 
     /** Busca em lote — evita N+1 ao enriquecer uma página de outro domínio com dado de cliente. */
@@ -65,4 +69,11 @@ public interface CustomerRepository {
 
     /** Lista todos os clientes em um estágio — usado para resolver o público-alvo de uma campanha. */
     List<Customer> findByEstagio(CustomerStage estagio);
+
+    /**
+     * V206 — exclusão do perfil (LGPD): troca o nome por {@code nome} e anula contato, e-mail, CPF,
+     * nascimento, cidade e foto; estágio e segmento voltam ao neutro. Devolve false se o cliente não
+     * existe ou já foi anonimizado.
+     */
+    boolean anonymize(Long id, String nome, java.time.Instant now);
 }

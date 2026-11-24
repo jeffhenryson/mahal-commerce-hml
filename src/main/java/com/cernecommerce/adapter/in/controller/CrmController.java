@@ -90,13 +90,16 @@ public class CrmController {
     private final ChannelStatusDTOConverter channelStatusConverter;
     private final CashbackDTOConverter cashbackConverter;
     private final ApplicationEventPublisher publisher;
+    private final com.cernecommerce.core.ports.in.CustomerDeletionUseCase customerDeletionUseCase;
 
     public CrmController(CrmUseCase crmUseCase, CashbackUseCase cashbackUseCase, ReceivableUseCase receivableUseCase,
             CustomerDTOConverter converter,
             CustomerNoteDTOConverter noteConverter, StageTransitionDTOConverter stageConverter,
             TagDTOConverter tagConverter, CustomerCsvConverter csvConverter,
             CampaignDTOConverter campaignConverter, ChannelStatusDTOConverter channelStatusConverter,
-            CashbackDTOConverter cashbackConverter, ApplicationEventPublisher publisher) {
+            CashbackDTOConverter cashbackConverter, ApplicationEventPublisher publisher,
+            com.cernecommerce.core.ports.in.CustomerDeletionUseCase customerDeletionUseCase) {
+        this.customerDeletionUseCase = customerDeletionUseCase;
         this.crmUseCase = crmUseCase;
         this.cashbackUseCase = cashbackUseCase;
         this.receivableUseCase = receivableUseCase;
@@ -151,6 +154,34 @@ public class CrmController {
         publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_UPDATED,
                 authentication.getName(), Map.of("customerId", String.valueOf(id))));
         return ResponseEntity.ok(converter.toResponse(updated));
+    }
+
+    @Operation(summary = "Exclui o perfil do cliente (anonimização LGPD, V206)",
+            description = "Não apaga a linha: nome vira \"Cliente excluído\" e contato, e-mail, CPF, nascimento, "
+                    + "cidade e foto ficam nulos; estágio e segmento voltam ao neutro. Remove tags (a VIP "
+                    + "inclusive), notas e anexos (também do storage), zera o saldo de cashback por lançamento "
+                    + "(EXPIRED/REVERSED, motivo CUSTOMER_DELETED) sem apagar o extrato e impede disparos futuros. "
+                    + "Pedidos, comandas, estoque e auditoria mantêm o customer_id. Não tem volta. "
+                    + "Idempotente: num perfil já excluído devolve 204 sem efeito.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Perfil excluído (anonimizado), também quando já estava"),
+            @ApiResponse(responseCode = "404", description = "CUSTOMER_NOT_FOUND — o cliente não existe",
+                    content = @Content(schema = @Schema(implementation = com.cernecommerce.infra.handler.ApiError.class))),
+            @ApiResponse(responseCode = "409", description = "CUSTOMER_HAS_OPEN_COMANDA — comanda, mesa ou sessão "
+                    + "aberta; CUSTOMER_HAS_OPEN_BALANCE — saldo devedor em Marcados",
+                    content = @Content(schema = @Schema(implementation = com.cernecommerce.infra.handler.ApiError.class))),
+            @ApiResponse(responseCode = "403", description = "Sem permissão (CRM_CUSTOMER_DELETE)", content = @Content)
+    })
+    @DeleteMapping("/customers/{id}")
+    @PreAuthorize("hasAuthority('CRM_CUSTOMER_DELETE')")
+    public ResponseEntity<Void> deleteCustomer(@PathVariable Long id, Authentication authentication) {
+        if (customerDeletionUseCase.deleteCustomer(id)) {
+            // Sem dado pessoal no payload: só o id, e o usuário no próprio evento. A repetição
+            // idempotente (já anonimizado) não gera um segundo evento.
+            publisher.publishEvent(AuditEvent.of(EventType.CUSTOMER_DELETED,
+                    authentication.getName(), Map.of("customerId", String.valueOf(id))));
+        }
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Cadastra ou reaproveita o lead do balcão/mesa (PDV-F020)",

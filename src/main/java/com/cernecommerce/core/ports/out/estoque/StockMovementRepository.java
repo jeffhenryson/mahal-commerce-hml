@@ -50,6 +50,15 @@ public interface StockMovementRepository {
             Instant from, Instant to, int page, int size);
 
     /**
+     * Busca livre (GET /estoque/movements?q=): cada termo de {@code terms} (já em minúsculas) tem de
+     * aparecer, sem diferenciar acento, no SKU, no nome do produto ou num atributo da variação (tipo
+     * ou valor) — em qualquer ordem. {@code warehouseId}, {@code type}, {@code from} e {@code to}
+     * nulos não filtram. Mesma ordem de {@link #findBySkuAndWarehouseId}.
+     */
+    PageResult<StockMovement> searchByText(java.util.List<String> terms, Long warehouseId, MovementType type,
+            Instant from, Instant to, int page, int size);
+
+    /**
      * Últimas {@code ENTRADA}s de um SKU num depósito, mais recentes primeiro (item 2 do pedido do
      * frontend — histórico de compras). {@code unitCost}/{@code lotCode} já vêm gravados na
      * própria movimentação (EST-F007/EST-F008); {@code goodsReceiptId} liga de volta ao

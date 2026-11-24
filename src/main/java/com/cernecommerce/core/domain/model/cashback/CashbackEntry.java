@@ -32,10 +32,23 @@ import java.time.Instant;
  *        Obrigatório para todo tipo que não seja {@link CashbackEntryType#EARNED} nem
  *        {@link CashbackEntryType#REDEEMED} — o resgate consome vários ganhos, e o vínculo com
  *        eles mora em {@link CashbackRedemptionAllocation}.
+ * @param reason motivo de um lançamento fora do fluxo normal do programa (V206); {@code null} no
+ *        fluxo normal. Hoje só {@link #REASON_CUSTOMER_DELETED}.
  */
 public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderItemId,
         CashbackEntryType type, BigDecimal amount, Instant availableAt, Instant expiresAt,
-        Long reversesEntryId, Instant createdAt) {
+        Long reversesEntryId, Instant createdAt, String reason) {
+
+    /** V206 — o saldo foi zerado porque o perfil do cliente foi excluído (anonimização LGPD). */
+    public static final String REASON_CUSTOMER_DELETED = "CUSTOMER_DELETED";
+
+    /** Lançamento do fluxo normal, sem motivo. */
+    public CashbackEntry(Long id, Long customerId, Long orderId, Long orderItemId,
+            CashbackEntryType type, BigDecimal amount, Instant availableAt, Instant expiresAt,
+            Long reversesEntryId, Instant createdAt) {
+        this(id, customerId, orderId, orderItemId, type, amount, availableAt, expiresAt, reversesEntryId,
+                createdAt, null);
+    }
 
     public CashbackEntry {
         if (customerId == null) {
@@ -149,6 +162,20 @@ public record CashbackEntry(Long id, Long customerId, Long orderId, Long orderIt
             Long reversesEntryId, Instant createdAt) {
         return new CashbackEntry(id, customerId, orderId, orderItemId, type, amount, availableAt,
                 expiresAt, reversesEntryId, createdAt);
+    }
+
+    /** Reconstitui um lançamento a partir de persistência, com o motivo (V206). */
+    public static CashbackEntry of(Long id, Long customerId, Long orderId, Long orderItemId,
+            CashbackEntryType type, BigDecimal amount, Instant availableAt, Instant expiresAt,
+            Long reversesEntryId, Instant createdAt, String reason) {
+        return new CashbackEntry(id, customerId, orderId, orderItemId, type, amount, availableAt,
+                expiresAt, reversesEntryId, createdAt, reason);
+    }
+
+    /** Cópia com o motivo do lançamento (V206). */
+    public CashbackEntry withReason(String novoMotivo) {
+        return new CashbackEntry(id, customerId, orderId, orderItemId, type, amount, availableAt, expiresAt,
+                reversesEntryId, createdAt, novoMotivo);
     }
 
     /** Indica se este lançamento já conta para o saldo disponível no instante informado. */

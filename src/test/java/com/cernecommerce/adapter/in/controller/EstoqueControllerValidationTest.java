@@ -131,6 +131,27 @@ class EstoqueControllerValidationTest {
     }
 
     @Test
+    void listMovements_comQDeUmCaractere_returns_400() throws Exception {
+        mockMvc.perform(asStockManager(get("/estoque/movements").param("q", "m")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void listMovements_comQAcimaDe80Caracteres_returns_400() throws Exception {
+        mockMvc.perform(asStockManager(get("/estoque/movements").param("q", "m".repeat(81))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    /** No limite (2 caracteres) passa da validação e chega à busca — 200 com a página, mesmo vazia. */
+    @Test
+    void listMovements_comQDeDoisCaracteres_passaDaValidacao() throws Exception {
+        mockMvc.perform(asStockManager(get("/estoque/movements").param("q", "mz")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void listMovements_comSkuEmBranco_returns_400() throws Exception {
         mockMvc.perform(asStockManager(get("/estoque/movements")
                         .param("sku", "  ")

@@ -18,4 +18,8 @@ public class CashbackEntryResponseDTO {
     private Instant expiresAt;
     private Long reversesEntryId;
     private Instant createdAt;
+    /** V206 — motivo de um lançamento fora do fluxo normal; hoje só {@code CUSTOMER_DELETED}. */
+    @io.swagger.v3.oas.annotations.media.Schema(nullable = true,
+            description = "Motivo do lançamento fora do fluxo normal (ex.: CUSTOMER_DELETED); nulo no fluxo normal.")
+    private String reason;
 }

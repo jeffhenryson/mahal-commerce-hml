@@ -26,6 +26,13 @@ import java.util.List;
 public interface CashbackUseCase {
 
     /**
+     * V206 — zera o saldo de cashback do cliente (disponível e em carência) gravando lançamentos
+     * {@code EXPIRED}/{@code REVERSED} com o motivo informado. Nada do extrato é apagado. Devolve
+     * quantos lançamentos foram gravados (0 se não havia saldo).
+     */
+    int forfeitAll(Long customerId, String reason);
+
+    /**
      * Pendência 8 — revoga um ganho ({@code EARNED}) do cliente: grava um {@code REVERSED} apontando
      * para ele, como no reembolso. Nada é apagado.
      *

@@ -1024,6 +1024,20 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.NOT_FOUND, ex.getMessage(), "CUSTOMER_NOT_FOUND", req);
     }
 
+    /** V206 — exclusão do perfil bloqueada por comanda, mesa ou sessão aberta. */
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.crm.CustomerHasOpenComandaException.class)
+    public ResponseEntity<ApiError> handleCustomerHasOpenComanda(
+            com.cernecommerce.core.domain.exception.crm.CustomerHasOpenComandaException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CUSTOMER_HAS_OPEN_COMANDA", req);
+    }
+
+    /** V206 — exclusão do perfil bloqueada por saldo devedor em Marcados. */
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.crm.CustomerHasOpenBalanceException.class)
+    public ResponseEntity<ApiError> handleCustomerHasOpenBalance(
+            com.cernecommerce.core.domain.exception.crm.CustomerHasOpenBalanceException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "CUSTOMER_HAS_OPEN_BALANCE", req);
+    }
+
     @ExceptionHandler(DuplicateTagNameException.class)
     public ResponseEntity<ApiError> handleDuplicateTagName(DuplicateTagNameException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "TAG_ALREADY_EXISTS", req);

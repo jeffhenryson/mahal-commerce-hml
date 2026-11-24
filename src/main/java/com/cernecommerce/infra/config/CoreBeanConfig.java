@@ -759,6 +759,23 @@ class CoreBeanConfig {
         return service;
     }
 
+    /** V206 — exclusão (anonimização LGPD) do perfil do cliente. */
+    @Bean
+    com.cernecommerce.core.ports.in.CustomerDeletionUseCase customerDeletionUseCase(
+            CustomerRepository customerRepository, CustomerTagRepository customerTagRepository,
+            CustomerNoteRepository customerNoteRepository,
+            com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort customerNoteAttachmentStoragePort,
+            CashbackEntryRepository cashbackEntryRepository, CashbackUseCase cashbackUseCase,
+            ComandaRepository comandaRepository,
+            com.cernecommerce.core.ports.out.salao.SalaoAutoatendimentoRepository salaoAutoatendimentoRepository,
+            CentralPedidosConfigRepository centralPedidosConfigRepository,
+            CustomerReceivableRepository customerReceivableRepository) {
+        return new com.cernecommerce.core.service.CustomerDeletionService(customerRepository, customerTagRepository,
+                customerNoteRepository, customerNoteAttachmentStoragePort, cashbackEntryRepository, cashbackUseCase,
+                comandaRepository, salaoAutoatendimentoRepository, centralPedidosConfigRepository,
+                customerReceivableRepository, Clock.systemUTC());
+    }
+
     /** V183 — anexos de nota do CRM: disco local privado, servidos só pela API (podem ser documentos do cliente). */
     @Bean
     com.cernecommerce.core.ports.out.storage.CustomerNoteAttachmentStoragePort customerNoteAttachmentStoragePort(

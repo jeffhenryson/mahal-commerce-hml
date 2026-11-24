@@ -106,10 +106,51 @@ endpoints de negócio fora de `crm-export`/`estoque-movements`/`shop-catalog`) �
 Single-tenant, sem carteira por vendedor: quem tem `CRM_CUSTOMER_READ` vê **todos** os clientes.
 
 `customers` (V48) guarda `nome`, `contato`, `email` e `cpf` — **tudo em texto claro**, sem
-criptografia em repouso nem mascaramento na API ou no CSV. Não há registro de consentimento,
-anonimização, exportação por titular nem exclusão de cliente (o domínio não tem endpoint de
-delete). Sobre LGPD no backend como um todo, ver
+criptografia em repouso nem mascaramento na API ou no CSV. Não há registro de consentimento nem
+exportação por titular. Sobre LGPD no backend como um todo, ver
 [`plataforma`](../plataforma/README.md#conformidade-lgpd).
+
+**Exclusão do perfil = anonimização (V206).** `DELETE /crm/customers/{id}` (`CRM_CUSTOMER_DELETE`,
+concedida só a `ROLE_ADMIN`) devolve `204` e não apaga a linha. É idempotente: chamar de novo num
+perfil já anonimizado também devolve `204`, sem efeito e sem novo evento de auditoria. Pedidos, comandas,
+movimentações de estoque, extrato de cashback e auditoria continuam apontando para o mesmo
+`customer_id`. Não tem volta. Tudo roda numa transação (`CustomerDeletionService`):
+
+- `anonymized_at` é preenchido e `nome` vira "Cliente excluído". `contato`, `phone_normalized`,
+  `email`, `cpf`, `data_nascimento`, `cidade`, `avatar_url` e `origem` ficam `NULL`. O estágio
+  volta a `NOVO_LEAD` e o segmento a "Novo".
+- Saem todas as tags (a VIP inclusive), as notas e os anexos. Os arquivos dos anexos são apagados
+  do storage **depois do commit**.
+- O saldo de cashback zera por lançamento, sem apagar nada do extrato: `REVERSED` para o ganho em
+  carência e `EXPIRED` da sobra para o ganho liberado, com `reason = CUSTOMER_DELETED`, a coluna
+  nova da V206.
+- Os disparos futuros param, porque o `AutomationDispatchService` trata o anonimizado como "sem
+  cliente". Não há fila de campanha por cliente para cancelar.
+- O evento `CUSTOMER_DELETED` vai para a auditoria só com o `customerId`, e só na exclusão que
+  de fato anonimizou.
+
+**Recusas:**
+
+| Código | Quando |
+|---|---|
+| `404 CUSTOMER_NOT_FOUND` | O cliente não existe. Já anonimizado não é recusa: devolve `204`. |
+| `409 CUSTOMER_HAS_OPEN_COMANDA` | Há comanda aberta, o que inclui mesa ocupada, ou solicitação de sessão pendente. |
+| `409 CUSTOMER_HAS_OPEN_BALANCE` | Há fiado em aberto (`customer_receivable`). |
+
+**Quem ignora o cliente anonimizado:**
+
+- a listagem, a busca e o export;
+- os lookups por CPF, e-mail e telefone, que incluem o autocomplete do PDV e o QR do salão;
+- os segmentos e o recálculo;
+- o painel e o assistente;
+- a ficha (`GET /crm/customers/{id}`), que dá `404`.
+
+Só `findById`/`findByIds` do repositório o enxergam. É por eles que pedidos, comandas e o cupom
+reimpresso mostram "Cliente excluído". Como telefone, e-mail e CPF ficam `NULL`, o mesmo dado pode
+ser cadastrado de novo: os `UNIQUE` ignoram `NULL`. A `ck_customers_has_identifier` aceita linha
+anonimizada.
+
+A conta do marketplace (`users.customer_id`) não é tocada. Ela tem e-mail e telefone próprios.
 
 ### Auditoria
 

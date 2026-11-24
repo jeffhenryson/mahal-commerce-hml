@@ -106,6 +106,8 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         REPLENISHMENT_LIST_CLEARED,
         // CRM
         CUSTOMER_CREATED, CUSTOMER_UPDATED, CUSTOMER_NOTE_ADDED, CUSTOMER_STAGE_CHANGED,
+        /** V206 — perfil do cliente excluído (anonimização LGPD). Payload só com customerId. */
+        CUSTOMER_DELETED,
         // Ecommerce (ECM-F001, Fatia 8) — distinto de CUSTOMER_CREATED: nasce de autocadastro
         // público em /shop/register, não de um operador com CRM_CUSTOMER_MANAGE.
         CUSTOMER_MARKETPLACE_REGISTERED,

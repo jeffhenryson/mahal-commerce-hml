@@ -49,6 +49,8 @@ public class DevRoleBootstrapConfig {
         "CRM_CUSTOMER_READ", "CRM_CUSTOMER_MANAGE", "CRM_CUSTOMER_LOOKUP", "CRM_CUSTOMER_EXPORT",
         // CRM-C006 — cadastro rápido de lead (V127); o admin herda, o atendente recebe abaixo.
         "CRM_LEAD_CREATE",
+        // V206 — excluir (anonimizar) o perfil do cliente, LGPD. Na migração, só ROLE_ADMIN.
+        "CRM_CUSTOMER_DELETE",
         "USER_SECURITY_MANAGE", "CASHBACK_RATE_MANAGE", "CASHBACK_READ", "CASHBACK_ADJUST", "SALES_GOAL_MANAGE",
         "COMPRAS_READ", "COMPRAS_RECEIPT_MANAGE", "COMPRAS_SUPPLIER_MANAGE", "ECOMMERCE_READ",
         "FINANCEIRO_READ", "FINANCEIRO_CASH_FLOW_MANAGE", "LOGISTICA_READ",

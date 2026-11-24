@@ -2074,6 +2074,91 @@ class EstoqueRepositoryIT {
         assertThat(forDoIntervalo.content()).isEmpty();
     }
 
+    // ── GET /estoque/movements?q= — busca livre ───────────────────────────────
+
+    /** Depósito com movimentos de um produto base, duas variações e um SKU órfão. */
+    private Warehouse givenSearchFixture() {
+        Warehouse deposito = givenWarehouse("MOVQ-WH-" + System.nanoTime());
+        productRepository.save(Product.create("MOVQ-ZOMO", "Essência Zomo", "essencias", List.of(
+                ProductVariant.create("MOVQ-ZOMO-MENTA", List.of(new ProductAttribute("Sabor", "Menta"))),
+                ProductVariant.create("MOVQ-ZOMO-UVA", List.of(new ProductAttribute("Sabor", "Uva"))))));
+        productRepository.save(Product.create("MOVQ-CARV", "Carvão de Coco", "carvao", List.of()));
+        stockMovementRepository.save(StockMovement.create("MOVQ-ZOMO-MENTA", deposito.id(), MovementType.ENTRADA,
+                new BigDecimal("10"), "Entrada", "gerente"));
+        stockMovementRepository.save(StockMovement.create("MOVQ-ZOMO-MENTA", deposito.id(), MovementType.SAIDA,
+                new BigDecimal("2"), "Venda", "gerente"));
+        stockMovementRepository.save(StockMovement.create("MOVQ-ZOMO-UVA", deposito.id(), MovementType.ENTRADA,
+                new BigDecimal("5"), "Entrada", "gerente"));
+        stockMovementRepository.save(StockMovement.create("MOVQ-CARV", deposito.id(), MovementType.ENTRADA,
+                new BigDecimal("8"), "Entrada", "gerente"));
+        stockMovementRepository.save(StockMovement.create("MOVQ-ORFAO", deposito.id(), MovementType.AJUSTE,
+                new BigDecimal("1"), "Legado", "gerente"));
+        flushAndClear();
+        return deposito;
+    }
+
+    private List<String> skusFound(List<String> terms, Warehouse deposito, MovementType type, Instant from,
+            Instant to) {
+        return stockMovementRepository.searchByText(terms, deposito.id(), type, from, to, 0, 50).content().stream()
+                .map(StockMovement::sku).toList();
+    }
+
+    @Test
+    void searchByText_ignoraAcentoEMaiusculas_noNomeDoProduto() {
+        Warehouse deposito = givenSearchFixture();
+
+        // "essencia" acha "Essência" — no pai e nas duas variações.
+        assertThat(skusFound(List.of("essencia"), deposito, null, null, null))
+                .containsExactlyInAnyOrder("MOVQ-ZOMO-MENTA", "MOVQ-ZOMO-MENTA", "MOVQ-ZOMO-UVA");
+        assertThat(skusFound(List.of("carvao"), deposito, null, null, null)).containsExactly("MOVQ-CARV");
+    }
+
+    @Test
+    void searchByText_cadaPalavraEmQualquerOrdem_achaAVariacao() {
+        Warehouse deposito = givenSearchFixture();
+
+        // "menta" vem do atributo da variação, "zomo" do nome do pai.
+        assertThat(skusFound(List.of("menta", "zomo"), deposito, null, null, null))
+                .containsExactly("MOVQ-ZOMO-MENTA", "MOVQ-ZOMO-MENTA");
+        // Uma palavra que não aparece em lugar nenhum derruba o resultado: é AND entre palavras.
+        assertThat(skusFound(List.of("menta", "coco"), deposito, null, null, null)).isEmpty();
+    }
+
+    @Test
+    void searchByText_achaPeloSku_inclusiveOrfao() {
+        Warehouse deposito = givenSearchFixture();
+
+        assertThat(skusFound(List.of("movq-orf"), deposito, null, null, null)).containsExactly("MOVQ-ORFAO");
+    }
+
+    @Test
+    void searchByText_combinaComTipoEPeriodo() {
+        Warehouse deposito = givenSearchFixture();
+
+        assertThat(skusFound(List.of("menta"), deposito, MovementType.SAIDA, null, null))
+                .containsExactly("MOVQ-ZOMO-MENTA");
+        assertThat(skusFound(List.of("menta"), deposito, null, Instant.now().plusSeconds(3600), null)).isEmpty();
+        assertThat(skusFound(List.of("menta"), deposito, null, Instant.now().minusSeconds(3600),
+                Instant.now().plusSeconds(3600))).hasSize(2);
+    }
+
+    @Test
+    void searchByText_naoDuplicaLinhaPorAtributo_eContaCerto() {
+        Warehouse deposito = givenWarehouse("MOVQ2-WH-" + System.nanoTime());
+        productRepository.save(Product.create("MOVQ2-P", "Pod Descartável", "pods", List.of(
+                ProductVariant.create("MOVQ2-P-1", List.of(new ProductAttribute("Sabor", "Menta Ice"),
+                        new ProductAttribute("Potência", "Menta 5000"))))));
+        stockMovementRepository.save(StockMovement.create("MOVQ2-P-1", deposito.id(), MovementType.ENTRADA,
+                new BigDecimal("3"), "Entrada", "gerente"));
+        flushAndClear();
+
+        PageResult<StockMovement> page = stockMovementRepository.searchByText(List.of("menta"), deposito.id(),
+                null, null, null, 0, 20);
+
+        assertThat(page.content()).hasSize(1);
+        assertThat(page.totalElements()).isEqualTo(1L);
+    }
+
     // ── DELETE reorder-point (item 4) ─────────────────────────────────────────
 
     @Test

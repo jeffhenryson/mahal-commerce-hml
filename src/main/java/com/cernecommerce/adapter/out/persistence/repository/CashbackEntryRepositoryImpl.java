@@ -48,6 +48,7 @@ public class CashbackEntryRepositoryImpl implements CashbackEntryRepository {
         entity.setExpiresAt(entry.expiresAt());
         entity.setReversesEntryId(entry.reversesEntryId());
         entity.setCreatedAt(entry.createdAt());
+        entity.setReason(entry.reason());
         return toDomain(jpaRepository.save(entity));
     }
 
@@ -176,6 +177,12 @@ public class CashbackEntryRepositoryImpl implements CashbackEntryRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<CashbackEntry> findEarnedNotReversedByCustomerId(Long customerId) {
+        return jpaRepository.findEarnedNotReversedByCustomerId(customerId).stream().map(this::toDomain).toList();
+    }
+
+    @Override
     public void saveAllocation(CashbackRedemptionAllocation allocation) {
         CashbackRedemptionAllocationEntity entity = new CashbackRedemptionAllocationEntity();
         entity.setEntryId(allocation.entryId());
@@ -196,6 +203,6 @@ public class CashbackEntryRepositoryImpl implements CashbackEntryRepository {
     private CashbackEntry toDomain(CashbackEntryEntity e) {
         return CashbackEntry.of(e.getId(), e.getCustomerId(), e.getOrderId(), e.getOrderItemId(),
                 CashbackEntryType.valueOf(e.getType()), e.getAmount(), e.getAvailableAt(),
-                e.getExpiresAt(), e.getReversesEntryId(), e.getCreatedAt());
+                e.getExpiresAt(), e.getReversesEntryId(), e.getCreatedAt(), e.getReason());
     }
 }

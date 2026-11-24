@@ -35,13 +35,17 @@ public record Customer(
     String cidade,
     String avatarUrl,
     String segmento,
-    boolean segmentoManual
+    boolean segmentoManual,
+    Instant anonymizedAt
 ) {
 
     /** V183 — segmentos válidos. Texto livre para o front (badge), conjunto fechado aqui. */
     public static final java.util.Set<String> SEGMENTOS = java.util.Set.of("Novo", "Recorrente", "VIP", "Em Risco",
             "Inativo");
     public static final String SEGMENTO_INICIAL = "Novo";
+
+    /** V206 — nome que fica no lugar do original depois da exclusão (anonimização LGPD). */
+    public static final String NOME_ANONIMIZADO = "Cliente excluído";
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
@@ -52,7 +56,8 @@ public record Customer(
         boolean hasContato = contato != null && !contato.isBlank();
         boolean hasEmail = email != null && !email.isBlank();
         boolean hasCpf = cpf != null && !cpf.isBlank();
-        if (!hasContato && !hasEmail && !hasCpf) {
+        // V206 — o cliente anonimizado perdeu todos os identificadores de propósito.
+        if (!hasContato && !hasEmail && !hasCpf && anonymizedAt == null) {
             throw new IllegalArgumentException(
                     "cliente precisa de ao menos um identificador: cpf, email ou contato");
         }
@@ -66,6 +71,19 @@ public record Customer(
         if (!SEGMENTOS.contains(segmento)) {
             throw new IllegalArgumentException("segmento inválido: " + segmento);
         }
+    }
+
+    /** V206 — forma anterior à anonimização: cliente ativo. */
+    public Customer(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento, String cidade, String avatarUrl,
+            String segmento, boolean segmentoManual) {
+        this(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade, avatarUrl,
+                segmento, segmentoManual, null);
+    }
+
+    /** V206 — true depois da exclusão do perfil: os dados pessoais já foram apagados. */
+    public boolean isAnonymized() {
+        return anonymizedAt != null;
     }
 
     public String firstName() {
@@ -108,25 +126,25 @@ public record Customer(
     public Customer withProfile(String novoNome, String novoContato, String novoEmail, String novoCpf,
             String novaOrigem) {
         return new Customer(id, novoNome, novoContato, novoEmail, novoCpf, novaOrigem, cadastradoEm, estagio,
-                dataNascimento, cidade, avatarUrl, segmento, segmentoManual);
+                dataNascimento, cidade, avatarUrl, segmento, segmentoManual, anonymizedAt);
     }
 
     /** Retorna uma cópia com a data de nascimento trocada (CRM-F012). */
     public Customer withDataNascimento(LocalDate novaDataNascimento) {
         return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, novaDataNascimento,
-                cidade, avatarUrl, segmento, segmentoManual);
+                cidade, avatarUrl, segmento, segmentoManual, anonymizedAt);
     }
 
     /** Retorna uma cópia deste cliente com o estágio atualizado. */
     public Customer withEstagio(CustomerStage novoEstagio) {
         return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, novoEstagio, dataNascimento,
-                cidade, avatarUrl, segmento, segmentoManual);
+                cidade, avatarUrl, segmento, segmentoManual, anonymizedAt);
     }
 
     /** V183 — cidade e foto. Vazio vira nulo. */
     public Customer withCidadeEAvatar(String novaCidade, String novoAvatarUrl) {
         return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento,
-                blankToNull(novaCidade), blankToNull(novoAvatarUrl), segmento, segmentoManual);
+                blankToNull(novaCidade), blankToNull(novoAvatarUrl), segmento, segmentoManual, anonymizedAt);
     }
 
     /**
@@ -136,17 +154,25 @@ public record Customer(
     public Customer withSegmentoManual(String novoSegmento) {
         return novoSegmento == null
                 ? new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
-                        avatarUrl, segmento, false)
+                        avatarUrl, segmento, false, anonymizedAt)
                 : new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
-                        avatarUrl, novoSegmento, true);
+                        avatarUrl, novoSegmento, true, anonymizedAt);
     }
 
     /** Reconstitui com todos os campos (V183). */
     public static Customer of(Long id, String nome, String contato, String email, String cpf, String origem,
             Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento, String cidade, String avatarUrl,
             String segmento, boolean segmentoManual) {
+        return of(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade, avatarUrl,
+                segmento, segmentoManual, null);
+    }
+
+    /** Reconstitui com todos os campos, incluindo a anonimização (V206). */
+    public static Customer of(Long id, String nome, String contato, String email, String cpf, String origem,
+            Instant cadastradoEm, CustomerStage estagio, LocalDate dataNascimento, String cidade, String avatarUrl,
+            String segmento, boolean segmentoManual, Instant anonymizedAt) {
         return new Customer(id, nome, contato, email, cpf, origem, cadastradoEm, estagio, dataNascimento, cidade,
-                avatarUrl, segmento, segmentoManual);
+                avatarUrl, segmento, segmentoManual, anonymizedAt);
     }
 
     private static String blankToNull(String value) {

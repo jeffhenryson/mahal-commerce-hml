@@ -1517,6 +1517,17 @@ public interface EstoqueUseCase {
             Instant to, int page, int size);
 
     /**
+     * Busca livre no histórico de movimentações (GET /estoque/movements?q=): cada palavra de
+     * {@code q} tem de aparecer, sem diferenciar maiúsculas nem acentos, no SKU, no nome do produto ou
+     * no rótulo da variação, em qualquer ordem. Combina com depósito, tipo e período como
+     * {@link #listMovements(String, String, MovementType, Instant, Instant, int, int)}. Lança
+     * {@link com.cernecommerce.core.domain.exception.estoque.WarehouseNotFoundException} se o
+     * depósito informado não existir.
+     */
+    PageResult<StockMovement> searchMovements(String q, String warehouseCode, MovementType type, Instant from,
+            Instant to, int page, int size);
+
+    /**
      * Histórico paginado de {@code ENTRADA}s de um SKU num depósito, mais recentes primeiro (item
      * 2 do pedido do frontend — referência de última compra). Substitui a varredura client-side de
      * {@code GET /estoque/movements?sku=...&size=20} que perdia a referência em SKUs de giro

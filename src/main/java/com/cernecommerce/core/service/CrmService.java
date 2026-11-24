@@ -299,8 +299,7 @@ public class CrmService implements CrmUseCase {
     @Override
     @Transactional(readOnly = true)
     public Customer findCustomerById(Long id) {
-        return customerRepository.findById(id)
-                .orElseThrow(() -> new CustomerNotFoundException(id));
+        return requireCustomer(id);
     }
 
     @Override
@@ -764,8 +763,14 @@ public class CrmService implements CrmUseCase {
                         whatsapp.connected() ? WHATSAPP_PROVIDER : null, whatsapp.detail()));
     }
 
+    /**
+     * V206 — o cliente anonimizado (perfil excluído) responde como inexistente: a ficha, as notas, o
+     * extrato e qualquer operação nele dão 404. Quem só precisa do nome de um pedido antigo usa
+     * {@link #findCustomerNames}/{@link #findCustomersByIds}, que o enxergam como "Cliente excluído".
+     */
     private Customer requireCustomer(Long customerId) {
         return customerRepository.findById(customerId)
+                .filter(c -> !c.isAnonymized())
                 .orElseThrow(() -> new CustomerNotFoundException(customerId));
     }
 

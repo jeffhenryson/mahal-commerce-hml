@@ -13,6 +13,15 @@ import java.time.Instant;
 public class StockMovementResponseDTO {
     private Long id;
     private String sku;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Nome do produto dono do SKU — o do produto base quando "
+            + "o SKU é de uma variação. Nulo quando o SKU não pertence mais a nenhum produto (apagado).",
+            nullable = true)
+    private String productName;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "Rótulo da variação (ex.: \"Sabor: Menta\"; vários "
+            + "atributos unidos por \" · \"). Nulo no produto base e no SKU órfão.", nullable = true)
+    private String variantLabel;
     private String warehouseCode;
     private String type;
     private BigDecimal quantity;

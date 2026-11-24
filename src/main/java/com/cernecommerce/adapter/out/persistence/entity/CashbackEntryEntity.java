@@ -46,4 +46,8 @@ public class CashbackEntryEntity {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    /** V206 — motivo de um lançamento fora do fluxo normal (ex.: CUSTOMER_DELETED). */
+    @Column(length = 40)
+    private String reason;
 }

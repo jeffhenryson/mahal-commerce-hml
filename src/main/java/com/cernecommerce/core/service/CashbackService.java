@@ -327,6 +327,40 @@ public class CashbackService implements CashbackUseCase {
         return cashbackEntryRepository.save(CashbackEntry.reversed(entry, Instant.now()));
     }
 
+    /**
+     * V206 — zera o saldo do cliente (disponível e em carência) por lançamento, sem apagar nada do
+     * extrato. Para cada ganho ainda não anulado: em carência, um {@code REVERSED} pelo valor cheio
+     * (nada dele pôde ser resgatado); já liberado, um {@code EXPIRED} só da sobra que nenhum resgate
+     * consumiu — expirar o valor cheio debitaria duas vezes o que já foi resgatado (V186). A trava do
+     * cliente fecha a corrida com um resgate em andamento, como em {@link #expireEntries}.
+     */
+    @Override
+    @Transactional
+    public int forfeitAll(Long customerId, String reason) {
+        cashbackEntryRepository.lockCustomer(customerId);
+        Instant now = Instant.now();
+        List<CashbackEntry> earned = cashbackEntryRepository.findEarnedNotReversedByCustomerId(customerId);
+        if (earned.isEmpty()) {
+            return 0;
+        }
+        Map<Long, BigDecimal> consumed = cashbackEntryRepository
+                .sumConsumedByEarnedIds(earned.stream().map(CashbackEntry::id).toList());
+        int written = 0;
+        for (CashbackEntry entry : earned) {
+            BigDecimal used = consumed.getOrDefault(entry.id(), BigDecimal.ZERO);
+            BigDecimal remaining = entry.amount().subtract(used);
+            if (remaining.signum() <= 0) {
+                continue;
+            }
+            CashbackEntry forfeiture = entry.availableAt().isAfter(now) && used.signum() == 0
+                    ? CashbackEntry.reversed(entry, now)
+                    : CashbackEntry.expired(entry, remaining, now);
+            cashbackEntryRepository.save(forfeiture.withReason(reason));
+            written++;
+        }
+        return written;
+    }
+
     @Override
     @Transactional
     public CashbackBalance releasePending(Long customerId) {
