@@ -45,7 +45,8 @@ public class PdvSessaoEssenciaController {
     @Operation(summary = "Essências de sessão e as modalidades em que valem",
             description = "PDV-F061 — as essências de sessão ativas que se podem vender, uma linha por SKU "
                     + "vendável (o mesmo critério do catálogo do PDV), com faixaId e as marcações "
-                    + "compraEssencia/itensPessoais (na variação, o que ela não marcou vem do produto).")
+                    + "compraEssencia/itensPessoais/promoEssencia (na variação, o que ela não marcou vem do "
+                    + "produto).")
     @GetMapping("/pdv/sessao/essencias")
     @PreAuthorize("hasAnyAuthority('PDV_READ','PDV_SESSAO_MANAGE')")
     public ResponseEntity<List<SessionEssenceResponseDTO>> list() {
@@ -66,12 +67,13 @@ public class PdvSessaoEssenciaController {
     public ResponseEntity<SessionEssenceResponseDTO> setFlags(@PathVariable String sku,
             @RequestBody SessionEssenceFlagsRequest request, Authentication authentication) {
         EstoqueUseCase.SessionEssence saved = estoqueUseCase.setSessionFlags(sku, request.getCompraEssencia(),
-                request.getItensPessoais());
+                request.getItensPessoais(), request.getPromoEssencia());
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("target", "essencia");
         payload.put("id", saved.sku());
         payload.put("compraEssencia", saved.compraEssencia());
         payload.put("itensPessoais", saved.itensPessoais());
+        payload.put("promoEssencia", saved.promoEssencia());
         publisher.publishEvent(AuditEvent.of(EventType.SESSION_MENU_CHANGED, authentication.getName(), payload));
         return ResponseEntity.ok(SessionEssenceResponseDTO.of(saved));
     }

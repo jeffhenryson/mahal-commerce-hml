@@ -104,6 +104,10 @@ public class ProductEntity {
     @Column(name = "session_itens_pessoais", nullable = false)
     private boolean sessionItensPessoais;
 
+    // PDV-F062 — a essência vale na "Promo de essência" (V207). Padrão TRUE: a marcação exclui.
+    @Column(name = "session_promo_essencia", nullable = false)
+    private boolean sessionPromoEssencia = true;
+
     // "Repor sozinha" (V202) — troca automática da lata aberta ao atingir o limite de sessões.
     // Limite nulo = usar o sessions_per_unit gravado na lata.
     @Column(name = "auto_replace", nullable = false)

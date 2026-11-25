@@ -121,7 +121,7 @@ public class PdvSessaoController {
             @ApiResponse(responseCode = "400", description = "Essência vazia (SESSION_ESSENCE_REQUIRED); sem faixa na essência nem tierId (SESSION_TIER_REQUIRED, PDV-F050); mescla com o mesmo sabor (SAME_FLAVOR_MIX) ou 2º sabor sem o 1º (SESSION_ESSENCE_SKU_REQUIRED, PDV-F051)", content = @Content),
             @ApiResponse(responseCode = "403", description = "DUPLO sem PDV_COMANDA_COURTESY (COURTESY_NOT_ALLOWED, PDV-C025): o 2º rosh do duplo é cortesia; pagarNoFinal sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED, PDV-F034)", content = @Content),
             @ApiResponse(responseCode = "404", description = "Comanda, faixa (SESSION_TIER_NOT_FOUND) ou adicional (SESSION_ADDON_NOT_FOUND) não encontrado", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não aberta, sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT); PDV-F061: DUPLO fora de PADRAO (SESSION_MODALITY_DUPLO), essência sem a marca da modalidade (SESSION_ESSENCE_NOT_ALLOWED), sem pacote no Salão (SALAO_SEM_ESTOQUE)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta, sem utensílio livre (SESSION_ASSET_UNAVAILABLE) ou vaso não configurado (SESSION_MENU_CONFLICT); PDV-F061: DUPLO fora de PADRAO (SESSION_MODALITY_DUPLO), essência sem a marca da modalidade (SESSION_ESSENCE_NOT_ALLOWED), sem pacote no Salão (SALAO_SEM_ESTOQUE); PDV-F062: promo sem lata aberta (SESSION_PROMO_REQUIRES_OPEN_PACKAGE) ou com essência fora da promo (SESSION_PROMO_EXCLUDED)", content = @Content)
     })
     @PostMapping("/pdv/comandas/{id}/sessoes")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")
@@ -540,9 +540,12 @@ public class PdvSessaoController {
                 : atual.itensPessoaisPreco();
         BigDecimal compraEssencia = request.getCompraEssenciaDesconto() != null ? request.getCompraEssenciaDesconto()
                 : atual.compraEssenciaDesconto();
+        // PDV-F062 — idem para o preço da promo de essência.
+        BigDecimal promoEssencia = request.getPromoEssenciaPreco() != null ? request.getPromoEssenciaPreco()
+                : atual.promoEssenciaPreco();
         SessionSettings saved = sessionMenuUseCase.updateSettings(new SessionSettings(request.getVasoPadraoCodigo(),
                 request.getVasoGrandeCodigo(), request.getUpgradeVasoGrandePreco(), request.getDiasDuploRosh(), jumbo,
-                itensPessoais, compraEssencia));
+                itensPessoais, compraEssencia, promoEssencia));
         audit(authentication, menuPayload("config", saved));
         return ResponseEntity.ok(SessionSettingsResponseDTO.of(saved));
     }
@@ -586,6 +589,7 @@ public class PdvSessaoController {
             putIfPresent(p, "upgradeCarvaoJumboPreco", c.upgradeCarvaoJumboPreco());
             putIfPresent(p, "itensPessoaisPreco", c.itensPessoaisPreco());
             putIfPresent(p, "compraEssenciaDesconto", c.compraEssenciaDesconto());
+            putIfPresent(p, "promoEssenciaPreco", c.promoEssenciaPreco());
             putIfPresent(p, "diasDuploRosh", c.diasDuploRosh() == null ? null
                     : c.diasDuploRosh().stream().map(Enum::name).sorted().toList());
         }

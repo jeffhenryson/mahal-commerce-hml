@@ -12,4 +12,8 @@ public class SessionEssenceFlagsRequest {
 
     @Schema(description = "Vale na sessão com itens pessoais do cliente.", example = "false")
     private Boolean itensPessoais;
+
+    @Schema(description = "PDV-F062 — vale na \"Promo de essência\" (false = fora da promo, as deluxe).",
+            example = "true")
+    private Boolean promoEssencia;
 }

@@ -662,7 +662,9 @@ public record Product(
                         variant.sessionCompraEssencia() != null ? variant.sessionCompraEssencia()
                                 : sessionFlags.compraEssencia(),
                         variant.sessionItensPessoais() != null ? variant.sessionItensPessoais()
-                                : sessionFlags.itensPessoais()))
+                                : sessionFlags.itensPessoais(),
+                        variant.sessionPromoEssencia() != null ? variant.sessionPromoEssencia()
+                                : sessionFlags.promoEssencia()))
                 .orElse(sessionFlags);
     }
 

@@ -9,14 +9,19 @@ package com.cernecommerce.core.domain.model.pdv;
  *   cobrados); a sessão sai com desconto.</li>
  *   <li>{@link #ITENS_PESSOAIS}: o cliente traz o narguilé; preço fixo, sem utensílio da casa, e 1
  *   pacote do sabor principal vem incluso; o resto dos pacotes é cobrado.</li>
+ *   <li>{@link #PROMO_ESSENCIA} (PDV-F062): itens da casa e preço fechado
+ *   ({@code SessionSettings#promoEssenciaPreco}), qualquer que seja a faixa, mas só com lata já aberta
+ *   no Salão. Mescla vale; duplo não. Vaso grande, jumbo e adicionais somam por cima.</li>
  * </ul>
  *
- * <p>Nas duas modalidades novas a sessão não gasta lata: a essência sai da loja como pacote.</p>
+ * <p>Na compra de essência e nos itens pessoais a sessão não gasta lata: a essência sai da loja como
+ * pacote. A promo gasta 1 uso da lata aberta, como a padrão.</p>
  */
 public enum SessionModality {
     PADRAO,
     COMPRA_ESSENCIA,
-    ITENS_PESSOAIS;
+    ITENS_PESSOAIS,
+    PROMO_ESSENCIA;
 
     /** O 2º rosh do duplo só existe na sessão padrão. */
     public boolean allowsDuplo() {
@@ -35,7 +40,7 @@ public enum SessionModality {
 
     /** A essência são pacotes da loja, e não uso da lata da casa. */
     public boolean usesStorePackages() {
-        return this != PADRAO;
+        return this == COMPRA_ESSENCIA || this == ITENS_PESSOAIS;
     }
 
     /** 1 pacote do sabor principal vem no kit, a R$ 0. */
@@ -45,4 +50,7 @@ public enum SessionModality {
 
     /** SKU da linha da sessão de itens pessoais sem faixa: o preço não depende dela. */
     public static final String ITENS_PESSOAIS_SKU = "SESS-PESSOAL";
+
+    /** PDV-F062 — SKU da linha da promo cujo sabor não tem faixa: o preço também não depende dela. */
+    public static final String PROMO_ESSENCIA_SKU = "SESS-PROMO";
 }

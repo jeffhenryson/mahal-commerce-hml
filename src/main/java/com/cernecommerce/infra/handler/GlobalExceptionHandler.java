@@ -221,6 +221,8 @@ import com.cernecommerce.core.domain.exception.pdv.SessionAssetTypeNotFoundExcep
 import com.cernecommerce.core.domain.exception.pdv.SessionAssetUnavailableException;
 import com.cernecommerce.core.domain.exception.pdv.SessionModalityDuploException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceNotAllowedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoExcludedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoRequiresOpenPackageException;
 import com.cernecommerce.core.domain.exception.pdv.SessionCollectedException;
 import com.cernecommerce.core.domain.exception.pdv.SessionAddonNotAfterDeliveryException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPackagePaidException;
@@ -1949,6 +1951,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SessionEssenceNotAllowedException.class)
     public ResponseEntity<ApiError> handleSessionEssenceNotAllowed(SessionEssenceNotAllowedException ex, HttpServletRequest req) {
         return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_ESSENCE_NOT_ALLOWED", req);
+    }
+
+    @ExceptionHandler(SessionPromoRequiresOpenPackageException.class)
+    public ResponseEntity<ApiError> handleSessionPromoRequiresOpenPackage(SessionPromoRequiresOpenPackageException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_PROMO_REQUIRES_OPEN_PACKAGE", req);
+    }
+
+    @ExceptionHandler(SessionPromoExcludedException.class)
+    public ResponseEntity<ApiError> handleSessionPromoExcluded(SessionPromoExcludedException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "SESSION_PROMO_EXCLUDED", req);
     }
 
     @ExceptionHandler(SessionCollectedException.class)

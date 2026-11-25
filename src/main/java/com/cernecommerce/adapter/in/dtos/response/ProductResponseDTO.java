@@ -120,6 +120,9 @@ public class ProductResponseDTO {
     /** PDV-F061 — a essência vale na sessão com itens pessoais do cliente. */
     private boolean sessionItensPessoais;
 
+    /** PDV-F062 — a essência vale na "Promo de essência" (false = fora da promo). */
+    private boolean sessionPromoEssencia;
+
     /** {@code RASCUNHO}, {@code ATIVO} ou {@code ARQUIVADO} (EST-F023, EST-F054). */
     private String status;
 }

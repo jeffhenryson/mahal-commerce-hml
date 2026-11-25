@@ -1,6 +1,8 @@
 package com.cernecommerce.core.service;
 
 import com.cernecommerce.core.domain.exception.pdv.SessionModalityDuploException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoExcludedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoRequiresOpenPackageException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPackagesRequiredException;
 import com.cernecommerce.core.domain.exception.pdv.SessionFlavorNotInPackagesException;
 import com.cernecommerce.core.domain.exception.pdv.SessionEssenceNotAllowedException;
@@ -631,10 +633,16 @@ public class ComandaService implements ComandaUseCase {
         if (!pacotes.isEmpty()) {
             requireFlavorsInPackages(sabores, pacotes.keySet());
         }
+        // PDV-F062 — a promo só usa lata já aberta: conferido antes de gravar, consumeEssence nunca
+        // chega a abrir lata nova nem a tirar da loja.
+        if (modality == SessionModality.PROMO_ESSENCIA) {
+            requireOpenPackages(sabores, comanda, Set.of());
+        }
         // PDV-F050 — a faixa é a da essência (a maior, na mescla); o tierId do pedido só vale para o
-        // sabor sem faixa na ficha e para a sessão em texto. PDV-F061 — itens pessoais não exigem faixa.
+        // sabor sem faixa na ficha e para a sessão em texto. PDV-F061 — itens pessoais não exigem faixa;
+        // PDV-F062 — nem a promo, cujo preço é fechado.
         SessionTier tier = tierFixed ? menu.requireActiveTier(command.tierId())
-                : modality == SessionModality.ITENS_PESSOAIS ? tierForOptional(menu, command.tierId(), sabores)
+                : tierIsOptional(modality) ? tierForOptional(menu, command.tierId(), sabores)
                 : tierFor(menu, command.tierId(), null, sabores);
         SessionSettings settings = menu.settings();
         String notes = sessionNotes(essenceText(command.essencia(), sabores), vasoGrande);
@@ -713,20 +721,31 @@ public class ComandaService implements ComandaUseCase {
             // A maior faixa entre os sabores da sessão (tierFor), menos o desconto.
             case COMPRA_ESSENCIA -> tier.preco().subtract(settings.compraEssenciaDesconto()).max(BigDecimal.ZERO);
             case ITENS_PESSOAIS -> settings.itensPessoaisPreco();
+            // PDV-F062 — preço fechado, qualquer que seja a faixa (ou sem faixa).
+            case PROMO_ESSENCIA -> settings.promoEssenciaPreco();
         };
         return (setup.vasoGrande() ? base.add(settings.upgradeVasoGrandePreco()) : base)
                 .add(setup.addonsTotal()).add(settings.charcoalSurcharge(setup.charcoal(), setup.charcoalCourtesy()));
     }
 
-    /** PDV-F061 — o SKU da linha: o da faixa, ou o sintético de itens pessoais sem faixa. */
+    /** PDV-F061 — o SKU da linha: o da faixa, ou o sintético da modalidade sem faixa (itens pessoais, promo). */
     private static String sessionSku(SessionModality modality, SessionTier tier) {
-        return tier != null ? tier.sku() : SessionModality.ITENS_PESSOAIS_SKU;
+        if (tier != null) {
+            return tier.sku();
+        }
+        return modality == SessionModality.PROMO_ESSENCIA ? SessionModality.PROMO_ESSENCIA_SKU
+                : SessionModality.ITENS_PESSOAIS_SKU;
+    }
+
+    /** PDV-F061/PDV-F062 — modalidades de preço que não depende da faixa: a faixa é só informação. */
+    private static boolean tierIsOptional(SessionModality modality) {
+        return modality == SessionModality.ITENS_PESSOAIS || modality == SessionModality.PROMO_ESSENCIA;
     }
 
     /** O nome da linha de sessão: a faixa e o que soma a ela, para o cupom e o histórico. */
     private static String sessionProductName(SessionModality modality, SessionTier tier, SessionSettings settings,
             SessionSetup setup) {
-        // PDV-F061 — itens pessoais podem não ter faixa: o preço é fixo.
+        // PDV-F061 — itens pessoais (e a promo, PDV-F062) podem não ter faixa: o preço é fixo.
         StringBuilder productName = new StringBuilder("Sessão");
         if (tier != null) {
             productName.append(' ').append(tier.nome());
@@ -735,6 +754,8 @@ public class ComandaService implements ComandaUseCase {
             productName.append(" (compra de essência)");
         } else if (modality == SessionModality.ITENS_PESSOAIS) {
             productName.append(" (itens pessoais)");
+        } else if (modality == SessionModality.PROMO_ESSENCIA) {
+            productName.append(" (promo de essência)");
         }
         if (setup.vasoGrande()) {
             productName.append(" + vaso grande");
@@ -777,10 +798,36 @@ public class ComandaService implements ComandaUseCase {
         }
         for (Map.Entry<String, EstoqueUseCase.CatalogSaleInfo> sabor : sabores) {
             var flags = sabor.getValue().sessionFlags();
+            // PDV-F062 — na promo a marcação é "fora da promo" (as deluxe), com erro próprio.
+            if (modality == SessionModality.PROMO_ESSENCIA) {
+                if (!flags.promoEssencia()) {
+                    throw new SessionPromoExcludedException(sabor.getKey());
+                }
+                continue;
+            }
             boolean liberada = modality == SessionModality.COMPRA_ESSENCIA ? flags.compraEssencia()
                     : flags.itensPessoais();
             if (!liberada) {
                 throw new SessionEssenceNotAllowedException(sabor.getKey(), modality.name());
+            }
+        }
+    }
+
+    /**
+     * PDV-F062 — cada sabor da promo tem lata aberta no depósito de sessão (a do Salão, com ele ativo).
+     * Sabor sem lata configurada (vendido da prateleira) também recusa: a promo não tira da loja.
+     *
+     * @param jaNaLinha SKUs que a linha já usa (edição): o uso deles já foi contado e não se reconfere
+     */
+    private void requireOpenPackages(List<Map.Entry<String, EstoqueUseCase.CatalogSaleInfo>> sabores,
+            Comanda comanda, Set<String> jaNaLinha) {
+        for (Map.Entry<String, EstoqueUseCase.CatalogSaleInfo> sabor : sabores) {
+            if (jaNaLinha.contains(sabor.getKey())) {
+                continue;
+            }
+            if (!sabor.getValue().consumesOpenPackage()
+                    || !estoqueUseCase.hasOpenPackage(sabor.getKey(), comanda.warehouseCode())) {
+                throw new SessionPromoRequiresOpenPackageException(sabor.getKey());
             }
         }
     }
@@ -1017,9 +1064,14 @@ public class ComandaService implements ComandaUseCase {
         // PDV-F061 — origem das modalidades novas: repete com as essências que o cliente já comprou
         // (mesma modalidade e preço, sem pacote novo), ou como sessão padrão da casa (faixa e lata).
         SessionModality origemModalidade = origem.effectiveModality();
-        boolean comEssenciasCompradas = origemModalidade != SessionModality.PADRAO
+        boolean comEssenciasCompradas = origemModalidade.usesStorePackages()
                 && command.repeticao() != ComandaUseCase.RepeatMode.PADRAO;
-        SessionModality modalidade = comEssenciasCompradas ? origemModalidade : SessionModality.PADRAO;
+        // PDV-F062 — a promo se repete como promo, pelo preço de hoje e com a lata aberta conferida de
+        // novo no addSession; com repeticao=PADRAO, vira sessão padrão pela faixa.
+        boolean repetePromo = origemModalidade == SessionModality.PROMO_ESSENCIA
+                && command.repeticao() != ComandaUseCase.RepeatMode.PADRAO;
+        SessionModality modalidade = comEssenciasCompradas || repetePromo ? origemModalidade
+                : SessionModality.PADRAO;
         if (comEssenciasCompradas) {
             Set<String> compradas = purchasedEssences(comanda, origem);
             for (String sku : new String[]{essenciaSku, essenciaSku2}) {
@@ -1087,7 +1139,20 @@ public class ComandaService implements ComandaUseCase {
             throw new SessionPackagePaidException(sessionItemId);
         }
 
-        SessionTier tier = modality == SessionModality.ITENS_PESSOAIS
+        // PDV-F062 — trocar o sabor da promo exige lata aberta do sabor novo; o que a linha já usa teve
+        // o uso contado no lançamento.
+        if (modality == SessionModality.PROMO_ESSENCIA) {
+            Set<String> naLinha = new HashSet<>();
+            if (antes.essenceSku() != null) {
+                naLinha.add(antes.essenceSku());
+            }
+            if (antes.essenceSku2() != null) {
+                naLinha.add(antes.essenceSku2());
+            }
+            requireOpenPackages(sabores, comanda, naLinha);
+        }
+
+        SessionTier tier = tierIsOptional(modality)
                 ? tierForOptional(menu, command.tierId(), sabores)
                 : tierFor(menu, command.tierId(), null, sabores);
         SessionSettings settings = menu.settings();

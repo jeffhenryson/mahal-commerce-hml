@@ -40,4 +40,8 @@ public class SessionSettingsEntity {
 
     @Column(name = "compra_essencia_desconto", nullable = false, precision = 12, scale = 2)
     private BigDecimal compraEssenciaDesconto;
+
+    // PDV-F062 (V207) — preço fechado da promo de essência.
+    @Column(name = "promo_essencia_preco", nullable = false, precision = 12, scale = 2)
+    private BigDecimal promoEssenciaPreco;
 }

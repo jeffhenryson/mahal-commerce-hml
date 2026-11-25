@@ -71,4 +71,8 @@ public class ProductVariantEntity {
 
     @Column(name = "session_itens_pessoais")
     private Boolean sessionItensPessoais;
+
+    // PDV-F062 — promo de essência (V207). Nulo herda do produto pai.
+    @Column(name = "session_promo_essencia")
+    private Boolean sessionPromoEssencia;
 }

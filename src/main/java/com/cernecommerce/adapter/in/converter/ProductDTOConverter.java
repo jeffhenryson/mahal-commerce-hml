@@ -99,6 +99,7 @@ public class ProductDTOConverter {
             var flags = product.sessionFlagsFor(variant.sku());
             variantDto.setSessionCompraEssencia(flags.compraEssencia());
             variantDto.setSessionItensPessoais(flags.itensPessoais());
+            variantDto.setSessionPromoEssencia(flags.promoEssencia());
             variantDto.setAutoReplace(product.autoReplace());
             variantDto.setAutoReplaceLimit(product.autoReplaceLimit());
             return variantDto;
@@ -123,6 +124,7 @@ public class ProductDTOConverter {
         dto.setSessionTierId(product.sessionTierId());
         dto.setSessionCompraEssencia(product.sessionFlags().compraEssencia());
         dto.setSessionItensPessoais(product.sessionFlags().itensPessoais());
+        dto.setSessionPromoEssencia(product.sessionFlags().promoEssencia());
         dto.setStatus(product.status().name());
         return dto;
     }

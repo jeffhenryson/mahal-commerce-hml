@@ -85,7 +85,10 @@ public class AddSessionRequest {
     @Schema(description = "PDV-F061 — PADRAO (padrão), COMPRA_ESSENCIA (o cliente compra o pacote: sessão "
             + "com desconto e o pacote ligado a ela, pelo preço de venda) ou ITENS_PESSOAIS (narguilé do "
             + "cliente: preço fixo, sem utensílio da casa nem vaso grande). As duas novas exigem essenciaSku "
-            + "marcado para a modalidade e não aceitam DUPLO. Não muda na edição.", defaultValue = "PADRAO")
+            + "marcado para a modalidade e não aceitam DUPLO. PDV-F062 — PROMO_ESSENCIA: preço fechado "
+            + "(promoEssenciaPreco, R$ 10) com lata já aberta no Salão (409 SESSION_PROMO_REQUIRES_OPEN_PACKAGE), "
+            + "sabor não marcado fora da promo (409 SESSION_PROMO_EXCLUDED), mescla vale, DUPLO não; vaso grande, "
+            + "jumbo e adicionais somam por cima e pacotes é ignorado. Não muda na edição.", defaultValue = "PADRAO")
     private SessionModality modalidade;
 
     @jakarta.validation.Valid

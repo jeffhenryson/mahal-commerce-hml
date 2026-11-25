@@ -52,4 +52,10 @@ public class SessionSettingsRequest {
     @Schema(description = "PDV-F061 — quanto a sessão com compra de essência sai mais barata que a faixa. "
             + "Omitido = mantém o atual.", example = "5.00")
     private BigDecimal compraEssenciaDesconto;
+
+    @DecimalMin(value = "0.00", inclusive = false)
+    @Digits(integer = 10, fraction = 2)
+    @Schema(description = "PDV-F062 — preço fechado da sessão \"Promo de essência\" (lata já aberta), "
+            + "qualquer que seja a faixa. Omitido = mantém o atual.", example = "10.00")
+    private BigDecimal promoEssenciaPreco;
 }

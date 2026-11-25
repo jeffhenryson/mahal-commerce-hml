@@ -127,7 +127,8 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
         return settingsJpa.findById(SessionSettingsEntity.SINGLETON_ID)
                 .map(e -> new SessionSettings(e.getVasoPadraoCodigo(), e.getVasoGrandeCodigo(),
                         e.getUpgradeVasoGrandePreco(), SessionSettings.parseDias(e.getDiasDuploRosh()),
-                        e.getUpgradeCarvaoJumboPreco(), e.getItensPessoaisPreco(), e.getCompraEssenciaDesconto()))
+                        e.getUpgradeCarvaoJumboPreco(), e.getItensPessoaisPreco(), e.getCompraEssenciaDesconto(),
+                        e.getPromoEssenciaPreco()))
                 .orElseGet(SessionSettings::defaults);
     }
 
@@ -135,7 +136,8 @@ public class SessionMenuRepositoryImpl implements SessionMenuRepository {
     public SessionSettings saveSettings(SessionSettings settings) {
         settingsJpa.save(new SessionSettingsEntity(SessionSettingsEntity.SINGLETON_ID, settings.vasoPadraoCodigo(),
                 settings.vasoGrandeCodigo(), settings.upgradeVasoGrandePreco(), settings.diasDuploRoshAsText(),
-                settings.upgradeCarvaoJumboPreco(), settings.itensPessoaisPreco(), settings.compraEssenciaDesconto()));
+                settings.upgradeCarvaoJumboPreco(), settings.itensPessoaisPreco(), settings.compraEssenciaDesconto(),
+                settings.promoEssenciaPreco()));
         return getSettings();
     }
 

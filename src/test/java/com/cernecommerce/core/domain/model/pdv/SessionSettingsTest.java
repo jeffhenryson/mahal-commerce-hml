@@ -41,4 +41,14 @@ class SessionSettingsTest {
         assertThatThrownBy(() -> SessionTier.create("X", new BigDecimal("-1"), null, 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void promoEssenciaPreco_padraoDez_eRecusaZero() {
+        assertThat(SessionSettings.defaults().promoEssenciaPreco()).isEqualByComparingTo("10.00");
+        assertThat(new SessionSettings("VASO_P", "VASO_G", BigDecimal.ZERO, Set.of(), BigDecimal.ZERO, null, null,
+                new BigDecimal("12.00")).promoEssenciaPreco()).isEqualByComparingTo("12.00");
+        assertThatThrownBy(() -> new SessionSettings("VASO_P", "VASO_G", BigDecimal.ZERO, Set.of(), BigDecimal.ZERO,
+                null, null, BigDecimal.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

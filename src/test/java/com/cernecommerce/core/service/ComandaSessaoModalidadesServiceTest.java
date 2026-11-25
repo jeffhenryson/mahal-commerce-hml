@@ -8,6 +8,8 @@ import com.cernecommerce.core.domain.exception.pdv.SessionLinkedLineException;
 import com.cernecommerce.core.domain.exception.pdv.SessionModalityDuploException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPackagePaidException;
 import com.cernecommerce.core.domain.exception.pdv.SessionPackagesRequiredException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoExcludedException;
+import com.cernecommerce.core.domain.exception.pdv.SessionPromoRequiresOpenPackageException;
 import com.cernecommerce.core.domain.model.estoque.MovementType;
 import com.cernecommerce.core.domain.model.estoque.OpenPackage;
 import com.cernecommerce.core.domain.model.estoque.Pricing;
@@ -88,7 +90,7 @@ class ComandaSessaoModalidadesServiceTest {
     private static final List<SessionAssetType> KIT_PADRAO = List.of(
             new SessionAssetType(1L, "VASO_P", "Vaso pequeno", 5, false, true));
     private static final Pricing PACOTE_45 = Pricing.of(new BigDecimal("30.00"), null, new BigDecimal("45.00"));
-    private static final SessionModalityFlags TODAS = new SessionModalityFlags(true, true);
+    private static final SessionModalityFlags TODAS = new SessionModalityFlags(true, true, true);
     private static final SessionAddon FILTRO = new SessionAddon(7L, "Filtro de gelo", new BigDecimal("5.00"), 1,
             true, true);
     private static final SessionAddon CARVAO_EXTRA = new SessionAddon(8L, "Carvão extra", new BigDecimal("3.00"), 2,
@@ -246,7 +248,7 @@ class ComandaSessaoModalidadesServiceTest {
     void pacoteForaDaModalidade_eRecusado() {
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
         givenEssence(A, 1L);
-        when(estoqueUseCase.resolveSaleInfo(C)).thenReturn(essencia(C, 2L, new SessionModalityFlags(false, true)));
+        when(estoqueUseCase.resolveSaleInfo(C)).thenReturn(essencia(C, 2L, new SessionModalityFlags(false, true, true)));
 
         assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.COMPRA_ESSENCIA, A, null,
                 false, null, false, List.of(new PackageChoice(A, 1), new PackageChoice(C, 1))), "caixa1"))
@@ -530,5 +532,243 @@ class ComandaSessaoModalidadesServiceTest {
 
         assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo("23.00");
         verify(comandaRepository).save(eq(result));
+    }
+
+    // ── Promo de essência (PDV-F062) ─────────────────────────────────────────────────────────
+
+    private static final SessionTier SENCE_40 = new SessionTier(3L, "Sence", new BigDecimal("40.00"), "Sence", 3,
+            true);
+
+    private void givenOpenPackage(String sku) {
+        when(estoqueUseCase.hasOpenPackage(sku, "LOJA-01")).thenReturn(true);
+        when(estoqueUseCase.consumeSession(sku, "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(OpenPackage.registered(sku, 1L, 5, 1, "caixa1", Instant.now()).withUses(1));
+    }
+
+    private void givenPromoLaunch(boolean vasoGrande) {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, vasoGrande)).thenReturn(KIT_PADRAO);
+        givenSaveAssignsItemIds();
+    }
+
+    @Test
+    void promo_saborDeFaixa40_saiPeloPrecoFechado_eGastaUmUsoDaLata() {
+        givenPromoLaunch(false);
+        givenEssence(C, 3L);
+        when(sessionMenu.findActiveTier(3L)).thenReturn(Optional.of(SENCE_40));
+        givenOpenPackage(C);
+
+        Comanda result = comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, C, null, false, null,
+                false, List.of(new PackageChoice(C, 1))), "caixa1");
+
+        ComandaItem sessao = result.items().get(0);
+        assertThat(result.items()).hasSize(1);
+        assertThat(sessao.unitPrice()).isEqualByComparingTo("10.00");
+        assertThat(sessao.modality()).isEqualTo(SessionModality.PROMO_ESSENCIA);
+        assertThat(sessao.sku()).isEqualTo(SENCE_40.sku());
+        assertThat(sessao.productName()).contains("(promo de essência)");
+        assertThat(sessao.essenceSku()).isEqualTo(C);
+        verify(estoqueUseCase).consumeSession(C, "LOJA-01", BigDecimal.ONE, "caixa1");
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+        verify(sessionMenu).allocate(sessao.id(), KIT_PADRAO);
+    }
+
+    @Test
+    void promo_vasoGrandeEAdicional_somamPorCima() {
+        givenPromoLaunch(true);
+        givenEssence(A, 1L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.requireActiveAddons(List.of(7L))).thenReturn(List.of(FILTRO));
+        givenOpenPackage(A);
+
+        Comanda result = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(null, null, true, null,
+                List.of(7L), false, null, null, false, A, null, null, null, null, false,
+                SessionModality.PROMO_ESSENCIA, List.of()), "caixa1");
+
+        // 10 (promo) + 10 (vaso grande) + 5 (filtro)
+        assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo("25.00");
+    }
+
+    @Test
+    void promo_jumboCortesia_naoSoma() {
+        givenPromoLaunch(false);
+        givenEssence(A, 1L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        givenOpenPackage(A);
+
+        Comanda result = comandaService.addSession(10L, new ComandaUseCase.AddSessionCommand(null, null, false,
+                Charcoal.JUMBO, List.of(), false, null, null, false, A, null, null, null, null, true,
+                SessionModality.PROMO_ESSENCIA, List.of()), "caixa1");
+
+        assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void promo_mesclaDeDuasLatasAbertas_precoFechado_umUsoEmCada() {
+        givenPromoLaunch(false);
+        givenEssence(A, 1L);
+        givenEssence(C, 3L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.findActiveTier(3L)).thenReturn(Optional.of(SENCE_40));
+        givenOpenPackage(A);
+        givenOpenPackage(C);
+
+        Comanda result = comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, C, false, null,
+                false, List.of()), "caixa1");
+
+        ComandaItem sessao = result.items().get(0);
+        assertThat(sessao.unitPrice()).isEqualByComparingTo("10.00");
+        assertThat(sessao.essenceSku2()).isEqualTo(C);
+        verify(estoqueUseCase).consumeSession(A, "LOJA-01", BigDecimal.ONE, "caixa1");
+        verify(estoqueUseCase).consumeSession(C, "LOJA-01", BigDecimal.ONE, "caixa1");
+    }
+
+    @Test
+    void promo_saborSemFaixa_usaSkuSintetico() {
+        givenPromoLaunch(false);
+        givenEssence(A, null);
+        givenOpenPackage(A);
+
+        Comanda result = comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, null, false, null,
+                false, List.of()), "caixa1");
+
+        assertThat(result.items().get(0).sku()).isEqualTo(SessionModality.PROMO_ESSENCIA_SKU);
+        assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void promo_semLataAberta_eRecusada_semAbrirLata() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenEssence(A, 1L);
+        when(estoqueUseCase.hasOpenPackage(A, "LOJA-01")).thenReturn(false);
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, null,
+                false, null, false, List.of()), "caixa1"))
+                .isInstanceOf(SessionPromoRequiresOpenPackageException.class);
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void promo_mescla_segundoSaborSemLata_recusaTudo() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenEssence(A, 1L);
+        givenEssence(B, 1L);
+        when(estoqueUseCase.hasOpenPackage(A, "LOJA-01")).thenReturn(true);
+        when(estoqueUseCase.hasOpenPackage(B, "LOJA-01")).thenReturn(false);
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, B,
+                false, null, false, List.of()), "caixa1"))
+                .isInstanceOf(SessionPromoRequiresOpenPackageException.class);
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+    }
+
+    @Test
+    void promo_saborSemLataConfigurada_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo(A)).thenReturn(new EstoqueUseCase.CatalogSaleInfo(A, PACOTE_45, true,
+                true, null, null, false, false, 1L, null, TODAS));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, null,
+                false, null, false, List.of()), "caixa1"))
+                .isInstanceOf(SessionPromoRequiresOpenPackageException.class);
+        verify(estoqueUseCase, never()).adjustStock(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void promo_essenciaForaDaPromo_eRecusada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        when(estoqueUseCase.resolveSaleInfo(A)).thenReturn(essencia(A, 1L, new SessionModalityFlags(true, true,
+                false)));
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, null,
+                false, null, false, List.of()), "caixa1"))
+                .isInstanceOf(SessionPromoExcludedException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void promo_comDuplo_eRecusada() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda()));
+        givenEssence(A, 1L);
+
+        assertThatThrownBy(() -> comandaService.addSession(10L, lancar(SessionModality.PROMO_ESSENCIA, A, null,
+                false, null, true, List.of()), "caixa1"))
+                .isInstanceOf(SessionModalityDuploException.class);
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void repetirPromo_mantemAPromo_peloPrecoDeHoje() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessao(1L, SessionModality.PROMO_ESSENCIA, SessionStatus.RECOLHIDO, 50L))));
+        givenEssence(B, 1L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        givenOpenPackage(B);
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L, new ComandaUseCase.RepeatSessionCommand(null, false,
+                null, null, false, B, null, null, false, null), "caixa1");
+
+        ComandaItem nova = result.items().get(1);
+        assertThat(nova.modality()).isEqualTo(SessionModality.PROMO_ESSENCIA);
+        assertThat(nova.unitPrice()).isEqualByComparingTo("10.00");
+        verify(estoqueUseCase).consumeSession(B, "LOJA-01", BigDecimal.ONE, "caixa1");
+    }
+
+    @Test
+    void repetirPromo_comoPadrao_cobraAFaixa() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessao(1L, SessionModality.PROMO_ESSENCIA, SessionStatus.RECOLHIDO, 50L))));
+        givenEssence(A, 1L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(sessionMenu.reserveAssetsForSession(SETTINGS, false)).thenReturn(KIT_PADRAO);
+        when(estoqueUseCase.consumeSession(A, "LOJA-01", BigDecimal.ONE, "caixa1"))
+                .thenReturn(OpenPackage.registered(A, 1L, 5, 1, "caixa1", Instant.now()).withUses(1));
+        givenSaveAssignsItemIds();
+
+        Comanda result = comandaService.repeatSession(10L, 1L, new ComandaUseCase.RepeatSessionCommand(null, false,
+                null, null, false, null, null, null, false, ComandaUseCase.RepeatMode.PADRAO), "caixa1");
+
+        ComandaItem nova = result.items().get(1);
+        assertThat(nova.effectiveModality()).isEqualTo(SessionModality.PADRAO);
+        assertThat(nova.unitPrice()).isEqualByComparingTo("25.00");
+        verify(estoqueUseCase, never()).hasOpenPackage(any(), any());
+    }
+
+    @Test
+    void editarPromo_trocandoParaSaborSemLata_eRecusado() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessao(1L, SessionModality.PROMO_ESSENCIA, SessionStatus.AGUARDANDO_PAGAMENTO, null))));
+        givenEssence(B, 1L);
+        when(estoqueUseCase.hasOpenPackage(B, "LOJA-01")).thenReturn(false);
+
+        assertThatThrownBy(() -> comandaService.editSession(10L, 1L, new ComandaUseCase.EditSessionCommand(
+                null, null, B, null, null, false, null, false, List.of(), null), "caixa1"))
+                .isInstanceOf(SessionPromoRequiresOpenPackageException.class);
+        verify(estoqueUseCase, never()).releaseSession(any(), any(), any());
+        verify(estoqueUseCase, never()).consumeSession(any(), any(), any(), any());
+        verify(comandaRepository, never()).save(any());
+    }
+
+    @Test
+    void editarPromo_mesmoSabor_naoReconfereALata() {
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessao(1L, SessionModality.PROMO_ESSENCIA, SessionStatus.AGUARDANDO_PAGAMENTO, null))));
+        givenEssence(A, 1L);
+        when(sessionMenu.findActiveTier(1L)).thenReturn(Optional.of(TRADICIONAL));
+        when(sessionMenu.settings()).thenReturn(SETTINGS);
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda result = comandaService.editSession(10L, 1L, new ComandaUseCase.EditSessionCommand(
+                null, null, A, null, null, false, null, false, List.of(), null), "caixa1").comanda();
+
+        assertThat(result.items().get(0).modality()).isEqualTo(SessionModality.PROMO_ESSENCIA);
+        assertThat(result.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
+        verify(estoqueUseCase, never()).hasOpenPackage(any(), any());
     }
 }

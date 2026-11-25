@@ -18,7 +18,7 @@ import java.util.List;
  */
 public record ProductVariant(Long id, String sku, List<ProductAttribute> attributes, boolean active,
                              Pricing pricing, String barcode, Boolean sessionCompraEssencia,
-                             Boolean sessionItensPessoais) {
+                             Boolean sessionItensPessoais, Boolean sessionPromoEssencia) {
 
     public ProductVariant {
         if (sku == null || sku.isBlank()) {
@@ -40,7 +40,7 @@ public record ProductVariant(Long id, String sku, List<ProductAttribute> attribu
     /** Cria uma nova variação (sem id, ativa por padrão), com código de barras próprio. */
     public static ProductVariant create(String sku, List<ProductAttribute> attributes, Pricing pricing,
             String barcode) {
-        return new ProductVariant(null, sku, attributes, true, pricing, barcode, null, null);
+        return new ProductVariant(null, sku, attributes, true, pricing, barcode, null, null, null);
     }
 
     /** Reconstitui uma variação sem preço próprio a partir de persistência. */
@@ -57,7 +57,7 @@ public record ProductVariant(Long id, String sku, List<ProductAttribute> attribu
     /** Reconstitui uma variação a partir de persistência, com código de barras próprio. */
     public static ProductVariant of(Long id, String sku, List<ProductAttribute> attributes, boolean active,
             Pricing pricing, String barcode) {
-        return new ProductVariant(id, sku, attributes, active, pricing, barcode, null, null);
+        return new ProductVariant(id, sku, attributes, active, pricing, barcode, null, null, null);
     }
 
     /**
@@ -77,12 +77,14 @@ public record ProductVariant(Long id, String sku, List<ProductAttribute> attribu
 
     /** Substitui a precificação própria, preservando o resto. {@code null} volta a herdar do pai. */
     public ProductVariant withPricing(Pricing newPricing) {
-        return new ProductVariant(id, sku, attributes, active, newPricing, barcode, sessionCompraEssencia, sessionItensPessoais);
+        return new ProductVariant(id, sku, attributes, active, newPricing, barcode, sessionCompraEssencia, sessionItensPessoais,
+                sessionPromoEssencia);
     }
 
     /** Define o código de barras/EAN próprio da variação, preservando o resto. */
     public ProductVariant withBarcode(String newBarcode) {
-        return new ProductVariant(id, sku, attributes, active, pricing, newBarcode, sessionCompraEssencia, sessionItensPessoais);
+        return new ProductVariant(id, sku, attributes, active, pricing, newBarcode, sessionCompraEssencia, sessionItensPessoais,
+                sessionPromoEssencia);
     }
 
     /**
@@ -92,19 +94,22 @@ public record ProductVariant(Long id, String sku, List<ProductAttribute> attribu
      * histórico órfão.
      */
     public ProductVariant withActive(boolean newActive) {
-        return new ProductVariant(id, sku, attributes, newActive, pricing, barcode, sessionCompraEssencia, sessionItensPessoais);
+        return new ProductVariant(id, sku, attributes, newActive, pricing, barcode, sessionCompraEssencia, sessionItensPessoais,
+                sessionPromoEssencia);
     }
 
     /** Substitui os atributos da variação, preservando o resto (EST-F024). */
     public ProductVariant withAttributes(List<ProductAttribute> newAttributes) {
-        return new ProductVariant(id, sku, newAttributes, active, pricing, barcode, sessionCompraEssencia, sessionItensPessoais);
+        return new ProductVariant(id, sku, newAttributes, active, pricing, barcode, sessionCompraEssencia, sessionItensPessoais,
+                sessionPromoEssencia);
     }
 
     /**
      * PDV-F061 — marcação própria das modalidades da sessão. {@code null} em um campo herda o valor
-     * do produto pai.
+     * do produto pai. PDV-F062 — {@code promoEssencia}: vale na "Promo de essência".
      */
-    public ProductVariant withSessionFlags(Boolean compraEssencia, Boolean itensPessoais) {
-        return new ProductVariant(id, sku, attributes, active, pricing, barcode, compraEssencia, itensPessoais);
+    public ProductVariant withSessionFlags(Boolean compraEssencia, Boolean itensPessoais, Boolean promoEssencia) {
+        return new ProductVariant(id, sku, attributes, active, pricing, barcode, compraEssencia, itensPessoais,
+                promoEssencia);
     }
 }

@@ -27,6 +27,9 @@ public class ProductVariantResponseDTO {
     /** PDV-F061 — já resolvido: a marcação da variação ou, sem ela, a do produto. */
     private boolean sessionItensPessoais;
 
+    /** PDV-F062 — já resolvido: a marcação da variação ou, sem ela, a do produto. */
+    private boolean sessionPromoEssencia;
+
     /** "Repor sozinha" — herdado do produto base: a configuração mora lá e vale para todas as variações. */
     private Boolean autoReplace;
 

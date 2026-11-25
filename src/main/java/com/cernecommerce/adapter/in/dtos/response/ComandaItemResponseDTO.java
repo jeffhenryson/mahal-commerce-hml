@@ -140,7 +140,7 @@ public class ComandaItemResponseDTO {
             + "desconto.")
     private BigDecimal storeDiscountAmount;
 
-    @Schema(description = "PDV-F061 — modalidade da linha de sessão: PADRAO, COMPRA_ESSENCIA ou ITENS_PESSOAIS. "
+    @Schema(description = "PDV-F061 — modalidade da linha de sessão: PADRAO, COMPRA_ESSENCIA, ITENS_PESSOAIS ou PROMO_ESSENCIA (PDV-F062). "
             + "Nulo nas linhas que não são sessão; ausente nas sessões antigas (= PADRAO).")
     private String modalidade;
 

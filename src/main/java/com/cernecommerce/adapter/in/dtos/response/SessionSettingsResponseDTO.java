@@ -8,11 +8,11 @@ import java.util.List;
 
 public record SessionSettingsResponseDTO(String vasoPadraoCodigo, String vasoGrandeCodigo,
         BigDecimal upgradeVasoGrandePreco, List<DayOfWeek> diasDuploRosh, BigDecimal upgradeCarvaoJumboPreco,
-        BigDecimal itensPessoaisPreco, BigDecimal compraEssenciaDesconto) {
+        BigDecimal itensPessoaisPreco, BigDecimal compraEssenciaDesconto, BigDecimal promoEssenciaPreco) {
 
     public static SessionSettingsResponseDTO of(SessionSettings s) {
         return new SessionSettingsResponseDTO(s.vasoPadraoCodigo(), s.vasoGrandeCodigo(), s.upgradeVasoGrandePreco(),
                 s.diasDuploRosh().stream().sorted().toList(), s.upgradeCarvaoJumboPreco(),
-                s.itensPessoaisPreco(), s.compraEssenciaDesconto());
+                s.itensPessoaisPreco(), s.compraEssenciaDesconto(), s.promoEssenciaPreco());
     }
 }

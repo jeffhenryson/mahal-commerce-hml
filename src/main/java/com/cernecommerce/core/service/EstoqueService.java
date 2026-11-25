@@ -1634,6 +1634,13 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional(readOnly = true)
+    public boolean hasOpenPackage(String sku, String warehouseCode) {
+        Warehouse warehouse = sessionWarehouse(warehouseCode);
+        return openPackageRepository.findOpen(sku, warehouse.id()).isPresent();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<SessionEssence> listSessionEssences() {
         // EST-F054 — só publicado e ativo, vendido por sessão: o mesmo filtro do cardápio do Salão.
         ProductFilter filtro = new ProductFilter(null, null, null, true, null, null, ProductStatus.ATIVO, true);
@@ -1657,7 +1664,8 @@ public class EstoqueService implements EstoqueUseCase {
 
     @Override
     @Transactional
-    public SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais) {
+    public SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais,
+            Boolean promoEssencia) {
         Product product = productRepository.findByAnySku(sku)
                 .orElseThrow(() -> new ProductNotFoundException(sku));
         if (!product.sessionProduct()) {
@@ -1666,12 +1674,13 @@ public class EstoqueService implements EstoqueUseCase {
         SessionModalityFlags atuais = product.sessionFlagsFor(sku);
         boolean compra = compraEssencia != null ? compraEssencia : atuais.compraEssencia();
         boolean pessoais = itensPessoais != null ? itensPessoais : atuais.itensPessoais();
+        boolean promo = promoEssencia != null ? promoEssencia : atuais.promoEssencia();
         Product atualizado;
         if (product.sku().equals(sku)) {
-            atualizado = product.withSessionFlags(new SessionModalityFlags(compra, pessoais));
+            atualizado = product.withSessionFlags(new SessionModalityFlags(compra, pessoais, promo));
         } else {
             atualizado = product.withVariants(product.variants().stream()
-                    .map(v -> v.sku().equals(sku) ? v.withSessionFlags(compra, pessoais) : v)
+                    .map(v -> v.sku().equals(sku) ? v.withSessionFlags(compra, pessoais, promo) : v)
                     .toList());
         }
         Product salvo = productRepository.save(atualizado);
@@ -1683,7 +1692,7 @@ public class EstoqueService implements EstoqueUseCase {
         String nome = sku.equals(p.sku()) || sabor.equals(p.name()) ? p.name() : p.name() + " " + sabor;
         SessionModalityFlags flags = p.sessionFlagsFor(sku);
         return new SessionEssence(sku, nome, p.brand(), p.sessionTierId(), flags.compraEssencia(),
-                flags.itensPessoais());
+                flags.itensPessoais(), flags.promoEssencia());
     }
 
     /** Página da leitura do catálogo de sessão (PDV-F061): dezenas de produtos, não o catálogo inteiro. */

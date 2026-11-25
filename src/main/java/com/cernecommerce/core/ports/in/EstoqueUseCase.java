@@ -951,6 +951,13 @@ public interface EstoqueUseCase {
     void releaseSession(String sku, String warehouseCode, BigDecimal quantity);
 
     /**
+     * PDV-F062 — se o SKU tem lata aberta (não fechada por "Acabou"/reposição) no depósito de sessão.
+     * Mesma resolução de depósito de {@link #consumeSession}: com Salão ativo, a lata é a dele. A lata
+     * acima da estimativa ({@code exhausted}) segue aberta e conta.
+     */
+    boolean hasOpenPackage(String sku, String warehouseCode);
+
+    /**
      * PDV-F061 — as essências de sessão ativas que se podem vender, uma linha por SKU vendável (o
      * mesmo critério do catálogo de sessão do PDV), com as modalidades em que cada uma vale.
      */
@@ -959,16 +966,18 @@ public interface EstoqueUseCase {
     /**
      * PDV-F061 — marca as modalidades de uma essência. SKU de variação grava na variação; o SKU do
      * próprio produto grava no produto (e vale para as variações que não marcaram nada). Nulo mantém.
+     * PDV-F062 — {@code promoEssencia}: vale na "Promo de essência".
      *
      * @throws com.cernecommerce.core.domain.exception.estoque.ProductNotFoundException SKU desconhecido
      * @throws com.cernecommerce.core.domain.exception.estoque.NotAPackagedSessionProductException se o
      *         produto não é vendido por sessão
      */
-    SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais);
+    SessionEssence setSessionFlags(String sku, Boolean compraEssencia, Boolean itensPessoais,
+            Boolean promoEssencia);
 
     /** PDV-F061 — uma essência do cardápio de sessão e as modalidades em que ela vale. */
     record SessionEssence(String sku, String nome, String marca, Long faixaId, boolean compraEssencia,
-            boolean itensPessoais) {
+            boolean itensPessoais, boolean promoEssencia) {
     }
 
     /**
