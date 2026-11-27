@@ -597,6 +597,52 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "AUTO_REPLACE_INVALID_LIMIT", req);
     }
 
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.ProductRequestNotFoundException.class)
+    public ResponseEntity<ApiError> handleProductRequestNotFound(
+            com.cernecommerce.core.domain.exception.estoque.ProductRequestNotFoundException ex, HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "PRODUCT_REQUEST_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.InvalidProductRequestTransitionException.class)
+    public ResponseEntity<ApiError> handleInvalidProductRequestTransition(
+            com.cernecommerce.core.domain.exception.estoque.InvalidProductRequestTransitionException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "INVALID_STATUS_TRANSITION", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.ProductRequestConflictException.class)
+    public ResponseEntity<ApiError> handleProductRequestConflict(
+            com.cernecommerce.core.domain.exception.estoque.ProductRequestConflictException ex, HttpServletRequest req) {
+        return error(HttpStatus.CONFLICT, ex.getMessage(), "PRODUCT_REQUEST_CONFLICT", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.ProductRequestCustomerRequiredException.class)
+    public ResponseEntity<ApiError> handleProductRequestCustomerRequired(
+            com.cernecommerce.core.domain.exception.estoque.ProductRequestCustomerRequiredException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "CUSTOMER_REQUIRED", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.SkuRequiredForArrivedException.class)
+    public ResponseEntity<ApiError> handleSkuRequiredForArrived(
+            com.cernecommerce.core.domain.exception.estoque.SkuRequiredForArrivedException ex, HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "SKU_REQUIRED_FOR_ARRIVED", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.ProductRequestSkuNotFoundException.class)
+    public ResponseEntity<ApiError> handleProductRequestSkuNotFound(
+            com.cernecommerce.core.domain.exception.estoque.ProductRequestSkuNotFoundException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.NOT_FOUND, ex.getMessage(), "SKU_NOT_FOUND", req);
+    }
+
+    @ExceptionHandler(com.cernecommerce.core.domain.exception.estoque.ProductRequestValidationException.class)
+    public ResponseEntity<ApiError> handleProductRequestValidation(
+            com.cernecommerce.core.domain.exception.estoque.ProductRequestValidationException ex,
+            HttpServletRequest req) {
+        return error(HttpStatus.BAD_REQUEST, ex.getMessage(), "VALIDATION_ERROR", req);
+    }
+
     @ExceptionHandler(ReplenishmentItemNotFoundException.class)
     public ResponseEntity<ApiError> handleReplenishmentItemNotFound(ReplenishmentItemNotFoundException ex,
             HttpServletRequest req) {

@@ -188,4 +188,9 @@ class ConverterBeanConfig {
     QuantityPromotionDTOConverter quantityPromotionDTOConverter() {
         return new QuantityPromotionDTOConverter();
     }
+
+    @Bean
+    com.cernecommerce.adapter.in.converter.ProductRequestDTOConverter productRequestDTOConverter() {
+        return new com.cernecommerce.adapter.in.converter.ProductRequestDTOConverter();
+    }
 }

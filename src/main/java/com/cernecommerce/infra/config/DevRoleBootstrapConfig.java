@@ -45,6 +45,8 @@ public class DevRoleBootstrapConfig {
         "ESTOQUE_CATEGORY_MANAGE",
         "ESTOQUE_BRAND_MANAGE",
         "ESTOQUE_REPLENISHMENT_MANAGE",
+        // V209 — pedidos de clientes (produtos que a loja não tem). O atendente recebe só o CREATE.
+        "ESTOQUE_PRODUCT_REQUEST_MANAGE", "ESTOQUE_PRODUCT_REQUEST_CREATE",
         "ESTOQUE_ATTRIBUTE_MANAGE",
         "CRM_CUSTOMER_READ", "CRM_CUSTOMER_MANAGE", "CRM_CUSTOMER_LOOKUP", "CRM_CUSTOMER_EXPORT",
         // CRM-C006 — cadastro rápido de lead (V127); o admin herda, o atendente recebe abaixo.

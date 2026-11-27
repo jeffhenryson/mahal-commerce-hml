@@ -11,6 +11,10 @@ import java.util.Map;
  * automação, mesmo que o evento chegue repetido. {@code contexto} traz dados do evento que não
  * cabem em cliente/pedido (valores do caixa, SKU sem estoque, vencimento do fiado) e vai no
  * payload como está.</p>
+ *
+ * <p>{@code variaveis} são blocos de topo do template, além de {@code cliente}/{@code loja}/{@code pedido}: o
+ * pedido de cliente usa {@code produto.*} e {@code pedidoProduto.*}. Vão também no payload, no topo. Um bloco
+ * com o nome de um bloco fixo é ignorado.</p>
  */
 public record AutomationOccurrence(
         CampaignTrigger gatilho,
@@ -19,7 +23,8 @@ public record AutomationOccurrence(
         Long customerId,
         Long orderId,
         String key,
-        Map<String, Object> contexto) {
+        Map<String, Object> contexto,
+        Map<String, Object> variaveis) {
 
     public AutomationOccurrence {
         if (gatilho != CampaignTrigger.EVENTO && gatilho != CampaignTrigger.ENTRADA_ESTAGIO) {
@@ -35,11 +40,24 @@ public record AutomationOccurrence(
             throw new IllegalArgumentException("key é obrigatória");
         }
         contexto = contexto == null ? Map.of() : Map.copyOf(contexto);
+        variaveis = variaveis == null ? Map.of() : Map.copyOf(variaveis);
+    }
+
+    public AutomationOccurrence(CampaignTrigger gatilho, AutomationEvent evento, CustomerStage estagio,
+            Long customerId, Long orderId, String key, Map<String, Object> contexto) {
+        this(gatilho, evento, estagio, customerId, orderId, key, contexto, null);
     }
 
     public static AutomationOccurrence event(AutomationEvent evento, Long customerId, Long orderId, String key,
             Map<String, Object> contexto) {
         return new AutomationOccurrence(CampaignTrigger.EVENTO, evento, null, customerId, orderId, key, contexto);
+    }
+
+    /** Evento com blocos de variáveis de topo próprios ({@code produto.*} etc.). */
+    public static AutomationOccurrence event(AutomationEvent evento, Long customerId, String key,
+            Map<String, Object> contexto, Map<String, Object> variaveis) {
+        return new AutomationOccurrence(CampaignTrigger.EVENTO, evento, null, customerId, null, key, contexto,
+                variaveis);
     }
 
     public static AutomationOccurrence stageEntered(Long customerId, CustomerStage estagio, String key) {

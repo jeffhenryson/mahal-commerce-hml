@@ -32,7 +32,12 @@ public enum AutomationEvent {
     /** Destinatário é a loja: o payload vai sem {@code cliente} e o segmento é ignorado. */
     ESTOQUE_BAIXO(false),
     /** Fase 2 — tabela de "avise-me" da loja online. */
-    PRODUTO_DE_VOLTA(true);
+    PRODUTO_DE_VOLTA(true),
+    /**
+     * Pedido de cliente (produto que a loja não vendia) chegou. Um disparo por solicitação, com
+     * {@code produto.nome/marca/variacao} e {@code pedidoProduto.quantidade} no template.
+     */
+    PEDIDO_PRODUTO_CHEGOU(true);
 
     private final boolean hasCustomer;
 

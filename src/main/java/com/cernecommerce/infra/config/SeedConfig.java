@@ -39,6 +39,8 @@ public class SeedConfig {
         "ESTOQUE_CATEGORY_MANAGE",
         "ESTOQUE_BRAND_MANAGE",
         "ESTOQUE_REPLENISHMENT_MANAGE",
+        // V209 — pedidos de clientes (produtos que a loja não tem). O atendente recebe só o CREATE.
+        "ESTOQUE_PRODUCT_REQUEST_MANAGE", "ESTOQUE_PRODUCT_REQUEST_CREATE",
         "ESTOQUE_ATTRIBUTE_MANAGE",
         "CRM_CUSTOMER_READ", "CRM_CUSTOMER_MANAGE", "CRM_CUSTOMER_LOOKUP", "CRM_CUSTOMER_EXPORT",
         // CRM-C006 — cadastro rápido de lead (V127); o admin herda, o atendente recebe abaixo.
@@ -107,7 +109,9 @@ public class SeedConfig {
         // renegocia o marcado do cliente que veio pagar, sem ver a lista de devedores nem os totais.
         "RECEIVABLE_RECEIVE", "RECEIVABLE_RESCHEDULE",
         // ECM-F012 — a V176 dá a Central de Pedidos também ao atendente.
-        "ONLINE_ORDER_READ", "ONLINE_ORDER_MANAGE"
+        "ONLINE_ORDER_READ", "ONLINE_ORDER_MANAGE",
+        // V209 — registra pedido de cliente (produto que a loja não tem) no balcão.
+        "ESTOQUE_PRODUCT_REQUEST_CREATE"
     };
 
     // DEV_ONLY_PERMISSIONS e ROLE_DEV são gerenciados pelo DevRoleBootstrapConfig (todos os profiles).

@@ -168,6 +168,7 @@ public class EstoqueService implements EstoqueUseCase {
 
     private static final String STOCK_MANAGE_PERMISSION = "ESTOQUE_STOCK_MANAGE";
     private static final String REORDER_ALERT_BATCH = "estoque.reorder-alerts";
+    private static final String STOCK_ENTRY_BATCH = "estoque.stock-entries";
     private static final String KIT_BLOCKED_ALERT_BATCH = "estoque.kit-blocked-alerts";
     private static final String DEFAULT_WAREHOUSE_CONFIG_KEY = "estoque.warehouse.default-code";
 
@@ -182,6 +183,8 @@ public class EstoqueService implements EstoqueUseCase {
     private final NotificationUseCase notificationUseCase;
     private final UserRepository userRepository;
     private final AfterCommitExecutor afterCommitExecutor;
+    /** Gatilho opcional dos pedidos de clientes (seção 7); nulo = desligado. */
+    private com.cernecommerce.core.ports.out.estoque.StockEntryListener stockEntryListener;
     private final Duration defaultReservationTtl;
     private final KitComponentRepository kitComponentRepository;
     private final StockLotRepository stockLotRepository;
@@ -2023,7 +2026,31 @@ public class EstoqueService implements EstoqueUseCase {
 
         notifyIfBelowReorderPoint(saved);
         notifyIfKitsNewlyBlocked(kitBuildableBefore, warehouse.id());
+        notifyStockEntry(type, sku, product);
         return saved;
+    }
+
+    /**
+     * Pedidos de clientes: liga o aviso de ENTRADA, despachado depois do commit. Ligado pelo
+     * {@code CoreBeanConfig} só com {@code estoque.product-requests.auto-arrive-on-stock-entry=true}.
+     */
+    public void setStockEntryListener(com.cernecommerce.core.ports.out.estoque.StockEntryListener listener) {
+        this.stockEntryListener = listener;
+    }
+
+    private void notifyStockEntry(MovementType type, String sku, Optional<Product> product) {
+        if (stockEntryListener == null || type != MovementType.ENTRADA) {
+            return;
+        }
+        // O pedido pode estar vinculado ao SKU da variação ou ao do pai.
+        afterCommitExecutor.accumulate(STOCK_ENTRY_BATCH, sku, this::dispatchStockEntries);
+        product.map(Product::sku).filter(parent -> !parent.equals(sku))
+                .ifPresent(parent -> afterCommitExecutor.accumulate(STOCK_ENTRY_BATCH, parent,
+                        this::dispatchStockEntries));
+    }
+
+    private void dispatchStockEntries(List<String> skus) {
+        stockEntryListener.onStockEntry(new LinkedHashSet<>(skus));
     }
 
     @Override

@@ -179,7 +179,8 @@ public class AutomationDispatchService implements AutomationDispatchUseCase {
             return;
         }
         AutomationRecipient cliente = customer == null || !occurrence.requiresCustomer() ? null : clienteOf(customer);
-        AutomationDispatchContext context = new AutomationDispatchContext(occurrence.eventName(), cliente, order, occurrence.contexto(), false);
+        AutomationDispatchContext context = new AutomationDispatchContext(occurrence.eventName(), cliente, order,
+                occurrence.contexto(), occurrence.variaveis(), false);
 
         for (CampaignAutomation automation : candidates) {
             if (cliente != null && occurrence.gatilho() == CampaignTrigger.EVENTO
@@ -312,6 +313,8 @@ public class AutomationDispatchService implements AutomationDispatchUseCase {
         if (!context.contexto().isEmpty()) {
             variables.put("contexto", context.contexto());
         }
+        // Blocos próprios do evento (produto.*, pedidoProduto.*) não sobrescrevem os fixos.
+        context.variaveis().forEach(variables::putIfAbsent);
         return variables;
     }
 
@@ -358,6 +361,7 @@ public class AutomationDispatchService implements AutomationDispatchUseCase {
         if (!context.contexto().isEmpty()) {
             payload.put("contexto", context.contexto());
         }
+        context.variaveis().forEach(payload::putIfAbsent);
         payload.put("disparadoEm", agora.toString());
         payload.put("origem", WEBHOOK_ORIGEM);
         if (context.teste()) {

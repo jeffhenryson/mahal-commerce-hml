@@ -610,14 +610,38 @@ class CoreBeanConfig {
             SessionMenuRepository sessionMenuRepository,
             // PDV-F052 — essência de sessão sem faixa recusada na ficha. Desligada até corrigir os
             // produtos antigos (SELECT sku FROM product WHERE session_product AND session_tier_id IS NULL).
-            @Value("${estoque.produto.faixa-sessao-obrigatoria:false}") boolean sessionTierRequired) {
-        return new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
+            @Value("${estoque.produto.faixa-sessao-obrigatoria:false}") boolean sessionTierRequired,
+            // Pedidos de clientes, seção 7: entrada de estoque no SKU vinculado move o pedido ORDERED para
+            // ARRIVED e avisa os clientes. Desligado por padrão.
+            @Value("${estoque.product-requests.auto-arrive-on-stock-entry:false}") boolean productRequestAutoArrive,
+            org.springframework.beans.factory.ObjectProvider<com.cernecommerce.core.ports.out.estoque.StockEntryListener>
+                    stockEntryListener) {
+        EstoqueService service = new EstoqueService(productRepository, warehouseRepository, stockBalanceRepository,
                 stockMovementRepository, reorderPointRepository, stockIntegrityRepository,
                 stockCountRepository, stockReservationRepository, notificationUseCase, userRepository,
                 afterCommitExecutor, defaultReservationTtl, kitComponentRepository, stockLotRepository,
                 systemConfigPort, categoryRepository, brandRepository, attributeTypeRepository,
                 replenishmentListRepository, openPackageRepository, managerNotificationPort, auditEventPublisherPort,
                 skuPackagingRepository, sessionMenuRepository, sessionTierRequired);
+        if (productRequestAutoArrive) {
+            // Resolvido na hora do uso: o listener depende do caso de uso dos pedidos, não do estoque.
+            service.setStockEntryListener(skus -> stockEntryListener.getObject().onStockEntry(skus));
+        }
+        return service;
+    }
+
+    /** Pedidos de clientes (Estoque › Pedidos de clientes): produtos que a loja não tem. */
+    @Bean
+    com.cernecommerce.core.ports.in.ProductRequestUseCase productRequestUseCase(
+            com.cernecommerce.core.ports.out.estoque.ProductRequestRepository productRequestRepository,
+            ProductRepository productRepository, CategoryRepository categoryRepository,
+            CustomerRepository customerRepository, UserRepository userRepository,
+            CampaignAutomationRepository campaignAutomationRepository,
+            com.cernecommerce.core.ports.out.crm.AutomationDispatchQueue automationDispatchQueue,
+            AfterCommitExecutor afterCommitExecutor) {
+        return new com.cernecommerce.core.service.ProductRequestService(productRequestRepository, productRepository,
+                categoryRepository, customerRepository, userRepository, campaignAutomationRepository,
+                automationDispatchQueue, afterCommitExecutor, Clock.systemUTC());
     }
 
     @Bean

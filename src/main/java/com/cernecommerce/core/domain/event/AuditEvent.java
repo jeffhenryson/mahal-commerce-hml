@@ -104,6 +104,9 @@ public record AuditEvent(EventType type, String username, Instant timestamp, Map
         ATTRIBUTE_TYPE_CREATED,
         REPLENISHMENT_ITEM_ADDED, REPLENISHMENT_ITEM_UPDATED, REPLENISHMENT_ITEM_REMOVED,
         REPLENISHMENT_LIST_CLEARED,
+        // Pedidos de clientes (V208): produtos que a loja não tem. Payload com productRequestId.
+        PRODUCT_REQUEST_CREATED, PRODUCT_REQUEST_STATUS_CHANGED, PRODUCT_REQUEST_ENTRY_ADDED,
+        PRODUCT_REQUEST_LINKED, PRODUCT_REQUEST_NOTIFIED,
         // CRM
         CUSTOMER_CREATED, CUSTOMER_UPDATED, CUSTOMER_NOTE_ADDED, CUSTOMER_STAGE_CHANGED,
         /** V206 — perfil do cliente excluído (anonimização LGPD). Payload só com customerId. */
