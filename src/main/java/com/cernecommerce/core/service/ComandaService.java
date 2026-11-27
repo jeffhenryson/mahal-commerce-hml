@@ -2185,12 +2185,15 @@ public class ComandaService implements ComandaUseCase {
                 && !comanda.isReleasedForPreparation(item)) {
             throw new SessionNotPaidException(itemId);
         }
-        // PDV-F040 — a sessão paga no final vai ao salão a receber, mas só sai dele paga: recolher é
-        // o momento de cobrar. Vale também para a desistência (PREPARANDO → RECOLHIDO) — quem
-        // desistiu sem pagar sai pela remoção da linha. A cortesia não tem o que cobrar.
-        // PDV-C046 — no duplo, o último recolhimento do grupo é o do 2º rosh: a raiz sai sem pagar
-        // enquanto ele ainda está na mesa (ou na fila), e a cobrança de tudo passa para ele.
-        if (status == SessionStatus.RECOLHIDO) {
+        // PDV-F063 — a sessão paga no final é recolhida como uma sessão paga (ENTREGUE → RECOLHIDO):
+        // libera os utensílios, promove a fila, e o valor fica a receber na mesa até o close
+        // completo ("Cobrar e encerrar") ou o parcial com a linha. O finish continua recusando a mesa
+        // com linha a receber (COMANDA_HAS_OPEN_ITEMS).
+        // A desistência (PREPARANDO → RECOLHIDO) não muda (PDV-F040): quem desistiu sem pagar sai
+        // pela remoção da linha. A cortesia não tem o que cobrar.
+        // PDV-C046 — na desistência do duplo, a raiz sai sem pagar enquanto o 2º rosh ainda está na
+        // mesa (ou na fila), e a cobrança de tudo passa para ele.
+        if (status == SessionStatus.RECOLHIDO && item.sessionStatus() != SessionStatus.ENTREGUE) {
             boolean raiz = item.mode() == ConsumptionMode.SESSAO;
             if (owesOnCollect(item) && !(raiz && hasActiveRosh(comanda, item.id()))) {
                 throw new SessionNotPaidForCollectException(itemId);
@@ -2264,7 +2267,7 @@ public class ComandaService implements ComandaUseCase {
         return comandaRepository.save(updated);
     }
 
-    /** PDV-F040 — a linha paga no final ainda a cobrar: recolhê-la é o momento de pagar. */
+    /** PDV-F040 — a linha paga no final ainda a cobrar: a desistência dela não sai sem pagar. */
     private static boolean owesOnCollect(ComandaItem item) {
         return item.isPayLater() && item.isOpen() && !item.courtesy();
     }

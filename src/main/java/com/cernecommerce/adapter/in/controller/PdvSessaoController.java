@@ -241,8 +241,8 @@ public class PdvSessaoController {
     @Operation(summary = "Passa a sessão para pagar no final",
             description = "PDV-F059 — a sessão {itemId} lançada para pagar agora, ainda AGUARDANDO_PAGAMENTO e "
                     + "sem pedido, passa a pagar no final: o mesmo efeito de lançá-la com pagarNoFinal=true — "
-                    + "vai a PREPARANDO, o tempo começa, e o 2º rosh ligado herda a marca. Recolher continua "
-                    + "exigindo o pagamento (SESSION_NOT_PAID_FOR_COLLECT).")
+                    + "vai a PREPARANDO, o tempo começa, e o 2º rosh ligado herda a marca. Recolher fica a "
+                    + "receber na mesa (PDV-F063).")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Convertida, com a comanda atualizada"),
             @ApiResponse(responseCode = "403", description = "Sem PDV_SESSION_PAY_LATER (SESSION_PAY_LATER_NOT_ALLOWED)", content = @Content),
@@ -374,11 +374,13 @@ public class PdvSessaoController {
                     + "RECOLHIDO). Recolher libera os utensílios quando a sessão e os roshs ligados a "
                     + "ela estão todos recolhidos, e promove o próximo rosh NA_FILA da mesma sessão para "
                     + "PREPARANDO. AGUARDANDO_PAGAMENTO não sai por aqui: quem a promove é o pagamento "
-                    + "(PDV-F027).")
+                    + "(PDV-F027). PDV-F063: a sessão paga no final (e o 2º rosh dela) é recolhida de ENTREGUE sem "
+                    + "pagar — libera os utensílios e promove a fila, e a linha fica em aberto (amountReceivable) "
+                    + "até o close completo ou o parcial com ela; o finish recusa a mesa com valor a receber.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Atualizada, com a comanda"),
             @ApiResponse(responseCode = "404", description = "Comanda ou linha não encontrada", content = @Content),
-            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026); ou sessão paga no final recolhida antes de paga (SESSION_NOT_PAID_FOR_COLLECT, PDV-F040). PDV-C046: no duplo pago no final a sessão sai sem pagar enquanto o 2º rosh está no salão, e a cobrança vai para o recolhimento do 2º rosh, que recusa com o mesmo SESSION_NOT_PAID_FOR_COLLECT enquanto a sessão não estiver paga (também na desistência)", content = @Content)
+            @ApiResponse(responseCode = "409", description = "Comanda não aberta, linha sem status de sessão (NOT_A_SESSION_LINE) transição inválida (INVALID_SESSION_TRANSITION), ou rosh da fila mandado ao preparo antes de pago — a própria linha ainda a cobrar, ou a sessão raiz aguardando pagamento (SESSION_NOT_PAID, PDV-C026); ou desistência (PREPARANDO → RECOLHIDO) de sessão paga no final ainda não paga (SESSION_NOT_PAID_FOR_COLLECT, PDV-F040): quem desistiu sem pagar sai pela remoção da linha. PDV-C046: na desistência do duplo pago no final a raiz sai sem pagar enquanto o 2º rosh está no salão, e a desistência do 2º rosh recusa com o mesmo código enquanto a sessão não estiver paga", content = @Content)
     })
     @PatchMapping("/pdv/comandas/{id}/sessoes/{itemId}/status")
     @PreAuthorize("hasAuthority('PDV_COMANDA_MANAGE')")

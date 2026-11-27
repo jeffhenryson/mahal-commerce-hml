@@ -1141,17 +1141,68 @@ class ComandaSessaoServiceTest {
         assertThat(depois.items().get(1).isOpen()).isTrue();
     }
 
-    /** PDV-F040 — pagar no final é pagar ao recolher: a sessão a receber não sai do salão. */
+    /**
+     * PDV-F063 — a sessão paga no final é recolhida como uma paga: libera os utensílios, e o valor
+     * fica a receber na mesa, sem pedido, até o "Cobrar e encerrar".
+     */
     @Test
-    void updateSessionStatus_recolherSessaoPagaNoFinalSemPagar_recusa() {
+    void updateSessionStatus_recolherSessaoPagaNoFinalSemPagar_ficaAReceberNaMesa() {
         Instant t = Instant.now();
         Comanda comanda = comanda(
                 sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null));
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
-                .isInstanceOf(SessionNotPaidForCollectException.class);
+        Comanda depois = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        ComandaItem linha = depois.items().get(0);
+        assertThat(linha.sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(linha.isOpen()).isTrue();
+        assertThat(linha.closedInOrderId()).isNull();
+        assertThat(depois.runningTotal()).isEqualByComparingTo(comanda.runningTotal());
+        assertThat(depois.amountReceivable()).isEqualByComparingTo(PREMIUM.preco());
+        verify(sessionMenu).release(List.of(1L));
+        verifyNoInteractions(orderRepository);
+    }
+
+    /** PDV-F063 — o finish (encerrar sem cobrar) não deixa sair a mesa com sessão a receber. */
+    @Test
+    void finishComanda_comSessaoPagaNoFinalRecolhidaSemPagar_recusa() {
+        Instant t = Instant.now();
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
+                sessaoEm(1L, PREMIUM, recolhido(), 400L),
+                sessaoEm(2L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null))));
+
+        assertThatThrownBy(() -> comandaService.finishComanda(10L, "caixa1"))
+                .isInstanceOf(ComandaHasOpenItemsException.class);
         verify(comandaRepository, never()).save(any());
+    }
+
+    /**
+     * PDV-F063 — duas sessões pagas no final recolhidas e uma compra na loja deixada na conta: o close
+     * completo cobra tudo num pedido só e fecha a mesa.
+     */
+    @Test
+    void closeComanda_completoCobraAsSessoesRecolhidasAReceberEACompraNaLoja() {
+        Instant t = Instant.now();
+        ComandaItem compraNaLoja = ComandaItem.of(3L, "ESS-ZOMO", BigDecimal.ONE, new BigDecimal("40.00"),
+                new BigDecimal("20.00"), "Essência Zomo", t, ConsumptionMode.NORMAL, false, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, false, null, true, null);
+        Comanda comanda = comanda(
+                sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null),
+                sessaoEm(2L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null),
+                compraNaLoja);
+        assertThat(comanda.amountReceivable())
+                .isEqualByComparingTo(PREMIUM.preco().multiply(BigDecimal.TWO).add(new BigDecimal("40.00")));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda));
+        givenClosingSucceeds();
+
+        Order order = comandaService.closeComanda(10L, dinheiro("500.00"), null, false, null, "caixa1");
+
+        assertThat(order.items()).hasSize(3);
+        verify(orderRepository).save(any());
+        verify(comandaRepository).save(argThat(c -> c.status() == ComandaStatus.FECHADA
+                && c.items().stream().allMatch(i -> Long.valueOf(500L).equals(i.closedInOrderId()))));
     }
 
     /** PDV-F040 — nem a desistência tira do salão a sessão a receber: sai pela remoção da linha. */
@@ -1887,7 +1938,7 @@ class ComandaSessaoServiceTest {
         verify(estoqueUseCase).consumeSession("ZOMO-MENTA", "LOJA-01", BigDecimal.ONE, "caixa1");
     }
 
-    // ── PDV-C046 — duplo pago no final: a cobrança vai para o recolhimento do 2º rosh ───────────
+    // ── PDV-C046/PDV-F063 — duplo pago no final: recolhido a receber, desistência só paga ─────
 
     private static ComandaItem sessaoPagaNoFinalEntregue(Long id, Long closedIn) {
         Instant t = Instant.now();
@@ -1924,16 +1975,38 @@ class ComandaSessaoServiceTest {
         verify(sessionMenu, never()).release(any());
     }
 
+    /** PDV-F063 — duplo pago no final: recolher o 2º rosh com a raiz a receber libera o vaso. */
     @Test
-    void updateSessionStatus_recolherORoshComARaizSemPedido_recusa() {
+    void updateSessionStatus_recolherORoshComARaizSemPedido_liberaOVasoEOGrupoFicaAReceber() {
         Instant t = Instant.now();
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
                 sessaoEm(1L, PREMIUM, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null),
                 roshEm(2L, 1L, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1"))
-                .isInstanceOf(SessionNotPaidForCollectException.class);
-        verify(comandaRepository, never()).save(any());
+        Comanda result = comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(1).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(result.items()).allMatch(ComandaItem::isOpen);
+        assertThat(result.amountReceivable()).isEqualByComparingTo(PREMIUM.preco());
+        verify(sessionMenu).release(List.of(1L));
+    }
+
+    /** PDV-F063 — o duplo pago no final recolhido nas duas pontas, nenhuma paga: os dois passam. */
+    @Test
+    void updateSessionStatus_duploPagoNoFinal_recolheRaizERoshSemPagar() {
+        Instant t = Instant.now();
+        Comanda inicio = comanda(sessaoPagaNoFinalEntregue(1L, null),
+                roshEm(2L, 1L, new SessionProgress(SessionStatus.ENTREGUE, t, t, null, true), null));
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(inicio));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Comanda raizRecolhida = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+        when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(raizRecolhida));
+        Comanda result = comandaService.updateSessionStatus(10L, 2L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items()).allMatch(i -> i.sessionStatus() == SessionStatus.RECOLHIDO && i.isOpen());
+        verify(sessionMenu).release(List.of(1L));
     }
 
     /** A desistência do 2º rosh também não tira a cobrança do salão: sai pela remoção da linha. */
@@ -1963,26 +2036,33 @@ class ComandaSessaoServiceTest {
     }
 
     @Test
-    void updateSessionStatus_roshJaRecolhido_raizSemPagar_recusa() {
+    void updateSessionStatus_roshJaRecolhido_raizSemPagar_recolheELiberaOVaso() {
         Instant t = Instant.now();
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
                 sessaoPagaNoFinalEntregue(1L, null),
                 roshEm(2L, 1L, new SessionProgress(SessionStatus.RECOLHIDO, t, t, t, true), null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
-                .isInstanceOf(SessionNotPaidForCollectException.class);
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(0).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        assertThat(result.items().get(0).isOpen()).isTrue();
+        verify(sessionMenu).release(List.of(1L));
     }
 
     @Test
-    void updateSessionStatus_roshDesistido_raizSemPagar_recusa() {
+    void updateSessionStatus_roshDesistido_raizSemPagar_recolheELiberaOVaso() {
         Instant t = Instant.now();
         SessionProgress desistido = new SessionProgress(SessionStatus.RECOLHIDO, t, null, t, true,
                 "Cliente não quis", "caixa1");
         when(comandaRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(comanda(
                 sessaoPagaNoFinalEntregue(1L, null), roshEm(2L, 1L, desistido, null))));
+        when(comandaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1"))
-                .isInstanceOf(SessionNotPaidForCollectException.class);
+        Comanda result = comandaService.updateSessionStatus(10L, 1L, SessionStatus.RECOLHIDO, "caixa1");
+
+        assertThat(result.items().get(0).sessionStatus()).isEqualTo(SessionStatus.RECOLHIDO);
+        verify(sessionMenu).release(List.of(1L));
     }
 
     /** Duplo já pago: o recolhimento das duas linhas segue como antes. */

@@ -22,6 +22,7 @@ public class ComandaDTOConverter {
         dto.setItems(comanda.items().stream().map(this::toResponse).toList());
         dto.setRunningTotal(comanda.runningTotal());
         dto.setPromotionDiscountTotal(comanda.promotionDiscountTotal());
+        dto.setAmountReceivable(comanda.amountReceivable());
         dto.setOrderId(comanda.orderId());
         dto.setOpenedBy(comanda.openedBy());
         dto.setOpenedAt(comanda.openedAt());

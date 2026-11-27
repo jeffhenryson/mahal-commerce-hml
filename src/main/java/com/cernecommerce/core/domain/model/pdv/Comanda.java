@@ -251,6 +251,19 @@ public record Comanda(
         return openItems().stream().map(ComandaItem::netSubtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /**
+     * PDV-F063 — o que a mesa deixou para pagar no encerramento: as sessões pagas no final (e os
+     * roshs cobráveis delas) e a compra na loja deixada na conta, ainda sem pedido. Já entra no
+     * {@link #runningTotal()}; este é só o recorte "a receber" que o card da mesa mostra.
+     */
+    public BigDecimal amountReceivable() {
+        return openItems().stream()
+                .filter(i -> !i.courtesy())
+                .filter(i -> i.isPayLater() || i.storePurchase())
+                .map(ComandaItem::netSubtotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     /** As linhas que nenhum pedido cobrou ainda (PDV-F017). */
     public List<ComandaItem> openItems() {
         return items.stream().filter(ComandaItem::isOpen).toList();

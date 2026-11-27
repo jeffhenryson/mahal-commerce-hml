@@ -29,6 +29,10 @@ public class ComandaResponseDTO {
     @Schema(description = "Desconto de promoção por quantidade nas linhas em aberto (\"Promoções −R$ X\"). O runningTotal já sai líquido dele.")
     private BigDecimal promotionDiscountTotal;
 
+    @Schema(description = "PDV-F063 — a receber no encerramento: sessões pagas no final (e roshs cobráveis delas) "
+            + "e compra na loja deixada na conta, ainda sem pedido. Já incluído no runningTotal.", example = "70.00")
+    private BigDecimal amountReceivable;
+
     @Schema(description = "Preenchido só depois do fechamento — o pedido gerado a partir dos itens.")
     private Long orderId;
 
