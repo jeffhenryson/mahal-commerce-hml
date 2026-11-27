@@ -130,14 +130,16 @@ public class ReceivableController {
             @ApiResponse(responseCode = "404", description = "RECEIVABLE_NOT_FOUND", content = @Content)
     })
     @GetMapping("/receivables/{id}")
-    @PreAuthorize("hasAuthority('RECEIVABLE_READ')")
+    // CRM-F013 — o atendente chega ao detalhe pelo cliente que veio pagar.
+    @PreAuthorize("hasAnyAuthority('RECEIVABLE_READ', 'RECEIVABLE_RECEIVE')")
     public ResponseEntity<ReceivableResponseDTO> get(@PathVariable("id") Long id) {
         return ResponseEntity.ok(toResponse(receivableUseCase.get(id)));
     }
 
     @Operation(summary = "Marcados do cliente (aba \"Marcados\" da ficha)", description = "Mais recentes primeiro.")
     @GetMapping("/crm/customers/{id}/receivables")
-    @PreAuthorize("hasAuthority('RECEIVABLE_READ')")
+    // CRM-F013 — os marcados de UM cliente; a lista geral e o resumo continuam só com RECEIVABLE_READ.
+    @PreAuthorize("hasAnyAuthority('RECEIVABLE_READ', 'RECEIVABLE_RECEIVE')")
     public ResponseEntity<List<ReceivableResponseDTO>> listByCustomer(@PathVariable("id") Long customerId) {
         return ResponseEntity.ok(receivableUseCase.listByCustomer(customerId).stream()
                 .map(ReceivableController::toResponse).toList());
@@ -189,12 +191,15 @@ public class ReceivableController {
             @ApiResponse(responseCode = "200", description = "Recebido"),
             @ApiResponse(responseCode = "400", description = "CASH_CONFIRMATION_REQUIRED — linha DINHEIRO sem "
                     + "cashConfirmed=true; INVALID_PAYMENT_METHOD — method ausente ou inválido", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Sessão de outro operador", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Sem RECEIVABLE_RECEIVE, RECEIVABLE_READ nem "
+                    + "RECEIVABLE_MANAGE; ou sessão de outro operador", content = @Content),
             @ApiResponse(responseCode = "409", description = "PAYMENT_EXCEEDS_BALANCE, RECEIVABLE_NOT_OPEN, "
                     + "sessão fechada ou de dia anterior", content = @Content)
     })
     @PostMapping("/receivables/payments")
-    @PreAuthorize("hasAuthority('PDV_SALE_MANAGE')")
+    // CRM-F013 — era PDV_SALE_MANAGE; a V210 deu RECEIVABLE_RECEIVE a todo perfil que a tinha. O caixa
+    // aberto do próprio operador continua exigido no serviço.
+    @PreAuthorize("hasAnyAuthority('RECEIVABLE_RECEIVE', 'RECEIVABLE_READ', 'RECEIVABLE_MANAGE')")
     public ResponseEntity<SettlementResult> pay(@RequestParam("sessionId") Long sessionId,
             @Valid @RequestBody ReceivablePaymentRequest request, Authentication authentication) {
         List<PaymentCommand> payments = orderConverter.toPaymentCommands(request.getPayments());
@@ -255,9 +260,11 @@ public class ReceivableController {
 
     // ── Manutenção ───────────────────────────────────────────────────────────────────────────
 
-    @Operation(summary = "Renegocia o vencimento de um marcado em aberto")
+    @Operation(summary = "Renegocia o vencimento de um marcado em aberto",
+            description = "RECEIVABLE_MANAGE ou RECEIVABLE_RESCHEDULE (CRM-F013), sem teto de prazo para nenhuma "
+                    + "das duas. Exige reason e audita RECEIVABLE_DUE_DATE_CHANGED com quem alterou.")
     @PatchMapping("/receivables/{id}/due-date")
-    @PreAuthorize("hasAuthority('RECEIVABLE_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('RECEIVABLE_MANAGE', 'RECEIVABLE_RESCHEDULE')")
     public ResponseEntity<ReceivableResponseDTO> changeDueDate(@PathVariable("id") Long id,
             @Valid @RequestBody ReceivableDueDateRequest request, Authentication authentication) {
         LocalDate before = receivableUseCase.get(id).receivable().dueDate();

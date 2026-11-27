@@ -118,7 +118,7 @@ class SeedConfigTest {
     /**
      * PLAT-C059 + PDV-C037 — as permissões de V136/V137/V145 não estavam no seed: em dev, com o
      * Flyway desligado, o admin tomava 403 ao marcar, corrigir pagamento e ver recebíveis. Fechar
-     * caixa alheio é do admin; o atendente só lê recebíveis.
+     * caixa alheio é do admin; o atendente recebe e renegocia marcado (V210), sem a lista geral.
      */
     @Test
     void seedAll_grantsOnAccountCorrectionReceivableAndCloseAnyPermissions() throws Exception {
@@ -133,11 +133,15 @@ class SeedConfigTest {
         runner.run();
 
         for (String perm : new String[] {"PDV_SESSION_CLOSE_ANY", "PDV_SALE_ON_ACCOUNT", "ORDER_PAYMENT_CORRECT",
-                "ORDER_PAYMENT_CORRECT_CLOSED", "RECEIVABLE_READ", "RECEIVABLE_MANAGE"}) {
+                "ORDER_PAYMENT_CORRECT_CLOSED", "RECEIVABLE_READ", "RECEIVABLE_MANAGE",
+                "RECEIVABLE_RECEIVE", "RECEIVABLE_RESCHEDULE"}) {
             verify(permissionUseCase).createPermission(perm);
             verify(roleUseCase).assignPermission("ROLE_ADMIN", perm);
         }
-        verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "RECEIVABLE_READ");
+        // CRM-F013 (V210) — o atendente recebe e renegocia, mas não lê a lista geral.
+        verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "RECEIVABLE_RECEIVE");
+        verify(roleUseCase).assignPermission("ROLE_ATENDENTE", "RECEIVABLE_RESCHEDULE");
+        verify(roleUseCase, org.mockito.Mockito.never()).assignPermission("ROLE_ATENDENTE", "RECEIVABLE_READ");
         verify(roleUseCase, org.mockito.Mockito.never()).assignPermission("ROLE_ATENDENTE", "PDV_SESSION_CLOSE_ANY");
     }
 }

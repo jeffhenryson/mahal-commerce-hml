@@ -3106,7 +3106,7 @@ adicionais, subtotal).
 
 PDV-F059 — **sem corpo.** A sessão `AGUARDANDO_PAGAMENTO` ainda sem pedido passa a pagar no final, com o
 mesmo efeito de lançá-la com `pagarNoFinal: true`: grava a marca, vai a `PREPARANDO` com o tempo contando, e
-o 2º rosh ligado herda a marca. Recolher continua exigindo pagamento (`SESSION_NOT_PAID_FOR_COLLECT`).
+o 2º rosh ligado herda a marca. Recolher fica a receber na mesa (PDV-F063, abaixo).
 **200** com o `ComandaResponseDTO`. Evento `COMANDA_SESSION_PAY_LATER` com `{comandaId, itemId, convertido: true}`.
 
 | Erro | HTTP | Código |
@@ -3123,8 +3123,17 @@ o 2º rosh ligado herda a marca. Recolher continua exigindo pagamento (`SESSION_
 > `COURTESY_NOT_ALLOWED`). No repetir, sem o campo o jumbo vai cobrado, mesmo com a origem de cortesia.
 > `ComandaItemResponseDTO.carvaoCortesia` volta em toda linha `SESSAO`.
 
-> **Duplo pago no final cobra no 2º rosh (PDV-C046), em `PATCH …/sessoes/{itemId}/status`.** Recolher
-> a sessão `pagarNoFinal` ainda a cobrar continua `409 SESSION_NOT_PAID_FOR_COLLECT` (PDV-F040), **exceto**
+> **Pagar no final cobra no encerramento (PDV-F063), em `PATCH …/sessoes/{itemId}/status`.** A sessão
+> `pagarNoFinal` (e o 2º rosh dela) vai de `ENTREGUE` a `RECOLHIDO` **sem pagar**: libera os utensílios,
+> promove a fila, e a linha fica em aberto (`closedInOrderId` nulo, dentro do `runningTotal`). Ela é
+> cobrada pelo `POST …/close` completo ("Cobrar e encerrar", junto com a compra na loja) ou pelo parcial
+> com `itemIds`. O `POST …/finish` continua recusando a mesa com valor a receber
+> (`409 COMANDA_HAS_OPEN_ITEMS`). `ComandaResponseDTO.amountReceivable` traz a soma a receber (linhas
+> pagas no final + compra na loja em aberto, sem cortesia). O bloco abaixo vale agora só para a
+> **desistência** (`PREPARANDO → RECOLHIDO`).
+>
+> **Duplo pago no final cobra no 2º rosh (PDV-C046), na desistência.** Desistir da
+> sessão `pagarNoFinal` ainda a cobrar continua `409 SESSION_NOT_PAID_FOR_COLLECT` (PDV-F040), **exceto**
 > quando ela tem um `ROSH_EXTRA` ligado ainda no salão (na fila, sabor pendente incluído; o recolhido e o
 > desistido não contam). Aí ela sai sem pagar, o rosh é promovido e os utensílios só voltam com o grupo
 > inteiro recolhido. Em troca, recolher o `ROSH_EXTRA` (inclusive a desistência `PREPARANDO → RECOLHIDO`)
@@ -3898,11 +3907,11 @@ aberto (`ABERTO`, `PARCIAL`, `VENCIDO`); `overdue=true`, só clientes com saldo 
 vencido primeiro. `openBalanceBalcao` + `openBalanceMesa` = `openBalance`. `creditLimit`: o teto
 total, se houver; senão, a soma dos limites efetivos dos canais.
 
-### GET /receivables/{id} — Permissão: RECEIVABLE_READ
+### GET /receivables/{id} — Permissão: RECEIVABLE_READ ou RECEIVABLE_RECEIVE
 
 `ReceivableResponseDTO` com as quitações. `404 RECEIVABLE_NOT_FOUND`.
 
-### GET /crm/customers/{id}/receivables — Permissão: RECEIVABLE_READ
+### GET /crm/customers/{id}/receivables — Permissão: RECEIVABLE_READ ou RECEIVABLE_RECEIVE
 
 Marcados do cliente, mais recentes primeiro (aba "Marcados" da ficha).
 
@@ -3932,7 +3941,9 @@ Pré-checagem do "Marcar" para o PDV:
   padrão e o teto total.
 - `overdueBalance` é sempre do cliente inteiro: vencido em qualquer canal bloqueia os dois.
 
-### POST /receivables/payments?sessionId= — Permissão: PDV_SALE_MANAGE
+### POST /receivables/payments?sessionId= — Permissão: RECEIVABLE_RECEIVE, RECEIVABLE_READ ou RECEIVABLE_MANAGE
+
+Até a V210 (CRM-F013) era `PDV_SALE_MANAGE`; a V210 deu `RECEIVABLE_RECEIVE` a todo perfil que a tinha.
 
 Recebe marcado no caixa de **quem recebe**. Exige a sessão `OPEN`, do operador e de hoje (as mesmas
 regras da venda).
@@ -3989,7 +4000,9 @@ gravados sem o dinheiro entrar). Estorna o **lote inteiro**, a unidade que o ope
 `409 RECEIVABLE_PAYMENT_ALREADY_REVERSED` (um estorno por lote); `409 RECEIVABLE_NOT_OPEN` se um marcado
 do lote foi cancelado depois.
 
-### PATCH /receivables/{id}/due-date — Permissão: RECEIVABLE_MANAGE
+### PATCH /receivables/{id}/due-date — Permissão: RECEIVABLE_MANAGE ou RECEIVABLE_RESCHEDULE
+
+Sem teto de prazo para nenhuma das duas (CRM-F013).
 
 `{ "dueDate": "2026-11-15", "reason": "..." }` — renegocia o vencimento de um marcado em aberto
 (hoje ou depois; `reason` obrigatório, ≤ 500). `200` com o marcado. Publica
@@ -4838,7 +4851,9 @@ interface TotpConfirmResponse {
 | `CRM_CUSTOMER_VIP_MANAGE` | Criar/associar/remover **só a tag VIP** (PDV-F046). ADMIN, DEV e ATENDENTE |
 | `RECEIVABLE_LIMIT_SET_CAPPED` | `PUT /crm/customers/{id}/credit-limit` até o teto `pdv.on-account.attendant-max-credit-limit` (PDV-F046). ADMIN, DEV e ATENDENTE |
 | `ORDER_REFUND_OWN_SESSION` | `POST /orders/{id}/refund` só de pedido da própria sessão de caixa aberta (PED-F004). ATENDENTE |
-| `RECEIVABLE_READ` | Leituras de `/receivables/**` e `GET /crm/customers/{id}/receivables` (CRM-F010). ADMIN e ATENDENTE |
+| `RECEIVABLE_READ` | Leituras de `/receivables/**` (lista geral e resumo só com ela) e `GET /crm/customers/{id}/receivables` (CRM-F010). ADMIN; o ATENDENTE perdeu na V210 |
+| `RECEIVABLE_RECEIVE` | Marcados de um cliente (`GET /crm/customers/{id}/receivables`), detalhe (`GET /receivables/{id}`) e `POST /receivables/payments` (CRM-F013, V210). ADMIN, DEV, ATENDENTE e todo perfil com `RECEIVABLE_READ`, `RECEIVABLE_MANAGE` ou `PDV_SALE_MANAGE` |
+| `RECEIVABLE_RESCHEDULE` | `PATCH /receivables/{id}/due-date` (CRM-F013, V210). ADMIN, DEV, ATENDENTE e todo perfil com `RECEIVABLE_READ` ou `RECEIVABLE_MANAGE` |
 | `RECEIVABLE_MANAGE` | Renegociar e cancelar marcado, `PUT /crm/customers/{id}/credit-limit` (CRM-F010). Só ADMIN |
 | `RECEIVABLE_PAYMENT_REVERSE` | `POST /receivables/payment-batches/{batchId}/reverse` — estornar quitação de marcado lançada por engano (V173). ADMIN e DEV |
 | `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto (PDV-F030). ADMIN e ATENDENTE |

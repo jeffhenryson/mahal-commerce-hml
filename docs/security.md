@@ -131,7 +131,9 @@ Permissões criadas em `V45__estoque_product_permissions.sql` (`ESTOQUE_PRODUCT_
 | `ORDER_PAYMENT_CORRECT` | `POST /orders/{id}/payments/correction` com o caixa do pedido aberto | ADMIN, ATENDENTE |
 | `ORDER_PAYMENT_CORRECT_CLOSED` | A mesma correção com o caixa já fechado. O controller confere a authority para decidir, porque o endpoint aceita as duas | ADMIN |
 | `PDV_SALE_ON_ACCOUNT` | Linha `MARCADO` na venda e no fechamento de mesa. Checada no controller (`OnAccountGuard`), antes do service | ADMIN |
-| `RECEIVABLE_READ` | Leituras de marcados | ADMIN, ATENDENTE |
+| `RECEIVABLE_READ` | Leituras de marcados, inclusive a lista geral e o resumo | ADMIN |
+| `RECEIVABLE_RECEIVE` | Marcados de um cliente, detalhe e receber no próprio caixa (V210) | ADMIN, ATENDENTE |
+| `RECEIVABLE_RESCHEDULE` | Renegociar o vencimento (V210) | ADMIN, ATENDENTE |
 | `RECEIVABLE_MANAGE` | Renegociar, cancelar marcado e definir limite de crédito | ADMIN |
 | `RECEIVABLE_PAYMENT_REVERSE` | Estornar o lote de quitação de marcado lançado por engano (V173) | ADMIN, DEV |
 

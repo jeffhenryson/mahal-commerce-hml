@@ -1,5 +1,7 @@
 package com.cernecommerce.core.service;
 
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionClosedException;
+import com.cernecommerce.core.domain.exception.pdv.CashRegisterSessionNotOwnedException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitAboveCapException;
 import com.cernecommerce.core.domain.exception.recebivel.CreditLimitExceededException;
 import com.cernecommerce.core.domain.exception.recebivel.CustomerHasOverdueException;
@@ -463,6 +465,29 @@ class ReceivableServiceTest {
         assertThatThrownBy(() -> service.pay(45L, "bia", CUSTOMER,
                 List.of(new PaymentCommand(PaymentMethod.DEBITO, new BigDecimal("30.00"), null)), null))
                 .isInstanceOf(PaymentExceedsBalanceException.class);
+        verify(receivableRepository, never()).saveBatch(any());
+    }
+
+    /** CRM-F013 — com o atendente recebendo, a regra do caixa continua: só o próprio, aberto. */
+    @Test
+    void pay_inAnotherOperatorsDrawer_isRefused() {
+        givenReceivingSession();
+
+        assertThatThrownBy(() -> service.pay(45L, "atendente2", CUSTOMER,
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("10.00"), null)), null))
+                .isInstanceOf(CashRegisterSessionNotOwnedException.class);
+        verify(receivableRepository, never()).saveBatch(any());
+    }
+
+    @Test
+    void pay_inAClosedDrawer_isRefused() {
+        when(cashRegisterRepository.findById(45L)).thenReturn(Optional.of(CashRegisterSession.of(45L, "bia",
+                NOW.minusSeconds(7200), BigDecimal.ZERO, "LOJA-01", NOW.minusSeconds(60), "bia", BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, CashRegisterSession.Status.CLOSED)));
+
+        assertThatThrownBy(() -> service.pay(45L, "bia", CUSTOMER,
+                List.of(new PaymentCommand(PaymentMethod.PIX, new BigDecimal("10.00"), null)), null))
+                .isInstanceOf(CashRegisterSessionClosedException.class);
         verify(receivableRepository, never()).saveBatch(any());
     }
 

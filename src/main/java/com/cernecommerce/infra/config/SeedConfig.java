@@ -62,6 +62,8 @@ public class SeedConfig {
         "RECEIVABLE_READ", "RECEIVABLE_MANAGE",
         // CRM-F010 — estornar o lote de quitação lançado por engano (V173, caixa 62).
         "RECEIVABLE_PAYMENT_REVERSE",
+        // CRM-F013 — receber e renegociar marcado pelo cliente, sem a lista geral (V210).
+        "RECEIVABLE_RECEIVE", "RECEIVABLE_RESCHEDULE",
         // PDV-F034 — sessão que vai ao preparo antes de paga: risco de calote, decisão da casa (V139).
         "PDV_SESSION_PAY_LATER",
         // PDV-F011 — como a COURTESY, só no admin: acréscimo manual é decisão da casa (V117).
@@ -101,8 +103,9 @@ public class SeedConfig {
         "CRM_CUSTOMER_READ", "CRM_CUSTOMER_LOOKUP", "CRM_LEAD_CREATE",
         "CASHBACK_READ",
         "ORDER_READ",
-        // PLAT-C059 — a V137 concede a leitura de recebíveis também ao atendente.
-        "RECEIVABLE_READ",
+        // CRM-F013 — a V210 trocou o RECEIVABLE_READ da V137 por estas duas: o atendente recebe e
+        // renegocia o marcado do cliente que veio pagar, sem ver a lista de devedores nem os totais.
+        "RECEIVABLE_RECEIVE", "RECEIVABLE_RESCHEDULE",
         // ECM-F012 — a V176 dá a Central de Pedidos também ao atendente.
         "ONLINE_ORDER_READ", "ONLINE_ORDER_MANAGE"
     };

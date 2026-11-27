@@ -79,6 +79,14 @@ O "Marcar" (CRM-F010) também tem controller e permissões próprios: `Receivabl
 Todas estão em `SeedConfig` (as da V137 desde PLAT-C059; a da V173 entrou junto com ela), então o admin de
 `dev` não toma 403.
 
+**CRM-F013 (V210) — o atendente no caixa.** `RECEIVABLE_RECEIVE` abre os marcados de **um** cliente
+(`GET /crm/customers/{id}/receivables`), o detalhe (`GET /receivables/{id}`) e o recebimento
+(`POST /receivables/payments`, que deixou de pedir `PDV_SALE_MANAGE`). `RECEIVABLE_RESCHEDULE` abre o
+`PATCH …/due-date`, sem teto de prazo. A lista geral e o resumo continuam só com `RECEIVABLE_READ`, e
+cancelar e o limite, com `RECEIVABLE_MANAGE`. A V210 dá as duas ao `ROLE_ATENDENTE`, ao admin, ao dev e a
+todo perfil com `READ`/`MANAGE` (o `RECEIVE` também a quem tinha `PDV_SALE_MANAGE`), e **tira o
+`RECEIVABLE_READ` do atendente**: decisão do dono, ele não vê a lista de devedores nem os totais.
+
 **Granularidade:** `CRM_CUSTOMER_LOOKUP` resolveu o caso do balcão — quem atende ali agora pode
 achar **um** cliente por CPF/email/contato sem precisar de `CRM_CUSTOMER_READ`.
 `CRM_CUSTOMER_EXPORT` resolveu o caso do export (CRM-C002) — ler um cliente não implica mais
